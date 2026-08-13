@@ -2,13 +2,22 @@
 
 from tenet.fusion_tree import FusionTree, coupled_sectors, fusion_trees
 from tenet.leg import IN, OUT, Leg, Side
-from tenet.map_view import MapLayout, from_matrices, map_layout, to_matrices
+from tenet.map_view import (
+    MapLayout,
+    TensorMapView,
+    as_map,
+    from_matrices,
+    map_layout,
+    to_matrices,
+)
 from tenet.ops import (
     add,
     allclose,
+    compose,
     conj,
     divide,
     fuse,
+    identity,
     multiply,
     negative,
     norm,
@@ -16,7 +25,7 @@ from tenet.ops import (
     transpose,
     unfuse,
 )
-from tenet.space import GradedSpace
+from tenet.space import GradedSpace, ProductSpace
 from tenet.structure import FusionBlockKey, TensorStructure
 from tenet.tensor import SymmetricTensor
 
@@ -34,17 +43,22 @@ __all__ = [
     "GradedSpace",
     "Leg",
     "MapLayout",
+    "ProductSpace",
     "Side",
     "SymmetricTensor",
+    "TensorMapView",
     "TensorStructure",
     "add",
     "allclose",
+    "as_map",
+    "compose",
     "conj",
     "coupled_sectors",
     "divide",
     "from_matrices",
     "fuse",
     "fusion_trees",
+    "identity",
     "map_layout",
     "multiply",
     "negative",

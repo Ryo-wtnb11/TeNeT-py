@@ -68,7 +68,8 @@ def _scalar(s: Any, t: "SymmetricTensor", op: str) -> Any:
     if isinstance(s, SymmetricTensor):
         raise TypeError(
             f"{op}: elementwise products of two SymmetricTensors are not a defined "
-            "categorical operation; use tenet.tensordot(a, b, axes=...) instead"
+            "categorical operation; use tenet.tensordot(a, b, axes=...) for a contraction, "
+            "or a @ b for morphism composition. `*` is scalar multiplication only"
         )
     if isinstance(s, numbers.Number) or getattr(s, "ndim", None) == 0:
         return s

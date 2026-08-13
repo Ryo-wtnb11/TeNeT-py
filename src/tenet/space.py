@@ -11,10 +11,15 @@ non-dual leg. There is deliberately no ``dual()`` method here — ask the ``Leg`
 
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from math import prod
+from typing import TYPE_CHECKING
 
 from tenet.symmetry.base import ClebschGordan, FusionProvider, Sector, requires
 
-__all__ = ["GradedSpace"]
+if TYPE_CHECKING:
+    from tenet.leg import Leg
+
+__all__ = ["GradedSpace", "ProductSpace"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,3 +105,54 @@ class GradedSpace:
                 return offset
             offset += m * self.provider.irrep_dim(b)
         raise KeyError(a)
+
+
+@dataclass(frozen=True, slots=True)
+class ProductSpace:
+    """An ordered tuple of legs, viewed as one factor of ``Hom(domain, codomain)``.
+
+    A TensorMap-level value type (README "``ProductSpace``"): nobody constructs one
+    to make an ordinary five-axis tensor, and ``SymmetricTensor.codomain`` keeps
+    returning plain legs. It appears on :class:`~tenet.map_view.TensorMapView`.
+
+    Frozen, hashable, array-free; equal iff its ordered legs are equal (``name``
+    included, since ``Leg`` compares it). Composition, however, ignores ``name`` —
+    see :meth:`matches`.
+    """
+
+    legs: tuple["Leg", ...]
+
+    @property
+    def provider(self) -> FusionProvider:
+        if not self.legs:
+            raise ValueError("an empty ProductSpace has no provider")
+        return self.legs[0].provider
+
+    @property
+    def dim(self) -> int:
+        """``Π leg.space.dim`` — the full dense dimension. Requires ``ClebschGordan``."""
+        return prod(leg.space.dim for leg in self.legs)
+
+    @property
+    def reduced_dim(self) -> int:
+        """``Π leg.space.reduced_dim``. Any provider."""
+        return prod(leg.space.reduced_dim for leg in self.legs)
+
+    def matches(self, other: "ProductSpace") -> int | None:
+        """``None`` if composable against ``other``, else the first offending position.
+
+        Composability is ``(space, dual, order)``, exactly (invariant 2): the
+        effective categorical objects ``V`` or ``V*`` must agree, in order. ``side``
+        is not compared (OUT meets IN by construction) and neither is ``name``,
+        which is user bookkeeping. Dimensions are never compared on their own — a
+        charge-reversed U(1) partner has the same dimension and the wrong space.
+
+        Differing lengths report the first position past the shorter tuple; callers
+        that can say something better about leg counts should check them first.
+        """
+        for i, (x, y) in enumerate(zip(self.legs, other.legs, strict=False)):
+            if x.space != y.space or x.dual != y.dual:
+                return i
+        if len(self.legs) != len(other.legs):
+            return min(len(self.legs), len(other.legs))
+        return None

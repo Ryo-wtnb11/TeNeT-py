@@ -15,7 +15,7 @@ order; within sector ``a``'s slab the index is ``alpha * d_a + m``.
 
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 import numpy as np
@@ -24,6 +24,9 @@ from tenet.fusion_tree import FusionTree
 from tenet.leg import OUT, Leg
 from tenet.structure import FusionBlockKey, TensorStructure
 from tenet.symmetry.base import ClebschGordan, FusionProvider, requires
+
+if TYPE_CHECKING:
+    from tenet.map_view import TensorMapView
 
 __all__ = ["SymmetricTensor"]
 
@@ -262,6 +265,25 @@ class SymmetricTensor:
 
     def __truediv__(self, s: Any) -> "SymmetricTensor":
         return self._ops().divide(self, s)
+
+    def __matmul__(self, other: "SymmetricTensor") -> "SymmetricTensor":
+        """Morphism composition ``a ∘ b``. See :func:`tenet.compose`."""
+        if not isinstance(other, SymmetricTensor):
+            raise TypeError(
+                f"@ composes two SymmetricTensors, got {type(other).__name__}: "
+                "for scalar multiplication write `t * s`"
+            )
+        from tenet.ops import map as map_ops
+
+        return map_ops.compose(self, other)
+
+    # --- map view -------------------------------------------------------------
+
+    def as_map(self) -> "TensorMapView":
+        """View this tensor as a morphism. Zero-copy. See :class:`~tenet.TensorMapView`."""
+        from tenet.map_view import as_map
+
+        return as_map(self)
 
     def conj(self) -> "SymmetricTensor":
         """Conjugate the blocks; ``legs`` unchanged. See :func:`tenet.conj`."""
