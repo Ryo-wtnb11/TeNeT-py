@@ -7,10 +7,10 @@
 The design combines three main ideas:
 
 - **TeNeT-style categorical tensor semantics**  
-  tensors are linear maps with explicit domain and codomain, with non-Abelian structure represented using fusion trees;
+  Tensors are linear maps with explicit domain and codomain, with non-Abelian structure represented using fusion trees.
 
 - **symmray-style array storage**  
-  reduced blocks are ordinary backend-native multidimensional arrays rather than entries in a custom packed storage format;
+  Reduced blocks are ordinary backend-native multidimensional arrays rather than entries in a custom packed storage format.
 
 - **autoray-based backend dispatch**  
   NumPy, JAX, PyTorch, and other compatible array backends can be used without making one numerical framework part of the core tensor semantics.
@@ -27,27 +27,27 @@ A symmetric tensor is not simply a block-sparse ndarray.
 
 The central object of `tenet-py` is a tensor map
 
-\[
-T\in\operatorname{Hom}(D,C),
-\]
+$$
+T \in \operatorname{Hom}(D,C),
+$$
 
 with
 
-\[
-C=C_1\otimes\cdots\otimes C_m,
+$$
+C = C_1 \otimes \cdots \otimes C_m,
 \qquad
-D=D_1\otimes\cdots\otimes D_n.
-\]
+D = D_1 \otimes \cdots \otimes D_n.
+$$
 
 The distinction between domain and codomain is part of the mathematical structure.
 
 In a rigid tensor category,
 
-\[
+$$
 \operatorname{Hom}(D,C)
 \simeq
-C\otimes D^*,
-\]
+C \otimes D^*,
+$$
 
 so domain legs correspond categorically to dual objects.
 
@@ -55,8 +55,8 @@ Consequently:
 
 - moving a leg between domain and codomain is not generally `moveaxis`;
 - permuting legs is not generally an ndarray `transpose`;
-- changing fusion-tree basis can require nontrivial \(F\)-moves;
-- braiding can require \(R\)-symbols;
+- changing fusion-tree basis can require nontrivial $F$-moves;
+- braiding can require $R$-symbols;
 - non-Abelian fusion may produce several intermediate channels;
 - fusion multiplicities can introduce additional internal indices.
 
@@ -122,12 +122,12 @@ It does **not** initially aim to provide:
 
 A tensor is explicitly represented as
 
-\[
+$$
 T:
-D_1\otimes\cdots\otimes D_n
+D_1 \otimes \cdots \otimes D_n
 \longrightarrow
-C_1\otimes\cdots\otimes C_m.
-\]
+C_1 \otimes \cdots \otimes C_m.
+$$
 
 The public API therefore keeps domain and codomain separate:
 
@@ -152,9 +152,9 @@ Conceptually:
 
 Internally this may be interpreted as the oriented boundary
 
-\[
+$$
 (C_1,C_2,C_3,D_1^*,D_2^*),
-\]
+$$
 
 but the public API retains the tensor-map interpretation.
 
@@ -179,34 +179,38 @@ This distinction becomes essential for general duality, fermionic systems, braid
 
 A graded vector space is represented as
 
-\[
+$$
 V
 =
 \bigoplus_a
-\mathbb C^{m_a}\otimes V_a,
-\]
+\mathbb{C}^{m_a}
+\otimes
+V_a,
+$$
 
 where
 
-- \(a\) is a symmetry sector;
-- \(V_a\) is the corresponding irreducible representation;
-- \(m_a\) is its degeneracy.
+- $a$ is a symmetry sector;
+- $V_a$ is the corresponding irreducible representation;
+- $m_a$ is its degeneracy.
 
 For example, for SU(2),
 
-\[
+$$
 V
 =
-2V_{1/2}\oplus3V_1
-\]
+2V_{1/2}
+\oplus
+3V_1
+$$
 
 has
 
-\[
+$$
 m_{1/2}=2,
 \qquad
 m_1=3.
-\]
+$$
 
 Conceptually:
 
@@ -220,15 +224,15 @@ V = GradedSpace(
 )
 ```
 
-The degeneracy dimension \(m_a\) must not be confused with the physical irrep dimension.
+The degeneracy dimension $m_a$ must not be confused with the physical irrep dimension.
 
 For SU(2),
 
-\[
-\dim V_j=2j+1,
-\]
+$$
+\dim V_j = 2j+1,
+$$
 
-but a reduced tensor axis corresponding to sector \(j\) has dimension \(m_j\).
+but a reduced tensor axis corresponding to sector $j$ has dimension $m_j$.
 
 ---
 
@@ -245,15 +249,15 @@ Ordering is meaningful.
 
 In general,
 
-\[
-C_1\otimes C_2
-\]
+$$
+C_1 \otimes C_2
+$$
 
 must not be silently identified with
 
-\[
-C_2\otimes C_1.
-\]
+$$
+C_2 \otimes C_1.
+$$
 
 Even in symmetric categories they may only be canonically isomorphic through a categorical permutation, and in braided categories the corresponding map may carry nontrivial data.
 
@@ -263,34 +267,34 @@ Even in symmetric categories they may only be canonically isomorphic through a c
 
 The most important storage decision in `tenet-py` is:
 
-\[
+$$
 \boxed{
 \text{one logical reduced block}
 =
 \text{one multidimensional backend array}
 }
-\]
+$$
 
 The library does not initially introduce a custom flattened tensor payload.
 
 For
 
-\[
+$$
 T:
-D_1\otimes D_2
-\rightarrow
-C_1\otimes C_2\otimes C_3,
-\]
+D_1 \otimes D_2
+\longrightarrow
+C_1 \otimes C_2 \otimes C_3,
+$$
 
 a block with fixed external sectors
 
-\[
+$$
 (c_1,c_2,c_3;d_1,d_2)
-\]
+$$
 
 has shape
 
-\[
+$$
 (
 m_{c_1},
 m_{c_2},
@@ -298,7 +302,7 @@ m_{c_3},
 m_{d_1},
 m_{d_2}
 ).
-\]
+$$
 
 For example:
 
@@ -308,9 +312,9 @@ block.shape == (2, 4, 3, 8, 5)
 
 represents
 
-\[
+$$
 A_{\alpha_1\alpha_2\alpha_3\beta_1\beta_2}.
-\]
+$$
 
 For multiplicity-free fusion, the basic invariant is
 
@@ -320,7 +324,7 @@ block.ndim == len(T.codomain) + len(T.domain)
 
 The block may be any backend-native multidimensional array supported by the numerical layer:
 
-```python
+```text
 numpy.ndarray
 jax.Array
 torch.Tensor
@@ -413,13 +417,13 @@ This optimization must remain hidden behind the logical block interface.
 
 Thus:
 
-\[
+$$
 \boxed{
 \text{logical block representation}
 \neq
 \text{physical execution representation}
 }
-\]
+$$
 
 ---
 
@@ -429,9 +433,11 @@ For Abelian symmetries, external sector labels are often sufficient to identify 
 
 For U(1),
 
-\[
-q_1\otimes q_2\to q_1+q_2
-\]
+$$
+q_1 \otimes q_2
+\to
+q_1+q_2
+$$
 
 is unique.
 
@@ -439,9 +445,9 @@ For non-Abelian symmetries this is no longer true.
 
 Consider
 
-\[
-j_1\otimes j_2\otimes j_3.
-\]
+$$
+j_1 \otimes j_2 \otimes j_3.
+$$
 
 Using a left-associated fusion tree,
 
@@ -455,15 +461,15 @@ j1     j2      j3
         J
 ```
 
-different values of \(j_{12}\) correspond to different fusion channels.
+different values of $j_{12}$ correspond to different fusion channels.
 
 The external sectors
 
-\[
+$$
 (j_1,j_2,j_3)
-\]
+$$
 
-and final sector \(J\) therefore do not uniquely determine the reduced tensor.
+and final sector $J$ therefore do not uniquely determine the reduced tensor.
 
 `tenet-py` treats the fusion tree as explicit structural metadata.
 
@@ -529,7 +535,7 @@ where each value is an ordinary multidimensional backend array.
 
 `tenet-py` keeps three kinds of indices conceptually separate.
 
-## Structural categorical indices
+## 1. Structural categorical indices
 
 Examples:
 
@@ -543,23 +549,21 @@ These are Python objects and metadata.
 
 They are not ndarray dimensions.
 
----
-
-## Reduced numerical indices
+## 2. Reduced numerical indices
 
 These represent degeneracy spaces such as
 
-\[
+$$
 \alpha=1,\ldots,m_a.
-\]
+$$
 
 These are ndarray dimensions.
 
 A reduced block
 
-\[
+$$
 A_{\alpha\beta\gamma}
-\]
+$$
 
 is therefore naturally represented as
 
@@ -567,17 +571,15 @@ is therefore naturally represented as
 array.shape == (m_a, m_b, m_c)
 ```
 
----
-
-## Physical irrep indices
+## 3. Physical irrep indices
 
 For example SU(2) has magnetic quantum numbers
 
-\[
+$$
 m=-j,-j+1,\ldots,j.
-\]
+$$
 
-These indices belong to symmetry tensors such as Clebsch–Gordan coefficients and are not stored explicitly in the reduced representation.
+These indices belong to symmetry tensors such as Clebsch--Gordan coefficients and are not stored explicitly in the reduced representation.
 
 Schematically:
 
@@ -595,17 +597,18 @@ full physical index
 
 For a general fusion category,
 
-\[
-a\otimes b
+$$
+a \otimes b
 =
-\bigoplus_c N_{ab}^{c}\,c.
-\]
+\bigoplus_c
+N_{ab}^{c}\,c.
+$$
 
 When
 
-\[
+$$
 N_{ab}^{c}>1,
-\]
+$$
 
 a fusion vertex carries an additional multiplicity label.
 
@@ -616,9 +619,9 @@ Two natural possibilities are:
 1. treat multiplicity labels as part of the fusion-tree structural key;
 2. represent multiplicity basis dimensions as explicit reduced ndarray axes.
 
-The choice should be made based on the transformation and contraction semantics rather than storage convenience.
+The choice should be made based on transformation and contraction semantics rather than storage convenience.
 
-The architecture must support either without redesigning `TensorMap`.
+The architecture should support either without redesigning `TensorMap`.
 
 ---
 
@@ -675,7 +678,7 @@ NumPy   JAX   PyTorch
 
 # Why autoray?
 
-Using `autoray` keeps two important concerns separate.
+Using `autoray` keeps two concerns separate.
 
 The tensor structure asks:
 
@@ -687,23 +690,23 @@ The backend asks:
 
 For example, a categorical operation may determine that
 
-```text
-block B
+$$
+B
 =
-F00 * transpose(block A0)
+F_{00}\operatorname{transpose}(A_0)
 +
-F01 * transpose(block A1)
-```
+F_{01}\operatorname{transpose}(A_1).
+$$
 
 The structural layer determines:
 
 - which blocks participate;
-- which \(F\)-coefficients are required;
+- which $F$-coefficients are required;
 - which axes correspond.
 
 The numerical layer only executes:
 
-```python
+```text
 transpose
 multiply
 add
@@ -736,7 +739,7 @@ Such operations should be explicit because they may imply device transfer or hos
 
 Although the core representation is backend-independent, JAX is an important target.
 
-For a JAX-backed `TensorMap`:
+For a JAX-backed `TensorMap`,
 
 ```python
 blocks[key] = jax.Array(...)
@@ -814,13 +817,13 @@ static categorical structure
 
 The guiding interpretation is
 
-\[
+$$
 \boxed{
 \text{categorical structure}
 \approx
 \text{static shape/type information}
 }
-\]
+$$
 
 for a compiled JAX computation.
 
@@ -914,23 +917,19 @@ Used to ensure that the entire abstraction reduces cleanly to ordinary dense ten
 
 There is exactly one sector.
 
----
-
 ## U(1)
 
 Use integer charges:
 
-\[
-\mathbf 1=0,
+$$
+\mathbf{1}=0,
 \qquad
 q^*=-q,
 \qquad
-q_1\otimes q_2=q_1+q_2.
-\]
+q_1 \otimes q_2=q_1+q_2.
+$$
 
 This provides the simplest nontrivial graded-space test.
-
----
 
 ## SU(2)
 
@@ -945,15 +944,16 @@ so half-integer representations are stored exactly.
 
 Fusion is
 
-\[
-j_1\otimes j_2
+$$
+j_1 \otimes j_2
 =
-\bigoplus_{j=|j_1-j_2|}^{j_1+j_2}j.
-\]
+\bigoplus_{j=|j_1-j_2|}^{j_1+j_2}
+j.
+$$
 
 SU(2) is included from the beginning to ensure that the architecture genuinely supports non-Abelian fusion.
 
-The first milestone does not require CG coefficients or \(F\)-symbols.
+The first milestone does not require Clebsch--Gordan coefficients or $F$-symbols.
 
 ---
 
@@ -963,20 +963,23 @@ Duality belongs to the categorical structure.
 
 For
 
-\[
-V=
+$$
+V
+=
 \bigoplus_a
-\mathbb C^{m_a}\otimes V_a,
-\]
+\mathbb{C}^{m_a}\otimes V_a,
+$$
 
 the dual is
 
-\[
+$$
 V^*
 =
 \bigoplus_a
-(\mathbb C^{m_a})^*\otimes V_{a^*}.
-\]
+(\mathbb{C}^{m_a})^*
+\otimes
+V_{a^*}.
+$$
 
 A domain factor appears categorically as a dual object in the oriented tensor boundary.
 
@@ -1020,7 +1023,7 @@ A reduced ndarray can of course be transposed numerically:
 ar.do("transpose", block, axes)
 ```
 
-but the decision that a particular categorical operation corresponds to that transpose, possibly combined with \(F\)- or \(R\)-coefficients, belongs to `tenet-py`.
+but the decision that a particular categorical operation corresponds to that transpose, possibly combined with $F$- or $R$-coefficients, belongs to `tenet-py`.
 
 Thus `TensorMap` should not simply masquerade as an ndarray.
 
@@ -1065,9 +1068,9 @@ The categorical layer should determine the numerical operation before backend ex
 
 A future contraction
 
-\[
-C=A\cdot B
-\]
+$$
+C = A \cdot B
+$$
 
 should conceptually proceed as
 
@@ -1110,7 +1113,7 @@ may reconstruct the full physical tensor.
 
 For SU(2), schematically,
 
-\[
+$$
 T_{
 (\alpha_1m_1)
 (\alpha_2m_2)
@@ -1120,9 +1123,9 @@ T_{
 \sum_{\tau}
 A^{(\tau)}_{\alpha_1\alpha_2\alpha_3}
 C^{(\tau)}_{m_1m_2m_3}.
-\]
+$$
 
-The magnetic indices \(m_i\) exist only in the expanded representation.
+The magnetic indices $m_i$ exist only in the expanded representation.
 
 Dense expansion is therefore a transformation, not the canonical tensor storage.
 
@@ -1201,9 +1204,9 @@ W = GradedSpace(
 
 A tensor
 
-\[
-T:W\rightarrow V\otimes V
-\]
+$$
+T:W\longrightarrow V\otimes V
+$$
 
 may then be constructed from ordinary arrays:
 
@@ -1245,8 +1248,6 @@ T_numpy = T.to_backend("numpy")
 ```
 
 This should map each reduced block while preserving all categorical metadata.
-
-Conceptually:
 
 ```text
 TensorMap[NumPy]
@@ -1306,8 +1307,6 @@ rather than introducing a custom dense-storage implementation.
 
 `tenet-py` follows the same broad idea but extends it toward an explicitly categorical non-Abelian tensor-map representation.
 
-Schematically:
-
 ```text
                   tenet-py
                      │
@@ -1334,13 +1333,13 @@ Schematically:
 
 JAX is not the tensor storage abstraction of `tenet-py`.
 
-Instead:
+Instead,
 
-\[
+$$
 \boxed{
 \text{JAX is one particularly powerful ndarray backend}
 }
-\]
+$$
 
 This distinction matters because the same tensor structure should remain usable for:
 
@@ -1375,8 +1374,6 @@ Implement:
 
 No general contraction yet.
 
----
-
 ## Milestone 2 — Basic array operations
 
 Implement:
@@ -1393,21 +1390,17 @@ Test with at least:
 - NumPy;
 - JAX.
 
----
-
 ## Milestone 3 — Categorical transformations
 
 Introduce:
 
 - CG data;
-- \(F\)-symbols;
-- \(R\)-symbols where applicable;
+- $F$-symbols;
+- $R$-symbols where applicable;
 - recoupling;
 - categorical permutation;
 - adjoint;
 - domain/codomain movement.
-
----
 
 ## Milestone 4 — Contraction
 
@@ -1425,8 +1418,6 @@ autoray dense kernels
 output TensorMap
 ```
 
----
-
 ## Milestone 5 — Factorizations
 
 Implement symmetry-aware:
@@ -1438,8 +1429,6 @@ Implement symmetry-aware:
 - reconstructed bond spaces.
 
 Structural changes such as truncation should be represented explicitly at the Python level.
-
----
 
 ## Milestone 6 — Performance
 
@@ -1463,31 +1452,23 @@ The public `TensorMap` representation should remain independent of these optimiz
 
 The object is mathematically
 
-\[
+$$
 T\in\operatorname{Hom}(D,C),
-\]
+$$
 
 not merely an ndarray carrying symmetry annotations.
-
----
 
 ## Reduced blocks should remain ordinary arrays
 
 Do not implement custom dense storage unless profiling provides a concrete reason.
 
----
-
 ## Use autoray for numerical dispatch
 
 The symmetry library should not become coupled to NumPy, JAX, or PyTorch implementation details.
 
----
-
 ## JAX is important but not foundational
 
 JAX-specific capabilities should integrate cleanly without making `jax.Array` part of the categorical model.
-
----
 
 ## Structural indices are not ndarray axes
 
@@ -1495,19 +1476,13 @@ Sectors and fusion channels are metadata.
 
 Degeneracy indices are array dimensions.
 
----
-
 ## Non-Abelian fusion is explicit
 
 Fusion trees are first-class immutable objects.
 
----
-
 ## Optimization must remain below the mathematical API
 
 Packing, batching, kernel selection, and execution planning must not determine the public tensor semantics.
-
----
 
 ## Correctness before runtime sophistication
 
@@ -1516,8 +1491,6 @@ The first version should establish a mathematically coherent representation befo
 ---
 
 # Project philosophy
-
-The complete design can be summarized as:
 
 ```text
                          tenet-py
@@ -1551,7 +1524,7 @@ The complete design can be summarized as:
 
 The core idea is deliberately simple:
 
-\[
+$$
 \boxed{
 \text{categorical tensor structure in Python}
 +
@@ -1559,7 +1532,6 @@ The core idea is deliberately simple:
 +
 \text{backend dispatch through autoray}
 }
-\]
+$$
 
 Everything else should be built on top of that boundary.
-
