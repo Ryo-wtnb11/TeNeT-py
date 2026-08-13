@@ -9,10 +9,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from tenet.symmetry.base import Sector, permute_unique_tree
+from tenet.symmetry.base import Sector, bend_unique, permute_unique_tree
 
 if TYPE_CHECKING:
     from tenet.fusion_tree import FusionTree
+    from tenet.structure import FusionBlockKey
 
 __all__ = ["U1", "U1Provider", "U1Sector"]
 
@@ -61,9 +62,27 @@ class U1Provider:
         """One term, coefficient 1: charge addition is commutative and ``F = R = 1``."""
         return permute_unique_tree(self, tree, perm)
 
+    def bend_right(
+        self, key: "FusionBlockKey", *, dual: bool
+    ) -> tuple[tuple["FusionBlockKey", complex], ...]:
+        """One term, coefficient 1: for an Abelian irrep ``B = N``, ``dim = 1``, ``FS = 1``."""
+        return bend_unique(self, key, right=True, dual=dual)
+
+    def bend_left(
+        self, key: "FusionBlockKey", *, dual: bool
+    ) -> tuple[tuple["FusionBlockKey", complex], ...]:
+        return bend_unique(self, key, right=False, dual=dual)
+
+    def z_matrix(self, a: U1Sector) -> np.ndarray:
+        """``Z = [[1]]``, read-only: ``V_q`` is one-dimensional and the FS phase is 1."""
+        return _Z
+
 
 _CGC = np.ones((1, 1, 1, 1))
 _CGC.flags.writeable = False
+
+_Z = np.ones((1, 1))
+_Z.flags.writeable = False
 
 U1 = U1Provider()
 """Module-level singleton, used as ``GradedSpace(provider=U1, ...)``."""
