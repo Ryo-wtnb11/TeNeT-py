@@ -14,6 +14,7 @@ from tenet.ops.basic import (
     norm,
     subtract,
 )
+from tenet.ops.permutation import transpose
 
 __all__ = [
     "add",
@@ -24,4 +25,5 @@ __all__ = [
     "negative",
     "norm",
     "subtract",
+    "transpose",
 ]

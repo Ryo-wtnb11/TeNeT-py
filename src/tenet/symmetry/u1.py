@@ -5,10 +5,14 @@ later product-sector concern, not a reason to make every charge a tuple.
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
-from tenet.symmetry.base import Sector
+from tenet.symmetry.base import Sector, permute_unique_tree
+
+if TYPE_CHECKING:
+    from tenet.fusion_tree import FusionTree
 
 __all__ = ["U1", "U1Provider", "U1Sector"]
 
@@ -50,6 +54,12 @@ class U1Provider:
         if not self.n_symbol(a, b, c):
             raise ValueError(f"U(1) fusion forbids {a} x {b} -> {c}")
         return _CGC
+
+    def permute_tree(
+        self, tree: "FusionTree", perm: tuple[int, ...]
+    ) -> tuple[tuple["FusionTree", complex], ...]:
+        """One term, coefficient 1: charge addition is commutative and ``F = R = 1``."""
+        return permute_unique_tree(self, tree, perm)
 
 
 _CGC = np.ones((1, 1, 1, 1))

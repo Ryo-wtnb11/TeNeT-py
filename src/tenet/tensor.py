@@ -244,6 +244,18 @@ class SymmetricTensor:
         """qdim-weighted Frobenius norm. See :func:`tenet.norm`."""
         return self._ops().norm(self)
 
+    def transpose(self, *axes: Any) -> "SymmetricTensor":
+        """``T.transpose(2, 0, 1)``, ``T.transpose((2, 0, 1))`` or ``T.transpose()``.
+
+        The last form reverses all axes (NumPy convention). See
+        :func:`tenet.transpose`; no leg changes ``side``.
+        """
+        from tenet.ops import permutation
+
+        if len(axes) == 1 and (axes[0] is None or isinstance(axes[0], Sequence)):
+            axes = tuple(axes[0] or ())
+        return permutation.transpose(self, axes or None)
+
     def __repr__(self) -> str:
         def safe(get) -> Any:
             try:
