@@ -198,6 +198,52 @@ class SymmetricTensor:
 
     __hash__ = None  # type: ignore[assignment]  # holds arrays; T.structure is the hashable half
 
+    # --- arithmetic -----------------------------------------------------------
+    # One-line wrappers over tenet.ops.basic, with function-local imports so the
+    # dependency edge stays one-way (ops -> tensor). No __iadd__: the tensor is
+    # frozen and Python's rebinding fallback is the intended behaviour.
+
+    def _ops(self):
+        from tenet.ops import basic
+
+        return basic
+
+    def __add__(self, other: "SymmetricTensor") -> "SymmetricTensor":
+        if not isinstance(other, SymmetricTensor):
+            raise TypeError(
+                f"cannot add {type(other).__name__} to a SymmetricTensor: adding a scalar "
+                "is not equivariant and would break the symmetry"
+            )
+        return self._ops().add(self, other)
+
+    def __sub__(self, other: "SymmetricTensor") -> "SymmetricTensor":
+        if not isinstance(other, SymmetricTensor):
+            raise TypeError(
+                f"cannot subtract {type(other).__name__} from a SymmetricTensor: "
+                "scalar shifts are not equivariant"
+            )
+        return self._ops().subtract(self, other)
+
+    def __neg__(self) -> "SymmetricTensor":
+        return self._ops().negative(self)
+
+    def __mul__(self, s: Any) -> "SymmetricTensor":
+        """Scalar multiplication only; a ``SymmetricTensor`` operand is a ``TypeError``."""
+        return self._ops().multiply(self, s)
+
+    __rmul__ = __mul__
+
+    def __truediv__(self, s: Any) -> "SymmetricTensor":
+        return self._ops().divide(self, s)
+
+    def conj(self) -> "SymmetricTensor":
+        """Conjugate the blocks; ``legs`` unchanged. See :func:`tenet.conj`."""
+        return self._ops().conj(self)
+
+    def norm(self) -> float:
+        """qdim-weighted Frobenius norm. See :func:`tenet.norm`."""
+        return self._ops().norm(self)
+
     def __repr__(self) -> str:
         def safe(get) -> Any:
             try:
