@@ -10,18 +10,22 @@ treated as a no-op (invariant 2).
 
 F-, R- and B-symbols and Frobenius-Schur signs *are* available, through the
 :class:`~tenet.symmetry.base.RecouplingData` capability; their gauge is pinned to
-the vendored TensorKitSectors fixtures (see ``SU2_GAUGE``). Still absent: the dense
-``z_matrix`` of the Z-isomorphism, and the operations built on these coefficients
-(``permute_tree``, ``bend_right``/``bend_left``).
+the vendored TensorKitSectors fixtures (see ``SU2_GAUGE``). ``permute_tree`` is
+built on them, so ``transpose`` is total for SU(2). Still absent: the dense
+``z_matrix`` of the Z-isomorphism and ``bend_right``/``bend_left``.
 """
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from tenet.symmetry import _su2_coeff
 from tenet.symmetry._su2_coeff import cg_tensor, triangle
-from tenet.symmetry.base import Sector
+from tenet.symmetry.base import Sector, permute_braided_tree
+
+if TYPE_CHECKING:
+    from tenet.fusion_tree import FusionTree
 
 __all__ = ["SU2", "SU2_GAUGE", "SU2Provider", "SU2Sector"]
 
@@ -109,6 +113,12 @@ class SU2Provider:
     def b_symbol(self, a: SU2Sector, b: SU2Sector, c: SU2Sector) -> float:
         """``B^{ab}_c``, derived from :meth:`f_symbol`; real, of unit modulus."""
         return _su2_coeff.b_symbol(a.two_j, b.two_j, c.two_j)
+
+    def permute_tree(
+        self, tree: "FusionTree", perm: tuple[int, ...]
+    ) -> tuple[tuple["FusionTree", complex], ...]:
+        """Artin-braid expansion; SU(2) is symmetric, so ``perm`` fixes the braid."""
+        return permute_braided_tree(self, tree, perm)
 
     def frobenius_schur(self, a: SU2Sector) -> int:
         """``chi_a = (-1)^(2j)``: ``+1`` for integer spin, ``-1`` for half-integer."""

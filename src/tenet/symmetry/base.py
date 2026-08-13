@@ -6,6 +6,7 @@ sit inside ``TensorStructure`` (invariant 8).
 """
 
 from dataclasses import dataclass
+from functools import cache
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
@@ -24,6 +25,7 @@ __all__ = [
     "TrivialProvider",
     "TrivialSector",
     "bend_unique",
+    "permute_braided_tree",
     "permute_unique_tree",
     "requires",
 ]
@@ -189,6 +191,90 @@ def permute_unique_tree(
             f"coupling to {tree.coupled!r}; permute_unique_tree needs exactly one"
         )
     return ((trees[0], 1.0),)
+
+
+@cache
+def permute_braided_tree(
+    provider: "RecouplingData", tree: "FusionTree", perm: tuple[int, ...]
+) -> tuple[tuple["FusionTree", complex], ...]:
+    """``permute_tree`` for any provider supplying F- and R-symbols.
+
+    Bubble-decomposes ``perm`` into adjacent transpositions (Artin generators) and
+    applies :func:`_artin_braid` to each, accumulating a ``{tree: coeff}`` expansion.
+    ``perm[j]`` is the OLD uncoupled position that becomes position ``j``.
+
+    Symmetric-category only: the caller gets no over/under choice, because
+    ``R == R**-1`` for the providers this serves (invariant 12). A provider whose
+    braiding is genuinely chiral must not reuse this helper — it needs ``levels``
+    and an explicit ``braid`` API.
+
+    The coefficients are conjugated nowhere, which is correct exactly while the
+    provider's gauge is real: TensorKit braids the domain-side (fusion) tree with
+    the conjugate coefficient, and for a complex-gauge provider the caller must
+    conjugate on the domain side. SU(2) in the racah/TensorKitSectors gauge has
+    real F and R, so the two agree and ``permutation_plan`` may treat the two
+    trees of a block key symmetrically.
+
+    No tolerance-based pruning: a structurally forbidden term is already exactly
+    ``0.0`` through ``f_symbol``, and the surviving float residues from the ``sum
+    over d`` cost plan size, never correctness.
+    ponytail: the ceiling is term-list size for high-rank, high-spin trees; the
+    upgrade path is exact sqrt-rational accumulation, not a tolerance.
+    """
+    terms: dict[FusionTree, complex] = {tree: 1.0}
+    current = list(range(tree.rank))  # old position now sitting at each slot
+    for j, target in enumerate(perm):
+        for i in range(current.index(target) - 1, j - 1, -1):
+            current[i], current[i + 1] = current[i + 1], current[i]
+            nxt: dict[FusionTree, complex] = {}
+            for t, c in terms.items():
+                for braided, cb in _artin_braid(provider, t, i):
+                    nxt[braided] = nxt.get(braided, 0) + c * cb
+            terms = nxt
+    return tuple(terms.items())
+
+
+@cache
+def _artin_braid(
+    provider: "RecouplingData", tree: "FusionTree", i: int
+) -> tuple[tuple["FusionTree", complex], ...]:
+    """Swap uncoupled lines ``i`` and ``i+1`` of a left-associated tree.
+
+    ``i == 0``: the two lines already meet at the first vertex, so a single
+    R-move does it and the spine is untouched.
+
+    ``i >= 1``: with ``a = e_{i-1}``, ``b = u_i``, ``c = u_{i+1}``, ``f = e_{i+1}``
+    and the old inner line ``e = e_i``, F-move to ``(a (b c))``, R on the ``(b c)``
+    vertex, F-move back::
+
+        coeff(e -> e') = sum_d F^{abc}_f[e, d] · R^{bc}_d · conj(F^{acb}_f[e', d])
+
+    which is a genuine expansion over the admissible ``e' in fusion(a, c)``.
+    Every other spine entry, and every multiplicity label, is unchanged.
+    """
+    from tenet.fusion_tree import FusionTree
+
+    u = tree.uncoupled
+    spine = tree.lines()
+    new_u = (*u[:i], u[i + 1], u[i], *u[i + 2 :])
+    if i == 0:
+        swapped = FusionTree(new_u, tree.inner, tree.multiplicities, tree.coupled)
+        return ((swapped, provider.r_symbol(u[0], u[1], spine[1])),)
+
+    a, b, c, e, f = spine[i - 1], u[i], u[i + 1], spine[i], spine[i + 1]
+    out = []
+    for new_e in provider.fusion(a, c):
+        if not provider.n_symbol(new_e, b, f):
+            continue
+        coeff = sum(
+            provider.f_symbol(a, b, c, f, e, d)
+            * provider.r_symbol(b, c, d)
+            * provider.f_symbol(a, c, b, f, new_e, d).conjugate()
+            for d in provider.fusion(b, c)
+        )
+        inner = (*tree.inner[: i - 1], new_e, *tree.inner[i:])
+        out.append((FusionTree(new_u, inner, tree.multiplicities, tree.coupled), coeff))
+    return tuple(out)
 
 
 def bend_unique(
