@@ -13,11 +13,17 @@ for *every* provider, SU(2) included — this is invariant 3 in action.
 
 **case B — some side permutation is non-trivial.** That is a braid. It needs the
 provider to state its own coefficients through
-:class:`~tenet.symmetry.base.PermutationCoefficients`; Trivial and U(1) do, SU(2)
-does not and says so loudly (F-moves and R-moves are Milestone 4). A
-"just permute the block axes" fast path for SU(2) would return a numerically
-plausible tensor that is silently the wrong element of the fusion basis, and only
-a dense round-trip would catch it.
+:class:`~tenet.symmetry.base.PermutationCoefficients`; every provider shipped here
+does, and one that does not is refused loudly. A "just permute the block axes"
+fast path would return a numerically plausible tensor that is silently the wrong
+element of the fusion basis, and only a dense round-trip would catch it. A
+non-Abelian provider returns a genuine multi-term expansion, which the
+accumulation loop below sums into shared target blocks — the case it was written
+for, and the case no Abelian provider ever exercises.
+
+Both trees of a key are braided with the *same* coefficients. That is correct
+while the provider's gauge is real (SU(2)'s is); a complex-gauge provider must
+conjugate on the domain (input-tree) side.
 
 ``transpose`` never changes a leg's ``side``: moving a leg between domain and
 codomain is a bend (``repartition``, Milestone 3). What it does change is
@@ -99,8 +105,8 @@ def _refuse(provider: Any, axes: tuple[int, ...], offenders: str) -> None:
         raise CapabilityError(
             f"transpose: axes {axes} reorders legs within a side ({offenders}), which is a "
             f"braid, and provider {provider.name} does not implement PermutationCoefficients. "
-            "Within-side reordering for a non-Abelian symmetry such as SU(2) needs F-moves "
-            "and R-moves (Milestone 4); it is not a block transpose and will not be faked. "
+            "Within-side reordering needs the provider's own F- and R-moves; it is not a "
+            "block transpose and will not be faked. "
             "Permutations that only change the OUT/IN interleaving, leaving each side's "
             "internal order intact, work today for every provider."
         ) from exc

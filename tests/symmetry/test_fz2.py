@@ -511,9 +511,11 @@ def test_no_provider_identity_branching_outside_fz2():
         assert "fZ2" not in text or path.name == "__init__.py"
 
 
-def test_su2_still_refuses_within_side_permutation():
-    """fZ2's arrival must not have loosened the capability gate."""
-    assert not isinstance(SU2, PermutationCoefficients)
+def test_capability_gate_is_still_opt_in():
+    """fZ2's arrival must not have loosened the gate: a provider opts in by
+    defining ``permute_tree`` — SU(2) does since #36 (the negative case lives in
+    tests/ops/test_permutation.py)."""
+    assert isinstance(SU2, PermutationCoefficients)
 
 
 def test_fusion_block_key_is_reachable():

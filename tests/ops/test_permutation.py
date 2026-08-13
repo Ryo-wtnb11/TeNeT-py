@@ -103,9 +103,7 @@ def test_empty_call_reverses():
     assert t.transpose() == t.transpose((3, 2, 1, 0))
     assert tenet.transpose(t) == t.transpose((3, 2, 1, 0))
     assert t.transpose(None) == t.transpose((3, 2, 1, 0))
-    # reversal is a within-side permutation, so SU(2) refuses it rather than lying
-    with pytest.raises(CapabilityError):
-        su2().transpose()
+    assert su2().transpose() == su2().transpose((3, 2, 1, 0))
 
 
 @pytest.mark.parametrize(
@@ -171,25 +169,23 @@ def test_case_a_needs_no_permutation_capability():
 
 
 @pytest.mark.parametrize(("p", "side"), [((2, 1, 0, 3), "OUT"), ((0, 3, 2, 1), "IN")])
-def test_case_b_su2_refused(p, side):
-    t = su2()
+def test_case_b_refused_without_the_capability(p, side):
+    """SU(2) now has the capability (#36); a fusion-only provider still does not."""
+    provider = FusionOnly()
+    space = GradedSpace.new(provider, {TrivialSector(): 2})
+    legs = (Leg(space, OUT), Leg(space, IN), Leg(space, OUT), Leg(space, IN))
+    t = SymmetricTensor.random(legs, seed=3)
     with pytest.raises(CapabilityError) as excinfo:
         t.transpose(p)
     message = str(excinfo.value)
-    assert "SU2" in message
+    assert "FusionOnly" in message
     assert str(p) in message and side in message
-    assert "Milestone 4" in message and "F-moves" in message
+    assert "PermutationCoefficients" in message
 
 
-def test_case_b_su2_refusal_is_not_a_silent_result():
+def test_case_b_su2_is_no_longer_refused():
     t = su2()
-    results = []
-    for p in ALL_PERMS:
-        try:
-            results.append(t.transpose(p))
-        except CapabilityError:
-            pass
-    assert len(results) == len(CASE_A)
+    assert len([t.transpose(p) for p in ALL_PERMS]) == len(ALL_PERMS)
 
 
 # --- case B, Abelian -----------------------------------------------------------
@@ -286,7 +282,8 @@ def test_case_b_plan_terms_are_a_bijection():
 def test_permutation_coefficients_is_runtime_checkable():
     assert isinstance(U1, PermutationCoefficients)
     assert isinstance(Trivial, PermutationCoefficients)
-    assert not isinstance(SU2, PermutationCoefficients)
+    assert isinstance(SU2, PermutationCoefficients)
+    assert not isinstance(FusionOnly(), PermutationCoefficients)
 
 
 @pytest.mark.parametrize(

@@ -14,6 +14,7 @@ from tenet.symmetry.base import (
     TrivialProvider,
     TrivialSector,
     bend_unique,
+    permute_braided_tree,
     permute_unique_tree,
     requires,
 )
@@ -46,6 +47,7 @@ __all__ = [
     "U1Sector",
     "bend_unique",
     "fZ2",
+    "permute_braided_tree",
     "permute_unique_tree",
     "requires",
 ]
