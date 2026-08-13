@@ -30,9 +30,9 @@ Two known gaps, deliberate:
   sector type and raise ``TypeError`` naming the position, so the failure happens
   loudly at the first fusion query.
 * **No ``BendingCoefficients`` / ``DualBasis`` forwarding.** The pattern is the
-  same (``z_matrix`` becomes a Kronecker product with this same flattening) but it
-  has its own dense-oracle criteria; a product has no bending capability today and
-  fails loudly. Follow-up to #40.
+  same (the duality matrix becomes a Kronecker product with this same flattening)
+  but it has its own dense-oracle criteria; a product has no bending capability
+  today and fails loudly. Follow-up to #40.
 
 **Nested products are not flattened.** ``ProductProvider((ProductProvider((A, B)),
 C))`` is a legal provider whose sectors are nested ``ProductSector``s, and it is
@@ -194,9 +194,8 @@ class ProductProvider:
         The braiding of a Deligne product is the tensor product of the factors'
         braidings and the associator factorizes, so the permuted product tree is
         literally ``⊗_i (Σ_α c_α^(i) t_α^(i))``, which multiplies out to this.
-        Written for many terms per factor even though every shipped provider
-        returns one, because the day SU(2) gains ``permute_tree`` a single-term
-        special case would be an untested correctness trap.
+        Written for many terms per factor, which SU(2)'s braid expansion (#36)
+        actually reaches — a single-term special case would be a correctness trap.
         """
         self._require_all(PermutationCoefficients, _PERM_HINT)
         per_factor = [

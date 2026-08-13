@@ -265,6 +265,42 @@ class BareStub:
         return permute_unique_tree(self, tree, perm)
 
 
+@dataclass(frozen=True, slots=True)
+class StillStub:
+    """``qdim``/``cgc`` but *no* ``permute_tree`` — the missing-permutation side.
+
+    Every shipped provider now has ``permute_tree`` (#36 gave SU(2) one), so the
+    "isinstance optimistic, call authoritative" contract needs a factor that still
+    refuses; this is it.
+    """
+
+    name: str = "Still"
+
+    @property
+    def unit(self) -> ASector:
+        return ASector(0)
+
+    def dual(self, a: ASector) -> ASector:
+        return a
+
+    def fusion(self, a: ASector, b: ASector) -> tuple[ASector, ...]:
+        return (ASector(a.label ^ b.label),)
+
+    def n_symbol(self, a: ASector, b: ASector, c: ASector) -> int:
+        return int(c.label == a.label ^ b.label)
+
+    def qdim(self, a: ASector) -> float:
+        return 1.0
+
+    def irrep_dim(self, a: ASector) -> int:
+        return 1
+
+    def cgc(self, a: ASector, b: ASector, c: ASector) -> np.ndarray:
+        if not self.n_symbol(a, b, c):
+            raise ValueError(f"{self.name}: forbidden triple")
+        return np.ones((1, 1, 1, 1))
+
+
 # --- provider value semantics -------------------------------------------------------
 
 
@@ -621,42 +657,72 @@ def test_capability_present_when_every_factor_has_it():
     assert SU.irrep_dim(su(1, 0)) == 2
 
 
-# --- SU(2) x U(1): the refusal ------------------------------------------------------
-
-# NOTE: becomes obsolete when #36 lands — SU2 gains permute_tree, and these two
-# tests must then be loosened to assert success instead of refusal.
+# --- SU(2) x U(1): forwarding, now that #36 landed -----------------------------------
 
 
-def test_su2_times_u1_permute_tree_refuses_naming_the_factor():
+def test_su2_times_u1_permute_tree_is_forwarded():
+    """#36 gave SU(2) a ``permute_tree``, so the product has one too — by the same
+    "iff every factor has it" rule that used to refuse this call."""
+    assert isinstance(ProductProvider((SU2, U1)), PermutationCoefficients) is True
     (tree,) = fusion_trees(SU, (su(1, 1), su(1, 1)), su(2, 2))
-    with pytest.raises(CapabilityError) as excinfo:
-        SU.permute_tree(tree, (1, 0))
-    message = str(excinfo.value)
-    assert "SU2" in message
-    assert "PermutationCoefficients" in message
-    assert "Milestone 4" in message
+    terms = SU.permute_tree(tree, (1, 0))
+    assert terms
+    for t, coeff in terms:
+        t.validate(SU)
+        assert t.uncoupled == (su(1, 1), su(1, 1))
+        assert coeff != 0
 
 
-def test_su2_times_u1_within_side_transpose_refuses_and_returns_nothing():
+def test_su2_times_u1_within_side_transpose_succeeds():
     t = su_tensor()
-    got = None
-    with pytest.raises(CapabilityError) as excinfo:
-        got = t.transpose((2, 1, 0, 3))
-    assert got is None
-    message = str(excinfo.value)
-    assert "SU2" in message
-    assert "PermutationCoefficients" in message
-    assert "Milestone 4" in message
+    r = t.transpose((2, 1, 0, 3))
+    assert r.structure.legs == tuple(t.legs[i] for i in (2, 1, 0, 3))
+
+
+# a within-side swap (2, 1, 0, 3) plus a full reversal and two mixed cases: enough to
+# reach genuinely multi-term SU(2) expansions without paying for all 24 permutations
+SU_PERMS = ((2, 1, 0, 3), (0, 3, 2, 1), (3, 2, 1, 0), (2, 3, 0, 1), (1, 2, 3, 0))
+
+# spin-1 is what makes it interesting: with only {0, 1/2} every SU(2) expansion has a
+# single term, so the distributed product would never multiply anything out
+SU_RICH_SPACE = GradedSpace.new(SU, {su(0, 0): 1, su(1, 1): 1, su(2, 0): 1})
+SU_RICH_LEGS = (
+    Leg(SU_RICH_SPACE, OUT),
+    Leg(SU_RICH_SPACE, IN),
+    Leg(SU_RICH_SPACE, OUT),
+    Leg(SU_RICH_SPACE, IN),
+)
+
+
+def test_the_su2_factor_really_expands_into_several_terms():
+    """Guards the oracle below: without this the dense check could pass on a diet of
+    one-term expansions and prove nothing about the distributed product."""
+    unc = (su(1, 1), su(1, 1), su(2, 0), su(2, 0))
+    counts = {len(SU.permute_tree(t, (0, 2, 3, 1))) for t in all_trees(SU, unc)}
+    assert max(counts) > 1
+
+
+@pytest.mark.parametrize("p", SU_PERMS)
+def test_dense_oracle_su2_times_u1(p):
+    """The distributed product against a dense oracle, with a factor that really does
+    return several terms — what the ``SplitStub`` could only simulate."""
+    t = SymmetricTensor.random(SU_RICH_LEGS, seed=19)
+    np.testing.assert_allclose(t.transpose(p).to_dense(), np.transpose(t.to_dense(), p), atol=1e-11)
 
 
 def test_isinstance_is_optimistic_and_the_call_is_authoritative():
     """``runtime_checkable`` only checks for the *presence* of ``permute_tree``, and
     ``ProductProvider`` defines it unconditionally so the error can name the factor.
     The call, not ``isinstance``, is the contract."""
-    assert isinstance(SU, PermutationCoefficients) is True
-    (tree,) = fusion_trees(SU, (su(1, 1), su(1, 1)), su(2, 2))
-    with pytest.raises(CapabilityError):
-        SU.permute_tree(tree, (1, 0))
+    still = ProductProvider((StillStub(), U1))
+    assert isinstance(still, PermutationCoefficients) is True
+    a = ps(ASector(1), q(1))
+    (tree,) = fusion_trees(still, (a, a), ps(ASector(0), q(2)))
+    with pytest.raises(CapabilityError) as excinfo:
+        still.permute_tree(tree, (1, 0))
+    message = str(excinfo.value)
+    assert "factor 0 (Still)" in message
+    assert "PermutationCoefficients" in message
 
 
 @pytest.mark.parametrize("p", CASE_A)
