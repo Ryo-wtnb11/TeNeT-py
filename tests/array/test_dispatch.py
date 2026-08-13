@@ -138,6 +138,8 @@ def test_no_array_protocol_and_asarray_does_not_densify():
 def test_src_never_imports_jax_or_torch():
     src = pathlib.Path(tenet.__file__).parent
     for path in src.rglob("*.py"):
+        if path.name == "pytree.py":
+            continue  # the opt-in registration module (#41); core never imports it
         text = path.read_text()
         assert "import jax" not in text, path
         assert "import torch" not in text, path

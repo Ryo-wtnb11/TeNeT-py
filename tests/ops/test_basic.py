@@ -344,8 +344,11 @@ def test_jax_norm_matches_numpy():
     use_jax()
     a = SymmetricTensor.random(SU2_LEGS, seed=31)
     j = a.to_backend("jax")
-    assert isinstance(tenet.norm(j), float)
-    assert tenet.norm(j) == pytest.approx(tenet.norm(a), abs=1e-12)
+    # #41 dropped norm's float(): a JAX tensor gives a 0-d jax.Array (traceable),
+    # not a Python float. float(v) == v still holds, which is all callers needed.
+    v = tenet.norm(j)
+    assert getattr(v, "ndim", 0) == 0 and float(v) == v
+    assert float(v) == pytest.approx(float(tenet.norm(a)), abs=1e-12)
 
 
 def test_jax_allclose_and_structure_errors():

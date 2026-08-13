@@ -140,7 +140,7 @@ def conj(t: "SymmetricTensor") -> "SymmetricTensor":
     return SymmetricTensor(t.structure, tuple(ar.do("conj", b) for b in t.blocks))
 
 
-def norm(t: "SymmetricTensor") -> float:
+def norm(t: "SymmetricTensor") -> Any:
     """``sqrt(Σ_τ qdim(c_τ) · ‖A_τ‖²)`` — the fusion-tree Frobenius norm.
 
     The quantum-dimension weight is the point: each key contributes ``‖A_τ‖²``
@@ -152,9 +152,8 @@ def norm(t: "SymmetricTensor") -> float:
     Uses ``qdim`` (capability ``QuantumDimension``), not ``irrep_dim``, so it is
     defined even for providers with no dense expansion at all.
 
-    Returns a Python ``float``; the reduction itself stays in ``ar.do`` and is
-    therefore traceable/differentiable, but the final concretization will have to
-    be dropped inside a JIT boundary (Milestone 6).
+    Returns the backend's own scalar, so the whole function is traceable and
+    differentiable (Milestone 6).
     """
     provider = t.provider
     requires(provider, QuantumDimension)
@@ -164,7 +163,10 @@ def norm(t: "SymmetricTensor") -> float:
         provider.qdim(key.coupled) * ar.do("sum", ar.do("abs", block) ** 2)
         for key, block in t.items()
     )
-    return float(ar.do("sqrt", total))
+    # No float(): concretizing here makes `norm` unusable under jit/grad/vmap.
+    # NumPy blocks give a float64 scalar (float-compatible); JAX blocks give a
+    # traceable 0-d array. Callers needing a Python float say float(tenet.norm(T)).
+    return ar.do("sqrt", total)
 
 
 def allclose(
