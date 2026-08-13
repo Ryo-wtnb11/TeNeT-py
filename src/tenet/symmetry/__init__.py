@@ -19,6 +19,7 @@ from tenet.symmetry.base import (
     requires,
 )
 from tenet.symmetry.fz2 import FZ2_GAUGE, FZ2Provider, FZ2Sector, fZ2
+from tenet.symmetry.product import ProductProvider, ProductSector
 from tenet.symmetry.su2 import SU2, SU2_GAUGE, SU2Provider, SU2Sector
 from tenet.symmetry.u1 import U1, U1Provider, U1Sector
 
@@ -35,6 +36,8 @@ __all__ = [
     "FZ2Sector",
     "FusionProvider",
     "PermutationCoefficients",
+    "ProductProvider",
+    "ProductSector",
     "QuantumDimension",
     "RecouplingData",
     "SU2Provider",
