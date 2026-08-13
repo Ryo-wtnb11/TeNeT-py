@@ -1,0 +1,175 @@
+"""Axis permutation — ``T.transpose(*axes)`` / :func:`tenet.transpose` — Milestone 2.
+
+Public axis order enters the categorical data through exactly two channels: which
+leg is which, and the *relative order within each side* (a ``FusionBlockKey``'s
+two trees list their uncoupled sectors in public axis order restricted to their
+side). That splits every permutation in two:
+
+**case A — both side permutations are the identity.** Only the OUT/IN
+interleaving changed. An OUT leg and an IN leg are never adjacent lines of one
+fusion diagram, so no tree, no coupled sector and no coefficient moves:
+``block_order`` is literally the same tuple and ``blocks[i] -> blocks[i]``. Free
+for *every* provider, SU(2) included — this is invariant 3 in action.
+
+**case B — some side permutation is non-trivial.** That is a braid. It needs the
+provider to state its own coefficients through
+:class:`~tenet.symmetry.base.PermutationCoefficients`; Trivial and U(1) do, SU(2)
+does not and says so loudly (F-moves and R-moves are Milestone 4). A
+"just permute the block axes" fast path for SU(2) would return a numerically
+plausible tensor that is silently the wrong element of the fusion basis, and only
+a dense round-trip would catch it.
+
+``transpose`` never changes a leg's ``side``: moving a leg between domain and
+codomain is a bend (``repartition``, Milestone 3). What it does change is
+``out_axes``/``in_axes``, which are *positions*.
+
+No NumPy and no ``to_dense`` here (invariants 8/9): the plan is array-free
+metadata and blocks move only through ``ar.do("transpose", ...)``.
+"""
+
+import operator
+from collections.abc import Sequence
+from dataclasses import dataclass
+from functools import cache
+from typing import TYPE_CHECKING, Any
+
+import autoray as ar
+
+from tenet.structure import FusionBlockKey, TensorStructure
+from tenet.symmetry.base import CapabilityError, PermutationCoefficients, requires
+
+if TYPE_CHECKING:
+    from tenet.tensor import SymmetricTensor
+
+__all__ = ["PermutationPlan", "permutation_plan", "transpose"]
+
+
+@dataclass(frozen=True, slots=True)
+class PermutationPlan:
+    """The categorical half of a transpose: static, array-free, hashable.
+
+    ``terms`` is ``((source block index, target block index, coefficient), ...)``;
+    a target may appear more than once (a genuine expansion sums into it) and the
+    coefficients are plain Python numbers, never arrays.
+    """
+
+    axes: tuple[int, ...]
+    new_structure: TensorStructure
+    terms: tuple[tuple[int, int, complex], ...]
+
+
+def _validated_axes(ndim: int, axes: Sequence[int]) -> tuple[int, ...]:
+    """A permutation of ``range(ndim)``, or ``ValueError`` naming the culprit."""
+    try:
+        # operator.index keeps NumPy/JAX integer scalars usable and makes the
+        # tuple hashable-as-plain-ints, so the plan cache does not fragment
+        axes = tuple(operator.index(a) for a in axes)
+    except TypeError as exc:
+        raise ValueError(f"transpose: axes {tuple(axes)} must all be integers") from exc
+    if len(axes) != ndim:
+        raise ValueError(f"transpose: axes {axes} has length {len(axes)}, expected {ndim}")
+    seen: set[int] = set()
+    for a in axes:
+        if not 0 <= a < ndim:
+            raise ValueError(f"transpose: axis {a} is out of range for a {ndim}-dimensional tensor")
+        if a in seen:
+            raise ValueError(f"transpose: axis {a} is repeated in {axes}")
+        seen.add(a)
+    return axes
+
+
+def _side_perm(
+    axes: tuple[int, ...], old_side_axes: tuple[int, ...], new_side_axes: tuple[int, ...]
+) -> tuple[int, ...]:
+    """The permutation induced on one side's legs among themselves.
+
+    Entry ``j`` is the position, within the *old* side, of the leg that ends up at
+    position ``j`` of the new side — the same "old index becoming new index j"
+    convention as ``axes`` itself, so it feeds ``permute_tree`` directly.
+    """
+    position = {old: j for j, old in enumerate(old_side_axes)}
+    return tuple(position[axes[i]] for i in new_side_axes)
+
+
+def _refuse(provider: Any, axes: tuple[int, ...], offenders: str) -> None:
+    """Turn the bare capability failure into a message a user can act on."""
+    try:
+        requires(provider, PermutationCoefficients)
+    except CapabilityError as exc:
+        raise CapabilityError(
+            f"transpose: axes {axes} reorders legs within a side ({offenders}), which is a "
+            f"braid, and provider {provider.name} does not implement PermutationCoefficients. "
+            "Within-side reordering for a non-Abelian symmetry such as SU(2) needs F-moves "
+            "and R-moves (Milestone 4); it is not a block transpose and will not be faked. "
+            "Permutations that only change the OUT/IN interleaving, leaving each side's "
+            "internal order intact, work today for every provider."
+        ) from exc
+
+
+@cache
+def permutation_plan(structure: TensorStructure, axes: tuple[int, ...]) -> PermutationPlan:
+    """Plan ``axes`` on ``structure``. Cached: repeat calls return the same object.
+
+    ``axes`` must already be a validated permutation (:func:`transpose` does that);
+    the cache is keyed on the frozen structure and the tuple, nothing else.
+    """
+    new_structure = TensorStructure(tuple(structure.legs[i] for i in axes))
+    out_perm = _side_perm(axes, structure.out_axes, new_structure.out_axes)
+    in_perm = _side_perm(axes, structure.in_axes, new_structure.in_axes)
+
+    if out_perm == tuple(range(len(out_perm))) and in_perm == tuple(range(len(in_perm))):
+        # case A: every key survives untouched, and block_order is a pure function
+        # of the legs, so the sorted key tuple is identical element for element.
+        terms = tuple((i, i, 1.0) for i in range(structure.num_blocks))
+        return PermutationPlan(axes, new_structure, terms)
+
+    provider = structure.provider
+    offenders = ", ".join(
+        f"{side} axes {tuple(old[j] for j in perm)} (was {old})"
+        for side, old, perm in (
+            ("OUT", structure.out_axes, out_perm),
+            ("IN", structure.in_axes, in_perm),
+        )
+        if perm != tuple(range(len(perm)))
+    )
+    _refuse(provider, axes, offenders)
+
+    built: list[tuple[int, int, complex]] = []
+    for src, key in enumerate(structure.block_order):
+        for out_tree, c_out in provider.permute_tree(key.output_tree, out_perm):
+            for in_tree, c_in in provider.permute_tree(key.input_tree, in_perm):
+                coeff = c_out * c_in
+                if coeff == 0:
+                    continue
+                dst = new_structure.index_of(FusionBlockKey(out_tree, in_tree))
+                built.append((src, dst, coeff))
+    return PermutationPlan(axes, new_structure, tuple(built))
+
+
+def transpose(t: "SymmetricTensor", axes: Sequence[int] | None = None) -> "SymmetricTensor":
+    """The same abstract tensor with public axes reordered as ``axes``.
+
+    ``axes[i]`` is the OLD axis that becomes new axis ``i`` (NumPy convention);
+    ``axes=None`` reverses them. ``side``, ``dual`` and ``name`` travel with each
+    leg and no leg ever changes side.
+    """
+    from tenet.tensor import SymmetricTensor
+
+    axes = tuple(reversed(range(t.ndim))) if axes is None else _validated_axes(t.ndim, tuple(axes))
+    plan = permutation_plan(t.structure, axes)
+
+    blocks: dict[int, Any] = {}
+    for src, dst, coeff in plan.terms:
+        contrib = ar.do("transpose", t.blocks[src], plan.axes)
+        if coeff != 1:
+            # keep a real coefficient real, so a real tensor stays real
+            contrib = contrib * (coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)
+        blocks[dst] = contrib if dst not in blocks else blocks[dst] + contrib
+
+    n = plan.new_structure.num_blocks
+    if len(blocks) != n:
+        raise ValueError(
+            f"transpose: the plan fills {len(blocks)} of {n} target blocks — "
+            f"{t.provider.name}.permute_tree dropped terms"
+        )
+    return SymmetricTensor(plan.new_structure, tuple(blocks[i] for i in range(n)))
