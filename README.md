@@ -39,7 +39,7 @@ tenet.linalg.svd(T, axes=((0, 2), (1, 3)))
 
 while preserving the categorical semantics required for non-Abelian symmetries and more general fusion categories.
 
-Reduced numerical data are stored in backend-native multidimensional arrays and executed using existing numerical frameworks such as NumPy, JAX, and PyTorch.
+Reduced numerical data are stored in backend-native multidimensional arrays (NumPy, JAX, PyTorch, ...) and dispatched through `autoray`.
 
 The goal is not to port TensorKit or TeNeT to Python.
 
@@ -73,7 +73,7 @@ programming model
 execution model
 ────────────────────────────────────────
       backend-native reduced arrays
-       NumPy / JAX / PyTorch / ...
+     NumPy / JAX / PyTorch via autoray
                     │
                     ▼
           GPU / AD / JIT / vmap
@@ -870,11 +870,24 @@ The block key contains categorical information.
 
 The corresponding value contains only numerical degeneracy data.
 
+Logically, the tensor associates
+
 ```python
-Mapping[FusionBlockKey, Array]
+FusionBlockKey  →  Array
 ```
 
-is therefore a natural initial logical representation.
+Physically, however, the blocks are stored as an ordered tuple
+
+```python
+blocks: tuple[Array, ...]
+```
+
+whose order is fixed by `structure.block_order`. The keys live in the
+structural metadata; the tuple contains only backend arrays. This keeps the
+numerical data a clean parameter tree (for `get_params`/`set_params` and
+optional JAX PyTree registration): the leaves are exactly the blocks, and no
+dict ordering or key hashing enters the dynamic data. A `Mapping`-style view
+(`T.block(key)`) is derived, not primary.
 
 ---
 
@@ -1217,26 +1230,9 @@ T.to_dense()
 
 The goal is **array-protocol compatibility**, not universal ndarray substitutability.
 
-Useful integration points include:
+The integration points, in order of importance:
 
-```text
-autoray dispatch
-Python Array API namespace
-JAX PyTree support
-backend-native leaves
-tensor-network contraction planners
-```
-
-For example:
-
-```python
-xp = T.__array_namespace__()
-C = xp.tensordot(A, B, axes=((2,), (0,)))
-```
-
-may dispatch back into `TeNeT-py`.
-
-Likewise:
+## 1. `autoray` dispatch (core)
 
 ```python
 import autoray as ar
@@ -1249,7 +1245,48 @@ C = ar.do(
 )
 ```
 
-can use the symmetric implementation while the reduced blocks are themselves dispatched through `autoray`.
+uses the symmetric implementation while the reduced blocks are themselves
+dispatched through `autoray` to whatever backend they belong to. This is the
+symmray model, and it is the primary protocol.
+
+## 2. Parameter extraction (quimb-compatible)
+
+`SymmetricTensor` implements the `get_params` / `set_params` protocol:
+
+```python
+params = T.get_params()      # tree of backend arrays (the blocks)
+T2 = T.set_params(params)    # same structure, new numerical data
+```
+
+This is exactly the interface `quimb`'s `TNOptimizer` uses to run JAX /
+PyTorch / TensorFlow optimization over structured tensors without any
+framework-specific registration inside the library. Variational workflows
+(VMC, PEPS optimization) get AD and JIT this way, at the application level.
+
+## 3. Optional JAX PyTree registration
+
+For users driving raw `jax.jit` / `jax.grad` / `jax.vmap` without quimb, a
+small opt-in module registers the tensor as a PyTree:
+
+```python
+import tenet.pytree  # requires jax; import-guarded, never imported by core
+```
+
+after which
+
+```python
+jax.tree.leaves(T) == list(T.blocks)
+```
+
+and a gradient with respect to `T` is another `SymmetricTensor` with the same
+structure. This works because `blocks` is an ordered tuple of arrays and
+`TensorStructure` is immutable, hashable, and array-free — F/R matrices and
+other categorical coefficient arrays are never stored in structural metadata,
+which would otherwise break treedef hashing and JIT cache keys.
+
+None of these make `jnp.einsum(...)` or `np.einsum(...)` work on
+`SymmetricTensor` directly — symmetric operations always go through
+`tenet.*` / `ar.do(...)`, which lower to backend array programs on the blocks.
 
 ---
 
@@ -1605,7 +1642,7 @@ The logical representation should not dictate the eventual GPU execution format.
 Initially:
 
 ```python
-blocks: Mapping[FusionBlockKey, Array]
+blocks: tuple[Array, ...]      # ordered by structure.block_order
 ```
 
 is attractive because it is:
@@ -1613,6 +1650,7 @@ is attractive because it is:
 - simple;
 - explicit;
 - backend independent;
+- a clean parameter tree;
 - easy to inspect;
 - easy to test.
 
@@ -1693,7 +1731,7 @@ eigh
 
 # Backend dispatch
 
-`autoray` can provide the initial backend abstraction.
+`autoray` provides the backend abstraction.
 
 Conceptually:
 
@@ -1726,6 +1764,12 @@ autoray
    │   │    │
  NumPy JAX PyTorch
 ```
+
+Framework-specific optimization (`jit`, `grad`, `vmap`, `torch.compile`,
+device placement) is the responsibility of the application layer, following
+the symmray/quimb model. The library's obligation is to stay *traceable*:
+structural logic runs in Python on static metadata, so a JAX trace or torch
+AD pass sees only clean backend array operations.
 
 ---
 
@@ -1802,9 +1846,12 @@ The categorical planning cost should therefore be amortizable.
 
 # JAX
 
-JAX should be a first-class backend but not define the tensor model.
+JAX is a first-class backend but does not define the tensor model, and core
+never imports it. JAX-specific optimization lives at the application level
+(e.g. quimb's `TNOptimizer` via `get_params`/`set_params`) or through the
+opt-in `tenet.pytree` registration described above.
 
-A JAX-backed tensor should conceptually be a PyTree:
+Under that registration, a JAX-backed tensor is conceptually a PyTree:
 
 ```text
 SymmetricTensor
@@ -1826,24 +1873,46 @@ Only reduced numerical data are differentiable leaves.
 
 Categorical metadata are static.
 
-A canonical flattening may be:
+Since `blocks` is already an ordered tuple, flattening is trivial:
 
-```python
-children = tuple(
-    T.blocks[key]
-    for key in T.structure.block_order
-)
-
-aux = T.structure
+```text
+leaves   = T.blocks
+treedef  = T.structure  (static, hashable)
 ```
 
-with reconstruction:
+This aligns JIT caching with the mathematics. Under
 
 ```python
-SymmetricTensor.from_structure_and_blocks(
-    aux,
-    children,
-)
+@jax.jit
+def norm(T):
+    return tenet.norm(T)
+```
+
+two tensors with the same `TensorStructure` (same provider, legs, fusion
+basis, block shapes) share one compiled specialization; only block values
+change. If the bond dimension or sector content changes, the treedef changes
+and JAX recompiles — which is exactly the desired behavior, because the
+structural plan genuinely differs.
+
+Contraction planning happens at trace time regardless of how `jit` is
+entered (raw PyTree or quimb-wrapped): the `structure` fields and `axes`
+arguments are static Python data, so sector matching, fusion-tree matching,
+and F/R coefficient selection run once during tracing, and only the
+resulting array program is staged into XLA:
+
+```text
+   tracing time              runtime
+        │                       │
+  TensorStructure            jax.Array blocks
+        │                       │
+  categorical planner           │
+        │                       │
+  static array program          │
+        └───────────┬───────────┘
+                    ▼
+                   XLA
+                    ▼
+              CPU / CUDA / TPU
 ```
 
 ---
@@ -2355,8 +2424,9 @@ TeNeT-py/
 │       │
 │       ├── array/
 │       │   ├── dispatch.py
-│       │   ├── namespace.py
-│       │   └── jax.py
+│       │   └── params.py
+│       │
+│       ├── pytree.py
 │       │
 │       └── network/
 │           ├── einsum.py
@@ -2408,7 +2478,7 @@ Implement:
 - fusion multiplicity labels;
 - `FusionBlockKey`;
 - `TensorStructure`;
-- `SymmetricTensor`;
+- `SymmetricTensor` (immutable hashable structure, ordered tuple of blocks);
 - derived `domain` and `codomain`;
 - NumPy reduced blocks.
 
@@ -2430,7 +2500,6 @@ Implement:
 - norm;
 - axis permutation;
 - explicit fusion/unfusion;
-- a limited Array API namespace;
 - `autoray` registration.
 
 At this stage, only operations with clear categorical definitions should be exposed.
@@ -2512,11 +2581,10 @@ Add path-planner integration only after pairwise contraction is correct.
 
 Implement:
 
-- PyTree registration;
-- static tensor structure;
-- dynamic reduced-array leaves;
+- `get_params` / `set_params` (quimb-compatible parameter extraction);
+- optional `tenet.pytree` registration (static structure, dynamic block leaves);
 - `jax.grad`;
-- `jax.jit`;
+- `jax.jit` (structural planning at trace time, plan reuse across calls);
 - `jax.vmap`;
 - fixed-structure contraction tests;
 - gradient tests against dense expansion.
@@ -2675,13 +2743,17 @@ Coupled-sector matrices are retained as the canonical lowering for composition a
 
 ## 8. Numerical leaves are backend-native arrays
 
-NumPy, JAX, and PyTorch should see ordinary arrays at the numerical boundary.
+NumPy, JAX, and PyTorch should see ordinary arrays at the numerical
+boundary. Structural metadata is immutable, hashable, and array-free — F/R
+and other coefficient arrays never live in structural fields.
 
 ---
 
 ## 9. AD acts on reduced numerical data
 
-Categorical metadata remain static.
+Categorical metadata remain static. Structure-changing operations
+(truncation, sector selection) live outside JIT/compile boundaries, or use
+static shapes/masks; the library never hides this distinction.
 
 ---
 
