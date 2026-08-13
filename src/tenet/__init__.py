@@ -2,6 +2,7 @@
 
 from tenet.fusion_tree import FusionTree, coupled_sectors, fusion_trees
 from tenet.leg import IN, OUT, Leg, Side
+from tenet.map_view import MapLayout, from_matrices, map_layout, to_matrices
 from tenet.ops import (
     add,
     allclose,
@@ -32,6 +33,7 @@ __all__ = [
     "FusionTree",
     "GradedSpace",
     "Leg",
+    "MapLayout",
     "Side",
     "SymmetricTensor",
     "TensorStructure",
@@ -40,12 +42,15 @@ __all__ = [
     "conj",
     "coupled_sectors",
     "divide",
+    "from_matrices",
     "fuse",
     "fusion_trees",
+    "map_layout",
     "multiply",
     "negative",
     "norm",
     "subtract",
+    "to_matrices",
     "transpose",
     "unfuse",
 ]
