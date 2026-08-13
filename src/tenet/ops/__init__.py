@@ -15,11 +15,12 @@ from tenet.ops.basic import (
     subtract,
 )
 from tenet.ops.fusion import fuse, unfuse
-from tenet.ops.map import compose, identity
+from tenet.ops.map import adjoint, compose, identity
 from tenet.ops.permutation import transpose
 
 __all__ = [
     "add",
+    "adjoint",
     "allclose",
     "compose",
     "conj",

@@ -289,6 +289,16 @@ class SymmetricTensor:
         """Conjugate the blocks; ``legs`` unchanged. See :func:`tenet.conj`."""
         return self._ops().conj(self)
 
+    def adjoint(self) -> "SymmetricTensor":
+        """``T†``: every leg's ``side`` flips, blocks are conjugated and key-swapped.
+
+        Not ``conj()`` (which touches no leg) and not a dualization. See
+        :func:`tenet.adjoint`.
+        """
+        from tenet.ops import map as map_ops
+
+        return map_ops.adjoint(self)
+
     def norm(self) -> float:
         """qdim-weighted Frobenius norm. See :func:`tenet.norm`."""
         return self._ops().norm(self)
