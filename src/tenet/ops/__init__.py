@@ -17,11 +17,13 @@ from tenet.ops.basic import (
 from tenet.ops.fusion import fuse, unfuse
 from tenet.ops.map import adjoint, compose, identity
 from tenet.ops.permutation import transpose
+from tenet.ops.repartition import bend, repartition
 
 __all__ = [
     "add",
     "adjoint",
     "allclose",
+    "bend",
     "compose",
     "conj",
     "divide",
@@ -30,6 +32,7 @@ __all__ = [
     "multiply",
     "negative",
     "norm",
+    "repartition",
     "subtract",
     "transpose",
     "unfuse",

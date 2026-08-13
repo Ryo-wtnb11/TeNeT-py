@@ -23,7 +23,13 @@ import numpy as np
 from tenet.fusion_tree import FusionTree
 from tenet.leg import OUT, Leg
 from tenet.structure import FusionBlockKey, TensorStructure
-from tenet.symmetry.base import ClebschGordan, FusionProvider, requires
+from tenet.symmetry.base import (
+    CapabilityError,
+    ClebschGordan,
+    DualBasis,
+    FusionProvider,
+    requires,
+)
 
 if TYPE_CHECKING:
     from tenet.map_view import TensorMapView
@@ -315,6 +321,16 @@ class SymmetricTensor:
             axes = tuple(axes[0] or ())
         return permutation.transpose(self, axes or None)
 
+    def repartition(self, outputs: Sequence[int], inputs: Sequence[int]) -> "SymmetricTensor":
+        """``T.repartition(outputs=(0, 1), inputs=(2,))``. See :func:`tenet.repartition`.
+
+        Every leg that crosses sides is *bent*: its ``side`` and its ``dual`` both
+        flip. Requires ``BendingCoefficients`` unless no leg crosses.
+        """
+        from tenet.ops.repartition import repartition
+
+        return repartition(self, outputs, inputs)
+
     # --- fusion ---------------------------------------------------------------
 
     def fuse(self, *axes: Any) -> "SymmetricTensor":
@@ -349,19 +365,19 @@ class SymmetricTensor:
     def to_dense(self) -> np.ndarray:
         """``T = Σ_τ A^(τ) ⊗ C^(τ)`` expanded into a plain NumPy array.
 
-        Explicit by design (invariant 9). Requires ``ClebschGordan``; legs with
-        ``dual=True`` need the Z-isomorphism and Frobenius-Schur signs (M4).
+        Explicit by design (invariant 9). Requires ``ClebschGordan``; a leg with
+        ``dual=True`` additionally requires ``DualBasis``, the provider's
+        ``V_a -> V_a^*`` isomorphism in the dense basis.
         """
         provider = self.provider
         requires(provider, ClebschGordan)
-        for i, leg in enumerate(self.legs):
-            if leg.dual:
-                raise NotImplementedError(
-                    f"to_dense: axis {i} has dual=True; the Z-isomorphism is Milestone 4"
-                )
+        duals = tuple(leg.dual for leg in self.legs)
+        if any(duals):
+            _refuse_dual(provider, duals.index(True))
 
         n = self.ndim
-        order = (*self.structure.out_axes, *self.structure.in_axes)
+        out_axes, in_axes = self.structure.out_axes, self.structure.in_axes
+        order = (*out_axes, *in_axes)
         dtype = np.result_type(self.blocks[0].dtype, np.float64) if self.blocks else np.float64
         dense = np.zeros(tuple(leg.space.dim for leg in self.legs), dtype=dtype)
 
@@ -374,8 +390,8 @@ class SymmetricTensor:
         for key, block in self.items():
             if not block.any():
                 continue
-            xout = _tree_cgt(provider, key.output_tree)
-            xin = _tree_cgt(provider, key.input_tree)
+            xout = _tree_cgt(provider, key.output_tree, tuple(duals[a] for a in out_axes))
+            xin = _tree_cgt(provider, key.input_tree, tuple(duals[a] for a in in_axes))
             cgt = np.tensordot(xout, xin.conj(), axes=([-1], [-1]))
             full = np.einsum(block, a_sub, cgt, c_sub, out_sub)
 
@@ -393,11 +409,34 @@ class SymmetricTensor:
         return dense
 
 
-def _tree_cgt(provider: ClebschGordan, tree: FusionTree) -> np.ndarray:
+def _refuse_dual(provider: FusionProvider, axis: int) -> None:
+    """Turn the bare ``DualBasis`` failure into a message a user can act on."""
+    try:
+        requires(provider, DualBasis)
+    except CapabilityError as exc:
+        raise CapabilityError(
+            f"to_dense: axis {axis} has dual=True, and provider {provider.name} does not "
+            "implement DualBasis. Expanding a dual leg needs the Z-isomorphism "
+            "V_a -> V_a^* in the dense basis, which for SU(2) carries the "
+            "Frobenius-Schur sign (-1)^(2j) and is Milestone 4. Trivial and U(1) supply "
+            "it (one-dimensional irreps, Z = [[1]])"
+        ) from exc
+
+
+def _tree_cgt(provider: ClebschGordan, tree: FusionTree, duals: tuple[bool, ...]) -> np.ndarray:
     """A tree's CG tensor, shape ``(d_u0, ..., d_u{N-1}, d_coupled)``.
 
     Left-associated contraction along the spine. Rank 0 is the unit's ``(1,)``
     (so an empty side contracts like any other) and rank 1 is the identity.
+
+    ``duals[i]`` says whether the leg feeding uncoupled line ``i`` is ``dual``.
+    Where it is, the tree's label is ``dual(a)`` but the dense axis must run over
+    ``V_a``, so the provider's ``Z_a: V_a -> V_a^*`` is contracted onto that axis.
+
+    ponytail: for Trivial and U(1) every ``Z`` is ``[[1]]``, so the general
+    insertion is only ever exercised in the ``d_a == 1`` case here. Milestone 4
+    must re-verify the placement (and the interaction with the ``.conj()`` the
+    caller applies to the input tree) against a provider with ``d_a > 1``.
     """
     dim = provider.irrep_dim
     if tree.rank == 0:
@@ -405,4 +444,8 @@ def _tree_cgt(provider: ClebschGordan, tree: FusionTree) -> np.ndarray:
     x = np.eye(dim(tree.uncoupled[0]))
     for e, u, f, mu in tree.vertices():
         x = np.tensordot(x, provider.cgc(e, u, f)[..., mu], axes=([-1], [0]))
+    for i, is_dual in enumerate(duals):
+        if is_dual:
+            z = provider.z_matrix(provider.dual(tree.uncoupled[i]))
+            x = np.moveaxis(np.tensordot(x, z, axes=([i], [1])), -1, i)
     return x

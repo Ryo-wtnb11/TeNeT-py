@@ -1,8 +1,10 @@
 """Symmetry providers and sector labels."""
 
 from tenet.symmetry.base import (
+    BendingCoefficients,
     CapabilityError,
     ClebschGordan,
+    DualBasis,
     FusionProvider,
     PermutationCoefficients,
     QuantumDimension,
@@ -10,6 +12,8 @@ from tenet.symmetry.base import (
     Trivial,
     TrivialProvider,
     TrivialSector,
+    bend_unique,
+    permute_unique_tree,
     requires,
 )
 from tenet.symmetry.su2 import SU2, SU2_GAUGE, SU2Provider, SU2Sector
@@ -19,8 +23,10 @@ __all__ = [
     "SU2",
     "SU2_GAUGE",
     "U1",
+    "BendingCoefficients",
     "CapabilityError",
     "ClebschGordan",
+    "DualBasis",
     "FusionProvider",
     "PermutationCoefficients",
     "QuantumDimension",
@@ -32,5 +38,7 @@ __all__ = [
     "TrivialSector",
     "U1Provider",
     "U1Sector",
+    "bend_unique",
+    "permute_unique_tree",
     "requires",
 ]

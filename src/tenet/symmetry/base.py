@@ -11,8 +11,10 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import numpy as np
 
 __all__ = [
+    "BendingCoefficients",
     "CapabilityError",
     "ClebschGordan",
+    "DualBasis",
     "FusionProvider",
     "PermutationCoefficients",
     "QuantumDimension",
@@ -20,11 +22,14 @@ __all__ = [
     "Trivial",
     "TrivialProvider",
     "TrivialSector",
+    "bend_unique",
+    "permute_unique_tree",
     "requires",
 ]
 
 if TYPE_CHECKING:
     from tenet.fusion_tree import FusionTree
+    from tenet.structure import FusionBlockKey
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -91,6 +96,35 @@ class PermutationCoefficients(Protocol):
         ...
 
 
+@runtime_checkable
+class BendingCoefficients(Protocol):
+    """Providers that can move one line between the two trees of a block key."""
+
+    def bend_right(
+        self, key: "FusionBlockKey", *, dual: bool
+    ) -> tuple[tuple["FusionBlockKey", complex], ...]:
+        """Move the LAST uncoupled line of ``output_tree`` onto the END of
+        ``input_tree``, dualized. ``dual`` is the moved leg's current flag (it
+        selects the Frobenius-Schur factor). Returns ``((key', coeff), ...)``.
+        """
+        ...
+
+    def bend_left(
+        self, key: "FusionBlockKey", *, dual: bool
+    ) -> tuple[tuple["FusionBlockKey", complex], ...]:
+        """The inverse direction: last line of ``input_tree`` onto ``output_tree``."""
+        ...
+
+
+@runtime_checkable
+class DualBasis(Protocol):
+    """Providers whose ``V_a -> V_a^*`` isomorphism is available in the dense basis."""
+
+    def z_matrix(self, a: Sector) -> np.ndarray:
+        """``Z_a``, shape ``(d_a, d_dual(a))``, in the provider's own dense basis."""
+        ...
+
+
 class CapabilityError(TypeError):
     """Raised when a provider lacks a capability an operation requires."""
 
@@ -127,6 +161,67 @@ def permute_unique_tree(
             f"coupling to {tree.coupled!r}; permute_unique_tree needs exactly one"
         )
     return ((trees[0], 1.0),)
+
+
+def bend_unique(
+    provider: FusionProvider, key: "FusionBlockKey", *, right: bool, dual: bool
+) -> tuple[tuple["FusionBlockKey", complex], ...]:
+    """``bend_right``/``bend_left`` for providers whose fusion is unique and B is 1.
+
+    Shared by Trivial and U(1), exactly as :func:`permute_unique_tree` is. The
+    source tree loses its last uncoupled line, the destination tree gains
+    ``dual`` of it at the *end*, and the new coupled sector is the source tree's
+    last inner line (the unit when the source had rank 1). Both spines are
+    **recomputed** from the new uncoupled tuples, never relabelled.
+
+    The coefficient is ``sqrt(dim(c)/dim(a)) · B(a,b,c)``, times the conjugate
+    Frobenius-Schur phase of ``dual(b)`` when the moved line is already ``dual``.
+    For every Abelian irrep all three factors are exactly ``1`` (all ``dim == 1``,
+    ``B == N ∈ {0,1}``, ``frobenius_schur_phase == 1``), and Trivial reaches the
+    same value through ``F ≡ 1``. So ``dual`` is accepted and provably ignored
+    here; a provider whose FS phase is not 1 must not route through this helper.
+
+    Not a capability check: a provider opts in by defining ``bend_right`` /
+    ``bend_left``. Uniqueness of fusion alone is never permission (a fermionic
+    parity provider has unique fusion and a non-trivial bend).
+    """
+    from tenet.fusion_tree import coupled_sectors
+    from tenet.structure import FusionBlockKey
+
+    src = key.output_tree if right else key.input_tree
+    dst = key.input_tree if right else key.output_tree
+    if src.rank == 0:
+        raise ValueError(
+            f"{provider.name}: cannot bend from an empty "
+            f"{'output' if right else 'input'} tree of {key}"
+        )
+
+    moved = src.uncoupled[-1]
+    remaining = src.uncoupled[:-1]
+    coupled = coupled_sectors(provider, remaining)
+    if len(coupled) != 1:
+        raise CapabilityError(
+            f"{provider.name}: dropping {moved!r} leaves {remaining} with "
+            f"{len(coupled)} coupled sectors; bend_unique needs exactly one"
+        )
+    new_src = _unique_tree(provider, remaining, coupled[0])
+    new_dst = _unique_tree(provider, (*dst.uncoupled, provider.dual(moved)), coupled[0])
+    new_key = FusionBlockKey(new_src, new_dst) if right else FusionBlockKey(new_dst, new_src)
+    return ((new_key, 1.0),)
+
+
+def _unique_tree(
+    provider: FusionProvider, uncoupled: tuple[Sector, ...], coupled: Sector
+) -> "FusionTree":
+    from tenet.fusion_tree import fusion_trees
+
+    trees = fusion_trees(provider, uncoupled, coupled)
+    if len(trees) != 1:
+        raise CapabilityError(
+            f"{provider.name}: {uncoupled} -> {coupled!r} has {len(trees)} trees; "
+            "bend_unique needs exactly one"
+        )
+    return trees[0]
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -168,6 +263,24 @@ class TrivialProvider:
         """One term, coefficient 1: there is a single sector and ``F = R = 1``."""
         return permute_unique_tree(self, tree, perm)
 
+    def bend_right(
+        self, key: "FusionBlockKey", *, dual: bool
+    ) -> tuple[tuple["FusionBlockKey", complex], ...]:
+        """One term, coefficient 1: ``B`` follows from ``F ≡ 1`` and ``dim ≡ 1``."""
+        return bend_unique(self, key, right=True, dual=dual)
+
+    def bend_left(
+        self, key: "FusionBlockKey", *, dual: bool
+    ) -> tuple[tuple["FusionBlockKey", complex], ...]:
+        return bend_unique(self, key, right=False, dual=dual)
+
+    def z_matrix(self, a: Sector) -> np.ndarray:
+        """``Z = [[1]]``, read-only: one-dimensional irrep, Frobenius-Schur phase 1."""
+        return _Z
+
+
+_Z = np.ones((1, 1))
+_Z.flags.writeable = False
 
 Trivial = TrivialProvider()
 """Module-level singleton, used as ``GradedSpace(provider=Trivial, ...)``."""

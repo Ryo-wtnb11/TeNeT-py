@@ -133,8 +133,9 @@ def test_random_is_reproducible_and_shaped():
 
 
 def test_to_dense_rejects_dual_leg_naming_axis():
+    # narrowed in #32: SU(2) still refuses, now as a named capability failure
     legs = (Leg(V, OUT), Leg(W, IN, dual=True))
-    with pytest.raises(NotImplementedError, match="axis 1"):
+    with pytest.raises(CapabilityError, match="axis 1"):
         SymmetricTensor.zeros(legs).to_dense()
 
 
