@@ -17,6 +17,7 @@ from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import autoray as ar
 import numpy as np
 
 from tenet.fusion_tree import FusionTree
@@ -30,7 +31,7 @@ Array = Any
 """Milestone 1 keeps blocks NumPy; ``autoray`` dispatch is Milestone 2."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False)
 class SymmetricTensor:
     """A symmetric tensor: categorical structure plus one reduced block per key."""
 
@@ -115,6 +116,100 @@ class SymmetricTensor:
 
     def items(self) -> Iterator[tuple[FusionBlockKey, Array]]:
         return zip(self.structure.block_order, self.blocks, strict=True)
+
+    # --- array-style properties -----------------------------------------------
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """Full **physical** dimension per public axis: ``Σ_a m_a d_a``.
+
+        Equal to ``self.to_dense().shape``. Requires ``ClebschGordan`` (via
+        ``GradedSpace.dim``) and raises ``CapabilityError`` without it — a
+        provider with non-integer quantum dimensions has no physical shape, and
+        silently returning :attr:`reduced_shape` would violate invariant 11.
+        """
+        return tuple(leg.space.dim for leg in self.legs)
+
+    @property
+    def reduced_shape(self) -> tuple[int, ...]:
+        """Degeneracy dimension per public axis: ``Σ_a m_a``. Any provider.
+
+        The storage-facing shape: what the reduced blocks are made of.
+        """
+        return tuple(leg.space.reduced_dim for leg in self.legs)
+
+    @property
+    def dtype(self) -> Any:
+        """The single dtype shared by all blocks (``__post_init__`` validates it)."""
+        return self._first_block().dtype
+
+    @property
+    def backend(self) -> str:
+        """``"numpy"`` / ``"jax"`` / ``"torch"``, inferred from the first block.
+
+        One tensor uses one backend; construction does not re-check every block,
+        since ``to_backend`` is the only sanctioned way to move them.
+        """
+        return ar.infer_backend(self._first_block())
+
+    @property
+    def device(self) -> Any:
+        """The first block's own ``.device`` (``None`` if it has none).
+
+        A plain ``getattr``: autoray exposes no portable device accessor, and
+        NumPy >= 2 arrays already carry ``.device == 'cpu'``.
+        """
+        return getattr(self._first_block(), "device", None)
+
+    def _first_block(self) -> Array:
+        if not self.blocks:
+            raise ValueError(
+                "tensor has no blocks: dtype/backend/device are undefined "
+                f"(structure with legs {self.legs})"
+            )
+        return self.blocks[0]
+
+    def to_backend(self, backend: str) -> "SymmetricTensor":
+        """Same structure, blocks converted with ``ar.do("array", b, like=backend)``.
+
+        The target backend's own dtype policy applies (JAX demotes float64 to
+        float32 unless ``jax_enable_x64`` is set); no dtype is forced here.
+        """
+        return SymmetricTensor(
+            self.structure, tuple(ar.do("array", b, like=backend) for b in self.blocks)
+        )
+
+    # --- value semantics ------------------------------------------------------
+
+    def __eq__(self, other: object) -> bool:
+        """Exact equality: same ``structure`` and every block exactly equal.
+
+        Never raises on a structure mismatch. Under a JAX trace ``bool()`` of a
+        traced comparison does raise, correctly: ``==`` is a concrete-value
+        question (invariants 9/10).
+        """
+        if not isinstance(other, SymmetricTensor):
+            return NotImplemented
+        if self.structure != other.structure:
+            return False
+        return all(
+            bool(ar.do("all", a == b)) for a, b in zip(self.blocks, other.blocks, strict=True)
+        )
+
+    __hash__ = None  # type: ignore[assignment]  # holds arrays; T.structure is the hashable half
+
+    def __repr__(self) -> str:
+        def safe(get) -> Any:
+            try:
+                return get()
+            except Exception:
+                return "?"
+
+        return (
+            f"SymmetricTensor(ndim={self.ndim}, shape={safe(lambda: self.shape)}, "
+            f"dtype={safe(lambda: self.dtype)}, backend={safe(lambda: self.backend)!r}, "
+            f"blocks={len(self.blocks)})"
+        )
 
     # --- dense expansion ------------------------------------------------------
 
