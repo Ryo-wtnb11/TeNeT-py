@@ -44,13 +44,21 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 
 from tenet.fusion_tree import FusionTree
+from tenet.space import ProductSpace
 from tenet.structure import FusionBlockKey, TensorStructure
 from tenet.symmetry.base import Sector
 
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["MapLayout", "from_matrices", "map_layout", "to_matrices"]
+__all__ = [
+    "MapLayout",
+    "TensorMapView",
+    "as_map",
+    "from_matrices",
+    "map_layout",
+    "to_matrices",
+]
 
 Band = tuple[Sector, FusionTree, int, int]
 """``(coupled sector, tree, offset, extent)`` — the offset/extent style of ``ops.fusion``."""
@@ -199,6 +207,57 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
                 piece = ar.do("reshape", piece, tuple(shape[a] for a in order))
                 blocks[i] = piece if order == identity else ar.do("transpose", piece, inverse)
     return SymmetricTensor(structure, tuple(blocks))
+
+
+@dataclass(frozen=True, slots=True)
+class TensorMapView:
+    """A *semantic* view of a tensor as a morphism. Nothing is moved or materialized.
+
+    ``as_map`` allocates nothing: the view holds the tensor and every property is
+    derived from the ``side`` metadata the legs already carry (README "TensorMap
+    views"). Materializing an ``(out..., in...)`` reordering here would violate
+    invariant 3 and fork ``T.as_map().svd()`` from ``svd(T, axes=...)``.
+    """
+
+    tensor: "SymmetricTensor"
+
+    @property
+    def codomain(self) -> ProductSpace:
+        """OUT legs, in public axis order."""
+        return ProductSpace(self.tensor.codomain)
+
+    @property
+    def domain(self) -> ProductSpace:
+        """IN legs, in public axis order."""
+        return ProductSpace(self.tensor.domain)
+
+    def matrices(self) -> dict[Sector, Any]:
+        """``{c: B_c}`` — :func:`to_matrices` of the underlying tensor."""
+        return to_matrices(self.tensor)
+
+    def compose(self, other: "TensorMapView | SymmetricTensor") -> "SymmetricTensor":
+        """``self ∘ other``. See :func:`tenet.compose`."""
+        from tenet.ops.map import compose
+
+        return compose(self.tensor, other.tensor if isinstance(other, TensorMapView) else other)
+
+    def adjoint(self) -> "SymmetricTensor":
+        raise NotImplementedError(
+            "TensorMapView.adjoint: the categorical adjoint (dagger) is #31; it is not "
+            "conj() (which touches no leg) and not transpose()"
+        )
+
+    def svd(self, **kw: Any) -> Any:
+        raise NotImplementedError(
+            "TensorMapView.svd: symmetric decompositions are Milestone 7. Until then, "
+            "to_matrices(t) gives one dense matrix per coupled sector to decompose by "
+            "hand, and from_matrices rebuilds a tensor from such matrices"
+        )
+
+
+def as_map(t: "SymmetricTensor") -> TensorMapView:
+    """View ``t`` as a morphism. Zero-copy: no block is read, moved or allocated."""
+    return TensorMapView(t)
 
 
 def _check(layout: MapLayout, mats: Mapping[Sector, Any]) -> None:
