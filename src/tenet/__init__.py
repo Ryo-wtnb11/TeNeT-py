@@ -21,6 +21,10 @@ from tenet.tensor import SymmetricTensor
 
 __version__ = "0.1.0"
 
+# Last: dispatch.py imports from tenet.ops, and registers this package with
+# autoray as a side effect of `import tenet`.
+from tenet import array  # noqa: E402, F401
+
 __all__ = [
     "IN",
     "OUT",
