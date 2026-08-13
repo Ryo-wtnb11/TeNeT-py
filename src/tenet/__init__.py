@@ -4,6 +4,7 @@ from tenet.fusion_tree import FusionTree, coupled_sectors, fusion_trees
 from tenet.leg import IN, OUT, Leg, Side
 from tenet.space import GradedSpace
 from tenet.structure import FusionBlockKey, TensorStructure
+from tenet.tensor import SymmetricTensor
 
 __version__ = "0.1.0"
 
@@ -15,6 +16,7 @@ __all__ = [
     "GradedSpace",
     "Leg",
     "Side",
+    "SymmetricTensor",
     "TensorStructure",
     "coupled_sectors",
     "fusion_trees",
