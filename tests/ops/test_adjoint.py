@@ -10,7 +10,7 @@ import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.map_view import to_matrices
 from tenet.ops.map import adjoint_plan
-from tenet.symmetry import SU2, U1, SU2Sector, U1Sector
+from tenet.symmetry import SU2, U1, CapabilityError, SU2Sector, U1Sector
 
 ZERO, HALF, ONE = SU2Sector(0), SU2Sector(1), SU2Sector(2)
 V = GradedSpace.new(SU2, {ZERO: 2, HALF: 2})
@@ -203,9 +203,10 @@ def test_dense_oracle_is_elementwise_conjugation():
 
 
 def test_dense_is_skipped_for_dual_legs():
-    # Milestone 4: to_dense needs the Z-isomorphism for dual=True legs, so the
-    # dual tensor above is covered by the structural/algebraic criteria only.
-    with pytest.raises(NotImplementedError):
+    # Milestone 4: to_dense needs the Z-isomorphism (DualBasis capability, #32/#37)
+    # for dual=True SU(2) legs, so the dual tensor above is covered by the
+    # structural/algebraic criteria only.
+    with pytest.raises(CapabilityError):
         cx(DUAL_LEGS).adjoint().to_dense()
 
 
