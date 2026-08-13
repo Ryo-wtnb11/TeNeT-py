@@ -179,6 +179,33 @@ class SymmetricTensor:
             self.structure, tuple(ar.do("array", b, like=backend) for b in self.blocks)
         )
 
+    # --- parameter protocol (quimb / autoray) ---------------------------------
+
+    def get_params(self) -> tuple[Array, ...]:
+        """The blocks, in ``structure.block_order`` — a pytree of backend arrays.
+
+        The identity, deliberately: ``blocks`` was chosen to be an ordered tuple
+        so that no dict ordering or key hashing ever enters the dynamic data.
+        """
+        return self.blocks
+
+    def set_params(self, params: Sequence[Array]) -> "SymmetricTensor":
+        """Same structure, new numerical data. A **new** tensor; ``self`` is untouched.
+
+        Goes through the ordinary constructor, so block count and per-block shape
+        are validated by ``__post_init__``.
+
+        ponytail: quimb's ``inject_variables`` may expect this to mutate in place.
+        quimb is not a dependency, so this is not guessed at here — the frozen
+        structure is what the JAX story rests on. If M8 finds quimb needs it, a
+        thin mutable adapter belongs there, not in the core type.
+        """
+        return SymmetricTensor(self.structure, tuple(params))
+
+    def copy(self) -> "SymmetricTensor":
+        """A new instance sharing the same structure and block objects."""
+        return SymmetricTensor(self.structure, self.blocks)
+
     # --- value semantics ------------------------------------------------------
 
     def __eq__(self, other: object) -> bool:
