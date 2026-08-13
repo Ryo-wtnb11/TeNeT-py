@@ -1,4 +1,3 @@
-````markdown
 # tenet-py
 
 **Symmetric tensor networks in pure Python with backend-native multidimensional arrays.**
@@ -1563,4 +1562,4 @@ The core idea is deliberately simple:
 \]
 
 Everything else should be built on top of that boundary.
-````
+
