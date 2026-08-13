@@ -242,10 +242,10 @@ class TensorMapView:
         return compose(self.tensor, other.tensor if isinstance(other, TensorMapView) else other)
 
     def adjoint(self) -> "SymmetricTensor":
-        raise NotImplementedError(
-            "TensorMapView.adjoint: the categorical adjoint (dagger) is #31; it is not "
-            "conj() (which touches no leg) and not transpose()"
-        )
+        """``T†`` in ``Hom(codomain, domain)``. See :func:`tenet.adjoint`."""
+        from tenet.ops.map import adjoint
+
+        return adjoint(self.tensor)
 
     def svd(self, **kw: Any) -> Any:
         raise NotImplementedError(

@@ -323,11 +323,10 @@ def test_svd_names_milestone_7_and_to_matrices():
     assert "Milestone 7" in str(e.value) and "to_matrices" in str(e.value)
 
 
-def test_adjoint_is_not_implemented_yet():
+def test_view_adjoint_is_the_tensor_adjoint():
+    # #31: the view's adjoint is tenet.adjoint of the underlying tensor.
     t = SymmetricTensor.random(A_LEGS, seed=0)
-    with pytest.raises(NotImplementedError) as e:
-        t.as_map().adjoint()
-    assert "adjoint" in str(e.value)
+    assert t.as_map().adjoint() == t.adjoint()
 
 
 def test_matmul_with_a_scalar_and_mul_with_a_tensor_both_explain_themselves():

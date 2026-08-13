@@ -1,4 +1,4 @@
-"""Morphism composition ``a ∘ b`` and ``identity`` — Milestone 3.
+"""Morphism composition ``a ∘ b``, ``identity`` and the adjoint ``T†`` — Milestone 3.
 
 Composition is one ``matmul`` per coupled sector and nothing else. Nothing
 recouples: ``a``'s domain and ``b``'s codomain are the *same ordered legs*, so
@@ -13,12 +13,33 @@ only sizes would let a charge-reversed U(1) partner through and silently produce
 a non-equivariant result. Order cannot be waived either — matching "up to a
 reordering" would need a within-side transpose, which is a braid (#21).
 
+:func:`adjoint` is the dagger, and it is one of four operations that are easy to
+confuse and are deliberately kept apart (invariant 2, README "Conjugation,
+duality, and adjoint are distinct"):
+
+======================  ==========  ==========  =======================  ==============
+operation               ``side``    ``dual``    blocks                   coefficients
+======================  ==========  ==========  =======================  ==============
+``conj`` (#20)          unchanged   unchanged   conjugated               none
+``leg.dualized`` (#6)   unchanged   flipped     Z-isomorphism (M4)       FS signs
+``repartition`` (#32)   some flip   same flip   bent                     B-symbols
+``adjoint`` (#31)       all flip    unchanged   conjugated, key-swapped  none
+======================  ==========  ==========  =======================  ==============
+
+``adjoint`` needs no bending coefficient precisely because it flips *every* side
+at once: ``⊕_c B_c ⊗ id_c`` is simply re-read as ``⊕_c B_c† ⊗ id_c``, so trees,
+coupled sectors and multiplicities all survive and only their row/column roles
+trade places. And it needs no block transpose because reduced axes travel with
+their own legs (invariant 7) and the public axis order is untouched: the whole
+transpose is absorbed into the key swap ``(ot, it) → (it, ot)``.
+
 No ``to_dense`` here, no provider branching, and NumPy appears only as
 :func:`identity`'s default dtype.
 """
 
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from functools import cache
 from typing import TYPE_CHECKING, Any
 
 import autoray as ar
@@ -26,12 +47,12 @@ import numpy as np
 
 from tenet.leg import IN, OUT, Leg
 from tenet.map_view import as_map, from_matrices, map_layout, to_matrices
-from tenet.structure import TensorStructure
+from tenet.structure import FusionBlockKey, TensorStructure
 
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["compose", "identity"]
+__all__ = ["AdjointPlan", "adjoint", "adjoint_plan", "compose", "identity"]
 
 
 def _check_composable(a: "SymmetricTensor", b: "SymmetricTensor") -> None:
@@ -114,4 +135,53 @@ def identity(legs: Sequence[Leg], *, dtype: Any = np.float64) -> "SymmetricTenso
     return from_matrices(
         structure,
         {c: ar.do("eye", layout.shape(c)[0], dtype=dtype, like="numpy") for c in layout.sectors},
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class AdjointPlan:
+    """The categorical half of a dagger: static, array-free, hashable.
+
+    ``sources[i]`` is the *old* block index feeding new block ``i`` — a pure
+    permutation of ``range(num_blocks)``, because swapping the two trees of a key
+    is a bijection on ``block_order`` (though not an order-preserving one, which
+    is why it is computed through ``index_of`` and never assumed).
+    """
+
+    new_structure: TensorStructure
+    sources: tuple[int, ...]
+
+
+@cache
+def adjoint_plan(structure: TensorStructure) -> AdjointPlan:
+    """The dagger plan for ``structure``. Cached: repeat calls return one object."""
+    flipped = tuple(replace(leg, side=IN if leg.side is OUT else OUT) for leg in structure.legs)
+    new_structure = TensorStructure(flipped)
+    sources = tuple(
+        structure.index_of(FusionBlockKey(key.input_tree, key.output_tree))
+        for key in new_structure.block_order
+    )
+    return AdjointPlan(new_structure, sources)
+
+
+def adjoint(t: "SymmetricTensor") -> "SymmetricTensor":
+    """``T†``: the Euclidean-adjoint morphism in ``Hom(codomain, domain)``.
+
+    Every leg keeps its ``space``, ``dual`` and ``name`` and flips its ``side``;
+    the public axis order is unchanged; the block for key ``(ot, it)`` becomes the
+    conjugate of the block for key ``(it, ot)`` — no axis permutation is needed,
+    because reduced axes travel with their own legs (invariant 7).
+
+    Deliberately no ``requires(...)``: this needs ``conj`` on the backend and the
+    identity of the trees, nothing a provider could fail to supply.
+
+    ponytail: a provider with complex Clebsch-Gordan coefficients would need the
+    same capability gate ``ops.basic.conj`` already flags — one line, once such a
+    provider exists. Not a second speculative protocol.
+    """
+    from tenet.tensor import SymmetricTensor
+
+    plan = adjoint_plan(t.structure)
+    return SymmetricTensor(
+        plan.new_structure, tuple(ar.do("conj", t.blocks[src]) for src in plan.sources)
     )

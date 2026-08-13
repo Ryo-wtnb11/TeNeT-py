@@ -12,6 +12,7 @@ from tenet.map_view import (
 )
 from tenet.ops import (
     add,
+    adjoint,
     allclose,
     compose,
     conj,
@@ -49,6 +50,7 @@ __all__ = [
     "TensorMapView",
     "TensorStructure",
     "add",
+    "adjoint",
     "allclose",
     "as_map",
     "compose",
