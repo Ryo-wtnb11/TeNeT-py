@@ -5,6 +5,10 @@ and U(1) the duality cup is the identity, so a bend changes no dense entry and
 ``to_dense(T.repartition(o, i)) == np.transpose(to_dense(T), (*o, *i))``. That is
 weak on the coefficient axis on purpose, which is why the block-level "no
 arithmetic happened" and round-trip criteria sit next to it.
+
+The SU(2) refusal these tests used to assert is retired by #38: the criterion is
+re-pointed at ``FusionOnly``, a provider that genuinely lacks the capability, and
+SU(2)'s own bend is covered in ``tests/symmetry/test_su2_bend.py``.
 """
 
 import dataclasses
@@ -86,10 +90,34 @@ def restore(ndim: int, axis: int) -> tuple[int, ...]:
 # --- the capabilities ----------------------------------------------------------
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class FusionOnly:
+    """FusionProvider + QuantumDimension, nothing else — no bending capability."""
+
+    name: str = "FusionOnly"
+
+    @property
+    def unit(self):
+        return TrivialSector()
+
+    def dual(self, a):
+        return a
+
+    def fusion(self, a, b):
+        return (TrivialSector(),)
+
+    def n_symbol(self, a, b, c):
+        return 1
+
+    def qdim(self, a):
+        return 1.0
+
+
 def test_bending_coefficients_is_runtime_checkable():
     assert isinstance(Trivial, BendingCoefficients)
     assert isinstance(U1, BendingCoefficients)
-    assert not isinstance(SU2, BendingCoefficients)
+    assert isinstance(SU2, BendingCoefficients)  # #38
+    assert not isinstance(FusionOnly(), BendingCoefficients)
 
 
 def test_dual_basis_is_runtime_checkable_and_is_the_identity_for_abelian():
@@ -102,34 +130,29 @@ def test_dual_basis_is_runtime_checkable_and_is_the_identity_for_abelian():
         assert not z.flags.writeable
 
 
-# --- SU(2): the refusal, and the bend-free repartition that still works ---------
+# --- the refusal (re-pointed by #38), and the bend-free repartition -------------
 
 
-@pytest.mark.parametrize(("outputs", "inputs"), [((0, 1, 2), (3,)), ((0,), (1, 2, 3))])
-def test_su2_repartition_that_moves_a_leg_is_refused(outputs, inputs):
-    t = su2()
+@pytest.mark.parametrize("axis", [0, 2])
+def test_repartition_refuses_a_provider_without_bending_coefficients(axis):
+    """#32's SU(2) criterion, re-pointed: SU(2) can bend now, ``FusionOnly`` cannot."""
+    space = GradedSpace.new(FusionOnly(), {TrivialSector(): 2})
+    structure = TensorStructure((Leg(space, OUT), Leg(space, IN), Leg(space, OUT)))
     with pytest.raises(CapabilityError) as excinfo:
-        t.repartition(outputs, inputs)
+        REPARTITION_MODULE._refuse(structure, axis)
     message = str(excinfo.value)
-    assert "SU2" in message
+    assert "FusionOnly" in message
     assert "BendingCoefficients" in message
-    assert "B-symbol" in message or "B(a,b,c)" in message
-    assert "Milestone 4" in message
-    moved = next(ax for ax in range(4) if (t.legs[ax].side is OUT) != (ax in outputs))
-    assert f"axis {moved}" in message
+    assert "B(a,b,c)" in message
+    assert f"axis {axis}" in message
 
 
-def test_su2_refusal_is_not_a_silent_result():
+def test_su2_repartition_that_moves_a_leg_now_succeeds():
+    """The retired half of #32's refusal: every split works for SU(2) as of #38."""
     t = su2()
-    results = []
-    for outputs, inputs in SPLITS:
-        try:
-            results.append(t.repartition(outputs, inputs))
-        except CapabilityError:
-            pass
-    # only the split that matches the existing sides survives
-    assert len(results) == 1
-    assert results[0].legs == tuple(t.legs[i] for i in (0, 2, 1, 3))
+    results = [t.repartition(outputs, inputs) for outputs, inputs in SPLITS]
+    assert len(results) == len(SPLITS)
+    assert results[1].legs == tuple(t.legs[i] for i in (0, 2, 1, 3))  # the bend-free one
 
 
 def test_su2_no_bend_repartition_succeeds_and_reduces_to_transpose():
@@ -502,7 +525,9 @@ def test_module_is_numpy_free_and_provider_agnostic():
     assert "if provider ==" not in src
     assert "isinstance(provider" not in src
     assert 'ar.do("transpose"' in src
-    assert "ponytail:" in src  # the rejected SU(2) rank-1 shortcut is recorded
+    # #38 deleted the rejected rank-1 SU(2) shortcut, and with it its ponytail note
+    assert "ponytail:" not in src
+    assert "Milestone 4" not in src
 
 
 def test_public_exports_and_readme_spelling():

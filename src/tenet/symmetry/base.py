@@ -7,6 +7,7 @@ sit inside ``TensorStructure`` (invariant 8).
 
 from dataclasses import dataclass
 from functools import cache
+from math import sqrt
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
@@ -24,6 +25,7 @@ __all__ = [
     "Trivial",
     "TrivialProvider",
     "TrivialSector",
+    "bend_braided",
     "bend_unique",
     "permute_braided_tree",
     "permute_unique_tree",
@@ -322,6 +324,68 @@ def bend_unique(
     new_dst = _unique_tree(provider, (*dst.uncoupled, provider.dual(moved)), coupled[0])
     new_key = FusionBlockKey(new_src, new_dst) if right else FusionBlockKey(new_dst, new_src)
     return ((new_key, 1.0),)
+
+
+def bend_braided(
+    provider: "RecouplingData", key: "FusionBlockKey", *, right: bool, dual: bool
+) -> tuple[tuple["FusionBlockKey", complex], ...]:
+    """``bend_right``/``bend_left`` for any provider supplying B, FS and ``qdim``.
+
+    The source tree's last vertex is ``a x b -> c`` (``a`` the unit when the
+    source has rank 1). The source loses ``b`` and re-couples to ``a``; the
+    destination gains ``dual(b)`` at its **end** and couples to ``a`` too. Both
+    spines are **recomputed** from the new uncoupled tuples — the source spine is
+    truncated and the destination's old coupled sector becomes its new last inner
+    line — never relabelled.
+
+    The coefficient is TensorKit's ``bendright``::
+
+        coeff = sqrt(qdim(c) / qdim(a)) · B(a, b, c)          (× conj(chi_dual(b))
+                                                               if the moved leg
+                                                               was already dual)
+
+    and ``bend_left`` is ``bendleft``: the *same* expression read off the input
+    tree, then conjugated — which is what makes it the exact inverse of
+    ``bend_right`` rather than a reciprocal guess (a unitary's inverse is its
+    conjugate transpose, and multiplicity-free bending is one entry per key).
+    Note the Frobenius-Schur factor is keyed on the moved leg's *current* flag,
+    so it appears once across a round trip, never twice and never zero times.
+
+    Single-term because the provider is multiplicity-free: one key in, one key
+    out. ``n_symbol > 1`` needs matrix-valued coefficients and is refused.
+    """
+    from tenet.fusion_tree import FusionTree
+    from tenet.structure import FusionBlockKey
+
+    src = key.output_tree if right else key.input_tree
+    dst = key.input_tree if right else key.output_tree
+    if src.rank == 0:
+        raise ValueError(
+            f"{provider.name}: cannot bend from an empty "
+            f"{'output' if right else 'input'} tree of {key}"
+        )
+
+    b, c = src.uncoupled[-1], src.coupled
+    a = src.lines()[-2] if src.rank >= 2 else provider.unit
+    if provider.n_symbol(a, b, c) > 1:
+        raise CapabilityError(
+            f"{provider.name}: N^{c!r}_{{{a!r},{b!r}}} > 1; bending a vertex with "
+            "multiplicity needs matrix-valued B-symbols, which are not supported"
+        )
+
+    new_src = FusionTree(src.uncoupled[:-1], src.inner[:-1], src.multiplicities[:-1], a)
+    new_dst = FusionTree(
+        (*dst.uncoupled, provider.dual(b)),
+        dst.lines()[1:],
+        (*dst.multiplicities, 0) if dst.rank else (),
+        a,
+    )
+    new_key = FusionBlockKey(new_src, new_dst) if right else FusionBlockKey(new_dst, new_src)
+
+    coeff = sqrt(provider.qdim(c) / provider.qdim(a)) * provider.b_symbol(a, b, c)
+    if dual:
+        coeff *= provider.frobenius_schur(provider.dual(b)).conjugate()
+    return ((new_key, coeff if right else coeff.conjugate()),)
 
 
 def _unique_tree(

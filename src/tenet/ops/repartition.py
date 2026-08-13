@@ -33,9 +33,10 @@ transpose  deliver (*outputs, *inputs)
 ```
 
 The coefficient is ``sqrt(dim(c)/dim(a)) · B(a,b,c)`` times a Frobenius-Schur
-phase, and for Trivial and U(1) it is provably exactly ``1``; those providers
-say so by implementing ``BendingCoefficients``. SU(2) does not, and is refused
-loudly rather than handed a plausible tensor with the wrong norm.
+phase, and for Trivial and U(1) it is provably exactly ``1``; SU(2) computes it
+from its B-symbols (#38). A provider that supplies none of that does not
+implement ``BendingCoefficients`` and is refused loudly rather than handed a
+plausible tensor with the wrong norm.
 
 No NumPy and no ``to_dense`` here (invariants 8/9): plans are array-free
 metadata and blocks move only through ``ar.do("transpose", ...)``.
@@ -86,16 +87,12 @@ def _refuse(structure: TensorStructure, axis: int) -> None:
             f"repartition: moving axis {axis} between domain and codomain is a line bend, "
             f"and provider {provider.name} does not implement BendingCoefficients. The "
             "bending coefficient is sqrt(dim(c)/dim(a))·B(a,b,c) with an extra "
-            "Frobenius-Schur phase on an already-dual line; for a non-Abelian symmetry "
-            "such as SU(2) the B-symbol needs an F-symbol we do not have (Milestone 4), "
-            "and the sqrt(dim(c)/dim(a)) prefactor alone is not 1. Faking it would give "
-            "correct shapes, correct sector bookkeeping and a wrong norm. A repartition "
-            "that moves no leg across sides works today for every provider."
-            # ponytail: the one cheap SU(2) bend (rank-1 codomain, where a is the unit,
-            # B(1,b,b) = 1 and the coefficient collapses to the scalar sqrt(qdim(b))) is
-            # deliberately not special-cased: fuse(#22) could collapse a side to rank 1,
-            # but the matching unfuse would land on a dual=True leg whose splitting is
-            # itself M4, and it would only ever express full-side bends. Recorded for M4.
+            "Frobenius-Schur phase on an already-dual line, so a provider must supply "
+            "quantum dimensions, B-symbols and Frobenius-Schur signs (bend_unique for "
+            "an Abelian symmetry where all three are 1, bend_braided otherwise — SU(2) "
+            "takes the latter). Faking it would give correct shapes, correct sector "
+            "bookkeeping and a wrong norm. A repartition that moves no leg across "
+            "sides works today for every provider."
         ) from exc
 
 

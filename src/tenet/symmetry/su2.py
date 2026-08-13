@@ -13,8 +13,9 @@ dual SU(2) legs.
 F-, R- and B-symbols and Frobenius-Schur signs are available through the
 :class:`~tenet.symmetry.base.RecouplingData` capability; their gauge is pinned to
 the vendored TensorKitSectors fixtures (see ``SU2_GAUGE``). ``permute_tree`` is
-built on them, so ``transpose`` is total for SU(2). Still absent:
-``bend_right``/``bend_left`` (#38).
+built on them, so ``transpose`` is total for SU(2), and ``bend_right`` /
+``bend_left`` are built on the B-symbol and the Frobenius-Schur sign, so
+``repartition`` is total for SU(2) too (#38).
 """
 
 from dataclasses import dataclass
@@ -24,10 +25,11 @@ import numpy as np
 
 from tenet.symmetry import _su2_coeff
 from tenet.symmetry._su2_coeff import cg_tensor, triangle
-from tenet.symmetry.base import Sector, permute_braided_tree
+from tenet.symmetry.base import Sector, bend_braided, permute_braided_tree
 
 if TYPE_CHECKING:
     from tenet.fusion_tree import FusionTree
+    from tenet.structure import FusionBlockKey
 
 __all__ = ["SU2", "SU2_GAUGE", "SU2Provider", "SU2Sector"]
 
@@ -121,6 +123,17 @@ class SU2Provider:
     ) -> tuple[tuple["FusionTree", complex], ...]:
         """Artin-braid expansion; SU(2) is symmetric, so ``perm`` fixes the braid."""
         return permute_braided_tree(self, tree, perm)
+
+    def bend_right(
+        self, key: "FusionBlockKey", *, dual: bool
+    ) -> tuple[tuple["FusionBlockKey", complex], ...]:
+        """One term: ``sqrt(qdim(c)/qdim(a))·B(a,b,c)``, times ``chi`` if already dual."""
+        return bend_braided(self, key, right=True, dual=dual)
+
+    def bend_left(
+        self, key: "FusionBlockKey", *, dual: bool
+    ) -> tuple[tuple["FusionBlockKey", complex], ...]:
+        return bend_braided(self, key, right=False, dual=dual)
 
     def frobenius_schur(self, a: SU2Sector) -> int:
         """``chi_a = (-1)^(2j)``: ``+1`` for integer spin, ``-1`` for half-integer."""

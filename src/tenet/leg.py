@@ -72,8 +72,10 @@ class Leg:
         """New leg with ``dual`` flipped — a relabelling of ``V ↔ V*`` only.
 
         It does **not** move the leg between domain and codomain, and in general
-        it does change the tensor's numerical content (Z-isomorphism / FS signs,
-        Milestone 4), which is why no tensor-level shortcut for it exists yet.
+        it does change the tensor's numerical content (the Z-isomorphism and its
+        Frobenius-Schur sign, available since #37), which is why no tensor-level
+        shortcut for it exists: only ``repartition`` flips ``dual``, and it flips
+        ``side`` at the same time, paying the bending coefficient for it (#38).
         """
         return replace(self, dual=not self.dual)
 
