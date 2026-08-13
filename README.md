@@ -11,7 +11,7 @@ The central design principle is:
 A tensor is still interpreted categorically as a morphism
 
 ```math
-T \in \operatorname{Hom}(D,C),
+T \in \mathrm{Hom}(D,C),
 ```
 
 with explicit duality, fusion structure, recoupling, and braiding where required.
@@ -306,7 +306,7 @@ The relative order of legs on each side is inherited from their public axis orde
 Therefore every `SymmetricTensor` defines a morphism
 
 ```math
-T \in \operatorname{Hom}(D(T),C(T)).
+T \in \mathrm{Hom}(D(T),C(T)).
 ```
 
 For example:
@@ -381,9 +381,9 @@ T:D\to C
 to an all-outgoing tensor using rigidity:
 
 ```math
-\operatorname{Hom}(D,C)
+\mathrm{Hom}(D,C)
 \simeq
-\operatorname{Hom}
+\mathrm{Hom}
 \left(
 \mathbf 1,
 C\otimes D^*
@@ -837,7 +837,7 @@ This retains the main TensorMap advantage:
 T
 \simeq
 \bigoplus_c
-B_c \otimes \operatorname{id}_c.
+B_c \otimes \mathrm{id}_c.
 ```
 
 The coupled-sector matrices \(B_c\) remain available for:
@@ -1566,7 +1566,7 @@ For a symmetric morphism, Schur-type decomposition gives the reduced form
 T
 \simeq
 \bigoplus_c
-B_c \otimes \operatorname{id}_c.
+B_c \otimes \mathrm{id}_c.
 ```
 
 The matrices \(B_c\) are the natural objects for:
