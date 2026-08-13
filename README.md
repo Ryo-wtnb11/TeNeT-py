@@ -1,170 +1,603 @@
 # TeNeT-py
 
-**Symmetric tensor networks in pure Python with backend-native multidimensional arrays.**
+**Non-Abelian symmetric tensors with ndarray-style Python APIs and backend-native numerical execution.**
 
-`TeNeT-py` is a pure-Python library for symmetry-aware tensor networks with explicit tensor-map semantics and support for non-Abelian fusion structures.
+`TeNeT-py` is a pure-Python library for symmetry-aware tensor computation designed to connect non-Abelian tensor algebra with the Python numerical and machine-learning ecosystem.
 
-The design combines three ideas:
+The central design principle is:
 
-- **TeNeT-style categorical semantics**  
-  A tensor is a linear map with explicit domain and codomain. Duality, fusion trees, recoupling, and braiding are part of the tensor semantics.
+> **TensorMap semantics are the mathematical model; an ndarray-like symmetric tensor is the programming model.**
 
-- **symmray-style array storage**  
-  Reduced blocks are ordinary multidimensional arrays supplied by an existing numerical backend. `TeNeT-py` does not implement its own ndarray or packed storage format.
+A tensor is still interpreted categorically as a morphism
 
-- **autoray-based backend dispatch**  
-  Dense numerical operations are dispatched through `autoray`, allowing the same symmetric tensor structure to use NumPy, JAX, PyTorch, and other compatible array backends.
+```math
+T \in \operatorname{Hom}(D,C),
+```
 
-JAX is intended to be a first-class backend for automatic differentiation, JIT compilation, and vectorization, but `jax.Array` is not part of the core tensor model.
+with explicit duality, fusion structure, recoupling, and braiding where required.
+
+However, the primary public object is **not** forced into a permanent
+
+```text
+codomain × domain
+```
+
+axis layout.
+
+Instead, a tensor exposes an ordered sequence of legs, much like the axes of an `ndarray`. Each leg carries enough categorical metadata to recover the corresponding TensorMap exactly.
+
+This allows tensor-network code to use APIs such as
+
+```python
+T.shape
+T.ndim
+T.transpose(...)
+tenet.tensordot(A, B, axes=...)
+tenet.einsum("abc,cde->abde", A, B)
+tenet.linalg.svd(T, axes=((0, 2), (1, 3)))
+```
+
+while preserving the categorical semantics required for non-Abelian symmetries and more general fusion categories.
+
+Reduced numerical data are stored in backend-native multidimensional arrays and executed using existing numerical frameworks such as NumPy, JAX, and PyTorch.
+
+The goal is not to port TensorKit or TeNeT to Python.
+
+The goal is to provide a **categorically correct symmetric tensor abstraction that fits naturally into the Python array ecosystem**, making it easier to exploit GPU execution, automatic differentiation, JIT compilation, vectorization, contraction planners, and machine-learning infrastructure in applications such as tensor-network VMC and neural quantum states.
 
 > **Status:** early design and implementation. The API is not stable.
 
 ---
 
-## Motivation
+# Design thesis
 
-A symmetric tensor is more than a block-sparse ndarray.
+The architecture separates three models:
 
-The central object in `TeNeT-py` is a tensor map
+```text
+mathematical model
+────────────────────────────────────────
+              TensorMap
+            T ∈ Hom(D, C)
+       duality / fusion / F / R
+                    │
+                    ▼
 
-```math
-T \in \mathrm{Hom}(D,C),
+programming model
+────────────────────────────────────────
+            SymmetricTensor
+          ordered ndarray-like legs
+     shape / ndim / transpose / einsum
+                    │
+                    ▼
+
+execution model
+────────────────────────────────────────
+      backend-native reduced arrays
+       NumPy / JAX / PyTorch / ...
+                    │
+                    ▼
+          GPU / AD / JIT / vmap
+```
+
+The important distinction is:
+
+```text
+TensorMap semantics
+        !=
+TensorMap-shaped public API
+```
+
+`TeNeT-py` keeps the former and deliberately avoids requiring the latter.
+
+---
+
+# Motivation
+
+A non-Abelian symmetric tensor is not simply a block-sparse ndarray.
+
+Its structure may involve:
+
+- graded representation spaces;
+- dual objects;
+- input and output orientation;
+- non-unique fusion channels;
+- fusion multiplicities;
+- fusion-tree bases;
+- recoupling transformations;
+- categorical permutations;
+- braiding;
+- evaluation and coevaluation maps.
+
+At the same time, after these categorical choices are fixed, the remaining variational degrees of freedom are ordinary numerical tensors.
+
+Those numerical tensors should ideally be handled by numerical systems that already provide:
+
+- GPU kernels;
+- automatic differentiation;
+- JIT compilation;
+- vectorization;
+- device placement;
+- mixed precision;
+- optimized matrix multiplication;
+- tensor contraction;
+- distributed execution.
+
+`TeNeT-py` therefore does not attempt to replace NumPy, JAX, or PyTorch.
+
+Instead, it defines the categorical layer required to tell these backends **which numerical operations must be performed and what those operations mean**.
+
+The basic decomposition is:
+
+```text
+categorical structure
+        +
+backend-native numerical arrays
+        +
+structural lowering
+        =
+symmetric tensor computation
+```
+
+---
+
+# Design influences
+
+The design is informed by several existing approaches:
+
+- [TensorKit.jl](https://github.com/QuantumKitHub/TensorKit.jl) provides the primary reference for explicit morphism semantics, fusion-tree bases, duality, and non-Abelian block linear algebra.
+- [TeNeT](https://github.com/Ryo-wtnb11/TeNeT) provides a reference for capability-based symmetry providers and a strict separation between categorical semantics, planning, and numerical execution.
+- [symmray](https://github.com/jcmgray/symmray) demonstrates the value of making symmetric tensors behave like ordinary arrays and using backend-native blocks with `autoray`.
+- [YASTN](https://github.com/yastn/yastn) demonstrates an axis-oriented Python tensor API with leg signatures, differentiable backends, and tensor-network operations.
+- [froSTspin](https://github.com/ogauthe/frostspin) provides a useful non-Abelian Python reference that combines per-leg signatures with a matrix-oriented row/column partition.
+
+`TeNeT-py` deliberately does not copy any one of these interfaces.
+
+Its target is approximately:
+
+```text
+TensorKit / TeNeT categorical semantics
+                 +
+YASTN / symmray array ergonomics
+                 +
+Python ML execution ecosystem
+```
+
+---
+
+# The central tensor type
+
+The primary owning type is
+
+```python
+SymmetricTensor
+```
+
+rather than `TensorMap`.
+
+Conceptually:
+
+```python
+T = SymmetricTensor(
+    legs=(leg0, leg1, leg2, ...),
+    blocks=...,
+)
+```
+
+A tensor has:
+
+```text
+ordered public legs
+categorical structure
+fusion-basis information
+reduced numerical blocks
+```
+
+The public leg order corresponds to the tensor's ndarray-style axis order.
+
+Therefore:
+
+```python
+T.ndim == len(T.legs)
+T.shape[i] == T.legs[i].dimension
+```
+
+up to the usual distinction between full physical dimension and reduced block dimensions.
+
+The tensor nevertheless has a well-defined domain and codomain.
+
+They are derived from the leg metadata.
+
+---
+
+# Legs
+
+A leg carries local categorical information.
+
+A minimal conceptual representation is:
+
+```python
+@dataclass(frozen=True)
+class Leg:
+    space: GradedSpace
+    side: Side
+    dual: bool = False
+    name: Hashable | None = None
 ```
 
 where
 
-```math
-C = C_1 \otimes \cdots \otimes C_m,
-\qquad
-D = D_1 \otimes \cdots \otimes D_n.
+```python
+Side.OUT
+Side.IN
 ```
 
-The distinction between domain and codomain is part of the mathematical structure.
+specify whether the leg belongs to the codomain or domain of the underlying morphism.
 
-Using rigidity,
+The two pieces of information
+
+```text
+IN / OUT
+```
+
+and
+
+```text
+non-dual / dual
+```
+
+are independent.
+
+This distinction is essential.
+
+For example,
 
 ```math
-\mathrm{Hom}(D,C)
+T:
+A \otimes B^*
+\longrightarrow
+C^* \otimes D
+```
+
+contains four different combinations:
+
+```text
+A     : IN,  non-dual
+B*    : IN,  dual
+C*    : OUT, dual
+D     : OUT, non-dual
+```
+
+A dual object is not the same concept as an input leg.
+
+---
+
+# Recovering TensorMap semantics
+
+Let the effective categorical object associated with leg \(i\) be
+
+```math
+X_i =
+\begin{cases}
+V_i, & \text{if } \mathrm{dual}_i = \mathrm{False},\\
+V_i^*, & \text{if } \mathrm{dual}_i = \mathrm{True}.
+\end{cases}
+```
+
+The codomain is obtained from the output legs:
+
+```math
+C(T)
+=
+\bigotimes_{i:\,\mathrm{side}_i=\mathrm{OUT}}
+X_i,
+```
+
+and the domain from the input legs:
+
+```math
+D(T)
+=
+\bigotimes_{i:\,\mathrm{side}_i=\mathrm{IN}}
+X_i.
+```
+
+The relative order of legs on each side is inherited from their public axis order.
+
+Therefore every `SymmetricTensor` defines a morphism
+
+```math
+T \in \operatorname{Hom}(D(T),C(T)).
+```
+
+For example:
+
+```python
+T = SymmetricTensor(
+    legs=(
+        Leg(C1, OUT),
+        Leg(D1, IN),
+        Leg(C2, OUT),
+        Leg(D2, IN),
+    ),
+    ...
+)
+```
+
+has ndarray-facing axis order
+
+```text
+(C1, D1, C2, D2)
+```
+
+but TensorMap semantics
+
+```math
+T:
+D_1 \otimes D_2
+\longrightarrow
+C_1 \otimes C_2.
+```
+
+Thus:
+
+```python
+T.shape
+```
+
+follows
+
+```text
+(C1, D1, C2, D2)
+```
+
+while
+
+```python
+T.codomain
+T.domain
+```
+
+return
+
+```text
+C1 ⊗ C2
+D1 ⊗ D2
+```
+
+respectively.
+
+This is the key mechanism that permits ndarray-style axis ordering without losing TensorMap semantics.
+
+---
+
+# Why keep both `side` and `dual`?
+
+One could instead convert every morphism
+
+```math
+T:D\to C
+```
+
+to an all-outgoing tensor using rigidity:
+
+```math
+\operatorname{Hom}(D,C)
 \simeq
-C \otimes D^*.
+\operatorname{Hom}
+\left(
+\mathbf 1,
+C\otimes D^*
+\right).
 ```
 
-A domain leg therefore corresponds to a dual object when the tensor map is viewed as an oriented tensor.
+For ordinary vector spaces this often makes input/output information appear redundant.
 
-This distinction matters because:
+For a general rigid category, however, this conversion is implemented by evaluation and coevaluation morphisms.
 
-- moving a leg between domain and codomain is not generally an ndarray `moveaxis`;
-- permuting tensor legs is not generally an ndarray `transpose`;
-- changing fusion-tree basis may require an $F$-move;
-- exchanging braided objects may require an $R$-move;
-- non-Abelian fusion can have multiple allowed intermediate sectors;
-- fusion multiplicities can introduce additional fusion channels.
-
-At the same time, once all categorical data are fixed, the remaining variational degrees of freedom are ordinary dense multidimensional tensors.
-
-`TeNeT-py` therefore separates **categorical structure** from **numerical arrays**.
+Changing
 
 ```text
-                           TensorMap
-                              │
-                       T ∈ Hom(D, C)
-                              │
-             ┌────────────────┴────────────────┐
-             │                                 │
-      categorical structure              numerical data
-             │                                 │
-        GradedSpace                     backend ndarray
-        ProductSpace                    reduced blocks
-        FusionTree                            │
-        BlockKey                              │
-        duality                               │
-        fusion                                │
-        F / R data                            │
-             │                                 │
-             └────────── operations ───────────┘
-                              │
-                           autoray
-                              │
-                 ┌────────────┼────────────┐
-                 │            │            │
-               NumPy         JAX        PyTorch
+IN → OUT
 ```
 
-The basic rule is:
+is therefore a categorical **bend**, not merely a change of a Boolean flag.
 
-> **Categorical indices are structural metadata. Reduced numerical indices are ndarray axes.**
+At the reduced level it may require:
 
----
+- duality maps;
+- normalization factors;
+- Frobenius-Schur factors;
+- changes of fusion basis;
+- \(B\)-symbols or equivalent bending coefficients.
 
-## Design goals
-
-`TeNeT-py` aims to provide:
-
-- explicit domain/codomain `TensorMap` semantics;
-- Abelian and non-Abelian symmetries;
-- fusion-tree-indexed reduced tensors;
-- multidimensional backend-native reduced blocks;
-- symmetry-provider-based algorithms;
-- backend dispatch through `autoray`;
-- JAX differentiation and compilation where appropriate;
-- a clean separation between mathematical structure and numerical execution.
-
-The initial implementation does **not** aim to provide:
-
-- a Python port of the Rust TeNeT runtime;
-- a custom ndarray implementation;
-- manually packed tensor storage;
-- explicit buffer offsets and strides;
-- custom CUDA memory management;
-- low-level kernel scheduling;
-- transparent substitution of `TensorMap` for arbitrary NumPy/JAX arrays.
-
----
-
-## Architecture
-
-The intended architecture is:
+Therefore `TeNeT-py` keeps both pieces of metadata.
 
 ```text
-                  categorical layer
-                         │
-                         │
-             ┌───────────┴───────────┐
-             │                       │
-        FusionProvider           GradedSpace
-             │                       │
-       fusion / dual             ProductSpace
-       F / R symbols                 │
-             │                       │
-             └───────────┬───────────┘
-                         │
-                     FusionTree
-                         │
-                      BlockKey
-                         │
-                         ▼
-                      TensorMap
-                         │
-                    reduced blocks
-                         │
-                         ▼
-                 backend-native arrays
-                         │
-                         ▼
-                      autoray
-                         │
-          ┌──────────────┼──────────────┐
-          │              │              │
-        NumPy           JAX          PyTorch
+side
+    tells us where the object lives in Hom(D,C)
+
+dual
+    tells us whether that object is V or V*
 ```
 
-The symmetry layer never owns dense numerical storage.
-
-The array backend never determines categorical meaning.
+This allows the user-facing representation to retain full morphism semantics without forcing input and output legs to occupy contiguous axis ranges.
 
 ---
 
-# Tensor spaces
+# TensorMap views
+
+Although `TensorMap` is not the primary owning type, TensorMap operations remain first-class.
+
+A tensor can expose a map view:
+
+```python
+M = T.as_map()
+```
+
+with
+
+```python
+M.domain
+M.codomain
+M.compose(...)
+M.adjoint()
+M.svd()
+```
+
+The default map view uses the `side` metadata already stored on the legs.
+
+No categorical transformation is required merely to ask for this view.
+
+Conceptually:
+
+```text
+SymmetricTensor
+
+axes = [C1, D1, C2, D2]
+side = [OUT, IN, OUT, IN]
+
+              │
+              ▼
+
+TensorMapView
+
+codomain = C1 ⊗ C2
+domain   = D1 ⊗ D2
+```
+
+The map view is therefore a **semantic view**, not necessarily a materialized rearrangement of block storage.
+
+---
+
+# Repartitioning is different from viewing
+
+Changing which legs are inputs and outputs is an actual categorical operation.
+
+For example:
+
+```python
+T2 = T.repartition(
+    outputs=(0, 1, 2),
+    inputs=(3,),
+)
+```
+
+may move an existing input leg to the output side or vice versa.
+
+This is not equivalent to:
+
+```python
+leg.side = OUT
+```
+
+because it may require bending a categorical line.
+
+The lowering is conceptually:
+
+```text
+old Hom(D, C)
+      │
+      ▼
+evaluation / coevaluation
+      │
+      ▼
+fusion-basis transformation
+      │
+      ▼
+new Hom(D', C')
+```
+
+The public API may be compact, but the operation remains categorically exact.
+
+---
+
+# Public axis order
+
+The public axis order exists primarily for ndarray-style programming.
+
+It determines:
+
+- `shape`;
+- `ndim`;
+- `axis`;
+- einsum labels;
+- tensordot axes;
+- user-facing block dimensions;
+- output ordering.
+
+It is intentionally not required to be
+
+```text
+all outputs followed by all inputs.
+```
+
+Thus the following is valid:
+
+```text
+OUT, IN, OUT, IN, OUT
+```
+
+This is one of the main differences from a TensorMap-first public API.
+
+---
+
+# `transpose` is an array operation with categorical semantics
+
+A call such as
+
+```python
+B = A.transpose(2, 0, 1)
+```
+
+means:
+
+> return the same abstract tensor with public axes ordered as `(2, 0, 1)`.
+
+It must not be implemented blindly as
+
+```python
+backend.transpose(block, ...)
+```
+
+for every symmetry.
+
+The structural layer first determines what changed.
+
+Possible cases include:
+
+1. only reduced numerical axes need to be reordered;
+2. the relative order of categorical factors changes;
+3. a fusion-tree basis must be transformed;
+4. an \(F\)-move is required;
+5. a swap carries a fermionic sign;
+6. a braid requires an \(R\)-move.
+
+Only after this analysis does the operation lower to backend array primitives.
+
+Thus:
+
+```text
+public transpose
+       │
+       ▼
+categorical analysis
+       │
+       ├── trivial?
+       ├── F-transform?
+       ├── swap phase?
+       └── braid?
+       │
+       ▼
+backend numerical program
+```
+
+A raw backend transpose remains a low-level primitive.
+
+It is not the semantic definition of tensor permutation.
+
+---
+
+# Fusion spaces
 
 ## `GradedSpace`
 
@@ -174,36 +607,28 @@ A symmetry-graded space has the form
 V
 =
 \bigoplus_a
-\mathbb{C}^{m_a}
+\mathbb C^{m_a}
 \otimes
 V_a,
 ```
 
 where:
 
-- $a$ is a symmetry sector;
-- $V_a$ is the corresponding irreducible representation;
-- $m_a$ is the degeneracy of that sector.
+- \(a\) is a sector;
+- \(V_a\) is the corresponding simple or irreducible object;
+- \(m_a\) is its degeneracy.
 
-For example, an SU(2)-graded space may be
+For example,
 
 ```math
 V
 =
 2 V_{1/2}
 \oplus
-3 V_1.
+3 V_1
 ```
 
-Its reduced degeneracies are
-
-```math
-m_{1/2}=2,
-\qquad
-m_1=3.
-```
-
-A possible Python representation is:
+can be represented as
 
 ```python
 V = GradedSpace(
@@ -215,513 +640,406 @@ V = GradedSpace(
 )
 ```
 
-The degeneracy $m_j$ is distinct from the physical irrep dimension.
-
-For SU(2),
+The degeneracy
 
 ```math
-\dim(V_j)=2j+1,
+m_a
 ```
 
-but the corresponding reduced tensor axis has size $m_j$.
+is distinct from the irrep dimension or quantum dimension of \(a\).
+
+Reduced ndarray axes contain only these degeneracy dimensions.
 
 ---
 
 ## `ProductSpace`
 
-The domain and codomain of a tensor map are ordered tensor products.
+`ProductSpace` remains useful, but mainly as a TensorMap-level object.
+
+For example:
 
 ```python
-C = ProductSpace(C1, C2, C3)
-D = ProductSpace(D1, D2)
+T.codomain
 ```
 
-This represents
+may return
+
+```python
+ProductSpace(C1, C2, C3)
+```
+
+and
+
+```python
+T.domain
+```
+
+may return
+
+```python
+ProductSpace(D1, D2)
+```
+
+The user does not need to construct a `ProductSpace` merely to create an ordinary tensor with five axes.
+
+This reverses the emphasis of a TensorMap-first interface:
+
+```text
+old
+
+ProductSpace
+     ↓
+TensorMap
+     ↓
+axes
+
+new
+
+Legs / axes
+     ↓
+SymmetricTensor
+     ↓
+derived ProductSpace views
+```
+
+---
+
+# Fusion trees are tensor-level structure
+
+Fusion-tree information must **not** be placed independently on individual legs.
+
+For example,
 
 ```math
-C=C_1\otimes C_2\otimes C_3,
+(a\otimes b)\otimes c
 ```
 
 and
 
 ```math
-D=D_1\otimes D_2.
+a\otimes(b\otimes c)
 ```
 
-The ordering is part of the structure.
+differ through relations involving multiple legs.
 
-In general,
+Likewise, an intermediate sector
 
 ```math
-C_1\otimes C_2
+e
 ```
 
-must not be silently identified with
+in
 
 ```math
-C_2\otimes C_1.
+(a\otimes b)\to e,\qquad
+(e\otimes c)\to d
 ```
 
-The two spaces may be related by a categorical isomorphism, but applying that isomorphism is an operation.
+does not belong to any single external edge.
 
-For braided categories that operation can be nontrivial.
-
----
-
-# `TensorMap`
-
-The main tensor object represents
-
-```math
-T:
-D_1\otimes\cdots\otimes D_n
-\longrightarrow
-C_1\otimes\cdots\otimes C_m.
-```
-
-The public representation keeps domain and codomain explicit:
-
-```python
-T = TensorMap(
-    codomain=(C1, C2, C3),
-    domain=(D1, D2),
-    blocks=blocks,
-)
-```
-
-Conceptually:
+Therefore the structure is separated as:
 
 ```text
-             C1    C2    C3
-              ↑     ↑     ↑
-              │     │     │
-              └─────T─────┘
-                    ↑
-                 D1   D2
+Leg
+    local object information
+
+TensorStructure
+    ordered collection of legs
+
+FusionBasis
+    relationships among several legs
+
+ExecutionPlan
+    temporary basis transformations and kernels
 ```
 
-The same tensor can internally be viewed through the oriented boundary
-
-```math
-(C_1,C_2,C_3,D_1^*,D_2^*).
-```
-
-```text
-TensorMap representation
-
-codomain = (C1, C2, C3)
-domain   = (D1, D2)
-
-                 │
-                 ▼
-
-oriented categorical representation
-
-(C1, C2, C3, D1*, D2*)
-```
-
-The public API should retain domain/codomain semantics instead of reducing everything to a single list of oriented ndarray axes.
-
----
-
-# Reduced tensor representation
-
-## Backend-native multidimensional blocks
-
-The main storage decision is:
-
-> **One logical reduced block is one ordinary multidimensional backend array.**
-
-`TeNeT-py` does not initially flatten all blocks into one custom buffer.
-
-Consider
-
-```math
-T:
-D_1\otimes D_2
-\longrightarrow
-C_1\otimes C_2\otimes C_3.
-```
-
-For fixed external sectors
-
-```math
-(c_1,c_2,c_3;d_1,d_2),
-```
-
-the corresponding reduced block has shape
-
-```math
-(
-m_{c_1},
-m_{c_2},
-m_{c_3},
-m_{d_1},
-m_{d_2}
-).
-```
-
-For example:
-
-```python
-block.shape == (2, 4, 3, 8, 5)
-```
-
-represents
-
-```math
-A_{\alpha_1\alpha_2\alpha_3\beta_1\beta_2}.
-```
-
-The array axes correspond to reduced degeneracy spaces.
-
-For the initial representation,
-
-```python
-block.ndim == len(T.codomain) + len(T.domain)
-```
-
-for every reduced block.
-
-The actual block object may be:
-
-```text
-numpy.ndarray
-jax.Array
-torch.Tensor
-...
-```
-
-as long as the backend is supported through the numerical dispatch layer.
-
----
-
-## Why not packed storage?
-
-The Rust TeNeT implementation can benefit from a representation of the form
-
-```text
-one contiguous buffer
-+
-block offsets
-+
-block shapes
-+
-block strides
-```
-
-because a native runtime may want direct control over allocation, memory placement, BLAS calls, GPU kernels, and scheduling.
-
-`TeNeT-py` deliberately does not begin with that abstraction.
-
-Instead:
-
-```text
-TensorMap
-│
-├── BlockKey A → ndarray(shape=...)
-├── BlockKey B → ndarray(shape=...)
-├── BlockKey C → ndarray(shape=...)
-└── ...
-```
-
-The numerical backend owns:
-
-- memory allocation;
-- physical data layout;
-- strides;
-- device placement;
-- dense kernels.
-
-`TeNeT-py` owns:
-
-- sectors;
-- spaces;
-- fusion structure;
-- block identities;
-- duality;
-- categorical transformations.
-
-This avoids implementing another ndarray layer in Python.
-
----
-
-## Logical storage versus execution layout
-
-The logical representation does not prevent later optimization.
-
-For example:
-
-```text
-logical blocks
-
-A → ndarray(shape=(4, 8, 16))
-B → ndarray(shape=(4, 8, 16))
-C → ndarray(shape=(4, 8, 16))
-```
-
-may later be lowered temporarily to
-
-```text
-execution bucket
-
-ndarray(shape=(3, 4, 8, 16))
-               ↑
-            block axis
-```
-
-for a batched operation.
-
-```text
-               logical TensorMap
-                      │
-                      ▼
-              execution lowering
-                      │
-          ┌───────────┼───────────┐
-          │           │           │
-        stack       reshape    transpose
-          │           │           │
-          └───────────┼───────────┘
-                      │
-                 batched kernel
-                      │
-                      ▼
-               logical TensorMap
-```
-
-Thus:
-
-```text
-logical representation
-        !=
-execution representation
-```
-
-Storage optimization should not leak into the public mathematical API.
+This prevents the `Leg` type from becoming a container for global categorical state.
 
 ---
 
 # Fusion trees
 
-For Abelian symmetry, a tuple of external charges can often determine the fusion channel uniquely.
-
-For example, in U(1),
-
-```math
-q_1 \otimes q_2
-\longrightarrow
-q_1+q_2.
-```
-
-Non-Abelian fusion is different.
-
-For SU(2),
-
-```math
-j_1\otimes j_2
-```
-
-may contain several sectors.
-
-For three factors, a left-associated fusion tree is
-
-```text
-j1       j2       j3
- \       /
-  \     /
-    j12
-      \
-       \
-        J
-```
-
-The intermediate sector $j_{12}$ is part of the basis.
-
-Therefore the external sectors
-
-```math
-(j_1,j_2,j_3)
-```
-
-and final sector $J$ are not sufficient to identify a reduced component.
-
-`TeNeT-py` represents this structure explicitly.
-
-```python
-tree = FusionTree(
-    uncoupled=(j1, j2, j3),
-    intermediate=(j12,),
-    coupled=J,
-)
-```
-
-The initial implementation should use one canonical tree convention, such as left association.
-
-Other tree bases are reached through explicit recoupling transformations rather than by introducing arbitrary tree topology immediately.
-
----
-
-## Fusion multiplicity
-
-For a general fusion rule,
+For non-Abelian fusion,
 
 ```math
 a\otimes b
 =
-\bigoplus_c N_{ab}^{c}\,c.
+\bigoplus_c N_{ab}^c\,c.
 ```
 
-If
+External sectors alone may not specify a basis.
+
+For three objects, a left-associated basis can contain
+
+```text
+a        b        c
+ \      /
+    e
+     \
+      \
+       d
+```
+
+where the intermediate sector \(e\) is part of the basis.
+
+With fusion multiplicity, additional labels are required:
 
 ```math
-N_{ab}^{c}>1,
+\mu = 1,\ldots,N_{ab}^{e}.
 ```
 
-multiple independent fusion vertices connect the same sectors.
-
-`FusionTree` should therefore be capable of carrying fusion-multiplicity labels at its internal vertices.
-
-These labels are **categorical basis data**, not external degeneracy axes.
-
-The initial design therefore treats fusion multiplicity as part of the fusion-tree structure.
-
-Schematically:
+A conceptual representation is:
 
 ```python
 FusionTree(
     uncoupled=(a, b, c),
-    intermediate=(x,),
-    multiplicities=(mu1, mu2),
-    coupled=y,
+    intermediate=(e,),
+    multiplicities=(mu0, mu1),
+    coupled=d,
 )
 ```
 
-The exact public representation can evolve, but fusion multiplicity should not be confused with the degeneracy dimensions stored in `GradedSpace`.
+The exact representation may evolve, but the design invariant is:
+
+> Fusion channels and fusion multiplicities are categorical basis labels, not ndarray dimensions.
+
+---
+
+# Tensor-level fusion basis
+
+Since every tensor still has an underlying domain and codomain, its reduced data can naturally use a pair of fusion trees:
+
+```text
+output fusion/splitting tree
+            │
+      coupled sector c
+            │
+input fusion tree
+```
+
+Schematically:
+
+```text
+C1        C2        C3
+ \         |        /
+   output fusion tree
+           |
+           c
+           |
+    input fusion tree
+        /       \
+       D1       D2
+```
+
+This retains the main TensorMap advantage:
+
+```math
+T
+\simeq
+\bigoplus_c
+B_c \otimes \operatorname{id}_c.
+```
+
+The coupled-sector matrices \(B_c\) remain available for:
+
+- composition;
+- SVD;
+- QR;
+- eigendecomposition;
+- polar decomposition;
+- matrix functions.
+
+The difference is that this matrix representation is no longer forced onto the public axis layout.
 
 ---
 
 # Block keys
 
-A tensor map contains a fusion tree for the codomain and a fusion tree for the domain.
-
-A reduced block is therefore indexed by
+A logical reduced component can be identified by a pair of compatible trees:
 
 ```python
-BlockKey(
-    codomain_tree=...,
-    domain_tree=...,
+FusionBlockKey(
+    output_tree=...,
+    input_tree=...,
 )
 ```
 
-The two trees must have compatible coupled sectors.
+with compatible coupled sector.
 
-For an invariant tensor map:
+The block key contains categorical information.
+
+The corresponding value contains only numerical degeneracy data.
 
 ```python
-key.codomain_tree.coupled == key.domain_tree.coupled
+Mapping[FusionBlockKey, Array]
 ```
 
-Conceptually:
+is therefore a natural initial logical representation.
+
+---
+
+# Reduced blocks follow public ndarray axes
+
+For a fixed fusion-tree pair and fixed external sectors, the reduced data form an ordinary multidimensional tensor.
+
+Suppose the public leg order is
 
 ```text
-       codomain tree                      domain tree
-
-C1         C2        C3                 D1         D2
- \         /                             \         /
-  \       /                               \       /
-     c12                                     d12
-       \                                     /
-        \                                   /
-         └──────── coupled sector ─────────┘
+(C1, D1, C2, D2)
 ```
 
-The canonical storage model is:
+with sector degeneracies
+
+```text
+(m_c1, m_d1, m_c2, m_d2).
+```
+
+Then the corresponding block is stored with
 
 ```python
-Mapping[BlockKey, Array]
+block.shape == (
+    m_c1,
+    m_d1,
+    m_c2,
+    m_d2,
+)
 ```
 
-where `Array` is a backend-native multidimensional tensor.
+in the same order as the public tensor axes.
+
+This is an important design choice.
+
+The logical block does **not** need to be stored as
+
+```text
+all output degeneracies × all input degeneracies
+```
+
+merely because the tensor has TensorMap semantics.
+
+When matrix linear algebra is required, the relevant block data are lowered to the appropriate matrix layout.
+
+Thus:
+
+```text
+logical block
+     multidimensional ndarray
+             │
+             ▼
+temporary map lowering
+             │
+             ▼
+coupled-sector matrix
+             │
+             ▼
+BLAS / SVD / QR / ...
+```
+
+This gives ndarray-style storage semantics without discarding the map interpretation.
 
 ---
 
 # Three kinds of indices
 
-A central design rule is to keep three kinds of indices separate.
+The implementation must keep three different notions of index separate.
 
-## 1. Categorical indices
+## 1. Public tensor axes
+
+These correspond to tensor legs.
 
 Examples:
 
-- U(1) charge $q$;
-- SU(2) spin $j$;
-- intermediate fusion sectors;
-- fusion multiplicity labels;
-- fusion-tree basis.
+```text
+axis 0
+axis 1
+axis 2
+```
 
-These belong to structural Python objects.
+They are visible to APIs such as:
 
-They are not ndarray axes.
+```python
+transpose
+tensordot
+einsum
+svd(..., axes=...)
+```
 
 ---
 
 ## 2. Reduced degeneracy indices
 
-For a sector $a$ with degeneracy $m_a$,
+For sector \(a\) with multiplicity \(m_a\),
 
 ```math
-\alpha=1,\ldots,m_a
+\alpha = 1,\ldots,m_a
 ```
 
 is a numerical index.
 
-These indices become ndarray axes.
+These are actual ndarray dimensions inside reduced blocks.
 
-For example:
+For example,
 
 ```math
 A_{\alpha\beta\gamma}
 ```
 
-is stored as:
+may be represented by
 
 ```python
-A.shape == (m_a, m_b, m_c)
+block.shape == (m_a, m_b, m_c)
 ```
 
 ---
 
-## 3. Irrep basis indices
+## 3. Categorical basis indices
 
-An SU(2) irrep $j$ has basis indices
+Examples include:
+
+- sector labels;
+- intermediate fusion sectors;
+- fusion multiplicity;
+- fusion-tree labels;
+- coupled sectors.
+
+These are static structural metadata.
+
+They are **not** ndarray axes.
+
+---
+
+## 4. Irrep basis indices
+
+An SU(2) sector \(j\) also has magnetic quantum-number indices
 
 ```math
-m=-j,-j+1,\ldots,j.
+m=-j,\ldots,j.
 ```
 
-These indices are encoded in symmetry tensors such as Clebsch-Gordan coefficients.
+These are represented implicitly by symmetry tensors and are absent from the reduced numerical data.
 
-They are not explicitly stored in the reduced block.
+Thus:
 
 ```text
-full physical leg
-       │
-       ├── sector label
-       │      └── categorical metadata
-       │
-       ├── degeneracy index
-       │      └── ndarray axis
-       │
-       └── irrep basis index
-              └── encoded by symmetry tensors
+physical tensor leg
+        │
+        ├── public leg identity
+        │
+        ├── sector
+        │       categorical
+        │
+        ├── reduced degeneracy index
+        │       ndarray
+        │
+        └── irrep basis index
+                implicit symmetry structure
 ```
 
 ---
 
 # Symmetry providers
 
-Symmetry-specific mathematics should be provided through capabilities rather than central branching.
+Symmetry-specific mathematics is supplied through capabilities rather than central branching.
 
 Avoid:
 
@@ -730,11 +1048,11 @@ if symmetry == "u1":
     ...
 elif symmetry == "su2":
     ...
+elif symmetry == "fibonacci":
+    ...
 ```
 
-Instead, tensor algorithms request operations from a provider.
-
-A minimal initial interface may look conceptually like:
+Instead:
 
 ```python
 class FusionProvider(Protocol):
@@ -749,300 +1067,754 @@ class FusionProvider(Protocol):
         ...
 ```
 
-Later capabilities may include:
+Additional capabilities can include:
 
 ```text
 fusion multiplicity
+rigidity
+evaluation
+coevaluation
+pivotal structure
 F-symbols
 R-symbols
-evaluation maps
-coevaluation maps
-pivotal data
 Frobenius-Schur data
+braiding type
+categorical coefficient dtype
 ```
+
+Tensor algorithms dispatch on the capabilities they require.
+
+For example:
 
 ```text
-                        tensor algorithms
-                               │
-                               ▼
-                        provider interface
-                               │
-            ┌──────────────────┼──────────────────┐
-            │                  │                  │
-           U1                 SU2             Fibonacci
+transpose
+    requires permutation capability
+
+repartition
+    requires rigidity
+
+recouple
+    requires F-symbols
+
+braid
+    requires R-symbols
 ```
 
-The provider layer is independent of the ndarray backend.
+This keeps symmetry definitions independent from the numerical backend.
 
 ---
 
-## Initial providers
+# Initial providers
 
-### Trivial symmetry
-
-There is one sector.
-
-This provider is useful for verifying that `TensorMap` reduces naturally to ordinary dense tensor algebra.
-
----
-
-### U(1)
-
-The tensor unit is charge $0$.
-
-Duality is
-
-```math
-q^*=-q.
-```
-
-Fusion is
-
-```math
-q_1\otimes q_2
-=
-q_1+q_2.
-```
-
----
-
-### SU(2)
-
-Represent spin using twice-spin integers:
-
-```python
-SU2Sector(two_j=0)  # j = 0
-SU2Sector(two_j=1)  # j = 1/2
-SU2Sector(two_j=2)  # j = 1
-```
-
-This avoids floating-point sector labels.
-
-The fusion outcomes satisfy
-
-```math
-|j_1-j_2|
-\leq
-j
-\leq
-j_1+j_2,
-```
-
-with unit spacing in $j$.
-
-Equivalently, in twice-spin representation the allowed values differ by two.
-
-SU(2) should be supported from the first structural milestone so that the design is genuinely non-Abelian from the beginning.
-
----
-
-# Duality
-
-Duality is part of the categorical structure rather than array storage.
-
-A graded space
-
-```math
-V
-=
-\bigoplus_a
-\mathbb{C}^{m_a}\otimes V_a
-```
-
-has dual sectors $a^*$ with the corresponding degeneracies.
-
-A tensor map
-
-```math
-T\in\mathrm{Hom}(D,C)
-```
-
-can be viewed as an oriented tensor in
-
-```math
-C\otimes D^*.
-```
+The first structural implementation should include at least:
 
 ```text
-TensorMap
-
-       C1       C2
-        ↑        ↑
-        │        │
-        └─── T ──┘
-             ↑
-             D
-
-oriented representation
-
-       C1   C2   D*
+Trivial
+U(1)
+SU(2)
 ```
 
-Therefore moving a leg from codomain to domain must not be defined as only an ndarray axis move.
+SU(2) should be present early.
 
-For a general rigid category, it may involve nontrivial categorical transformations.
+A design tested only with Abelian fusion can accidentally encode assumptions that fail once intermediate fusion channels become non-unique.
 
----
-
-# Array operations versus categorical operations
-
-The following concepts must remain distinct:
+The initial non-Abelian implementation should therefore validate from the beginning that:
 
 ```text
-ndarray transpose
-categorical permutation
-F-move
-braiding
-adjoint
-moving a leg between domain and codomain
+external sectors
+        !=
+complete fusion basis
 ```
-
-For a particular reduced block, a categorical operation may eventually lower to operations such as:
-
-```python
-ar.do("transpose", block, axes)
-```
-
-but the symmetry layer decides whether additional coefficients or changes of fusion-tree basis are required.
-
-For example, a recoupling transformation may have the schematic form
-
-```math
-B_{\tau'}
-=
-\sum_{\tau}
-F_{\tau'\tau} A_{\tau}.
-```
-
-Here $\tau$ and $\tau'$ label fusion-tree channels.
-
-The dense backend only performs the linear combination.
-
-The categorical layer determines its meaning.
 
 ---
 
-# Array backend
+# Array API philosophy
 
-## `autoray`
+`SymmetricTensor` should look like an array where doing so is mathematically meaningful.
 
-`TeNeT-py` uses `autoray` as the numerical dispatch layer.
+It should not pretend to be an arbitrary dense ndarray.
 
-The core implementation should avoid explicit backend branching such as:
+The intended surface includes properties such as:
 
 ```python
-if isinstance(x, np.ndarray):
-    ...
-elif isinstance(x, jax.Array):
-    ...
-elif isinstance(x, torch.Tensor):
-    ...
+T.ndim
+T.shape
+T.dtype
+T.backend
+T.device
 ```
+
+and operations such as:
+
+```python
+tenet.transpose
+tenet.tensordot
+tenet.einsum
+tenet.trace
+tenet.conj
+tenet.linalg.svd
+tenet.linalg.qr
+```
+
+where their categorical meaning is well-defined.
+
+---
+
+# Do not subclass `numpy.ndarray`
+
+The tensor itself should remain a Python structural object containing backend-native arrays.
+
+It should not subclass:
+
+```python
+numpy.ndarray
+jax.Array
+torch.Tensor
+```
+
+The symmetry metadata and block structure do not fit naturally into any one of these storage classes.
 
 Instead:
 
-```python
-import autoray as ar
-
-ar.do("reshape", x, shape)
-ar.do("transpose", x, axes)
-ar.do("conj", x)
-ar.do("matmul", x, y)
-ar.do("tensordot", x, y, axes=axes)
+```text
+SymmetricTensor
+    │
+    ├── static categorical structure
+    │
+    └── backend arrays
 ```
 
-The purpose of the internal array layer is not to wrap all of NumPy.
+The backend arrays themselves remain completely native.
 
-It should expose only the small set of dense primitives required by tensor operations.
+---
 
-```text
-              categorical operation
-                        │
-                        ▼
-               numerical lowering
-                        │
-            ┌───────────┼───────────┐
-            │           │           │
-       transpose     matmul      tensordot
-            │           │           │
-            └───────────┼───────────┘
-                        │
-                     autoray
-                        │
-           ┌────────────┼────────────┐
-           │            │            │
-         NumPy         JAX        PyTorch
+# Do not implicitly densify
+
+Operations such as
+
+```python
+np.asarray(T)
+```
+
+should not silently expand a symmetric tensor to its full dense representation.
+
+Dense expansion may:
+
+- require Clebsch-Gordan tensors;
+- allocate dramatically more memory;
+- destroy the block-sparse representation;
+- obscure categorical structure.
+
+Dense conversion should remain explicit:
+
+```python
+T.to_dense()
 ```
 
 ---
 
-## Backend consistency
+# Array protocol integration
 
-One `TensorMap` should normally use one array backend.
+The goal is **array-protocol compatibility**, not universal ndarray substitutability.
+
+Useful integration points include:
+
+```text
+autoray dispatch
+Python Array API namespace
+JAX PyTree support
+backend-native leaves
+tensor-network contraction planners
+```
 
 For example:
 
 ```python
-all NumPy blocks
+xp = T.__array_namespace__()
+C = xp.tensordot(A, B, axes=((2,), (0,)))
 ```
 
-or
+may dispatch back into `TeNeT-py`.
+
+Likewise:
 
 ```python
-all JAX blocks
+import autoray as ar
+
+C = ar.do(
+    "tensordot",
+    A,
+    B,
+    axes=((2,), (0,)),
+)
 ```
 
-rather than a mixture.
-
-Backend changes should be explicit:
-
-```python
-T_jax = T.to_backend("jax")
-T_numpy = T.to_backend("numpy")
-```
-
-This matters because changing backend may involve device transfer or synchronization.
+can use the symmetric implementation while the reduced blocks are themselves dispatched through `autoray`.
 
 ---
 
-# NumPy
+# Supported ndarray operations should be explicit
 
-NumPy should serve as the reference backend.
+Not every NumPy operation is meaningful for symmetric tensors.
 
-Core mathematical operations should be testable without JAX.
+For example, arbitrary:
 
-This gives:
+```text
+broadcasting
+physical-index slicing
+elementwise nonlinear functions
+arbitrary reshape
+```
 
-- simple reference implementations;
-- easier debugging;
-- deterministic structural tests;
-- separation of categorical correctness from compiler behavior.
+can change or destroy symmetry structure.
+
+Therefore the library should define a deliberate supported array surface rather than forwarding every unknown operation to the backend.
+
+The rule is:
+
+> An ndarray-style API is provided when the operation has a clear categorical interpretation.
+
+Unsupported operations should fail clearly rather than silently produce a mathematically different object.
+
+---
+
+# `reshape` and fusion
+
+A generic dense reshape such as
+
+```python
+x.reshape(6, 20, 7)
+```
+
+does not by itself specify how graded representation spaces should be fused.
+
+Therefore the primitive categorical operation is:
+
+```python
+T.fuse(...)
+```
+
+with an inverse:
+
+```python
+T.unfuse(...)
+```
+
+A NumPy-like `reshape` may be provided only when the requested transformation can be resolved unambiguously into leg fusion or splitting.
+
+Conceptually:
+
+```text
+public reshape request
+        │
+        ▼
+resolve leg grouping
+        │
+        ▼
+categorical fusion
+        │
+        ▼
+backend reshape / concatenate
+```
+
+The distinction between logical and physical fusion should remain available.
+
+For example:
+
+```text
+logical fusion
+    update axis structure while retaining fine block layout
+
+physical fusion
+    materialize larger reduced blocks for efficient kernels
+```
+
+These need not initially be separate public APIs, but the architecture should permit the distinction.
+
+---
+
+# Contraction
+
+The main tensor-network API should be axis-oriented.
+
+For example:
+
+```python
+C = tenet.tensordot(
+    A,
+    B,
+    axes=((2, 3), (0, 1)),
+)
+```
+
+or:
+
+```python
+C = tenet.einsum(
+    "abcd,cdef->abef",
+    A,
+    B,
+)
+```
+
+The einsum equation describes the **network-level contraction**, not the reduced block kernel directly.
+
+The implementation performs:
+
+```text
+einsum equation
+       │
+       ▼
+match public legs
+       │
+       ▼
+validate categorical compatibility
+       │
+       ▼
+insert required bends / evaluations
+       │
+       ▼
+determine compatible fusion channels
+       │
+       ▼
+recouple / braid if required
+       │
+       ▼
+construct output structure
+       │
+       ▼
+lower to backend array operations
+       │
+       ▼
+SymmetricTensor
+```
+
+Thus users can write ordinary tensor-network notation while the categorical layer handles the nontrivial structure.
+
+---
+
+# Composition remains first-class
+
+TensorMap composition is a special and important operation.
+
+For:
+
+```math
+A:V\to W,
+\qquad
+B:U\to V,
+```
+
+the operation
+
+```python
+C = A @ B
+```
+
+can represent
+
+```math
+C=A\circ B:U\to W.
+```
+
+The implementation can verify exact domain/codomain compatibility and exploit the coupled-sector block-matrix representation directly.
+
+Thus the ndarray API does not replace TensorMap operations.
+
+Both are available:
+
+```text
+einsum / tensordot
+    tensor-network view
+
+compose / @
+    morphism view
+```
+
+They operate on the same underlying `SymmetricTensor`.
+
+---
+
+# Bending and contraction
+
+A general einsum may contract legs that are not already arranged as direct TensorMap composition.
+
+The planner may therefore need to transform:
+
+```text
+OUT ↔ IN
+```
+
+internally.
+
+Such transformations use rigidity and must be represented explicitly in the structural plan.
+
+This is one reason to retain full TensorMap semantics even though the user-facing syntax is ndarray-like.
+
+---
+
+# Conjugation, duality, and adjoint are distinct
+
+The API should not conflate:
+
+```text
+complex conjugation
+dual object
+categorical adjoint
+axis reversal
+input/output swap
+```
+
+For example:
+
+```python
+T.conj()
+```
+
+and
+
+```python
+T.adjoint()
+```
+
+are not generally the same operation.
+
+Likewise:
+
+```python
+leg.dualized()
+```
+
+changes the categorical object associated with a leg, while:
+
+```python
+T.repartition(...)
+```
+
+changes its location between domain and codomain.
+
+These operations may coincide numerically in simple vector-space cases but should remain semantically distinct.
+
+---
+
+# Linear algebra
+
+TensorMap semantics become particularly valuable for matrix decompositions.
+
+For an arbitrary tensor:
+
+```python
+U, S, Vh = tenet.linalg.svd(
+    T,
+    axes=((0, 2), (1, 3)),
+)
+```
+
+the user selects the matrix bipartition using ndarray axes.
+
+The lowering is:
+
+```text
+SymmetricTensor
+       │
+       ▼
+requested axis partition
+       │
+       ▼
+temporary TensorMap representation
+       │
+       ▼
+fusion-tree basis transformation
+       │
+       ▼
+coupled-sector block matrices B_c
+       │
+       ▼
+backend SVD
+       │
+       ▼
+symmetric U, S, Vh
+```
+
+If the current input/output partition already matches the requested split, the temporary map conversion can be trivial.
+
+A map-oriented convenience API may also exist:
+
+```python
+U, S, Vh = T.as_map().svd()
+```
+
+using the current domain/codomain directly.
+
+Thus both styles are supported:
+
+```text
+ndarray style
+    svd(T, axes=(left, right))
+
+TensorMap style
+    T.as_map().svd()
+```
+
+---
+
+# Why retain the coupled-sector matrix representation?
+
+For a symmetric morphism, Schur-type decomposition gives the reduced form
+
+```math
+T
+\simeq
+\bigoplus_c
+B_c \otimes \operatorname{id}_c.
+```
+
+The matrices \(B_c\) are the natural objects for:
+
+```text
+composition
+SVD
+QR
+eigh
+polar decomposition
+matrix exponential
+```
+
+The public ndarray representation should therefore not eliminate this structure.
+
+Instead, the library should make it an internal or explicit map-level view.
+
+```text
+array-oriented logical block
+           │
+           ▼
+MapLayout
+           │
+           ▼
+coupled-sector matrix B_c
+```
+
+This is one of the main places where TensorMap semantics provide real computational value rather than merely mathematical notation.
+
+---
+
+# Logical storage versus execution layout
+
+The logical representation should not dictate the eventual GPU execution format.
+
+Initially:
+
+```python
+blocks: Mapping[FusionBlockKey, Array]
+```
+
+is attractive because it is:
+
+- simple;
+- explicit;
+- backend independent;
+- easy to inspect;
+- easy to test.
+
+For example:
+
+```text
+key A → jax.Array(shape=(2, 4, 3))
+key B → jax.Array(shape=(2, 4, 3))
+key C → jax.Array(shape=(5, 1, 8))
+```
+
+However, GPU execution may prefer:
+
+```text
+stack blocks with identical shape
+batch GEMMs
+group contractions by kernel shape
+```
+
+Therefore later lowering may produce:
+
+```text
+logical blocks
+      │
+      ▼
+shape buckets
+      │
+      ├── stack
+      ├── reshape
+      ├── gather
+      └── coefficient transform
+      │
+      ▼
+batched backend kernels
+```
+
+The invariant is:
+
+```text
+logical representation
+        !=
+execution representation
+```
+
+Optimization must remain below the mathematical API.
+
+---
+
+# No custom ndarray implementation
+
+`TeNeT-py` should not implement:
+
+```text
+its own dense ndarray
+its own stride system
+its own GPU memory allocator
+its own autograd engine
+```
+
+Backend arrays already solve these problems.
+
+The categorical layer should instead produce numerical programs expressed using a small collection of backend operations such as:
+
+```text
+transpose
+reshape
+stack
+concatenate
+tensordot
+einsum
+matmul
+svd
+qr
+eigh
+```
+
+---
+
+# Backend dispatch
+
+`autoray` can provide the initial backend abstraction.
+
+Conceptually:
+
+```python
+ar.do("transpose", x, axes)
+ar.do("reshape", x, shape)
+ar.do("matmul", x, y)
+ar.do("einsum", equation, *arrays)
+```
+
+The array-dispatch layer should remain intentionally small.
+
+Avoid creating a second numerical framework on top of `autoray`.
+
+The architecture is:
+
+```text
+categorical operation
+       │
+       ▼
+structural lowering
+       │
+       ▼
+small numerical IR
+       │
+       ▼
+autoray
+       │
+   ┌───┼────┐
+   │   │    │
+ NumPy JAX PyTorch
+```
+
+---
+
+# Structural planning
+
+Categorical analysis should be separated from numerical execution.
+
+A contraction should conceptually generate a static plan containing information such as:
+
+```text
+input block matches
+output block keys
+fusion-tree transforms
+F coefficients
+R coefficients
+axis permutations
+matrix reshapes
+accumulation targets
+```
+
+The numerical backend then executes only the resulting array program.
+
+```text
+SymmetricTensor operation
+            │
+            ▼
+     StructurePlanner
+            │
+            ▼
+       OperationPlan
+            │
+      static metadata
+            │
+            ▼
+     numerical program
+            │
+            ▼
+      backend arrays
+```
+
+This separation is particularly important for JAX.
+
+---
+
+# Plan caching
+
+Structural plans are determined primarily by:
+
+```text
+symmetry provider
+provider gauge/convention
+leg spaces
+leg sides
+leg dualities
+fusion basis
+operation
+axis pattern
+```
+
+They are often reusable across many numerical evaluations.
+
+This is especially important in:
+
+- VMC;
+- variational optimization;
+- imaginary-time evolution;
+- repeated PEPS contractions;
+- neural quantum states;
+- gradient calculations.
+
+The categorical planning cost should therefore be amortizable.
 
 ---
 
 # JAX
 
-JAX is a first-class backend, but it does not define the core tensor representation.
+JAX should be a first-class backend but not define the tensor model.
 
-For a JAX-backed tensor:
-
-```python
-blocks[key] = jax.Array(...)
-```
-
-the categorical structure remains ordinary immutable Python metadata.
-
-The intended PyTree model is:
+A JAX-backed tensor should conceptually be a PyTree:
 
 ```text
-TensorMap
+SymmetricTensor
 │
-├── static structure
-│   ├── domain
-│   ├── codomain
-│   ├── symmetry provider
-│   ├── fusion trees
-│   └── block keys
+├── static auxiliary data
+│   ├── legs
+│   ├── spaces
+│   ├── fusion basis
+│   ├── block keys
+│   └── provider identity
 │
 └── dynamic leaves
     ├── jax.Array
@@ -1050,198 +1822,338 @@ TensorMap
     └── ...
 ```
 
-Conceptually:
+Only reduced numerical data are differentiable leaves.
+
+Categorical metadata are static.
+
+A canonical flattening may be:
 
 ```python
 children = tuple(
-    blocks[key]
-    for key in canonical_block_order
+    T.blocks[key]
+    for key in T.structure.block_order
 )
 
-metadata = TensorMapStructure(
-    codomain=codomain,
-    domain=domain,
-    block_keys=canonical_block_order,
+aux = T.structure
+```
+
+with reconstruction:
+
+```python
+SymmetricTensor.from_structure_and_blocks(
+    aux,
+    children,
 )
 ```
 
-This allows the reduced numerical data to participate in:
+---
+
+# Automatic differentiation
+
+For fixed tensor structure, operations should be differentiable through the backend.
+
+For example:
 
 ```text
-jax.jit
-jax.grad
+F-move
+    linear combination of blocks
+
+contraction
+    einsum / matmul
+
+permutation
+    transpose + linear transforms
+
+norm
+    backend reduction
+```
+
+can all participate naturally in AD.
+
+The categorical coefficients are constants.
+
+The trainable variables are the reduced block entries.
+
+Thus:
+
+```math
+\frac{\partial E}
+     {\partial A^{(\tau)}_{\alpha\beta\cdots}}
+```
+
+is computed by the backend AD system while the categorical labels \(\tau\) remain static.
+
+---
+
+# Structure-changing differentiation
+
+Operations that change block dimensions require additional care.
+
+Examples include:
+
+```text
+SVD truncation
+charge-sector selection
+data-dependent bond-dimension allocation
+removing zero sectors
+```
+
+These operations may produce data-dependent Python structure or array shapes.
+
+That conflicts with ordinary JAX JIT assumptions.
+
+The architecture should therefore distinguish:
+
+```text
+fixed-structure differentiable operations
+```
+
+from
+
+```text
+structure-changing operations
+```
+
+Possible strategies for the latter include:
+
+- perform structural decisions outside JIT;
+- use static truncation dimensions;
+- use masks or padding;
+- explicitly recompile after a structural change.
+
+The library should not hide this distinction.
+
+---
+
+# VMC and neural quantum states
+
+A major goal is to make symmetric tensor structures usable inside ML-style computational workflows.
+
+For example:
+
+```text
+symmetric PEPS / MPS parameters
+        │
+        ▼
+JAX PyTree of reduced arrays
+        │
+        ▼
+batched amplitude evaluation
+        │
+        ▼
 jax.vmap
+        │
+        ▼
+Monte Carlo samples
+        │
+        ▼
+energy / fidelity objective
+        │
+        ▼
+jax.grad
 ```
 
-while the sector and fusion structure remains static.
-
-Different block structures may naturally lead to different JAX specializations.
-
-That is expected.
-
----
-
-# Structural planning and numerical execution
-
-Long-term tensor operations should separate categorical planning from backend execution.
+Likewise, hybrid ansätze can combine:
 
 ```text
-                 TensorMap operation
-                        │
-                        ▼
-                categorical analysis
-                        │
-            ┌───────────┼───────────┐
-            │           │           │
-        sector match   F-move     braiding
-            │           │           │
-            └───────────┼───────────┘
-                        │
-                        ▼
-                 numerical program
-                        │
-           ┌────────────┼────────────┐
-           │            │            │
-       transpose      reshape     matmul
-           │            │            │
-           └────────────┼────────────┘
-                        │
-                     autoray
-                        │
-                        ▼
-                backend execution
+neural network parameters
++
+symmetric tensor parameters
 ```
 
-This is particularly important for JAX: Python-level fusion-tree logic should not be mixed unnecessarily with compiled numerical kernels.
+inside the same differentiable program.
+
+The library should make this composition straightforward rather than imposing a separate tensor-network runtime abstraction.
+
+This is one of the main reasons to keep reduced data as ordinary backend arrays.
 
 ---
 
-# Contraction
+# Integration with tensor-network tooling
 
-A general contraction
+External contraction planners should not need to understand fusion trees.
 
-```math
-C = A \cdot B
-```
-
-should eventually follow:
+For path optimization, the relevant information is often only:
 
 ```text
-TensorMap A + TensorMap B
-              │
-              ▼
-    validate contracted spaces
-              │
-              ▼
-      determine compatible
-       fusion-tree channels
-              │
-              ▼
-       perform required
-       basis transformations
-              │
-              ▼
-     construct output blocks
-              │
-              ▼
-    backend-native contractions
-              │
-              ▼
-          TensorMap C
+tensor labels
+axis labels
+effective dimensions
+output labels
 ```
 
-The initial implementation should prioritize correctness and clear semantics over contraction scheduling.
+Thus an einsum network can expose a dense-style planning problem to tools such as:
+
+```text
+opt_einsum
+cotengra
+```
+
+while `TeNeT-py` retains responsibility for actual symmetric execution.
+
+```text
+SymmetricTensor network
+         │
+         ├── metadata → contraction planner
+         │
+         │                 │
+         │                 ▼
+         │            contraction path
+         │
+         ▼
+categorical execution planner
+         │
+         ▼
+reduced block kernels
+```
+
+The external planner chooses **which tensors to contract**.
+
+It does not decide:
+
+```text
+fusion channels
+recoupling
+fermionic signs
+braiding
+block layout
+```
 
 ---
 
-# Dense expansion
+# Braiding is the important limit of ndarray syntax
 
-A future explicit operation
+For ordinary symmetric monoidal categories, axis permutation has a canonical symmetric swap.
+
+For fermionic or super vector spaces, permutation carries a canonical graded sign.
+
+These cases can fit naturally behind familiar APIs such as:
 
 ```python
-T.to_dense()
+transpose
+einsum
+tensordot
 ```
 
-can reconstruct the full physical tensor.
+For a genuinely braided category, however, a permutation is not uniquely specified by the final axis order.
 
-For SU(2), schematically:
+For example, exchanging two anyon lines can involve:
 
 ```math
-T_{(\alpha_1,m_1)(\alpha_2,m_2)(\alpha_3,m_3)}
-=
-\sum_{\tau}
-A^{(\tau)}_{\alpha_1\alpha_2\alpha_3}
-C^{(\tau)}_{m_1m_2m_3}.
+R
 ```
 
-Here:
+or
 
-- $\alpha_i$ are reduced degeneracy indices;
-- $m_i$ are SU(2) irrep basis indices;
-- $\tau$ denotes fusion-tree data;
-- $A^{(\tau)}$ is the stored reduced tensor;
-- $C^{(\tau)}$ contains the corresponding symmetry coefficients.
-
-Physical irrep indices therefore appear only after explicit dense expansion.
-
-Dense expansion is not the canonical storage format.
-
----
-
-# Initial package structure
-
-```text
-TeNeT-py/
-│
-├── src/
-│   └── tenet/
-│       ├── __init__.py
-│       │
-│       ├── symmetry/
-│       │   ├── __init__.py
-│       │   ├── base.py
-│       │   ├── trivial.py
-│       │   ├── u1.py
-│       │   └── su2.py
-│       │
-│       ├── array/
-│       │   ├── __init__.py
-│       │   └── dispatch.py
-│       │
-│       ├── space.py
-│       ├── fusion_tree.py
-│       └── tensor_map.py
-│
-├── tests/
-│   ├── test_space.py
-│   ├── test_fusion_tree.py
-│   ├── test_tensor_map.py
-│   ├── test_backends.py
-│   └── test_jax.py
-│
-├── pyproject.toml
-└── README.md
+```math
+R^{-1},
 ```
 
-The `array` layer should remain intentionally small.
+depending on over/under crossing.
 
-Do not build another array framework on top of `autoray`.
-
----
-
-# Initial API sketch
+A bare expression such as
 
 ```python
-import numpy as np
+T.transpose(1, 0, 2)
+```
 
-from tenet import GradedSpace, TensorMap
+does not encode that information.
+
+Therefore ndarray compatibility must depend on provider capabilities.
+
+Possible policy:
+
+```text
+symmetric category
+    ordinary ndarray permutation API
+
+fermionic / graded-symmetric category
+    ordinary API with automatic graded signs
+
+generic braided category
+    require explicit braid or planar contraction semantics
+```
+
+For example:
+
+```python
+T.braid(0, 1, over=True)
+```
+
+or:
+
+```python
+tenet.planar_einsum(...)
+```
+
+may be required.
+
+The library must not invent an implicit braid convention merely to imitate NumPy.
+
+Correct categorical semantics take priority over superficial API compatibility.
+
+---
+
+# Array operations versus categorical operations
+
+The following must remain conceptually distinct:
+
+```text
+backend ndarray transpose
+public tensor transpose
+F-move
+R-move
+bend / repartition
+dualization
+complex conjugation
+adjoint
+fusion
+```
+
+A high-level operation may lower to several of these.
+
+For example:
+
+```text
+T.transpose(...)
+       │
+       ├── reorder reduced axes
+       ├── recouple fusion tree
+       └── apply braid coefficients
+```
+
+depending on the provider and axis pattern.
+
+This distinction is a core architectural invariant.
+
+---
+
+# Example API
+
+Consider:
+
+```python
+from tenet import (
+    GradedSpace,
+    Leg,
+    SymmetricTensor,
+    IN,
+    OUT,
+)
+
 from tenet.symmetry import SU2, SU2Sector
+```
 
+Define sectors:
 
+```python
 half = SU2Sector(two_j=1)
 one = SU2Sector(two_j=2)
+```
 
+and graded spaces:
 
+```python
 V = GradedSpace(
     provider=SU2,
     sectors={
@@ -1258,110 +2170,229 @@ W = GradedSpace(
 )
 ```
 
-Suppose
+A tensor with ndarray-facing axis order
 
-```math
-T:
-W
-\longrightarrow
-V\otimes V.
+```text
+(V, W, V)
 ```
 
-After selecting valid fusion-tree pairs, its reduced blocks are ordinary arrays:
+can be constructed as:
 
 ```python
-blocks = {
-    key0: np.zeros((4, 3, 2)),
-    key1: np.zeros((3, 4, 2)),
-}
-
-T = TensorMap(
-    codomain=(V, V),
-    domain=(W,),
+T = SymmetricTensor(
+    legs=(
+        Leg(V, side=OUT),
+        Leg(W, side=IN),
+        Leg(V, side=OUT),
+    ),
     blocks=blocks,
 )
 ```
 
-The same categorical tensor may use JAX arrays:
+Then:
 
 ```python
-import jax.numpy as jnp
-
-blocks = {
-    key0: jnp.zeros((4, 3, 2)),
-    key1: jnp.zeros((3, 4, 2)),
-}
+T.ndim == 3
 ```
 
-Only the numerical backend changes.
+and conceptually:
 
-The `TensorMap` semantics do not.
+```python
+T.codomain == V @ V
+T.domain == W
+```
+
+even though the input axis occurs between the two output axes in public axis order.
 
 ---
 
-# Relationship to TeNeT
+# Array-style contraction
 
-`TeNeT-py` takes several categorical design ideas from the Rust [TeNeT](https://github.com/Ryo-wtnb11/TeNeT) project:
+Suppose:
 
-- explicit domain and codomain;
-- fusion-tree-based reduced tensors;
-- explicit duality;
-- provider-based symmetry data;
-- separation between tensor semantics and execution.
-
-It intentionally does **not** reproduce the Rust storage/runtime architecture.
-
-In particular, the Python implementation does not initially require:
-
-```text
-flat contiguous payloads
-block offsets
-custom storage traits
-manual scratch buffers
-native execution plans
-CUDA runtime infrastructure
+```python
+A.legs == (a, b, c)
+B.legs == (c_dual, d, e)
 ```
 
-These are execution-level choices rather than part of the mathematical `TensorMap` abstraction.
+Then:
+
+```python
+C = tenet.einsum(
+    "abc,cde->abde",
+    A,
+    B,
+)
+```
+
+is the preferred tensor-network syntax.
+
+The equation controls the public axes.
+
+The categorical planner controls how the contraction is actually represented and executed.
 
 ---
 
-# Relationship to symmray
+# Map-style composition
 
-The numerical storage philosophy is inspired by [symmray](https://github.com/jcmgray/symmray):
+For operator-like tensors:
 
-```text
-symmetry structure
-       +
-block key → backend-native ndarray
+```python
+C = A @ B
 ```
 
-`TeNeT-py` applies this principle to an explicit fusion-tree-based tensor-map representation.
+uses the map semantics directly.
+
+This requires the relevant domain and codomain spaces to match.
+
+No einsum equation is necessary.
+
+---
+
+# Factorization
+
+Array style:
+
+```python
+U, S, Vh = tenet.linalg.svd(
+    T,
+    axes=((0, 2), (1, 3)),
+)
+```
+
+Map style:
+
+```python
+U, S, Vh = T.as_map().svd()
+```
+
+Both ultimately use the same coupled-sector block-matrix implementation.
+
+---
+
+# Backend conversion
+
+Backend changes should be explicit:
+
+```python
+T_jax = T.to_backend("jax")
+T_torch = T.to_backend("torch")
+T_numpy = T.to_backend("numpy")
+```
+
+One tensor should normally use one numerical backend.
+
+The categorical structure is unchanged.
+
+Only the reduced numerical arrays move.
+
+---
+
+# Dense expansion
+
+Dense expansion remains explicit:
+
+```python
+dense = T.to_dense()
+```
+
+For an SU(2) tensor, schematically,
+
+```math
+T_{(\alpha_1,m_1)\cdots(\alpha_N,m_N)}
+=
+\sum_\tau
+A^{(\tau)}_{\alpha_1\cdots\alpha_N}
+C^{(\tau)}_{m_1\cdots m_N},
+```
+
+where:
+
+- \(\alpha_i\) are reduced degeneracy indices;
+- \(m_i\) are irrep basis indices;
+- \(\tau\) denotes fusion-basis information;
+- \(A^{(\tau)}\) is stored;
+- \(C^{(\tau)}\) is determined by the symmetry provider.
+
+Full irrep basis indices appear only in this explicit expansion.
+
+---
+
+# Proposed package structure
 
 ```text
-                          TeNeT-py
-                             │
-             ┌───────────────┴───────────────┐
-             │                               │
-     categorical semantics              array model
-             │                               │
-           TeNeT                          symmray
-             │                               │
-       domain/codomain               backend ndarrays
-       fusion trees                      autoray
-       duality
-       F / R data
-             │                               │
-             └───────────────┬───────────────┘
-                             │
-                          TeNeT-py
+TeNeT-py/
+│
+├── src/
+│   └── tenet/
+│       ├── __init__.py
+│       │
+│       ├── symmetry/
+│       │   ├── base.py
+│       │   ├── trivial.py
+│       │   ├── u1.py
+│       │   ├── su2.py
+│       │   └── ...
+│       │
+│       ├── space.py
+│       ├── leg.py
+│       ├── fusion_tree.py
+│       ├── structure.py
+│       ├── tensor.py
+│       ├── map_view.py
+│       │
+│       ├── ops/
+│       │   ├── basic.py
+│       │   ├── permutation.py
+│       │   ├── contraction.py
+│       │   ├── fusion.py
+│       │   └── linalg.py
+│       │
+│       ├── planning/
+│       │   ├── transform.py
+│       │   ├── contraction.py
+│       │   └── cache.py
+│       │
+│       ├── array/
+│       │   ├── dispatch.py
+│       │   ├── namespace.py
+│       │   └── jax.py
+│       │
+│       └── network/
+│           ├── einsum.py
+│           └── planning.py
+│
+├── tests/
+│   ├── symmetry/
+│   ├── tensor/
+│   ├── ops/
+│   ├── backends/
+│   └── integration/
+│
+└── pyproject.toml
+```
+
+There should no longer be a conceptual requirement that
+
+```text
+tensor_map.py
+```
+
+contain the main owning tensor abstraction.
+
+TensorMap functionality belongs mainly in:
+
+```text
+map_view
+structural lowering
+linear algebra
 ```
 
 ---
 
-# Roadmap
+# Initial implementation strategy
 
-## Milestone 1 — Structural foundation
+## Milestone 1 — Semantic foundation
 
 Implement:
 
@@ -1371,190 +2402,364 @@ Implement:
 - U(1);
 - SU(2);
 - `GradedSpace`;
-- `ProductSpace`;
-- canonical `FusionTree`;
+- `Leg`;
+- independent `side` and `dual`;
+- `FusionTree`;
 - fusion multiplicity labels;
-- `BlockKey`;
-- `TensorMap`;
-- backend-native multidimensional reduced blocks;
-- minimal `autoray` dispatch;
-- NumPy tests;
-- JAX PyTree tests.
+- `FusionBlockKey`;
+- `TensorStructure`;
+- `SymmetricTensor`;
+- derived `domain` and `codomain`;
+- NumPy reduced blocks.
 
-No general contraction yet.
+The first milestone should already demonstrate a genuinely non-Abelian SU(2) tensor.
 
 ---
 
-## Milestone 2 — Basic tensor operations
+## Milestone 2 — ndarray-style surface
 
 Implement:
 
+- `ndim`;
+- `shape`;
+- `dtype`;
+- backend detection;
 - addition;
 - scalar multiplication;
 - conjugation;
 - norm;
-- backend conversion;
-- structural equality and compatibility checks.
+- axis permutation;
+- explicit fusion/unfusion;
+- a limited Array API namespace;
+- `autoray` registration.
+
+At this stage, only operations with clear categorical definitions should be exposed.
 
 ---
 
-## Milestone 3 — Categorical transformations
+## Milestone 3 — TensorMap operations
 
-Add:
+Implement:
 
-- symmetry coefficients;
-- $F$-moves;
-- $R$-moves where applicable;
-- recoupling;
-- categorical permutations;
+- `as_map()`;
+- composition;
+- identity;
 - adjoint;
-- moving legs between domain and codomain.
+- repartition;
+- bending;
+- map compatibility checks.
+
+This milestone validates that the ndarray-facing representation still reproduces full TensorMap semantics.
 
 ---
 
-## Milestone 4 — Contraction
+## Milestone 4 — Non-Abelian basis transforms
 
-Implement general symmetric contraction:
+Implement:
+
+- \(F\)-moves;
+- recoupling;
+- duality coefficients;
+- categorical permutations;
+- Frobenius-Schur data where required;
+- \(R\)-moves for supported braided providers.
+
+The implementation should separate:
 
 ```text
-categorical analysis
-        │
-        ▼
-fusion-tree matching
-        │
-        ▼
-basis transformations
-        │
-        ▼
-autoray dense contractions
-        │
-        ▼
-output TensorMap
+structural plan
 ```
+
+from:
+
+```text
+backend execution
+```
+
+from the beginning.
 
 ---
 
-## Milestone 5 — Factorizations
+## Milestone 5 — `tensordot` and `einsum`
 
-Implement symmetry-aware:
+Implement general contraction through public axes.
+
+Pipeline:
+
+```text
+einsum
+  ↓
+axis matching
+  ↓
+categorical validation
+  ↓
+map/bending resolution
+  ↓
+fusion-tree matching
+  ↓
+basis transforms
+  ↓
+backend contractions
+  ↓
+output SymmetricTensor
+```
+
+Add path-planner integration only after pairwise contraction is correct.
+
+---
+
+## Milestone 6 — JAX and AD
+
+Implement:
+
+- PyTree registration;
+- static tensor structure;
+- dynamic reduced-array leaves;
+- `jax.grad`;
+- `jax.jit`;
+- `jax.vmap`;
+- fixed-structure contraction tests;
+- gradient tests against dense expansion.
+
+This is a primary project milestone rather than a later optional backend feature.
+
+---
+
+## Milestone 7 — Linear algebra
+
+Implement:
 
 - QR;
 - SVD;
 - eigendecomposition;
+- polar decomposition;
 - truncation;
-- reconstruction of graded bond spaces.
+- graded bond-space reconstruction.
 
-Changes of sector content should remain explicit structural operations.
+Both APIs should work:
 
----
-
-## Milestone 6 — Performance
-
-Optimize only after profiling.
-
-Possible optimizations include:
-
-- grouping blocks by shape;
-- stacked block execution;
-- batched matrix multiplication;
-- categorical-plan caching;
-- recoupling-transform caching;
-- JAX compilation specialization;
-- custom kernels where measurements justify them.
-
-These optimizations should not alter the public mathematical representation.
-
----
-
-# Design principles
-
-### `TensorMap` first, ndarray second
-
-The primary object is
-
-```math
-T\in\mathrm{Hom}(D,C),
+```python
+svd(T, axes=...)
 ```
 
-not an ndarray decorated with symmetry labels.
+and
 
-### Reduced blocks remain ordinary arrays
+```python
+T.as_map().svd()
+```
 
-Do not introduce custom dense storage without a measured reason.
+---
 
-### `autoray` handles numerical dispatch
+## Milestone 8 — ML and tensor-network integration
 
-Categorical code should not be tied to NumPy, JAX, or PyTorch.
+Target workflows such as:
 
-### JAX is a backend, not the tensor model
+- quimb-style tensor networks;
+- cotengra contraction planning;
+- differentiable MPS/PEPS;
+- tensor-network VMC;
+- variational PEPS;
+- hybrid NQS/TN ansätze;
+- batched wavefunction amplitudes.
 
-JAX integration should build on the same backend-independent `TensorMap` structure.
+The goal is not merely backend compatibility in unit tests.
 
-### Fusion trees are first-class objects
+The goal is composition with existing scientific-ML workflows.
 
-Non-Abelian basis information must remain explicit.
+---
 
-### Categorical indices are not array axes
+## Milestone 9 — Performance
 
-Sector labels, intermediate sectors, and fusion multiplicities belong to the structural layer.
+Optimize after profiling.
 
-Reduced degeneracy indices belong to ndarray axes.
+Candidate optimizations include:
 
-### Categorical operations are not ndarray operations
+- shape bucketing;
+- stacked reduced blocks;
+- batched GEMM;
+- grouped GEMM;
+- cached fusion transforms;
+- cached contraction plans;
+- static JAX specializations;
+- backend-specific fast paths;
+- custom GPU kernels where justified.
 
-A raw axis transpose and a categorical permutation are different concepts even when they happen to produce the same numerical operation in a simple symmetry.
+These changes must not alter the public semantic representation.
 
-### Optimization stays below the mathematical API
+---
 
-Packing, bucketing, batching, caching, and kernel scheduling are execution details.
+# Explicit non-goals
 
-### Correctness before runtime sophistication
+The initial project does not aim to be:
 
-The first goal is a coherent and testable mathematical representation.
+- a Python port of TensorKit;
+- a Python port of Rust TeNeT;
+- a complete NumPy drop-in replacement;
+- a custom ndarray framework;
+- a custom autograd engine;
+- a custom GPU runtime;
+- a manually packed storage system;
+- an implicit dense tensor implementation;
+- a system that hides ambiguous anyonic braiding behind NumPy syntax.
+
+The project should reuse the Python numerical ecosystem rather than reproduce it.
+
+---
+
+# Core design invariants
+
+The following should remain true throughout development.
+
+## 1. Every tensor has exact TensorMap semantics
+
+For every `SymmetricTensor`,
+
+```python
+T.domain
+T.codomain
+```
+
+must be well-defined from its leg metadata.
+
+---
+
+## 2. `side` and `dual` are independent
+
+Never identify:
+
+```text
+input == dual
+```
+
+or:
+
+```text
+output == non-dual
+```
+
+They represent different categorical information.
+
+---
+
+## 3. Public axis order is independent of domain/codomain grouping
+
+Users may write tensor-network code using arbitrary ndarray-like axis order.
+
+---
+
+## 4. Fusion-tree information is relational
+
+Intermediate sectors, multiplicity channels, and fusion bases belong to tensor-level categorical structure, not individual legs.
+
+---
+
+## 5. Categorical operations are never defined by backend operations
+
+A backend transpose may implement part of a categorical permutation.
+
+It never defines what that permutation means.
+
+---
+
+## 6. Reduced blocks contain only numerical degeneracy indices
+
+Sector labels and fusion channels remain structural metadata.
+
+---
+
+## 7. TensorMap block-matrix structure remains available
+
+Coupled-sector matrices are retained as the canonical lowering for composition and linear algebra.
+
+---
+
+## 8. Numerical leaves are backend-native arrays
+
+NumPy, JAX, and PyTorch should see ordinary arrays at the numerical boundary.
+
+---
+
+## 9. AD acts on reduced numerical data
+
+Categorical metadata remain static.
+
+---
+
+## 10. Execution optimization stays below the public API
+
+Packing, bucketing, batching, caching, and kernel scheduling are execution concerns.
+
+---
+
+## 11. ndarray compatibility is semantic, not cosmetic
+
+An operation should be exposed through an ndarray-like interface only when its categorical meaning is defined.
+
+---
+
+## 12. Braided categories remain explicit where necessary
+
+If an ndarray expression does not uniquely specify a braid, the API must request additional information rather than guess.
 
 ---
 
 # Project philosophy
 
-```text
-                             TeNeT-py
-                                │
-                         T ∈ Hom(D,C)
-                                │
-             ┌──────────────────┴──────────────────┐
-             │                                     │
-          structure                              values
-             │                                     │
-       FusionProvider                       backend ndarray
-       GradedSpace                         multidimensional
-       ProductSpace                        reduced tensor
-       FusionTree                                 │
-       BlockKey                                   │
-       duality                                    │
-       fusion                                     │
-       F / R                                      │
-             │                                     │
-             └────────────── operations ───────────┘
-                                │
-                             autoray
-                                │
-                  ┌─────────────┼─────────────┐
-                  │             │             │
-                NumPy          JAX         PyTorch
-                                │
-                     ┌──────────┼──────────┐
-                     │          │          │
-                    jit        grad       vmap
-```
-
-The core idea is:
+The intended architecture can be summarized as:
 
 ```text
-categorical tensor structure in Python
-+
-reduced tensors as ordinary multidimensional arrays
-+
-backend dispatch through autoray
+                         TeNeT-py
+                            │
+                            ▼
+                    SymmetricTensor
+                            │
+             ordered ndarray-like legs
+                            │
+         ┌──────────────────┴──────────────────┐
+         │                                     │
+         ▼                                     ▼
+ TensorMap semantics                    numerical values
+         │                                     │
+ Hom(D, C)                            backend-native arrays
+ side + dual                                  │
+ fusion trees                                  │
+ multiplicity                                 │
+ duality                                      │
+ F / R                                        │
+         │                                     │
+         └──────────────────┬──────────────────┘
+                            │
+                            ▼
+                    structural planner
+                            │
+                            ▼
+                    numerical program
+                            │
+                            ▼
+                         autoray
+                            │
+              ┌─────────────┼─────────────┐
+              │             │             │
+            NumPy          JAX         PyTorch
+                            │
+                  ┌─────────┼─────────┐
+                  │         │         │
+                 GPU       grad      jit/vmap
+                            │
+                            ▼
+              tensor-network / ML workflows
+                            │
+               ┌────────────┼────────────┐
+               │            │            │
+              VMC          PEPS         NQS
 ```
 
-Everything else should be built on top of that boundary.
+The project should therefore be described by three sentences:
+
+> **TensorMap is the semantic model.**
+
+> **SymmetricTensor is the ndarray-like programming model.**
+
+> **Backend-native arrays are the execution model.**
+
+This boundary is the main design of `TeNeT-py`.
