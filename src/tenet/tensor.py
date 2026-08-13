@@ -256,6 +256,22 @@ class SymmetricTensor:
             axes = tuple(axes[0] or ())
         return permutation.transpose(self, axes or None)
 
+    # --- fusion ---------------------------------------------------------------
+
+    def fuse(self, *axes: Any) -> "SymmetricTensor":
+        """``T.fuse(0, 1)`` or ``T.fuse((0, 1))``. See :func:`tenet.fuse`."""
+        from tenet.ops import fusion
+
+        if len(axes) == 1 and not isinstance(axes[0], int):
+            axes = tuple(axes[0])
+        return fusion.fuse(self, axes)
+
+    def unfuse(self, axis: int, legs: Sequence[Leg]) -> "SymmetricTensor":
+        """Split ``axis`` into ``legs``. See :func:`tenet.unfuse`."""
+        from tenet.ops import fusion
+
+        return fusion.unfuse(self, axis, legs)
+
     def __repr__(self) -> str:
         def safe(get) -> Any:
             try:

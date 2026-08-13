@@ -2,7 +2,19 @@
 
 from tenet.fusion_tree import FusionTree, coupled_sectors, fusion_trees
 from tenet.leg import IN, OUT, Leg, Side
-from tenet.ops import add, allclose, conj, divide, multiply, negative, norm, subtract, transpose
+from tenet.ops import (
+    add,
+    allclose,
+    conj,
+    divide,
+    fuse,
+    multiply,
+    negative,
+    norm,
+    subtract,
+    transpose,
+    unfuse,
+)
 from tenet.space import GradedSpace
 from tenet.structure import FusionBlockKey, TensorStructure
 from tenet.tensor import SymmetricTensor
@@ -24,10 +36,12 @@ __all__ = [
     "conj",
     "coupled_sectors",
     "divide",
+    "fuse",
     "fusion_trees",
     "multiply",
     "negative",
     "norm",
     "subtract",
     "transpose",
+    "unfuse",
 ]

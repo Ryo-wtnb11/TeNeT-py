@@ -14,6 +14,7 @@ from tenet.ops.basic import (
     norm,
     subtract,
 )
+from tenet.ops.fusion import fuse, unfuse
 from tenet.ops.permutation import transpose
 
 __all__ = [
@@ -21,9 +22,11 @@ __all__ = [
     "allclose",
     "conj",
     "divide",
+    "fuse",
     "multiply",
     "negative",
     "norm",
     "subtract",
     "transpose",
+    "unfuse",
 ]
