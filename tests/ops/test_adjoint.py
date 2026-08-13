@@ -10,7 +10,7 @@ import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.map_view import to_matrices
 from tenet.ops.map import adjoint_plan
-from tenet.symmetry import SU2, U1, CapabilityError, SU2Sector, U1Sector
+from tenet.symmetry import SU2, U1, SU2Sector, U1Sector
 
 ZERO, HALF, ONE = SU2Sector(0), SU2Sector(1), SU2Sector(2)
 V = GradedSpace.new(SU2, {ZERO: 2, HALF: 2})
@@ -23,7 +23,7 @@ P = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 2})
 # interleaved sides (OUT, IN, OUT, IN); several coupled sectors of different qdim
 SU2_LEGS = (Leg(V, OUT, name="a"), Leg(W, IN), Leg(U, OUT), Leg(X, IN))
 U1_LEGS = (Leg(Q, OUT), Leg(P, IN), Leg(Q, IN))
-# mixes dual=True and dual=False: structural criteria only, dense is Milestone 4
+# mixes dual=True and dual=False; dense works for these too since #37
 DUAL_LEGS = (Leg(V, OUT, dual=True), Leg(W, IN), Leg(U, OUT), Leg(X, IN, dual=True))
 
 ALL_LEGS = [
@@ -202,12 +202,11 @@ def test_dense_oracle_is_elementwise_conjugation():
     np.testing.assert_allclose(mat(d), mat(t).conj().T, rtol=0.0, atol=1e-10)
 
 
-def test_dense_is_skipped_for_dual_legs():
-    # Milestone 4: to_dense needs the Z-isomorphism (DualBasis capability, #32/#37)
-    # for dual=True SU(2) legs, so the dual tensor above is covered by the
-    # structural/algebraic criteria only.
-    with pytest.raises(CapabilityError):
-        cx(DUAL_LEGS).adjoint().to_dense()
+def test_dense_oracle_holds_for_dual_legs():
+    # #37 gave SU(2) its Z-isomorphism, so dual=True legs densify and the dense
+    # oracle above applies to them too (it used to be a CapabilityError).
+    t = cx(DUAL_LEGS)
+    np.testing.assert_allclose(t.adjoint().to_dense(), np.conj(t.to_dense()), atol=1e-12)
 
 
 # --- backend agnosticism --------------------------------------------------------

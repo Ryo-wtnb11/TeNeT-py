@@ -417,9 +417,9 @@ def _refuse_dual(provider: FusionProvider, axis: int) -> None:
         raise CapabilityError(
             f"to_dense: axis {axis} has dual=True, and provider {provider.name} does not "
             "implement DualBasis. Expanding a dual leg needs the Z-isomorphism "
-            "V_a -> V_a^* in the dense basis, which for SU(2) carries the "
-            "Frobenius-Schur sign (-1)^(2j) and is Milestone 4. Trivial and U(1) supply "
-            "it (one-dimensional irreps, Z = [[1]])"
+            "V_a -> V_a^* in the dense basis, which carries the Frobenius-Schur "
+            "sign of the sector. Trivial and U(1) supply it (one-dimensional irreps, "
+            "Z = [[1]]); SU(2) supplies the antidiagonal (-1)^(j-m) matrix"
         ) from exc
 
 
@@ -433,10 +433,11 @@ def _tree_cgt(provider: ClebschGordan, tree: FusionTree, duals: tuple[bool, ...]
     Where it is, the tree's label is ``dual(a)`` but the dense axis must run over
     ``V_a``, so the provider's ``Z_a: V_a -> V_a^*`` is contracted onto that axis.
 
-    ponytail: for Trivial and U(1) every ``Z`` is ``[[1]]``, so the general
-    insertion is only ever exercised in the ``d_a == 1`` case here. Milestone 4
-    must re-verify the placement (and the interaction with the ``.conj()`` the
-    caller applies to the input tree) against a provider with ``d_a > 1``.
+    The ``d_a > 1`` path is covered as of #37: SU(2)'s ``Z`` is the antidiagonal
+    ``(-1)**i``, so a dual leg's dense slab is the direct one with the magnetic
+    index reversed and alternately signed, and the placement (together with the
+    ``.conj()`` the caller applies to the input tree) is pinned by the cup/cap
+    oracle in ``tests/symmetry/test_su2_dual.py``.
     """
     dim = provider.irrep_dim
     if tree.rank == 0:

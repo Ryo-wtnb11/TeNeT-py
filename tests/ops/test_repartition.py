@@ -95,7 +95,7 @@ def test_bending_coefficients_is_runtime_checkable():
 def test_dual_basis_is_runtime_checkable_and_is_the_identity_for_abelian():
     assert isinstance(Trivial, DualBasis)
     assert isinstance(U1, DualBasis)
-    assert not isinstance(SU2, DualBasis)
+    assert isinstance(SU2, DualBasis)  # #37; non-trivial for two_j >= 1
     for provider, a in ((Trivial, TrivialSector()), (U1, U1Sector(2))):
         z = provider.z_matrix(a)
         np.testing.assert_array_equal(z, np.ones((1, 1)))
@@ -380,16 +380,13 @@ def test_to_dense_now_accepts_a_dual_leg_for_abelian_providers(provider_legs):
     assert abs(float(np.linalg.norm(dense)) - tenet.norm(t)) < 1e-12
 
 
-def test_to_dense_still_refuses_a_dual_su2_leg_by_capability():
+def test_to_dense_now_accepts_a_dual_su2_leg():
+    """#37 landed ``SU2.z_matrix``, so #32's ``DualBasis`` refusal no longer fires."""
     legs = (Leg(V, OUT), Leg(W, IN, dual=True))
-    with pytest.raises(CapabilityError) as excinfo:
-        SymmetricTensor.zeros(legs).to_dense()
-    message = str(excinfo.value)
-    assert "DualBasis" in message
-    assert "axis 1" in message
-    assert "Z-isomorphism" in message
-    assert "Frobenius-Schur" in message
-    assert "Milestone 4" in message
+    t = SymmetricTensor.random(legs, seed=17)
+    dense = t.to_dense()
+    assert dense.shape == t.shape
+    assert abs(float(np.linalg.norm(dense)) - tenet.norm(t)) < 1e-12
 
 
 def test_dual_leg_dense_expansion_matches_the_non_dual_one_for_u1():
