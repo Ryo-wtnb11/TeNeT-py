@@ -17,10 +17,12 @@ from tenet.symmetry.base import (
     permute_unique_tree,
     requires,
 )
+from tenet.symmetry.fz2 import FZ2_GAUGE, FZ2Provider, FZ2Sector, fZ2
 from tenet.symmetry.su2 import SU2, SU2_GAUGE, SU2Provider, SU2Sector
 from tenet.symmetry.u1 import U1, U1Provider, U1Sector
 
 __all__ = [
+    "FZ2_GAUGE",
     "SU2",
     "SU2_GAUGE",
     "U1",
@@ -28,6 +30,8 @@ __all__ = [
     "CapabilityError",
     "ClebschGordan",
     "DualBasis",
+    "FZ2Provider",
+    "FZ2Sector",
     "FusionProvider",
     "PermutationCoefficients",
     "QuantumDimension",
@@ -41,6 +45,7 @@ __all__ = [
     "U1Provider",
     "U1Sector",
     "bend_unique",
+    "fZ2",
     "permute_unique_tree",
     "requires",
 ]
