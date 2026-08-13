@@ -132,11 +132,14 @@ def test_random_is_reproducible_and_shaped():
 # --- to_dense guards -------------------------------------------------------------
 
 
-def test_to_dense_rejects_dual_leg_naming_axis():
-    # narrowed in #32: SU(2) still refuses, now as a named capability failure
+def test_to_dense_accepts_a_dual_su2_leg():
+    # #32 narrowed the guard to a DualBasis capability check; #37 supplies the
+    # SU(2) Z-isomorphism, so the guard no longer fires. Content: test_su2_dual.py.
     legs = (Leg(V, OUT), Leg(W, IN, dual=True))
-    with pytest.raises(CapabilityError, match="axis 1"):
-        SymmetricTensor.zeros(legs).to_dense()
+    t = SymmetricTensor.random(legs, seed=5)
+    dense = t.to_dense()
+    assert dense.shape == t.shape
+    assert dense.any()
 
 
 def test_to_dense_requires_clebsch_gordan():

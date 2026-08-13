@@ -5,14 +5,16 @@ Sectors are labelled by the doubled spin ``two_j`` so labels stay exact integers
 
 ``dual(a) == a`` because SU(2) is self-dual as a *label* map. The Z-isomorphism
 ``V_j -> V_j^*`` carrying the Frobenius-Schur sign ``(-1)^(2j)`` is **not** the
-identity and is not implemented here (Milestone 4), so ``leg.dual`` must never be
-treated as a no-op (invariant 2).
+identity, so ``leg.dual`` must never be treated as a no-op (invariant 2). It is
+now available in the dense basis through :meth:`SU2Provider.z_matrix` (the
+:class:`~tenet.symmetry.base.DualBasis` capability), so ``to_dense`` works on
+dual SU(2) legs.
 
-F-, R- and B-symbols and Frobenius-Schur signs *are* available, through the
+F-, R- and B-symbols and Frobenius-Schur signs are available through the
 :class:`~tenet.symmetry.base.RecouplingData` capability; their gauge is pinned to
 the vendored TensorKitSectors fixtures (see ``SU2_GAUGE``). ``permute_tree`` is
-built on them, so ``transpose`` is total for SU(2). Still absent: the dense
-``z_matrix`` of the Z-isomorphism and ``bend_right``/``bend_left``.
+built on them, so ``transpose`` is total for SU(2). Still absent:
+``bend_right``/``bend_left`` (#38).
 """
 
 from dataclasses import dataclass
@@ -123,6 +125,17 @@ class SU2Provider:
     def frobenius_schur(self, a: SU2Sector) -> int:
         """``chi_a = (-1)^(2j)``: ``+1`` for integer spin, ``-1`` for half-integer."""
         return _su2_coeff.frobenius_schur(a.two_j)
+
+    def z_matrix(self, a: SU2Sector) -> np.ndarray:
+        """``Z_a: V_a -> V_a^*``, shape ``(d_a, d_dual(a)) == (d_a, d_a)``; read-only.
+
+        ``Z[i, d_a - 1 - i] = (-1)**i`` in the descending-m basis of :meth:`cgc`;
+        see :func:`tenet.symmetry._su2_coeff.z_matrix`. Not the identity for
+        ``two_j >= 1``, even though ``dual(a) == a``.
+        """
+        if not isinstance(a, SU2Sector):
+            raise ValueError(f"{self.name}: {a!r} is not an SU(2) sector")
+        return _su2_coeff.z_matrix(a.two_j)
 
 
 SU2 = SU2Provider()
