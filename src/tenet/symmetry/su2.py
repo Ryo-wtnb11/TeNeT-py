@@ -6,14 +6,20 @@ Sectors are labelled by the doubled spin ``two_j`` so labels stay exact integers
 ``dual(a) == a`` because SU(2) is self-dual as a *label* map. The Z-isomorphism
 ``V_j -> V_j^*`` carrying the Frobenius-Schur sign ``(-1)^(2j)`` is **not** the
 identity and is not implemented here (Milestone 4), so ``leg.dual`` must never be
-treated as a no-op (invariant 2). F-symbols, R-symbols and B-symbols are likewise
-Milestone 4.
+treated as a no-op (invariant 2).
+
+F-, R- and B-symbols and Frobenius-Schur signs *are* available, through the
+:class:`~tenet.symmetry.base.RecouplingData` capability; their gauge is pinned to
+the vendored TensorKitSectors fixtures (see ``SU2_GAUGE``). Still absent: the dense
+``z_matrix`` of the Z-isomorphism, and the operations built on these coefficients
+(``permute_tree``, ``bend_right``/``bend_left``).
 """
 
 from dataclasses import dataclass
 
 import numpy as np
 
+from tenet.symmetry import _su2_coeff
 from tenet.symmetry._su2_coeff import cg_tensor, triangle
 from tenet.symmetry.base import Sector
 
@@ -72,6 +78,41 @@ class SU2Provider:
         if not triangle(a.two_j, b.two_j, c.two_j):
             raise ValueError(f"{c} does not appear in the fusion of {a} and {b}")
         return cg_tensor(a.two_j, b.two_j, c.two_j)[..., np.newaxis]
+
+    def f_symbol(
+        self,
+        a: SU2Sector,
+        b: SU2Sector,
+        c: SU2Sector,
+        d: SU2Sector,
+        e: SU2Sector,
+        f: SU2Sector,
+    ) -> float:
+        """``[F^{abc}_d]_{e,f}``; ``e`` is the inner line of ``((ab)c)``, ``f`` of ``(a(bc))``.
+
+        Real in this gauge, so downstream conjugation of domain-side coefficients
+        is a no-op. Raises if any vertex has ``n_symbol > 1`` (unreachable for
+        SU(2), asserted so the scalar-valued contract is not merely documentation).
+        """
+        for x, y, z in ((a, b, e), (e, c, d), (b, c, f), (a, f, d)):
+            if self.n_symbol(x, y, z) > 1:
+                raise ValueError(
+                    f"{self.name}: f_symbol is scalar-valued but "
+                    f"N^{z!r}_{{{x!r},{y!r}}} > 1; matrix-valued F is not supported"
+                )
+        return _su2_coeff.f_symbol(a.two_j, b.two_j, c.two_j, d.two_j, e.two_j, f.two_j)
+
+    def r_symbol(self, a: SU2Sector, b: SU2Sector, c: SU2Sector) -> int:
+        """``R^{ab}_c = (-1)^(ja + jb - jc)``, exactly ``+-1``; SU(2) braiding is symmetric."""
+        return _su2_coeff.r_symbol(a.two_j, b.two_j, c.two_j)
+
+    def b_symbol(self, a: SU2Sector, b: SU2Sector, c: SU2Sector) -> float:
+        """``B^{ab}_c``, derived from :meth:`f_symbol`; real, of unit modulus."""
+        return _su2_coeff.b_symbol(a.two_j, b.two_j, c.two_j)
+
+    def frobenius_schur(self, a: SU2Sector) -> int:
+        """``chi_a = (-1)^(2j)``: ``+1`` for integer spin, ``-1`` for half-integer."""
+        return _su2_coeff.frobenius_schur(a.two_j)
 
 
 SU2 = SU2Provider()

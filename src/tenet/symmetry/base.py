@@ -18,6 +18,7 @@ __all__ = [
     "FusionProvider",
     "PermutationCoefficients",
     "QuantumDimension",
+    "RecouplingData",
     "Sector",
     "Trivial",
     "TrivialProvider",
@@ -122,6 +123,33 @@ class DualBasis(Protocol):
 
     def z_matrix(self, a: Sector) -> np.ndarray:
         """``Z_a``, shape ``(d_a, d_dual(a))``, in the provider's own dense basis."""
+        ...
+
+
+@runtime_checkable
+class RecouplingData(Protocol):
+    """Providers that supply associator, braiding and duality coefficients.
+
+    All four are **scalar**-valued, which is a multiplicity-free assumption: a
+    provider with ``n_symbol > 1`` must raise rather than truncate a matrix-valued
+    symbol. Generic tree-braiding and tree-bending helpers dispatch on this
+    protocol and know nothing about any particular symmetry.
+    """
+
+    def f_symbol(self, a: Sector, b: Sector, c: Sector, d: Sector, e: Sector, f: Sector) -> complex:
+        """``[F^{abc}_d]_{e,f}``; ``e`` is the inner line of ``((ab)c)``, ``f`` of ``(a(bc))``."""
+        ...
+
+    def r_symbol(self, a: Sector, b: Sector, c: Sector) -> complex:
+        """``R^{ab}_c``, the coefficient of braiding ``a`` past ``b`` inside ``c``."""
+        ...
+
+    def b_symbol(self, a: Sector, b: Sector, c: Sector) -> complex:
+        """``B^{ab}_c``, the duality coefficient bending ``b`` out of ``a x b -> c``."""
+        ...
+
+    def frobenius_schur(self, a: Sector) -> complex:
+        """``chi_a``, the Frobenius-Schur phase of the ``V_a -> V_a^*`` isomorphism."""
         ...
 
 
