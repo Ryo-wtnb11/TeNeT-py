@@ -305,8 +305,8 @@ class SymmetricTensor:
 
         return map_ops.adjoint(self)
 
-    def norm(self) -> float:
-        """qdim-weighted Frobenius norm. See :func:`tenet.norm`."""
+    def norm(self) -> Any:
+        """qdim-weighted Frobenius norm (a backend scalar). See :func:`tenet.norm`."""
         return self._ops().norm(self)
 
     def transpose(self, *axes: Any) -> "SymmetricTensor":
