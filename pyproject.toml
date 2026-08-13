@@ -1,7 +1,39 @@
 [project]
 name = "tenet-py"
 version = "0.1.0"
-description = "Add your description here"
+description = "Non-Abelian symmetric tensors with ndarray-style Python APIs and backend-native numerical execution"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "autoray>=0.10.1",
+    "numpy>=2.0",
+]
+
+[project.optional-dependencies]
+jax = [
+    "jax>=0.5",
+]
+
+[dependency-groups]
+dev = [
+    "jax>=0.5",
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tenet"]
+
+[tool.ruff]
+line-length = 100
+exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
