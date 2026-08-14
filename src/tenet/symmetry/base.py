@@ -22,6 +22,7 @@ __all__ = [
     "QuantumDimension",
     "RecouplingData",
     "Sector",
+    "StructureChangingError",
     "Trivial",
     "TrivialProvider",
     "TrivialSector",
@@ -177,6 +178,18 @@ class RecouplingData(Protocol):
 
 class CapabilityError(TypeError):
     """Raised when a provider lacks a capability an operation requires."""
+
+
+class StructureChangingError(TypeError):
+    """Raised when an operation whose *output structure depends on block values*
+    is asked to run inside a traced (jit/grad/vmap) region.
+
+    README "Structure-changing differentiation", invariants 9 and 10: the library
+    never hides the distinction between a shape-static operation and one that
+    decides its own output structure from the numbers. Lives here next to
+    :class:`CapabilityError`, subclasses ``TypeError`` for the same reason it
+    does, and is exported from ``tenet``.
+    """
 
 
 def requires(provider: FusionProvider, capability: type) -> None:

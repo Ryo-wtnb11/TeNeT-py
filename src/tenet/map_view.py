@@ -253,6 +253,17 @@ class TensorMapView:
 
         return svd(self.tensor)
 
+    def svd_truncated(
+        self, **kwargs
+    ) -> tuple["SymmetricTensor", "SymmetricTensor", "SymmetricTensor"]:
+        """Truncated ``U, S, Vh`` for the current partition. Not jittable.
+
+        See :func:`tenet.linalg.svd_truncated` for every keyword.
+        """
+        from tenet.ops.linalg import svd_truncated
+
+        return svd_truncated(self.tensor, **kwargs)
+
     def qr(self) -> tuple["SymmetricTensor", "SymmetricTensor"]:
         """``Q, R`` for the current partition. See :func:`tenet.linalg.qr`."""
         from tenet.ops.linalg import qr
