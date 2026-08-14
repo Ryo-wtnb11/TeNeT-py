@@ -34,7 +34,22 @@ if TYPE_CHECKING:
 __all__ = ["SU2", "SU2_GAUGE", "SU2Provider", "SU2Sector"]
 
 SU2_GAUGE = "3j=condon-shortley;cg=condon-shortley;f=tks-su2irrep;r=tks-su2irrep;fs=tks-su2irrep"
-"""Gauge fingerprint (racah / TensorKitSectors conventions); belongs in plan-cache keys."""
+"""Gauge fingerprint (racah / TensorKitSectors conventions). Documentation, not a key.
+
+Every plan cache (``permutation_plan``, ``bend_plan``, ``fusion_plan``,
+``map_layout``, ``contraction_plan``) is a :func:`functools.cache` keyed on
+``TensorStructure``, which contains ``Leg``s, which contain ``GradedSpace``s,
+which contain the **provider value**. :class:`SU2Provider` implements exactly
+this one hard-coded convention, so provider identity already pins the gauge
+one-for-one: appending this string to a key would be a constant on every key
+and could never change a lookup outcome.
+
+ponytail: the upgrade path for a provider that can carry two gauges is a
+``gauge`` field on the provider itself, which then enters every existing cache
+key for free with zero cache-code changes — and which knowingly flips
+``tests/symmetry/test_fz2.py::test_gauge_is_a_module_string_not_a_field``. One
+line, when and only when a second gauge exists.
+"""
 
 
 @dataclass(frozen=True, slots=True, order=True)

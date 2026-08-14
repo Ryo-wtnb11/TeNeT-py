@@ -52,18 +52,29 @@ No ``to_dense``, no NumPy and no provider branching here (invariants 8/9).
 import operator
 from collections import Counter
 from collections.abc import Sequence
+from dataclasses import dataclass
+from functools import cache
 from typing import TYPE_CHECKING, Any
 
 from tenet.leg import IN, OUT, Leg
 from tenet.ops.map import compose, identity
 from tenet.ops.permutation import transpose
 from tenet.ops.repartition import repartition
+from tenet.structure import TensorStructure
 from tenet.symmetry.base import BendingCoefficients, CapabilityError, requires
 
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["contractible", "einsum", "outward_dual", "tensordot", "trace"]
+__all__ = [
+    "ContractionPlan",
+    "contractible",
+    "contraction_plan",
+    "einsum",
+    "outward_dual",
+    "tensordot",
+    "trace",
+]
 
 Axes = Any
 """``((i, ...), (j, ...))`` or the NumPy integer form ``n``."""
@@ -87,10 +98,14 @@ def contractible(x: Leg, y: Leg) -> bool:
     return x.space == y.space and outward_dual(x) != outward_dual(y)
 
 
-def _validated(
-    a: "SymmetricTensor", b: "SymmetricTensor", axes: Axes
-) -> tuple[tuple[int, ...], ...]:
-    """``(a axes, b axes)`` as int tuples, checked in the CALLER's numbering."""
+def _validated(a: TensorStructure, b: TensorStructure, axes: Axes) -> tuple[tuple[int, ...], ...]:
+    """``(a axes, b axes)`` as plain-``int`` tuples, checked in the CALLER's numbering.
+
+    ``operator.index`` normalization is what keeps the plan cache from fragmenting
+    on NumPy/JAX integer scalars, exactly as in ``permutation_plan``'s
+    ``_validated_axes``; it also collapses NumPy's integer and bare-integer forms
+    onto the one canonical key.
+    """
     if hasattr(axes, "__index__"):
         n = operator.index(axes)
         if n < 0:
@@ -142,7 +157,7 @@ def _validated(
     return tuple(parts)
 
 
-def _crossing(t: "SymmetricTensor", contracted: tuple[int, ...], to_out: bool) -> tuple[int, ...]:
+def _crossing(t: TensorStructure, contracted: tuple[int, ...], to_out: bool) -> tuple[int, ...]:
     """Axes of ``t`` that must change side, in ``t``'s own numbering.
 
     ``to_out`` says where the *contracted* axes are headed: ``False`` for ``a``
@@ -155,7 +170,7 @@ def _crossing(t: "SymmetricTensor", contracted: tuple[int, ...], to_out: bool) -
 
 
 def _refuse_bends(
-    a: "SymmetricTensor", b: "SymmetricTensor", ca: tuple[int, ...], cb: tuple[int, ...]
+    a: TensorStructure, b: TensorStructure, ca: tuple[int, ...], cb: tuple[int, ...]
 ) -> None:
     """Refuse before any block moves, naming every axis that would have to bend."""
     offenders = [("a", ax) for ax in _crossing(a, ca, False)]
@@ -166,7 +181,7 @@ def _refuse_bends(
         requires(a.provider, BendingCoefficients)
     except CapabilityError as exc:
         named = ", ".join(f"axis {ax} of {which}" for which, ax in offenders)
-        shaped = (a.structure.in_axes, b.structure.out_axes)
+        shaped = (a.in_axes, b.out_axes)
         raise CapabilityError(
             f"tensordot: this axis pattern moves legs between domain and codomain "
             f"({named}), which is a line bend, and provider {a.provider.name} does not "
@@ -177,18 +192,51 @@ def _refuse_bends(
         ) from exc
 
 
-def tensordot(a: "SymmetricTensor", b: "SymmetricTensor", axes: Axes) -> "SymmetricTensor":
-    """Contract ``axes[0]`` of ``a`` against ``axes[1]`` of ``b``, pairwise in order.
+@dataclass(frozen=True, slots=True)
+class ContractionPlan:
+    """The categorical half of a pairwise contraction: static, array-free, hashable.
 
-    ``axes`` is ``((i, ...), (j, ...))`` or NumPy's integer form (``axes=2`` means
-    the last two axes of ``a`` against the first two of ``b``). Negative indices
-    are refused, as in :func:`~tenet.transpose` and :func:`~tenet.repartition`.
+    Holds no block indices and no coefficients — those belong to the sub-plans
+    (``permutation_plan``, ``bend_plan``, ``map_layout``), which are cached in
+    their own right and already shared between every tensor of the same
+    structure. Caching them a second time here would duplicate the same
+    coefficients with a second chance to go stale. What this object owns is the
+    small pure-Python derivation that decides *which* sub-plans run, plus
+    :attr:`new_structure`, the output legs known without contracting anything.
 
-    Output public axis order is ``a``'s free axes (in ``a``'s order) followed by
-    ``b``'s free axes (in ``b``'s order), matching ``np.tensordot``; every free
-    leg is returned **unchanged** — same ``space``, ``side``, ``dual`` and
-    ``name``. ``axes=((), ())`` is the outer product and falls out of the
-    lowering rather than being special-cased.
+    ponytail: no ``src/tenet/planning/`` package (README's proposed tree). Today
+    it would hold re-exports of plans that already live next to their ops
+    (``PermutationPlan``/``ops.permutation``, ``BendPlan``/``ops.repartition``,
+    ``FusionPlan``/``ops.fusion``, ``AdjointPlan``/``ops.map``,
+    ``MapLayout``/``map_view``) — churn against exhaustively tested modules for
+    zero behaviour change. Create it when plans are shared *across* operations:
+    M8's path-level planning, or M9's shape bucketing.
+    """
+
+    a_outputs: tuple[int, ...]
+    a_inputs: tuple[int, ...]
+    b_outputs: tuple[int, ...]
+    b_inputs: tuple[int, ...]
+    restore_outputs: tuple[int, ...]
+    restore_inputs: tuple[int, ...]
+    final_transpose: tuple[int, ...]
+    new_structure: TensorStructure
+
+
+# ponytail: unbounded `cache`, matching every other plan cache (see structure.py's
+# note). The ceiling is a workload that generates genuinely new structures per call
+# — data-dependent truncation inside a loop, which README already places outside
+# JIT; the upgrade path is `lru_cache(maxsize=...)`.
+@cache
+def contraction_plan(a: TensorStructure, b: TensorStructure, axes: Axes) -> ContractionPlan:
+    """Plan ``tensordot(a, b, axes)``. Cached: repeat calls return one object.
+
+    Raises here, before any block is touched and before one sub-plan is built:
+    invalid axes, mismatched providers, non-contractible pairs, a contraction
+    leaving no free leg, and a missing ``BendingCoefficients`` for a leg that
+    must cross. ``axes`` accepts everything :func:`tensordot` accepts; it is
+    normalized to plain ``int`` tuples before anything else, so the integer form
+    and NumPy integer scalars land on the same cache entry.
     """
     ca, cb = _validated(a, b, axes)
     if a.provider != b.provider:
@@ -223,13 +271,49 @@ def tensordot(a: "SymmetricTensor", b: "SymmetricTensor", axes: Axes) -> "Symmet
         )
     _refuse_bends(a, b, ca, cb)
 
-    c = compose(repartition(a, fa, ca), repartition(b, cb, fb))
-
+    # every free leg comes back exactly as it went in, so the output legs are known
+    # here — no block, and no sub-plan, has moved
     free = (*(a.legs[i] for i in fa), *(b.legs[j] for j in fb))
     outputs = tuple(k for k, leg in enumerate(free) if leg.side is OUT)
     inputs = tuple(k for k, leg in enumerate(free) if leg.side is IN)
     position = {k: p for p, k in enumerate((*outputs, *inputs))}
-    return transpose(repartition(c, outputs, inputs), tuple(position[k] for k in range(len(free))))
+    return ContractionPlan(
+        a_outputs=fa,
+        a_inputs=ca,
+        b_outputs=cb,
+        b_inputs=fb,
+        restore_outputs=outputs,
+        restore_inputs=inputs,
+        final_transpose=tuple(position[k] for k in range(len(free))),
+        new_structure=TensorStructure(free),
+    )
+
+
+def tensordot(a: "SymmetricTensor", b: "SymmetricTensor", axes: Axes) -> "SymmetricTensor":
+    """Contract ``axes[0]`` of ``a`` against ``axes[1]`` of ``b``, pairwise in order.
+
+    ``axes`` is ``((i, ...), (j, ...))`` or NumPy's integer form (``axes=2`` means
+    the last two axes of ``a`` against the first two of ``b``). Negative indices
+    are refused, as in :func:`~tenet.transpose` and :func:`~tenet.repartition`.
+
+    Output public axis order is ``a``'s free axes (in ``a``'s order) followed by
+    ``b``'s free axes (in ``b``'s order), matching ``np.tensordot``; every free
+    leg is returned **unchanged** — same ``space``, ``side``, ``dual`` and
+    ``name``. ``axes=((), ())`` is the outer product and falls out of the
+    lowering rather than being special-cased.
+
+    All refusals, and all axis bookkeeping, live in :func:`contraction_plan`;
+    what is left here is the execution of four already-tested operations.
+    """
+    # normalize first so the integer form and NumPy integer scalars share one entry
+    plan = contraction_plan(a.structure, b.structure, _validated(a.structure, b.structure, axes))
+    c = compose(
+        repartition(a, plan.a_outputs, plan.a_inputs),
+        repartition(b, plan.b_outputs, plan.b_inputs),
+    )
+    return transpose(
+        repartition(c, plan.restore_outputs, plan.restore_inputs), plan.final_transpose
+    )
 
 
 def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
