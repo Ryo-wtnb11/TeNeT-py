@@ -51,6 +51,16 @@ QA = GradedSpace.new(U1, {U1Sector(0): 3, U1Sector(1): 2})
 QB = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 3})
 RECT = (Leg(QA, OUT), Leg(QB, IN))
 
+# The same both-directions shape for the other two providers, so #80's wide-qr / tall-lq
+# coverage is not U(1)-only.
+VB = GradedSpace.new(SU2, {SU2Sector(0): 3, SU2Sector(1): 1})
+FB = GradedSpace.new(fZ2, {FZ2Sector(0): 2, FZ2Sector(1): 3})
+RECT_BY_PROVIDER = {
+    "u1": RECT,
+    "su2": (Leg(V, OUT), Leg(VB, IN)),
+    "fz2": (Leg(F, OUT), Leg(FB, IN)),
+}
+
 # A bigger structure for the jit trace-count test: same provider, different degeneracy.
 Q_BIG = GradedSpace.new(U1, {U1Sector(0): 4, U1Sector(1): 2})
 SQUARE_BIG = (Leg(Q_BIG, OUT), Leg(Q_BIG, IN))
@@ -480,14 +490,162 @@ def test_jit_still_traces_once_per_structure():
 # --- what the registration must NOT touch ----------------------------------------
 
 
+@pytest.mark.parametrize("shape", ["square", "rect"])
+@pytest.mark.parametrize("name", PROVIDERS)
 @pytest.mark.parametrize("objective", [qr_recon, lq_recon], ids=["qr", "lq"])
-def test_qr_and_lq_gradients_are_untouched(objective):
-    t = jt(RECT, seed=19)
+def test_qr_and_lq_gradients_are_untouched(objective, name, shape):
+    """``install()`` registers ``svd``/``eigh`` and nothing else, so these are bit-identical.
+
+    ``RECT``'s sectors are ``(3, 2)`` and ``(2, 3)`` (and the ``su2``/``fz2`` mirrors the
+    same), so the ``rect`` case silently exercises *wide* ``qr`` and *tall* ``lq`` — the
+    shapes that need JAX's wide-QR JVP (>= 0.10, see #80). It would have caught the
+    version gap had ``pyproject.toml``'s floor been honest.
+    """
+    t = jt(SQUARE[name] if shape == "square" else RECT_BY_PROVIDER[name], seed=19)
     before = blocks(jax.grad(objective)(t))
     tenet.ad.install()
     after = blocks(jax.grad(objective)(t))
     for a, b in zip(before, after, strict=True):
         assert np.array_equal(a, b)
+
+
+def test_ad_registers_svd_and_eigh_only():
+    tenet.ad.install()
+    assert tenet.ad._NAMES == ("linalg.svd", "linalg.eigh")
+
+    # ``_FUNCS`` is also autoray's resolution *cache*, so a key's mere presence proves
+    # nothing; what proves it is whose function sits behind it.
+    def owner(name):
+        return ar.get_lib_fn("jax", name).__module__
+
+    assert owner("linalg.svd").startswith("tenet.")
+    assert owner("linalg.eigh").startswith("tenet.")
+    assert not owner("linalg.qr").startswith("tenet.")
+
+
+def test_numpy_backed_qr_and_lq_are_unaffected():
+    t = jt(RECT, seed=41).to_backend("numpy")
+    before = (float(qr_recon(t)), float(lq_recon(t)))
+    tenet.ad.install()
+    assert (float(qr_recon(t)), float(lq_recon(t))) == before
+    q, r = ar.do("linalg.qr", np.eye(3))
+    assert isinstance(q, np.ndarray) and isinstance(r, np.ndarray)
+    want_q, want_r = np.linalg.qr(np.eye(3))
+    np.testing.assert_array_equal(q, want_q)
+    np.testing.assert_array_equal(r, want_r)
+
+
+def test_uninstall_restores_qr_and_lq_gradients_in_the_same_process():
+    t = jt(RECT, seed=42)
+    stock = blocks(jax.grad(qr_recon)(t)) + blocks(jax.grad(lq_recon)(t))
+    tenet.ad.install()
+    tenet.ad.uninstall()
+    again = blocks(jax.grad(qr_recon)(t)) + blocks(jax.grad(lq_recon)(t))
+    for a, b in zip(stock, again, strict=True):
+        assert np.array_equal(a, b)
+
+
+# --- qr / lq: JAX's own rule, measured (#80) -------------------------------------
+#
+# No custom VJP exists for these: the wide case is JAX >= 0.10's ``qr_jvp_rule``
+# (Roberts-Roberts Eqs. (9)-(10)), the square/tall one Liao-Liu-Wang-Xiang Eq. (5).
+# What is pinned here is that the floor in ``pyproject.toml`` is high enough, on every
+# sector shape, and that the exactly-rank-deficient corner stays *unsupported*.
+
+
+def q_only(factorize, which):
+    """``sum(sin(Q))`` / ``sum(cos(R))`` over the coupled-sector matrices — gauge-*dependent*.
+
+    Unlike ``svd``, at full rank ``Q`` and ``R`` are each individually well defined, so
+    there is no gauge precondition to hide behind and finite differences must agree.
+    """
+
+    def objective(t):
+        f = jnp.sin if which == 0 else jnp.cos
+        m = factorize(t)[which]
+        return sum(jnp.real(jnp.sum(f(b))) for b in to_matrices(m).values())
+
+    return objective
+
+
+qr_q = q_only(tenet.linalg.qr, 0)
+qr_r = q_only(tenet.linalg.qr, 1)
+lq_l = q_only(tenet.linalg.lq, 0)
+lq_q = q_only(tenet.linalg.lq, 1)
+
+QR_OBJECTIVES = {
+    "qr_recon": qr_recon,
+    "lq_recon": lq_recon,
+    "qr_q": qr_q,
+    "qr_r": qr_r,
+    "lq_l": lq_l,
+    "lq_q": lq_q,
+}
+
+
+@pytest.mark.parametrize("shape", ["square", "rect"])
+@pytest.mark.parametrize("name", PROVIDERS)
+@pytest.mark.parametrize("objective", [qr_recon, lq_recon], ids=["qr", "lq"])
+def test_qr_and_lq_gradients_are_finite_on_every_sector_shape(objective, name, shape):
+    """Square, tall and wide, for U(1), SU(2) and fZ2 — the JAX floor, as a test.
+
+    On JAX < 0.10 the ``rect`` case raises ``NotImplementedError`` out of
+    ``qr_jvp_rule``: wide for ``qr``, and for ``lq`` the *tall* sector, since
+    ``ops/linalg.py::lq`` factorizes ``B†``.
+    """
+    legs = SQUARE[name] if shape == "square" else RECT_BY_PROVIDER[name]
+    t = jt(legs, seed=43)
+    if shape == "rect":  # both directions really are present
+        assert {m.shape[0] > m.shape[1] for m in to_matrices(t).values()} == {True, False}
+    g = jax.grad(objective)(t)
+    assert all(np.isfinite(b).all() for b in blocks(g))
+
+
+@pytest.mark.parametrize("shape", ["square", "rect"])
+@pytest.mark.parametrize("name", ["u1", "su2"])
+@pytest.mark.parametrize("label", list(QR_OBJECTIVES))
+def test_finite_differences_qr_and_lq(label, name, shape):
+    objective = QR_OBJECTIVES[label]
+    legs = SQUARE[name] if shape == "square" else RECT_BY_PROVIDER[name]
+    t = jt(legs, seed=44)
+    g = jax.grad(objective)(t)
+    for got, want in zip(blocks(g), central_differences(objective, t), strict=True):
+        np.testing.assert_allclose(got, want, rtol=1e-6, atol=1e-6, err_msg=label)
+
+
+@pytest.mark.parametrize("objective", [qr_recon, lq_recon], ids=["qr", "lq"])
+def test_complex_qr_and_lq_gradients_match_finite_differences(objective):
+    """JAX's complex diagonal correction, through the wide path."""
+    t = jt(RECT, seed=45, dtype="complex128")
+    g = jax.grad(objective)(t)
+    for got, want in zip(blocks(g), complex_central_differences(objective, t), strict=True):
+        np.testing.assert_allclose(got, want, rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize("objective", [qr_recon, lq_recon], ids=["qr", "lq"])
+def test_rank_deficient_r_is_nan_before_and_after_install(objective):
+    """The documented non-support, as an executable claim.
+
+    An **exact** zero on ``R``'s diagonal makes the backward's triangular solve
+    back-substitute through a zero pivot. It is not stabilized, before or after
+    ``install()``: at exact rank deficiency the QR itself is non-unique, so there is no
+    value to broaden towards (unlike ``svd``, whose limit exists and is what #76
+    returns). If a future change accidentally stabilizes this, revisit the docstrings in
+    ``ops/linalg.py`` deliberately rather than deleting this test.
+    """
+    t = with_zeros(SQUARE["u1"], 1, seed=46)  # refill + diagonal_fill: the zero is a fact
+    assert has_nan(jax.grad(objective)(t))
+    tenet.ad.install()
+    assert has_nan(jax.grad(objective)(t))
+
+
+@pytest.mark.parametrize("objective", [qr_recon, lq_recon], ids=["qr", "lq"])
+def test_jit_of_qr_and_lq_grad_matches_the_unjitted_values(objective):
+    t = jt(RECT, seed=47)  # wide (2, 3) and tall (3, 2) sectors
+    plain = blocks(jax.grad(objective)(t))
+    jitted = blocks(jax.jit(jax.grad(objective))(t))
+    for a, b in zip(plain, jitted, strict=True):
+        np.testing.assert_allclose(b, a, rtol=0, atol=1e-12)
 
 
 @pytest.mark.parametrize("objective", [recon, eig_recon], ids=["svd", "eigh"])
