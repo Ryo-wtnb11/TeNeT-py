@@ -14,7 +14,7 @@ from collections.abc import Hashable
 from dataclasses import dataclass, replace
 
 from tenet.space import GradedSpace
-from tenet.symmetry.base import FusionProvider, Sector
+from tenet.symmetry.base import FusionProvider, Sector, _HashMemo
 
 __all__ = ["IN", "OUT", "Leg", "Side"]
 
@@ -31,7 +31,7 @@ IN = Side.IN
 
 
 @dataclass(frozen=True, slots=True)
-class Leg:
+class Leg(_HashMemo):
     """One tensor axis: ``space``, ``side``, ``dual`` and an optional ``name``.
 
     Frozen and hashable; ``name`` participates in equality like any other field.
@@ -41,6 +41,12 @@ class Leg:
     side: Side
     dual: bool = False
     name: Hashable | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_hash", hash((self.space, self.side, self.dual, self.name)))
+
+    def __hash__(self) -> int:
+        return self._hash
 
     @property
     def provider(self) -> FusionProvider:

@@ -37,6 +37,24 @@ if TYPE_CHECKING:
     from tenet.structure import FusionBlockKey
 
 
+class _HashMemo:
+    """Mixin supplying a ``_hash`` slot for frozen value types (M9, #59).
+
+    Python's dataclass ``__hash__`` re-hashes every field on every call, so a
+    nested frozen value (space → leg → structure) costs a full recursive walk per
+    ``functools.cache`` lookup — 42% of a steady-state ``tensordot`` at small
+    degeneracy. Subclasses compute ``hash(fields)`` **once** in ``__post_init__``
+    (identical value to the generated ``__hash__``, so hashes stay unchanged and
+    deterministic) and define ``__hash__`` returning it; equality is untouched.
+
+    It is a base class rather than a ``__slots__`` line in each body because
+    ``@dataclass(slots=True)`` builds ``__slots__`` itself and rejects one in the
+    class body — inherited slots it accepts.
+    """
+
+    __slots__ = ("_hash",)
+
+
 @dataclass(frozen=True, slots=True, order=True)
 class Sector:
     """Marker base for sector labels.

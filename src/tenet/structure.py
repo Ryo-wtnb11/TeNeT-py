@@ -31,13 +31,13 @@ from itertools import product
 
 from tenet.fusion_tree import FusionTree, coupled_sectors, fusion_trees
 from tenet.leg import OUT, Leg
-from tenet.symmetry.base import FusionProvider, Sector
+from tenet.symmetry.base import FusionProvider, Sector, _HashMemo
 
 __all__ = ["FusionBlockKey", "TensorStructure"]
 
 
 @dataclass(frozen=True, slots=True, order=True)
-class FusionBlockKey:
+class FusionBlockKey(_HashMemo):
     """An output/input fusion-tree pair with a shared coupled sector.
 
     Both trees list their uncoupled sectors in **public axis order** restricted
@@ -48,6 +48,12 @@ class FusionBlockKey:
     output_tree: FusionTree
     input_tree: FusionTree
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_hash", hash((self.output_tree, self.input_tree)))
+
+    def __hash__(self) -> int:
+        return self._hash
+
     @property
     def coupled(self) -> Sector:
         """The shared coupled sector. Equality of the two is a ``validate`` check."""
@@ -55,7 +61,7 @@ class FusionBlockKey:
 
 
 @dataclass(frozen=True)
-class TensorStructure:
+class TensorStructure(_HashMemo):
     """Ordered legs plus everything derivable from them. Immutable and hashable."""
 
     legs: tuple[Leg, ...]
@@ -66,6 +72,10 @@ class TensorStructure:
             # Give TensorStructure an explicit provider field if scalars ever matter.
             raise ValueError("TensorStructure needs at least one leg")
         object.__setattr__(self, "legs", tuple(self.legs))
+        object.__setattr__(self, "_hash", hash((self.legs,)))
+
+    def __hash__(self) -> int:
+        return self._hash
 
     @property
     def provider(self) -> FusionProvider:
@@ -102,17 +112,14 @@ class TensorStructure:
     def axis_sectors(self, key: FusionBlockKey) -> tuple[Sector, ...]:
         """One **space** sector per public axis, de-dualized via ``Leg.space_sector``.
 
-        The single place the duality convention is inverted, so it stays auditable.
+        A lookup into the per-structure table built once by
+        :func:`_axis_sectors_table`; foreign keys raise ``KeyError`` as before.
         """
-        by_axis = dict(zip(self.out_axes, key.output_tree.uncoupled, strict=True))
-        by_axis |= dict(zip(self.in_axes, key.input_tree.uncoupled, strict=True))
-        return tuple(leg.space_sector(by_axis[ax]) for ax, leg in enumerate(self.legs))
+        return _axis_sectors_table(self)[self.index_of(key)]
 
     def block_shape(self, key: FusionBlockKey) -> tuple[int, ...]:
         """Degeneracies in **public** axis order (invariant 7)."""
-        return tuple(
-            leg.degeneracy(a) for leg, a in zip(self.legs, self.axis_sectors(key), strict=True)
-        )
+        return _block_shape_table(self)[self.index_of(key)]
 
     def validate(self, key: FusionBlockKey | None = None) -> None:
         """Check the legs, and either every key in ``block_order`` or just ``key``.
@@ -194,3 +201,28 @@ def _block_order(s: TensorStructure) -> tuple[FusionBlockKey, ...]:
 @cache
 def _index_map(s: TensorStructure) -> dict[FusionBlockKey, int]:
     return {k: i for i, k in enumerate(_block_order(s))}
+
+
+@cache
+def _axis_sectors_table(s: TensorStructure) -> tuple[tuple[Sector, ...], ...]:
+    """Space sectors per axis for every key, aligned with ``block_order``.
+
+    The duality convention is inverted here and nowhere else (``Leg.space_sector``).
+    """
+    out_axes, in_axes = _axes(s)
+
+    def row(key: FusionBlockKey) -> tuple[Sector, ...]:
+        by_axis = dict(zip(out_axes, key.output_tree.uncoupled, strict=True))
+        by_axis |= dict(zip(in_axes, key.input_tree.uncoupled, strict=True))
+        return tuple(leg.space_sector(by_axis[ax]) for ax, leg in enumerate(s.legs))
+
+    return tuple(row(k) for k in _block_order(s))
+
+
+@cache
+def _block_shape_table(s: TensorStructure) -> tuple[tuple[int, ...], ...]:
+    """Block shapes in public axis order for every key, aligned with ``block_order``."""
+    return tuple(
+        tuple(leg.degeneracy(a) for leg, a in zip(s.legs, sectors, strict=True))
+        for sectors in _axis_sectors_table(s)
+    )
