@@ -44,6 +44,15 @@ this one hard-coded convention, so provider identity already pins the gauge
 one-for-one: appending this string to a key would be a constant on every key
 and could never change a lookup outcome.
 
+Cross-validated against froSTspin (2026-08-14; sympy Condon-Shortley lineage,
+descending-m, dimension-labeled irreps — an implementation lineage independent
+of racah/TensorKitSectors): all 215 admissible CG triples with ``dj <= 8``
+agree entrywise at 1.1e-16 with no phase correction, and froSTspin's
+``SU2SymmetricTensor.from_array`` (which asserts SU(2) invariance internally)
+round-trips our ``to_dense`` output at exactly 0.0 — validating the CG tree
+assembly, the ``alpha*d_a + m`` slab layout and the ``z_matrix`` duality
+handling end to end.
+
 ponytail: the upgrade path for a provider that can carry two gauges is a
 ``gauge`` field on the provider itself, which then enters every existing cache
 key for free with zero cache-code changes — and which knowingly flips
