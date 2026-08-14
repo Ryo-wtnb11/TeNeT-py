@@ -2452,6 +2452,20 @@ where:
 
 Full irrep basis indices appear only in this explicit expansion.
 
+Both directions are backend-generic and traceable: `to_dense` returns an array of
+the tensor's own backend and differentiates under `jax.grad`, and
+
+```python
+T = SymmetricTensor.from_dense(dense, legs, atol=None)
+```
+
+projects a dense carrier-basis array back onto the symmetric subspace. `legs` is
+required — a dense array carries no categorical information. Input that is not
+symmetric to `atol` (default `sqrt(eps) * ‖dense‖`, relative) is **refused**,
+naming the residual and the offending sector tuple, never silently projected;
+`atol=math.inf` is the documented "project, don't check" spelling, and the only
+one that traces (the comparison is a concrete-value question).
+
 ---
 
 # Proposed package structure

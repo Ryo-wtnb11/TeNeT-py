@@ -6,9 +6,11 @@ parameter tree of dynamic leaves, ordered by ``structure.block_order`` (invarian
 8). ``T.legs``, ``T.domain``, ``T.codomain``, ``T.block(key)`` and ``T.items()``
 are derived views; ``from_legs`` supplies the README's ergonomics.
 
-:meth:`SymmetricTensor.to_dense` is the only NumPy-assuming code here and the only
-way to densify — there is deliberately no ``__array__`` (invariant 9). Its layout
-convention, fixed once and depended on downstream: axis ``i`` has length
+:meth:`SymmetricTensor.to_dense` and :meth:`SymmetricTensor.from_dense` are the
+only way to cross into the dense basis — there is deliberately no ``__array__``
+(invariant 9) — and both are thin delegations to :mod:`tenet.ops.dense`, which
+owns the layout convention, the plan cache and the only NumPy in the boundary.
+That convention, fixed once and depended on downstream: axis ``i`` has length
 ``legs[i].space.dim``; sectors occupy contiguous slabs in the space's canonical
 order; within sector ``a``'s slab the index is ``alpha * d_a + m``.
 """
@@ -20,16 +22,9 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 import numpy as np
 
-from tenet.fusion_tree import FusionTree
 from tenet.leg import OUT, Leg
 from tenet.structure import FusionBlockKey, TensorStructure
-from tenet.symmetry.base import (
-    CapabilityError,
-    ClebschGordan,
-    DualBasis,
-    FusionProvider,
-    requires,
-)
+from tenet.symmetry.base import FusionProvider
 
 if TYPE_CHECKING:
     from tenet.map_view import TensorMapView
@@ -368,91 +363,26 @@ class SymmetricTensor:
 
     # --- dense expansion ------------------------------------------------------
 
-    def to_dense(self) -> np.ndarray:
-        """``T = Σ_τ A^(τ) ⊗ C^(τ)`` expanded into a plain NumPy array.
+    def to_dense(self) -> Array:
+        """``T = Σ_τ A^(τ) ⊗ C^(τ)`` expanded into a dense array of ``self``'s backend.
 
         Explicit by design (invariant 9). Requires ``ClebschGordan``; a leg with
-        ``dual=True`` additionally requires ``DualBasis``, the provider's
-        ``V_a -> V_a^*`` isomorphism in the dense basis.
+        ``dual=True`` additionally requires ``DualBasis``. See
+        :func:`tenet.ops.dense.to_dense` — traceable and differentiable as of #82.
         """
-        provider = self.provider
-        requires(provider, ClebschGordan)
-        duals = tuple(leg.dual for leg in self.legs)
-        if any(duals):
-            _refuse_dual(provider, duals.index(True))
+        from tenet.ops.dense import to_dense
 
-        n = self.ndim
-        out_axes, in_axes = self.structure.out_axes, self.structure.in_axes
-        order = (*out_axes, *in_axes)
-        dtype = np.result_type(self.blocks[0].dtype, np.float64) if self.blocks else np.float64
-        dense = np.zeros(tuple(leg.space.dim for leg in self.legs), dtype=dtype)
+        return to_dense(self)
 
-        # einsum subscripts: A carries the degeneracy index of each public axis,
-        # C carries the irrep index but in (out..., in...) axis order.
-        a_sub = list(range(n))
-        c_sub = [n + ax for ax in order]
-        out_sub = [x for i in range(n) for x in (i, n + i)]
+    @classmethod
+    def from_dense(
+        cls, dense: Array, legs: Sequence[Leg], *, atol: float | None = None
+    ) -> "SymmetricTensor":
+        """Project a dense carrier-basis array onto the symmetric subspace of ``legs``.
 
-        for key, block in self.items():
-            if not block.any():
-                continue
-            xout = _tree_cgt(provider, key.output_tree, tuple(duals[a] for a in out_axes))
-            xin = _tree_cgt(provider, key.input_tree, tuple(duals[a] for a in in_axes))
-            cgt = np.tensordot(xout, xin.conj(), axes=([-1], [-1]))
-            full = np.einsum(block, a_sub, cgt, c_sub, out_sub)
+        The inverse of :meth:`to_dense`; non-symmetric input is refused rather
+        than silently projected. See :func:`tenet.ops.dense.from_dense`.
+        """
+        from tenet.ops.dense import from_dense
 
-            sectors = self.structure.axis_sectors(key)
-            slabs = []
-            shape = []
-            for leg, a in zip(self.legs, sectors, strict=True):
-                size = leg.degeneracy(a) * provider.irrep_dim(a)
-                start = leg.space.sector_offset(a)
-                slabs.append(slice(start, start + size))
-                shape.append(size)
-            # (m_0, d_0, m_1, d_1, ...) -> within-slab index alpha * d_a + m
-            dense[tuple(slabs)] += full.reshape(shape)
-
-        return dense
-
-
-def _refuse_dual(provider: FusionProvider, axis: int) -> None:
-    """Turn the bare ``DualBasis`` failure into a message a user can act on."""
-    try:
-        requires(provider, DualBasis)
-    except CapabilityError as exc:
-        raise CapabilityError(
-            f"to_dense: axis {axis} has dual=True, and provider {provider.name} does not "
-            "implement DualBasis. Expanding a dual leg needs the Z-isomorphism "
-            "V_a -> V_a^* in the dense basis, which carries the Frobenius-Schur "
-            "sign of the sector. Trivial and U(1) supply it (one-dimensional irreps, "
-            "Z = [[1]]); SU(2) supplies the antidiagonal (-1)^(j-m) matrix"
-        ) from exc
-
-
-def _tree_cgt(provider: ClebschGordan, tree: FusionTree, duals: tuple[bool, ...]) -> np.ndarray:
-    """A tree's CG tensor, shape ``(d_u0, ..., d_u{N-1}, d_coupled)``.
-
-    Left-associated contraction along the spine. Rank 0 is the unit's ``(1,)``
-    (so an empty side contracts like any other) and rank 1 is the identity.
-
-    ``duals[i]`` says whether the leg feeding uncoupled line ``i`` is ``dual``.
-    Where it is, the tree's label is ``dual(a)`` but the dense axis must run over
-    ``V_a``, so the provider's ``Z_a: V_a -> V_a^*`` is contracted onto that axis.
-
-    The ``d_a > 1`` path is covered as of #37: SU(2)'s ``Z`` is the antidiagonal
-    ``(-1)**i``, so a dual leg's dense slab is the direct one with the magnetic
-    index reversed and alternately signed, and the placement (together with the
-    ``.conj()`` the caller applies to the input tree) is pinned by the cup/cap
-    oracle in ``tests/symmetry/test_su2_dual.py``.
-    """
-    dim = provider.irrep_dim
-    if tree.rank == 0:
-        return np.ones((dim(tree.coupled),))
-    x = np.eye(dim(tree.uncoupled[0]))
-    for e, u, f, mu in tree.vertices():
-        x = np.tensordot(x, provider.cgc(e, u, f)[..., mu], axes=([-1], [0]))
-    for i, is_dual in enumerate(duals):
-        if is_dual:
-            z = provider.z_matrix(provider.dual(tree.uncoupled[i]))
-            x = np.moveaxis(np.tensordot(x, z, axes=([i], [1])), -1, i)
-    return x
+        return from_dense(dense, legs, atol=atol)
