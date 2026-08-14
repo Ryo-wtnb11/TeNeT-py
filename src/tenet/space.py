@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from math import prod
 from typing import TYPE_CHECKING
 
-from tenet.symmetry.base import ClebschGordan, FusionProvider, Sector, requires
+from tenet.symmetry.base import ClebschGordan, FusionProvider, Sector, _HashMemo, requires
 
 if TYPE_CHECKING:
     from tenet.leg import Leg
@@ -23,7 +23,7 @@ __all__ = ["GradedSpace", "ProductSpace"]
 
 
 @dataclass(frozen=True, slots=True)
-class GradedSpace:
+class GradedSpace(_HashMemo):
     """Immutable graded space: ``sectors`` is sorted by sector, all ``m >= 1``.
 
     Use :meth:`new` to build one from a mapping; the raw constructor takes an
@@ -32,6 +32,12 @@ class GradedSpace:
 
     provider: FusionProvider
     sectors: tuple[tuple[Sector, int], ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_hash", hash((self.provider, self.sectors)))
+
+    def __hash__(self) -> int:
+        return self._hash
 
     @classmethod
     def new(

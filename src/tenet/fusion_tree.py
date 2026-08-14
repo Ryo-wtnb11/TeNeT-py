@@ -25,13 +25,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
 
-from tenet.symmetry.base import FusionProvider, Sector
+from tenet.symmetry.base import FusionProvider, Sector, _HashMemo
 
 __all__ = ["FusionTree", "coupled_sectors", "fusion_trees"]
 
 
 @dataclass(frozen=True, slots=True, order=True)
-class FusionTree:
+class FusionTree(_HashMemo):
     """A left-associated fusion tree. Frozen, hashable, totally ordered."""
 
     uncoupled: tuple[Sector, ...]
@@ -50,6 +50,12 @@ class FusionTree:
                 f"rank-{n} tree needs {max(n - 1, 0)} multiplicity labels, "
                 f"got {len(self.multiplicities)}"
             )
+        object.__setattr__(
+            self, "_hash", hash((self.uncoupled, self.inner, self.multiplicities, self.coupled))
+        )
+
+    def __hash__(self) -> int:
+        return self._hash
 
     @property
     def rank(self) -> int:

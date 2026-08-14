@@ -53,6 +53,20 @@ def test_key_and_structure_are_frozen_hashable_dict_keys():
     assert hash(k) == hash(FusionBlockKey(k.output_tree, k.input_tree))
 
 
+def test_memoized_hash_equals_the_field_tuple_hash():
+    """M9 (#59): the cached ``_hash`` must stay the dataclass hash, field for field.
+
+    Adding a field without extending ``__post_init__`` would silently make two
+    distinct values collide; this is the check that fails when that happens.
+    """
+    s = su2_half_structure()
+    k = s.block_order[0]
+    for obj in (s.legs[0].space, s.legs[0], k.output_tree, k, s):
+        fields = tuple(getattr(obj, f.name) for f in dataclasses.fields(obj))
+        assert "_hash" not in {f.name for f in dataclasses.fields(obj)}
+        assert hash(obj) == hash(fields)
+
+
 def test_key_field_order_is_the_documented_sort_order():
     assert [f.name for f in dataclasses.fields(FusionBlockKey)] == ["output_tree", "input_tree"]
 
