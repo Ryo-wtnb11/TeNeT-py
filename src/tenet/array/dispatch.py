@@ -92,8 +92,10 @@ for _name, _fn in {
     "shape": lambda t: t.shape,
     "ndim": lambda t: t.ndim,
     # the only densifying registration: an explicit request, unlike np.asarray
-    # (which must still not densify — invariant 9).
-    "to_numpy": lambda t: t.to_dense(),
+    # (which must still not densify — invariant 9). ``to_dense`` returns the
+    # tensor's *own* backend as of #82, so the NumPy contract autoray attaches to
+    # this name is honoured here, by one wrap and no new key.
+    "to_numpy": lambda t: ar.to_numpy(t.to_dense()),
 }.items():
     ar.register_function("tenet", _name, _fn)
 
