@@ -2088,6 +2088,73 @@ braiding
 block layout
 ```
 
+## `quimb` in practice
+
+A `SymmetricTensor` is usable as the `data` of a `quimb.tensor.Tensor` today, with
+no adapter on either side: the whole integration is the `autoray` registration plus
+the `get_params` / `set_params` protocol. `TeNeT-py` never imports `quimb` or
+`cotengra`; both are test-only dependencies in the dev group.
+
+```python
+import quimb.tensor as qtn
+
+t = qtn.Tensor(data=T, inds=("b0", "p0", "b1"))   # t.backend == "tenet"
+tn = qtn.TensorNetwork([t0, t1, t2])
+tn.contract(output_inds=("b0", "p0", "p1", "p2", "b3"))
+```
+
+Works:
+
+```text
+Tensor construction, .shape, .size, .copy(), .transpose(), .conj(), .H
+tensor_contract / @ / TensorNetwork.contract with explicit output_inds
+get_params / set_params
+TNOptimizer with the JAX autodiff backend
+```
+
+One caveat on the last line: `quimb`'s `Tensor.set_params` mutates its data object
+in place and discards the return value, while `SymmetricTensor` is frozen and
+returns a new tensor. Until that is reconciled, parameter injection needs a
+one-line forwarding shim:
+
+```python
+qtn.Tensor.set_params = lambda self, p: self._set_data(self.data.set_params(p))
+```
+
+Without it `TNOptimizer` runs but reports a flat loss, because the optimized
+parameters never reach the network.
+
+`quimb` hands the contraction to `cotengra`, which lowers the network itself and
+calls back **pairwise only** — `tensordot` for contractions, `einsum` for
+label shuffles. No multi-operand `einsum` is ever requested.
+
+Refused, and correctly so:
+
+```text
+Tensor.norm(), Tensor.split()   → reshape by shape has no categorical meaning;
+                                  use fuse / unfuse, or tenet.linalg.svd_truncated
+output_inds dropping an index   → summing an axis away is not equivariant
+contraction to a rank-0 scalar  → see below
+```
+
+### Scalars are spelled with boundary legs
+
+A `SymmetricTensor` has at least one leg, so `tn ^ all` — a contraction that leaves
+no free leg — is refused. This costs nothing in practice: a network is contracted
+down to its *boundary* legs, which for an MPS are trivial-sector legs of dimension
+one.
+
+```python
+ket = qtn.TensorNetwork([...])                       # legs b0 ... bN
+bra = qtn.TensorNetwork([...])                       # legs c0 ... cN, adjoint sites
+out = (ket | bra).contract(output_inds=("b0", "bN", "c0", "cN"))
+# out.data is a rank-4 SymmetricTensor holding a single 1x1x1x1 block
+```
+
+The number in that block is `⟨ψ|ψ⟩`. The rank-0 tensor is a separate design
+question — it would require every leg's provider to be carried explicitly — and is
+deliberately not answered by this pattern's existence.
+
 ---
 
 # Braiding is the important limit of ndarray syntax

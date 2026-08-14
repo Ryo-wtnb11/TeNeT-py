@@ -111,6 +111,19 @@ def test_do_fuse():
     assert ar.do("fuse", t, (0, 2)) == t.fuse((0, 2))
 
 
+def test_do_fuse_multi_group_is_refused_by_name():
+    """#68: autoray's convention is ``fuse(x, *axes_groups)``; the multi-group form
+    is a reshape in disguise and must say so instead of raising a bare TypeError."""
+    with pytest.raises(ValueError, match=r"fuse.*reshape in disguise"):
+        ar.do("fuse", su2(), (0, 2), (1, 3))
+
+
+def test_do_reshape_is_refused_in_our_own_voice():
+    """#68: registered only to refuse — the defined-operation list is unchanged."""
+    with pytest.raises(ValueError, match=r"reshape by shape is not defined"):
+        ar.do("reshape", su2(), (4, 9))
+
+
 def test_do_shape_and_ndim():
     t = su2()
     assert ar.do("shape", t) == t.shape
@@ -128,11 +141,10 @@ def test_do_to_numpy_is_to_dense_exactly():
 @pytest.mark.parametrize(
     "call",
     [
-        lambda a, b: ar.do("reshape", a, (4, 4)),
         lambda a, b: ar.do("exp", a),
         lambda a, b: ar.do("svd", a),
     ],
-    ids=["reshape", "exp", "svd"],
+    ids=["exp", "svd"],
 )
 def test_unregistered_operations_raise(call):
     """Invariant 11 at the dispatch layer: nothing unimplemented leaks through."""
