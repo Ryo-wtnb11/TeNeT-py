@@ -2,10 +2,11 @@
 
 Registration only — no numerical logic lives here, ever. Every entry is an
 already-implemented Milestone 2 function; the list is **closed**, so
-``ar.do("tensordot", ...)``, ``ar.do("einsum", ...)``, ``ar.do("reshape", ...)``,
-``ar.do("exp", ...)``, ``ar.do("svd", ...)`` and friends raise rather than leak
-through to a backend (invariant 11). Adding a name here is the deliberate act
-of declaring its categorical meaning defined.
+``ar.do("einsum", ...)``, ``ar.do("reshape", ...)``, ``ar.do("exp", ...)``,
+``ar.do("svd", ...)`` and friends raise rather than leak through to a backend
+(invariant 11). Adding a name here is the deliberate act of declaring its
+categorical meaning defined — ``"tensordot"`` and ``"trace"`` joined the list
+with #51, and ``"einsum"`` waits for #52.
 
 autoray would find most of these anyway — it infers a class's backend from the
 module it is defined in and then looks the function up in that module, and
@@ -17,7 +18,18 @@ heuristic's accident. This mirrors symmray's ``interface.py``.
 
 import autoray as ar
 
-from tenet.ops import add, conj, fuse, multiply, negative, norm, subtract, transpose
+from tenet.ops import (
+    add,
+    conj,
+    fuse,
+    multiply,
+    negative,
+    norm,
+    subtract,
+    tensordot,
+    trace,
+    transpose,
+)
 from tenet.tensor import SymmetricTensor
 
 __all__: list[str] = []
@@ -34,6 +46,8 @@ for _name, _fn in {
     "multiply": multiply,
     "negative": negative,
     "fuse": fuse,
+    "tensordot": tensordot,
+    "trace": trace,
     "shape": lambda t: t.shape,
     "ndim": lambda t: t.ndim,
     # the only densifying registration: an explicit request, unlike np.asarray

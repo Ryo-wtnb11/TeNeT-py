@@ -5,7 +5,8 @@ Two oracles, both written independently of the provider:
 * ``bubble_sign`` — a bubble sort that multiplies ``-1`` per adjacent transposition
   of two odd lines. It never mentions inversions, so it is a genuine check on
   :func:`koszul_sign`'s formula and not a restatement of it.
-* ``supersign`` — the dense-side Koszul sign, built from each axis's parity vector
+* ``supersign`` (``tests/helpers.py``, shared with the contraction suite since
+  #51) — the dense-side Koszul sign, built from each axis's parity vector
   in the space's canonical sector order (``FZ2Sector(0)``'s slab first, then
   ``FZ2Sector(1)``'s, since ``irrep_dim == 1``). For an output entry indexed by
   ``(n_0, ..., n_{N-1})`` with ``q_j = par_{p[j]}[n_j]`` the sign is
@@ -22,6 +23,7 @@ import sys
 
 import numpy as np
 import pytest
+from helpers import supersign
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
@@ -108,35 +110,6 @@ def bubble_sign(parities: tuple[int, ...], perm: tuple[int, ...]) -> float:
                     sign = -sign
                 seq[k], seq[k + 1] = seq[k + 1], seq[k]
                 swapped = True
-    return sign
-
-
-def parity_vector(space: GradedSpace) -> np.ndarray:
-    """Parity of each dense index of ``space``, in canonical sector order."""
-    return np.concatenate([np.full(m, a.parity) for a, m in space.sectors])
-
-
-def supersign(legs, p: tuple[int, ...], *, per_side: bool) -> np.ndarray:
-    """Dense-side Koszul sign array, shaped like ``np.transpose(dense, p)``.
-
-    ``per_side=False`` counts every inversion of ``p`` (correct when every leg
-    lives on one side); ``per_side=True`` counts only inversions between two axes
-    of the same side, which is TeNeT-py's stated convention.
-    """
-    pars = [parity_vector(legs[ax].space) for ax in p]
-    sides = [legs[ax].side for ax in p]
-    sign = np.ones(tuple(len(v) for v in pars))
-    n = len(p)
-    for j in range(n):
-        for k in range(j + 1, n):
-            if p[j] <= p[k] or (per_side and sides[j] is not sides[k]):
-                continue
-            shape_j = [1] * n
-            shape_j[j] = len(pars[j])
-            shape_k = [1] * n
-            shape_k[k] = len(pars[k])
-            product = pars[j].reshape(shape_j) * pars[k].reshape(shape_k)
-            sign = sign * (-1.0) ** product
     return sign
 
 

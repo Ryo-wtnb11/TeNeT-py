@@ -89,6 +89,15 @@ def test_do_arithmetic():
     assert ar.do("negative", a) == -a
 
 
+def test_do_tensordot_and_trace():
+    """#51 registered both; the closed list is a list, not a policy against growth."""
+    a = SymmetricTensor.random((Leg(V, OUT), Leg(W, IN)), seed=0)
+    b = SymmetricTensor.random((Leg(W, OUT), Leg(V, IN)), seed=1)
+    assert ar.do("tensordot", a, b, axes=([1], [0])) == tenet.tensordot(a, b, ([1], [0]))
+    c = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN), Leg(W, IN)), seed=2)
+    assert ar.do("trace", c, axes=(0, 1)) == tenet.trace(c, (0, 1))
+
+
 def test_do_fuse():
     t = su2()
     assert ar.do("fuse", t, (0, 2)) == t.fuse((0, 2))
@@ -111,14 +120,12 @@ def test_do_to_numpy_is_to_dense_exactly():
 @pytest.mark.parametrize(
     "call",
     [
-        lambda a, b: ar.do("tensordot", a, b, axes=([1], [0])),
         lambda a, b: ar.do("einsum", "ab,bc->ac", a, b),
         lambda a, b: ar.do("reshape", a, (4, 4)),
         lambda a, b: ar.do("exp", a),
-        lambda a, b: ar.do("trace", a),
         lambda a, b: ar.do("svd", a),
     ],
-    ids=["tensordot", "einsum", "reshape", "exp", "trace", "svd"],
+    ids=["einsum", "reshape", "exp", "svd"],
 )
 def test_unregistered_operations_raise(call):
     """Invariant 11 at the dispatch layer: nothing unimplemented leaks through."""

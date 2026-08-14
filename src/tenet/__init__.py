@@ -25,6 +25,8 @@ from tenet.ops import (
     norm,
     repartition,
     subtract,
+    tensordot,
+    trace,
     transpose,
     unfuse,
 )
@@ -70,7 +72,9 @@ __all__ = [
     "norm",
     "repartition",
     "subtract",
+    "tensordot",
     "to_matrices",
+    "trace",
     "transpose",
     "unfuse",
 ]
