@@ -14,6 +14,7 @@ from tenet.ops.basic import (
     norm,
     subtract,
 )
+from tenet.ops.contraction import tensordot, trace
 from tenet.ops.fusion import fuse, unfuse
 from tenet.ops.map import adjoint, compose, identity
 from tenet.ops.permutation import transpose
@@ -34,6 +35,8 @@ __all__ = [
     "norm",
     "repartition",
     "subtract",
+    "tensordot",
+    "trace",
     "transpose",
     "unfuse",
 ]
