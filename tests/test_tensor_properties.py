@@ -103,8 +103,8 @@ def test_core_never_imports_jax_or_torch():
 
     root = pathlib.Path(__file__).resolve().parents[1] / "src" / "tenet"
     for path in root.rglob("*.py"):
-        if path.name == "pytree.py":
-            continue  # the opt-in registration module (#41); core never imports it
+        if path.name in ("pytree.py", "ad.py"):
+            continue  # the opt-in modules (#41, #76); core never imports either
         text = path.read_text()
         assert "import jax" not in text and "import torch" not in text, path
 

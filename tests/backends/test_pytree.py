@@ -52,10 +52,19 @@ def qdims(t):
 
 
 def test_only_pytree_module_imports_jax():
-    """The file walk, not review, is what holds this invariant up."""
+    """The file walk, not review, is what holds this invariant up.
+
+    Set **equality**, never containment: ``tenet.ad`` (#76) is the second and last
+    opt-in module allowed to import JAX, and the assertion has to fail the moment a
+    third one appears.
+    """
     src = pathlib.Path(tenet.__file__).parent
     offenders = {p.name for p in src.rglob("*.py") if "import jax" in p.read_text()}
-    assert offenders == {"pytree.py"}
+    assert offenders == {"pytree.py", "ad.py"}
+    # the modules #76 leaves at a zero-line diff, stated by name
+    for rel in ("ops/linalg.py", "tensor.py", *(f"ops/{p.name}" for p in (src / "ops").iterdir())):
+        if (src / rel).suffix == ".py":
+            assert "import jax" not in (src / rel).read_text(), rel
 
 
 def test_not_exported_from_tenet_namespace():
