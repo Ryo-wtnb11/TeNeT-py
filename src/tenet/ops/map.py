@@ -94,6 +94,17 @@ def compose(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
 
     The result's public axis order is ``a``'s OUT legs followed by ``b``'s IN legs,
     each in its own public order.
+
+    For a long chain at a *fixed* partition in eager NumPy, the matrix form can
+    be kept between steps by hand (measured ~1.1x asymptotically; a persisted
+    layout in the library was evaluated and rejected — zero cache-hit rate in
+    real ``tensordot`` chains, and ``from_matrices`` is already zero-copy)::
+
+        acc = to_matrices(ts[0])
+        for t in ts[1:]:
+            mb = to_matrices(t)
+            acc = {c: acc[c] @ mb[c] for c in acc}
+        out = from_matrices(TensorStructure((*ts[0].codomain, *ts[-1].domain)), acc)
     """
     _check_composable(a, b)
     ma, mb = to_matrices(a), to_matrices(b)
