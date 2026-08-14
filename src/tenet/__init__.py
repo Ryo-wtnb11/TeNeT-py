@@ -34,6 +34,7 @@ from tenet.ops import (
 )
 from tenet.space import GradedSpace, ProductSpace
 from tenet.structure import FusionBlockKey, TensorStructure
+from tenet.symmetry.base import StructureChangingError
 from tenet.tensor import SymmetricTensor
 
 __version__ = "0.1.0"
@@ -52,6 +53,7 @@ __all__ = [
     "MapLayout",
     "ProductSpace",
     "Side",
+    "StructureChangingError",
     "SymmetricTensor",
     "TensorMapView",
     "TensorStructure",

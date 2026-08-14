@@ -59,11 +59,12 @@ from tenet.map_view import from_matrices, map_layout, to_matrices
 from tenet.ops.repartition import repartition
 from tenet.space import GradedSpace
 from tenet.structure import TensorStructure
+from tenet.symmetry.base import QuantumDimension, StructureChangingError, requires
 
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["qr", "svd"]
+__all__ = ["qr", "svd", "svd_truncated"]
 
 Axes = tuple[Sequence[int], Sequence[int]] | None
 
@@ -132,5 +133,210 @@ def qr(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sym
         ),
         from_matrices(
             TensorStructure((Leg(bond, OUT), *m.domain)), {c: p[1] for c, p in parts.items()}
+        ),
+    )
+
+
+# --- truncation, Milestone 7 (#64) -------------------------------------------------
+# Everything below is structure-changing: the bond space is decided by the singular
+# values, so it is NOT traceable. Kept self-contained at the end of the module so the
+# shape-static half above reads on its own.
+
+_CUTOFF_MODES = ("abs", "rel", "sum2", "rsum2", "sum1", "rsum1")
+
+_NOT_TRACEABLE = (
+    "svd_truncated decides its output structure from the singular values -- the bond "
+    "GradedSpace's degeneracies, and which sectors survive at all, depend on the block "
+    "values -- so it cannot run inside a traced region (jit, grad, vmap). Either run it "
+    "outside the traced region, or use tenet.linalg.svd, which is exact, shape-static "
+    "and traceable."
+)
+
+
+def _spectrum(parts: dict) -> list[tuple[float, object, int]]:
+    """``[(sigma, c, i), ...]`` descending by **bare** sigma, ties by ``(c, i)``.
+
+    ``float(sigma)`` is the tracer check, and it is the honest one: the selection
+    genuinely needs Python floats to sort, and asking the value for its value is the
+    only test that is about the actual requirement (never importing JAX, no guess at a
+    backend's tracer type). JAX raises ``ConcretizationTypeError``, a ``TypeError``;
+    a backend that raises something else joins the ``except`` tuple when it appears.
+    """
+    try:
+        entries = [(float(sigma), c, i) for c, p in parts.items() for i, sigma in enumerate(p[1])]
+    except TypeError as exc:
+        raise StructureChangingError(_NOT_TRACEABLE) from exc
+    entries.sort(key=lambda e: (-e[0], e[1], e[2]))
+    return entries
+
+
+def _admissible(spectrum: list, qdim, cutoff: float | None, mode: str) -> int:
+    """How long a prefix of ``spectrum`` the cutoff admits.
+
+    The bare sigma is what ``"abs"``/``"rel"`` compare; only the cumulative modes
+    carry the ``qdim`` weight, and the relative ones are dimensionally consistent --
+    threshold and accumulator are the same power of sigma, which is what makes
+    ``"rel"``/``"rsum1"``/``"rsum2"`` scale-invariant.
+    """
+    if cutoff is None:
+        return len(spectrum)
+    if mode == "abs":
+        return sum(1 for sigma, _, _ in spectrum if sigma > cutoff)
+    if mode == "rel":
+        threshold = cutoff * spectrum[0][0]
+        return sum(1 for sigma, _, _ in spectrum if sigma > threshold)
+    power = 2 if mode in ("sum2", "rsum2") else 1
+    weights = [qdim(c) * sigma**power for sigma, c, _ in spectrum]
+    threshold = cutoff * sum(weights) if mode.startswith("r") else cutoff
+    kept, dropped = len(spectrum), 0.0
+    for w in reversed(weights):
+        if dropped + w >= threshold:
+            break
+        dropped += w
+        kept -= 1
+    return kept
+
+
+def _validate(max_bond, cutoff, cutoff_mode, renorm) -> None:
+    if max_bond is None and cutoff is None:
+        raise ValueError(
+            "svd_truncated needs at least one of max_bond or cutoff; for the untruncated "
+            "factorization call tenet.linalg.svd, which is exact and jittable"
+        )
+    if max_bond is not None and max_bond <= 0:
+        raise ValueError(f"max_bond must be a positive dense bond dimension, got {max_bond!r}")
+    if cutoff is not None and cutoff < 0:
+        raise ValueError(f"cutoff must be non-negative, got {cutoff!r}")
+    if not isinstance(cutoff_mode, str):
+        raise ValueError(
+            f"cutoff_mode must be one of the strings {_CUTOFF_MODES}, got {cutoff_mode!r}; "
+            "quimb's integer codes 1-6 are not accepted"
+        )
+    if cutoff_mode not in _CUTOFF_MODES:
+        raise ValueError(f"unknown cutoff_mode {cutoff_mode!r}; expected one of {_CUTOFF_MODES}")
+    if not isinstance(renorm, bool):
+        raise TypeError(
+            f"renorm must be a bool, got {renorm!r}: it means 'preserve tenet.norm(T)', not "
+            "quimb's p-norm power. A `renorm: int` p-norm generalization is the follow-up "
+            "if a caller ever needs p=1"
+        )
+
+
+def svd_truncated(
+    t: "SymmetricTensor",
+    axes: Axes = None,
+    *,
+    max_bond: int | None = None,
+    cutoff: float | None = None,
+    cutoff_mode: str = "rsum2",
+    renorm: bool = False,
+) -> tuple["SymmetricTensor", "SymmetricTensor", "SymmetricTensor"]:
+    """``U, S, Vh`` on a *truncated* bond space. **NOT jittable.**
+
+    Same factor legs, same conventions and the same capability refusals as
+    :func:`svd`; the only difference is the bond :class:`~tenet.space.GradedSpace`,
+    whose degeneracy at ``c`` is the number of kept singular values there and which
+    **omits ``c`` entirely** when that number is zero. That is README Milestone 7's
+    "graded bond-space reconstruction", and it is why this is a sibling of
+    :func:`svd` rather than a keyword on it: a keyword would make one function
+    traceable or not depending on the value of an argument, which is exactly the
+    distinction README says the library must never hide. Under ``jax.jit`` or
+    ``jax.grad`` it raises
+    :class:`~tenet.symmetry.base.StructureChangingError`.
+
+    Selection is over **one global spectrum**, always, in every mode:
+
+    * the sort key is the **bare** ``sigma`` (descending; ties by sector order then
+      index) -- "how large is this singular value" has nothing to do with
+      multiplicity;
+    * the **cost** and the **weight** are ``qdim(c)``-weighted, because the reduced
+      index ``i`` in sector ``c`` stands for ``qdim(c)`` dense basis states. It is
+      the same weight :func:`tenet.norm` carries. Greedy-descending under a dense
+      budget is then optimal rather than a heuristic, so the result is the best
+      approximation of its achieved dense rank (Eckart-Young, sector-blind).
+
+    ``max_bond`` bounds the **dense** bond dimension ``Sum_c qdim(c)*m_c``, not the
+    reduced ``Sum_c m_c``. For U(1) and fermionic parity these coincide; for SU(2) they do not, and
+    that will surprise people. The walk **stops** at the first singular value that
+    would overflow the budget rather than scanning on for a cheaper one that still
+    fits, which is what keeps the kept set nested as ``max_bond`` grows; the
+    documented consequence is that ``max_bond`` may be undershot by up to
+    ``max qdim(c) - 1``.
+
+    ``cutoff_mode`` (quimb's names and quimb's semantics; the integer codes 1-6 quimb
+    also accepts are listed only so an M8 shim is a lookup -- **only the strings are
+    accepted here**):
+
+    ==== ========= ===========================================================
+    code mode      keeps
+    ==== ========= ===========================================================
+    1    ``abs``   ``sigma > cutoff``
+    2    ``rel``   ``sigma > cutoff * sigma_max`` (the bare global max)
+    3    ``sum2``  drops the largest set with ``Sum qdim(c) sigma^2 < cutoff``
+    4    ``rsum2`` as ``sum2``, threshold ``cutoff * tenet.norm(T)**2``
+    5    ``sum1``  as ``sum2`` at power 1, weight ``qdim(c) sigma``
+    6    ``rsum1`` as ``rsum2`` at power 1
+    ==== ========= ===========================================================
+
+    ``max_bond`` and ``cutoff`` together take the intersection. ``None`` means "no
+    truncation" -- there are no ``-1`` sentinels, and passing neither is refused,
+    naming :func:`svd`. ``renorm=True`` scales the kept singular values by
+    ``sqrt(norm(T)**2 / Sum_kept qdim(c) sigma^2)`` so that
+    ``tenet.norm(U @ S @ Vh) == tenet.norm(t)``; it is a bool, not quimb's p-norm
+    power.
+
+    No ``absorb`` enum and no fourth return value: ``S`` is a tensor, so absorbing is
+    a one-line ``compose``, and the truncation error is exactly
+    ``tenet.norm(t)**2 - tenet.norm(U @ S @ Vh)**2`` by Pythagoras.
+
+    Raises ``ValueError`` if every singular value is dropped -- a bond space with no
+    sectors is never returned.
+    """
+    _validate(max_bond, cutoff, cutoff_mode, renorm)
+    m, _, mats = _lower(t, axes)
+    provider = m.provider
+    requires(provider, QuantumDimension)
+    qdim = provider.qdim
+
+    parts = {c: ar.do("linalg.svd", b, full_matrices=False) for c, b in mats.items()}
+    spectrum = _spectrum(parts)
+    if not spectrum:
+        raise ValueError("svd_truncated: this tensor has no singular values at all")
+
+    admissible = _admissible(spectrum, qdim, cutoff, cutoff_mode)
+    keep_count: dict = {}
+    kept_weight, budget = 0.0, 0.0
+    for sigma, c, _ in spectrum[:admissible]:
+        if max_bond is not None:
+            budget += qdim(c)
+            if budget > max_bond:
+                break  # stop; never scan on for a cheaper sector that still fits
+        keep_count[c] = keep_count.get(c, 0) + 1
+        kept_weight += qdim(c) * sigma**2
+    if not keep_count:
+        raise ValueError(
+            f"svd_truncated: cutoff={cutoff!r} in cutoff_mode={cutoff_mode!r} with "
+            f"max_bond={max_bond!r} keeps no singular value at all (the largest available "
+            f"is {spectrum[0][0]!r}); a bond space with no sectors is not a tensor"
+        )
+
+    bond = GradedSpace.new(provider, keep_count)
+    scale = 1.0
+    if renorm:
+        total = sum(qdim(c) * sigma**2 for sigma, c, _ in spectrum)
+        scale = (total / kept_weight) ** 0.5
+    # sigma_c is descending within each sector, so the kept indices are a prefix.
+    return (
+        from_matrices(
+            TensorStructure((*m.codomain, Leg(bond, IN))),
+            {c: parts[c][0][:, :k] for c, k in keep_count.items()},
+        ),
+        from_matrices(
+            TensorStructure((Leg(bond, OUT), Leg(bond, IN))),
+            {c: ar.do("diag", parts[c][1][:k] * scale) for c, k in keep_count.items()},
+        ),
+        from_matrices(
+            TensorStructure((Leg(bond, OUT), *m.domain)),
+            {c: parts[c][2][:k, :] for c, k in keep_count.items()},
         ),
     )
