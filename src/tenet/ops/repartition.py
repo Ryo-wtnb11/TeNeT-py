@@ -51,13 +51,21 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 
 from tenet.leg import IN, OUT
+from tenet.ops.permutation import permutation_plan
 from tenet.structure import TensorStructure
 from tenet.symmetry.base import BendingCoefficients, CapabilityError, requires
 
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["BendPlan", "bend", "bend_plan", "repartition"]
+__all__ = [
+    "BendPlan",
+    "RepartitionPlan",
+    "bend",
+    "bend_plan",
+    "repartition",
+    "repartition_plan",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +201,89 @@ def _validated(
     return tuple(parts)
 
 
+@dataclass(frozen=True, slots=True)
+class RepartitionPlan:
+    """The whole transpose→bend→transpose sandwich as one plan. Array-free, hashable.
+
+    ``perm`` is the single composed axis permutation applied to every block;
+    ``terms`` is ``((source block index, target block index, coefficient), ...)``
+    with the whole chain's coefficients multiplied through. Same shape as
+    :class:`BendPlan` plus ``perm``, because a permutation is per-step, never
+    per-term.
+    """
+
+    new_structure: TensorStructure
+    perm: tuple[int, ...]
+    terms: tuple[tuple[int, int, complex], ...]
+
+
+def _compose(
+    terms: tuple[tuple[int, int, complex], ...], following: tuple[tuple[int, int, complex], ...]
+) -> tuple[tuple[int, int, complex], ...]:
+    """Sparse product of two block maps, duplicate ``(src, dst)`` pairs summed.
+
+    Zero results are kept: they are genuine cancellations, and the target block
+    still has to exist for the fill check.
+    """
+    by_src: dict[int, list[tuple[int, complex]]] = {}
+    for src, dst, coeff in following:
+        by_src.setdefault(src, []).append((dst, coeff))
+
+    merged: dict[tuple[int, int], complex] = {}
+    for src, mid, coeff in terms:
+        for dst, other in by_src.get(mid, ()):
+            key = (src, dst)
+            product = coeff * other
+            merged[key] = product if key not in merged else merged[key] + product
+    return tuple((src, dst, coeff) for (src, dst), coeff in merged.items())
+
+
+@cache
+def repartition_plan(
+    structure: TensorStructure, outputs: tuple[int, ...], inputs: tuple[int, ...]
+) -> RepartitionPlan:
+    """Plan the whole ``repartition``. Cached: repeat calls return one object.
+
+    Walks exactly the chain :func:`repartition` used to execute — transpose the
+    crossing leg to the end, bend it, and one final transpose — but over
+    structures instead of tensors, composing the sparse block maps and the
+    permutations as it goes. ``bend``'s own permutation is the identity here (the
+    leg has just been transposed to the end), so only the transposes' axes
+    compose into ``perm``.
+    """
+    ndim = len(structure.legs)
+    want = {ax: OUT for ax in outputs} | {ax: IN for ax in inputs}
+    crossing = [ax for ax in range(ndim) if structure.legs[ax].side is not want[ax]]
+    for ax in crossing:
+        # refuse before any composition, naming the axis in the caller's numbering
+        _refuse(structure, ax)
+
+    perm = tuple(range(ndim))
+    terms = tuple((i, i, 1.0) for i in range(structure.num_blocks))
+
+    labels = list(range(ndim))  # labels[p] is the original axis now at position p
+    for ax in crossing:
+        p = labels.index(ax)
+        axes = tuple(i for i in range(ndim) if i != p) + (p,)
+        plan = permutation_plan(structure, axes)
+        # applying ``perm`` then ``axes`` to a block is applying their composite
+        perm = tuple(perm[i] for i in axes)
+        terms = _compose(terms, plan.terms)
+        structure = plan.new_structure
+        labels.append(labels.pop(p))
+
+        bplan = bend_plan(structure, ndim - 1)
+        terms = _compose(terms, bplan.terms)
+        structure = bplan.new_structure
+
+    position = {a: p for p, a in enumerate(labels)}
+    axes = tuple(position[ax] for ax in (*outputs, *inputs))
+    plan = permutation_plan(structure, axes)
+    return RepartitionPlan(
+        plan.new_structure, tuple(perm[i] for i in axes), _compose(terms, plan.terms)
+    )
+
+
 def repartition(
     t: "SymmetricTensor", outputs: Sequence[int], inputs: Sequence[int]
 ) -> "SymmetricTensor":
@@ -204,22 +295,33 @@ def repartition(
     throughout.
 
     Owns no mathematics of its own: it transposes each crossing leg to the end,
-    bends it, and transposes once more to the requested order.
+    bends it, and transposes once more to the requested order — the whole chain
+    composed once by :func:`repartition_plan` and executed in a single pass, so
+    every block is copied once instead of once per step.
     """
+    from tenet.tensor import SymmetricTensor
+
     outputs, inputs = _validated(t.ndim, outputs, inputs)
 
     want = {ax: OUT for ax in outputs} | {ax: IN for ax in inputs}
-    crossing = [ax for ax in range(t.ndim) if t.legs[ax].side is not want[ax]]
-    for ax in crossing:
-        # refuse before moving any data, and name the axis in the caller's numbering
-        _refuse(t.structure, ax)
+    if not any(t.legs[ax].side is not want[ax] for ax in range(t.ndim)):
+        # no leg crosses: this is a plain transpose and must not pay for a plan
+        return t.transpose((*outputs, *inputs))
 
-    labels = list(range(t.ndim))  # labels[p] is the original axis now at position p
-    for ax in crossing:
-        p = labels.index(ax)
-        t = t.transpose(tuple(i for i in range(t.ndim) if i != p) + (p,))
-        labels.append(labels.pop(p))
-        t = bend(t, t.ndim - 1)
+    plan = repartition_plan(t.structure, outputs, inputs)
 
-    position = {a: p for p, a in enumerate(labels)}
-    return t.transpose(tuple(position[ax] for ax in (*outputs, *inputs)))
+    blocks: dict[int, Any] = {}
+    for src, dst, coeff in plan.terms:
+        contrib = ar.do("transpose", t.blocks[src], plan.perm)
+        if coeff != 1:
+            # keep a real coefficient real, so a real tensor stays real
+            contrib = contrib * (coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)
+        blocks[dst] = contrib if dst not in blocks else blocks[dst] + contrib
+
+    n = plan.new_structure.num_blocks
+    if len(blocks) != n:
+        raise ValueError(
+            f"repartition: the plan fills {len(blocks)} of {n} target blocks — "
+            f"{t.provider.name}'s coefficients dropped terms"
+        )
+    return SymmetricTensor(plan.new_structure, tuple(blocks[i] for i in range(n)))
