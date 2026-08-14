@@ -28,9 +28,20 @@ and `AGENTS.md` (condensed).
   formatters.
 - Type annotations on all public functions and classes.
 - Structural/categorical types are immutable.
-- Dependencies: keep minimal. Core depends on `numpy` and `autoray` only.
-  JAX/PyTorch are optional extras (`tenet-py[jax]`), never hard requirements;
-  core never imports them.
+- Dependencies: keep minimal. Core depends on `numpy`, `autoray` and
+  `opt-einsum` only. JAX/PyTorch are optional extras (`tenet-py[jax]`), never
+  hard requirements; core never imports them.
+  - `opt-einsum` was added for M8 (#67), which needs a contraction-path finder
+    for `einsum` over three or more operands. It is a 72 KB pure-Python wheel
+    with zero runtime dependencies (it does not import NumPy), BSD-3, and
+    already arrives transitively with JAX. The alternatives were worse: an
+    in-tree path finder is exactly the reinvention this rule exists to prevent,
+    and an extra would put a *packaging* cliff in the middle of the primary
+    tensor-network API — `einsum` working for two operands and refusing three
+    depending on what else is installed, which is a refusal that is not a
+    categorical statement, unlike every other refusal in that module. It is
+    imported lazily, inside the three-or-more-operand branch, so `import tenet`
+    and the pairwise path never pay for it.
 
 ## Tests
 

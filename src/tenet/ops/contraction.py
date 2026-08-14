@@ -43,8 +43,12 @@ into label→axis maps, hands the shared labels to :func:`tensordot` as one axis
 pair, and hands the requested output order to :func:`~tenet.transpose`. The
 parser is hand-rolled — ``opt_einsum`` parses ellipsis, unicode labels, the
 interleaved format and shape-driven broadcasting, none of which is meaningful
-for symmetric tensors, and README places ``opt_einsum``/``cotengra`` at the
-*path* level (M8, three or more operands) instead.
+for symmetric tensors. ``opt_einsum`` enters one level up instead (M8, #67), at
+the *path* level: with three or more operands ``contract_path`` orders the
+pairwise contractions and each step is the two-operand call above, so the
+scheduler adds a loop and no mathematics. It is imported lazily, inside that
+branch only; ``cotengra``'s optimizers arrive through ``optimize=`` as ordinary
+``PathOptimizer`` objects and ``cotengra`` is imported nowhere in ``tenet``.
 
 No ``to_dense``, no NumPy and no provider branching here (invariants 8/9).
 """
@@ -332,14 +336,14 @@ def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
 
 
 def _parse(equation: str, operands: tuple["SymmetricTensor", ...]) -> tuple[list[str], str]:
-    """``(terms, output)`` for a one- or two-operand equation, or a loud refusal.
+    """``(terms, output)`` for an equation over any number of operands, or a loud refusal.
 
     Every refusal below is a categorical statement, not a parser limitation, and
     each one names what to write instead.
     """
     if not operands:
         raise ValueError(
-            f"einsum: equation {equation!r} was given no operands; einsum takes one or two "
+            f"einsum: equation {equation!r} was given no operands; einsum takes one or more "
             "tensors after the equation, as in tenet.einsum('abc,cde->abde', A, B)"
         )
     if "." in equation:
@@ -356,15 +360,6 @@ def _parse(equation: str, operands: tuple["SymmetricTensor", ...]) -> tuple[list
                 f"einsum: label {label!r} in equation {equation!r} is not an ASCII letter; "
                 "labels are single letters a-z / A-Z, one per axis"
             )
-    if len(operands) > 2 or len(terms) > 2:
-        raise ValueError(
-            f"einsum: equation {equation!r} with {len(operands)} operands asks for a "
-            "contraction over three or more tensors, which needs a contraction *path*; "
-            "pairwise contraction must be correct before a path planner is added (README "
-            "'Milestone 5'), and planner hand-off to opt_einsum/cotengra is Milestone 8. "
-            "Chain two calls today, choosing the order yourself: "
-            "tenet.einsum('ij,jk->ik', tenet.einsum('ab,bi->ai', A, B), C)"
-        )
     if len(terms) != len(operands):
         raise ValueError(
             f"einsum: equation {equation!r} has {len(terms)} comma-separated term(s) but "
@@ -428,13 +423,41 @@ def _parse(equation: str, operands: tuple["SymmetricTensor", ...]) -> tuple[list
     return terms, out
 
 
-def einsum(equation: str, *operands: "SymmetricTensor") -> "SymmetricTensor":
-    """``tenet.einsum("abc,cde->abde", A, B)`` — one or two operands.
+def _plan_shape(t: "SymmetricTensor") -> tuple[int, ...]:
+    """What the path finder is allowed to see: physical dimensions, ``Σ_a m_a d_a``.
+
+    A planner asked to minimize FLOPs must see the physical extent of an axis
+    (#19), not its degeneracy count. A provider without ``ClebschGordan`` has no
+    physical shape at all, and there ``reduced_shape`` is the only thing on
+    offer; it can degrade *path quality*, never correctness, since the path only
+    ever decides the order of contractions that are each individually checked.
+    """
+    try:
+        return t.shape
+    except CapabilityError:
+        return t.reduced_shape
+
+
+def einsum(
+    equation: str, *operands: "SymmetricTensor", optimize: Any = "auto"
+) -> "SymmetricTensor":
+    """``tenet.einsum("abc,cde,ef->abdf", A, B, C)`` — any number of operands.
 
     Labels are single letters. ``->`` may be omitted, in which case the output is
     every label occurring exactly once, sorted (the NumPy rule). Repeated labels
-    within one operand (a trace or a diagonal), ellipsis, and three or more
-    operands are refused; see the message on each.
+    within one operand (a trace or a diagonal) and ellipsis are refused; see the
+    message on each.
+
+    With one or two operands this is the pairwise lowering and ``optimize`` is
+    not consulted (``opt_einsum`` is not even imported). With three or more the
+    pairwise order is chosen by ``opt_einsum.contract_path`` from the operands'
+    physical :attr:`~tenet.SymmetricTensor.shape`\\ s, and ``optimize`` is handed
+    to it unchanged: a strategy name, an explicit path, or any
+    ``opt_einsum.paths.PathOptimizer`` — cotengra's optimizers are such objects
+    and work here without ``cotengra`` being imported. Every step of the path is
+    then this same two-operand call, so the mathematics is unchanged; the path is
+    chosen from static structure only, and is therefore baked in at trace time
+    under ``jax.jit`` like every other structural decision.
 
     Shared labels are contracted in order of first appearance in the **first**
     operand — any order gives the same tensor, but a nondeterministic one would
@@ -446,6 +469,8 @@ def einsum(equation: str, *operands: "SymmetricTensor") -> "SymmetricTensor":
     terms, out = _parse(equation, operands)
     if len(operands) == 1:
         return transpose(operands[0], tuple(terms[0].index(label) for label in out))
+    if len(operands) > 2:
+        return _contract_path(terms, out, operands, optimize)
 
     shared = [label for label in terms[0] if label in terms[1]]
     axes = (
@@ -456,3 +481,75 @@ def einsum(equation: str, *operands: "SymmetricTensor") -> "SymmetricTensor":
     free = [label for label in terms[0] if label not in shared]
     free += [label for label in terms[1] if label not in shared]
     return transpose(tensordot(*operands, axes), tuple(free.index(label) for label in out))
+
+
+# ponytail: no path cache. Path finding for a ten-tensor network is microseconds
+# against block work measured in milliseconds, and the key would have to include
+# `optimize`, which may be a stateful, deliberately non-deterministic optimizer.
+# The ceiling is a hot loop over a large network re-planned every call; the upgrade
+# path is a @cache keyed on (equation, shapes, optimize) restricted to `str`.
+def _contract_path(
+    terms: list[str], out: str, operands: tuple["SymmetricTensor", ...], optimize: Any
+) -> "SymmetricTensor":
+    """Execute a three-or-more-operand equation as a sequence of pairwise ones.
+
+    Imported lazily so ``import tenet`` never pays for ``opt_einsum`` and the
+    two-operand path never touches it.
+
+    The parser's refusals do the reasoning here: every label occurs at most twice
+    in the whole equation, so the labels shared by any two chosen terms appear
+    nowhere else and are *always* fully contracted — no hyper-indices, no batch
+    labels, no partial contractions. An intermediate's free legs are the input
+    legs unchanged (:func:`contraction_plan`'s contract), so no new categorical
+    work happens between steps either.
+
+    ponytail: for a *braided* provider (a fermionic parity one, or a product
+    containing it) the answer is path-independent only for steps adjacent in
+    the caller's order — which is every step of a chain, and every step of any
+    path ``opt_einsum`` returns without an outer product. A step that reaches
+    across an intervening operand, as one can in a network with a loop, drags the
+    contracted wire past that operand's legs, and the Koszul sign of *that*
+    crossing is not expressible in the pairwise API this loop is built from
+    (a dense fold of the same network is ambiguous in exactly the same way).
+    The ceiling is a fermionic loop network whose best path is not adjacent; the
+    upgrade path is a sign correction computed from the skipped operands'
+    parities, which is M9's categorical path planning and needs new mathematics
+    rather than a scheduler.
+    """
+    import opt_einsum as oe
+
+    path, _ = oe.contract_path(
+        f"{','.join(terms)}->{out}",
+        *(_plan_shape(t) for t in operands),
+        shapes=True,
+        optimize=optimize,
+    )
+    terms, tensors = list(terms), list(operands)
+    # `rank` is each entry's position in the equation as the *caller* wrote it, which
+    # `opt_einsum`'s bookkeeping (pop both, append the result) does not preserve. It
+    # decides which of the two is the left operand of the pairwise call below, and it
+    # matters: the two ends of a wire are not interchangeable for a fermionic provider
+    # (the cap V*⊗V → 1 is not the cap V⊗V* → 1), so `einsum("ab,bc->ac", A, B)` and
+    # `einsum("bc,ab->ac", B, A)` differ by a Koszul sign. Contracting always in the
+    # caller's order is what makes the answer independent of the path.
+    rank = list(range(len(operands)))
+    for step in path:
+        if len(step) != 2:
+            raise ValueError(
+                f"einsum: the contraction path {path!r} contains the step {step!r}, which "
+                f"contracts {len(step)} operands at once; every step must be a pair, since "
+                "each one is lowered to a two-operand contraction. A single-operand step "
+                "would be a sum over an axis, which the parser already refuses"
+            )
+        i, j = sorted(step, reverse=True)  # pop the high index first
+        hi = (rank.pop(i), terms.pop(i), tensors.pop(i))
+        lo = (rank.pop(j), terms.pop(j), tensors.pop(j))
+        (ra, ta, a), (rb, tb, b) = sorted((hi, lo), key=operator.itemgetter(0))
+        keep = set(out).union(*map(set, terms))  # labels some later step still needs
+        mid = "".join([x for x in ta if x in keep] + [x for x in tb if x in keep])
+        tensors.append(einsum(f"{ta},{tb}->{mid}", a, b))
+        terms.append(mid)
+        rank.append(min(ra, rb))
+    # the last intermediate carries `out`'s labels, but in the order the path left
+    # them; one categorical transpose puts them in the order the caller asked for
+    return transpose(tensors[0], tuple(terms[0].index(label) for label in out))

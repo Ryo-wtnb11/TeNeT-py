@@ -556,6 +556,7 @@ source = { editable = "." }
 dependencies = [
     { name = "autoray" },
     { name = "numpy" },
+    { name = "opt-einsum" },
 ]
 
 [package.optional-dependencies]
@@ -576,6 +577,7 @@ requires-dist = [
     { name = "autoray", specifier = ">=0.10.1" },
     { name = "jax", marker = "extra == 'jax'", specifier = ">=0.5" },
     { name = "numpy", specifier = ">=2.0" },
+    { name = "opt-einsum", specifier = ">=3.4.0" },
 ]
 provides-extras = ["jax"]
 
