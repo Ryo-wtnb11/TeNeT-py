@@ -98,6 +98,14 @@ def test_do_tensordot_and_trace():
     assert ar.do("trace", c, axes=(0, 1)) == tenet.trace(c, (0, 1))
 
 
+def test_do_einsum_dispatches_despite_the_string_first_argument():
+    """#52: autoray's own einsum dispatcher infers the backend from every argument,
+    so the ``str`` equation in first position needs no extra registration."""
+    a = SymmetricTensor.random((Leg(V, OUT), Leg(W, IN)), seed=0)
+    b = SymmetricTensor.random((Leg(W, OUT), Leg(V, IN)), seed=1)
+    assert ar.do("einsum", "ab,bc->ac", a, b) == tenet.einsum("ab,bc->ac", a, b)
+
+
 def test_do_fuse():
     t = su2()
     assert ar.do("fuse", t, (0, 2)) == t.fuse((0, 2))
@@ -120,12 +128,11 @@ def test_do_to_numpy_is_to_dense_exactly():
 @pytest.mark.parametrize(
     "call",
     [
-        lambda a, b: ar.do("einsum", "ab,bc->ac", a, b),
         lambda a, b: ar.do("reshape", a, (4, 4)),
         lambda a, b: ar.do("exp", a),
         lambda a, b: ar.do("svd", a),
     ],
-    ids=["einsum", "reshape", "exp", "svd"],
+    ids=["reshape", "exp", "svd"],
 )
 def test_unregistered_operations_raise(call):
     """Invariant 11 at the dispatch layer: nothing unimplemented leaks through."""

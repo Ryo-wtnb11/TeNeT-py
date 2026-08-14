@@ -10,12 +10,24 @@ import numpy as np
 
 from tenet.space import GradedSpace
 
-__all__ = ["parity_vector", "supersign"]
+__all__ = ["parity_vector", "sector_parity", "supersign"]
+
+
+def sector_parity(sector) -> int:
+    """Fermionic parity of a sector, summed over the factors of a product sector.
+
+    ``ProductSector`` carries no ``parity`` of its own; a product of a bosonic and
+    a fermionic factor is graded by the fermionic one (#52 needs this to give the
+    product provider the same oracle as fZ2).
+    """
+    if hasattr(sector, "parity"):
+        return sector.parity
+    return sum(sector_parity(c) for c in getattr(sector, "components", ())) % 2
 
 
 def parity_vector(space: GradedSpace) -> np.ndarray:
     """Parity of each dense index of ``space``, in canonical sector order."""
-    return np.concatenate([np.full(m, a.parity) for a, m in space.sectors])
+    return np.concatenate([np.full(m, sector_parity(a)) for a, m in space.sectors])
 
 
 def supersign(legs, p: tuple[int, ...], *, per_side: bool) -> np.ndarray:
