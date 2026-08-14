@@ -303,7 +303,7 @@ def su2_operands():
 
 
 REFUSALS = [
-    pytest.param("abc,cde,efg->abdfg", 3, ["Milestone 8", "tenet.einsum("], id="three-operands"),
+    # three or more operands are no longer refused (#67); see test_einsum_multi.py
     pytest.param("abc->abc", 2, ["1 comma-separated term", "2 operand"], id="operand-count"),
     pytest.param("ab,cde->abde", 2, ["term 'ab'", "operand 0 is 3-dimensional"], id="term-length"),
     pytest.param("aac,cde->cde", 2, ["tenet.trace", "repeated inside"], id="trace"),
