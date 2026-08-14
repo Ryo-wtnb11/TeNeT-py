@@ -212,6 +212,15 @@ def qr(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sym
 
     Legs: ``Q`` is ``(*left legs, bond IN)`` and ``R`` is ``(bond OUT, *right legs)``.
     The sign of ``R``'s diagonal is the backend's; no stabilization is applied.
+
+    Differentiability: the gradient is JAX's own, and it is the standard rule
+    (Liao-Liu-Wang-Xiang Eq. (5) for the square/tall case; Roberts-Roberts
+    Eqs. (9)-(10) for the wide one, which is what JAX >= 0.10 implements). It is
+    finite and correct for any sector whose ``R`` is nonsingular. A sector matrix
+    that is **exactly** rank-deficient -- an exact zero on ``R``'s diagonal --
+    gives ``NaN``, and that is not stabilized here: unlike ``svd``'s degeneracy,
+    the QR of a rank-deficient matrix is itself non-unique, so there is no correct
+    value to broaden towards. See :mod:`tenet.ad`.
     """
     m, bond, mats = _lower(t, axes)
     parts = {c: ar.do("linalg.qr", b) for c, b in mats.items()}
@@ -366,6 +375,16 @@ def lq(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sym
     ``PermutationCoefficients`` and the fermionic Koszul signs — for the same numbers.
 
     No stabilization: the sign of ``L``'s diagonal is the backend's, as in :func:`qr`.
+
+    Differentiability: the gradient is JAX's own, inherited through ``qr(B†)`` --
+    so a ``rows > cols`` sector, the ordinary case here, hands JAX a *wide* matrix
+    and needs the wide-QR JVP of JAX >= 0.10 (Roberts-Roberts Eqs. (9)-(10);
+    Liao-Liu-Wang-Xiang Eq. (5) for the other side). It is finite and correct for
+    any sector whose ``L`` is nonsingular. A sector matrix that is **exactly**
+    rank-deficient -- an exact zero on ``L``'s diagonal -- gives ``NaN``, and that
+    is not stabilized here: unlike ``svd``'s degeneracy, the LQ of a rank-deficient
+    matrix is itself non-unique, so there is no correct value to broaden towards.
+    See :mod:`tenet.ad`.
     """
     m, bond, mats = _lower(t, axes)
     parts = {c: ar.do("linalg.qr", _dagger(b)) for c, b in mats.items()}

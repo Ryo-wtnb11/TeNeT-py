@@ -12,12 +12,14 @@ dependencies = [
 
 [project.optional-dependencies]
 jax = [
-    "jax>=0.5",
+    # 0.10 is the first release with the wide-matrix qr JVP; below it, qr on a wide
+    # sector and lq on a tall one raise NotImplementedError (#80).
+    "jax>=0.10",
 ]
 
 [dependency-groups]
 dev = [
-    "jax>=0.5",
+    "jax>=0.10",  # wide-matrix qr JVP; see the [jax] extra (#80)
     "pytest>=8.0",
     "quimb>=1.11",
     "ruff>=0.8",

@@ -575,7 +575,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "autoray", specifier = ">=0.10.1" },
-    { name = "jax", marker = "extra == 'jax'", specifier = ">=0.5" },
+    { name = "jax", marker = "extra == 'jax'", specifier = ">=0.10" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "opt-einsum", specifier = ">=3.4.0" },
 ]
@@ -583,7 +583,7 @@ provides-extras = ["jax"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "jax", specifier = ">=0.5" },
+    { name = "jax", specifier = ">=0.10" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "quimb", specifier = ">=1.11" },
     { name = "ruff", specifier = ">=0.8" },
