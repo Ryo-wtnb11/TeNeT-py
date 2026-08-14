@@ -15,6 +15,7 @@ from tenet.ops.basic import (
     subtract,
 )
 from tenet.ops.contraction import einsum, tensordot, trace
+from tenet.ops.embed import embed
 from tenet.ops.fusion import fuse, unfuse
 from tenet.ops.map import adjoint, compose, identity
 from tenet.ops.permutation import transpose
@@ -29,6 +30,7 @@ __all__ = [
     "conj",
     "divide",
     "einsum",
+    "embed",
     "fuse",
     "identity",
     "multiply",

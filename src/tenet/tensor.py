@@ -347,6 +347,12 @@ class SymmetricTensor:
 
         return fusion.unfuse(self, axis, legs)
 
+    def embed(self, legs: Sequence[Leg]) -> "SymmetricTensor":
+        """Zero-pad into larger, containing legs. See :func:`tenet.embed`."""
+        from tenet.ops.embed import embed
+
+        return embed(self, legs)
+
     def __repr__(self) -> str:
         def safe(get) -> Any:
             try:
