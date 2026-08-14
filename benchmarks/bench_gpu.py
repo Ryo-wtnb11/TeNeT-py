@@ -22,7 +22,7 @@ import symmray as sr
 import tenet
 import tenet.pytree  # noqa: F401  -- registers SymmetricTensor as a jax pytree
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-from tenet.symmetry import SU2, SU2Sector, U1, U1Sector
+from tenet.symmetry import SU2, U1, SU2Sector, U1Sector
 
 jax.config.update("jax_enable_x64", True)
 
@@ -119,7 +119,8 @@ def sanity(m=4):
     sb = sr.U1Array.from_dense(db, imap, duals, invalid_sectors="raise")
     sa.apply_to_arrays(jnp.asarray)
     sb.apply_to_arrays(jnp.asarray)
-    assert np.allclose(np.asarray(sr.tensordot(sa, sb, axes=2).to_dense()), ref), "symmray gpu != ref"
+    got = np.asarray(sr.tensordot(sa, sb, axes=2).to_dense())
+    assert np.allclose(got, ref), "symmray gpu != ref"
     print(f"sanity ok (m={m}): tenet-gpu == symmray-gpu == np.tensordot\n", flush=True)
 
 
@@ -160,7 +161,8 @@ def su2_operands(m, seed=0):
     a = (Leg(sp(), OUT, dual=True), Leg(sp(), OUT), Leg(sp(), IN), Leg(sp(), IN))
     b = (Leg(sp(), OUT, dual=True), Leg(sp(), OUT), Leg(sp(), IN), Leg(sp(), IN, dual=True))
     return tuple(
-        SymmetricTensor.random(legs, seed=seed + i, dtype=np.float64) for i, legs in enumerate((a, b))
+        SymmetricTensor.random(legs, seed=seed + i, dtype=np.float64)
+        for i, legs in enumerate((a, b))
     )
 
 
