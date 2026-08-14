@@ -270,6 +270,24 @@ class TensorMapView:
 
         return qr(self.tensor)
 
+    def eigh(self) -> tuple["SymmetricTensor", "SymmetricTensor"]:
+        """``W, V`` for the current partition. See :func:`tenet.linalg.eigh`."""
+        from tenet.ops.linalg import eigh
+
+        return eigh(self.tensor)
+
+    def polar(self, side: str = "left") -> tuple["SymmetricTensor", "SymmetricTensor"]:
+        """``W, P`` for the current partition. See :func:`tenet.linalg.polar`."""
+        from tenet.ops.linalg import polar
+
+        return polar(self.tensor, side=side)
+
+    def lq(self) -> tuple["SymmetricTensor", "SymmetricTensor"]:
+        """``L, Q`` for the current partition. See :func:`tenet.linalg.lq`."""
+        from tenet.ops.linalg import lq
+
+        return lq(self.tensor)
+
 
 def as_map(t: "SymmetricTensor") -> TensorMapView:
     """View ``t`` as a morphism. Zero-copy: no block is read, moved or allocated."""
