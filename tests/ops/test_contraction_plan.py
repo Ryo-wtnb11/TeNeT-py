@@ -19,7 +19,7 @@ from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.map_view import map_layout
 from tenet.ops.contraction import ContractionPlan, contraction_plan
 from tenet.ops.permutation import permutation_plan
-from tenet.ops.repartition import bend_plan
+from tenet.ops.repartition import repartition_plan
 from tenet.structure import TensorStructure
 from tenet.symmetry import (
     SU2,
@@ -250,7 +250,9 @@ def test_fifty_calls_are_one_miss_and_forty_nine_hits_for_every_plan_cache():
     caches = {
         "contraction_plan": contraction_plan,
         "permutation_plan": permutation_plan,
-        "bend_plan": bend_plan,
+        # bend_plan is a plan-time sub-plan of repartition_plan since #61, so it is
+        # consulted while that plan is built, not once per contraction
+        "repartition_plan": repartition_plan,
         "map_layout": map_layout,
     }
 
