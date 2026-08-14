@@ -316,11 +316,11 @@ def test_identity_dtype():
 # --- refusals that are ergonomics, not math -------------------------------------
 
 
-def test_svd_names_milestone_7_and_to_matrices():
+def test_view_svd_is_the_real_decomposition_now():
+    """#57 replaces the Milestone 7 refusal; the criteria live in tests/ops/test_linalg.py."""
     t = SymmetricTensor.random(A_LEGS, seed=0)
-    with pytest.raises(NotImplementedError) as e:
-        t.as_map().svd()
-    assert "Milestone 7" in str(e.value) and "to_matrices" in str(e.value)
+    u, s, vh = t.as_map().svd()
+    assert tenet.allclose(u @ s @ vh, t.repartition(t.structure.out_axes, t.structure.in_axes))
 
 
 def test_view_adjoint_is_the_tensor_adjoint():

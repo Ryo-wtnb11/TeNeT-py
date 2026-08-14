@@ -247,12 +247,17 @@ class TensorMapView:
 
         return adjoint(self.tensor)
 
-    def svd(self, **kw: Any) -> Any:
-        raise NotImplementedError(
-            "TensorMapView.svd: symmetric decompositions are Milestone 7. Until then, "
-            "to_matrices(t) gives one dense matrix per coupled sector to decompose by "
-            "hand, and from_matrices rebuilds a tensor from such matrices"
-        )
+    def svd(self) -> tuple["SymmetricTensor", "SymmetricTensor", "SymmetricTensor"]:
+        """``U, S, Vh`` for the current partition. See :func:`tenet.linalg.svd`."""
+        from tenet.ops.linalg import svd
+
+        return svd(self.tensor)
+
+    def qr(self) -> tuple["SymmetricTensor", "SymmetricTensor"]:
+        """``Q, R`` for the current partition. See :func:`tenet.linalg.qr`."""
+        from tenet.ops.linalg import qr
+
+        return qr(self.tensor)
 
 
 def as_map(t: "SymmetricTensor") -> TensorMapView:
