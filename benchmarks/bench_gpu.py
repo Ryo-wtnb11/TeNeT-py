@@ -3,6 +3,12 @@
 U(1) rank-4 tensordot, "wide" shape (free legs m=4, contracted legs degeneracy m),
 plus an SU(2) general-path (bending) contraction, GPU vs same-machine CPU.
 
+The `cc-*` columns are trace + compile + *first execute*, not compile alone; #74
+took the 54 s at SU(2) m=64 for graph size and it is not -- see
+`benchmarks/bench_compile.py`, which separates the three phases and shows the
+jaxpr is m-independent (707 equations at every m) and the cost is XLA:GPU gemm
+autotuning on 16384^2 f64 matmuls.
+
 symmray 0.2.1 registers no jax pytree, so `jax.jit(sr.tensordot)` fails
 ("Expected SymmrayCommon, got DynamicJaxprTracer") -- its GPU column is eager,
 one XLA dispatch per block.
