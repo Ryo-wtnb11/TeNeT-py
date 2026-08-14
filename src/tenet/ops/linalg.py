@@ -1,4 +1,7 @@
-"""Fixed-structure blockwise decompositions — ``svd`` and ``qr``, Milestone 7.
+"""Fixed-structure blockwise decompositions — ``svd``, ``qr``, ``eigh``, ``polar``, ``lq``.
+
+Milestone 7. Every function here is the same lowering with a different backend
+call and a different set of output legs; ``_lower`` is shared verbatim.
 
 The lowering is the one README "Linear algebra" draws, and every arrow of it is
 already built: :func:`~tenet.ops.repartition.repartition` puts the requested
@@ -50,12 +53,13 @@ No ``svd``/``qr`` registration in ``array/dispatch.py``: that list is closed and
 """
 
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import autoray as ar
 
 from tenet.leg import IN, OUT, Leg
-from tenet.map_view import from_matrices, map_layout, to_matrices
+from tenet.map_view import as_map, from_matrices, map_layout, to_matrices
 from tenet.ops.repartition import repartition
 from tenet.space import GradedSpace
 from tenet.structure import TensorStructure
@@ -64,7 +68,7 @@ from tenet.symmetry.base import QuantumDimension, StructureChangingError, requir
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["qr", "svd", "svd_truncated"]
+__all__ = ["eigh", "lq", "polar", "qr", "svd", "svd_truncated"]
 
 Axes = tuple[Sequence[int], Sequence[int]] | None
 
@@ -133,6 +137,162 @@ def qr(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sym
         ),
         from_matrices(
             TensorStructure((Leg(bond, OUT), *m.domain)), {c: p[1] for c, p in parts.items()}
+        ),
+    )
+
+
+# --- issue #63: eigh, polar and lq ------------------------------------------------
+
+
+def _dagger(mat):
+    """``B_c†`` for one dense coupled-sector matrix. Two backend calls, no capability."""
+    return ar.do("conj", ar.do("transpose", mat))
+
+
+def _check_square(m: "SymmetricTensor") -> None:
+    """Refuse a map whose domain is not its codomain, as ``(space, dual)`` in order.
+
+    Not a new checker: the predicate is ``ProductSpace.matches``, the identical
+    call ``ops.map._check_composable`` makes — ``m`` composability-checked against
+    itself. Only the message is new. Structural and total; the *numbers* are never
+    inspected (see :func:`eigh`).
+    """
+    codomain, domain = as_map(m).codomain, as_map(m).domain
+    i = codomain.matches(domain)
+    if i is None:
+        return
+
+    def at(axes: tuple[int, ...], legs: tuple[Leg, ...]) -> str:
+        return f"public axis {axes[i]}: {legs[i]!r}" if i < len(legs) else "no leg"
+
+    raise ValueError(
+        f"eigh: the map is not square at position {i} "
+        f"(codomain {at(m.structure.out_axes, codomain.legs)}; "
+        f"domain {at(m.structure.in_axes, domain.legs)}). "
+        "eigh requires the domain to be the codomain as (space, dual) in the same order — "
+        "side is not compared and name is ignored, and dimensions alone are never enough "
+        "(a charge-reversed U(1) partner has the same dimension and the wrong space). "
+        "Matching only up to a reordering would be a within-side transpose, i.e. a braid; "
+        "use tenet.transpose, or repartition (#32), to build a square map first."
+    )
+
+
+def eigh(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "SymmetricTensor"]:
+    """``T = V ∘ W ∘ V†`` for a self-adjoint ``T``. Returns ``(W, V)``.
+
+    Legs: ``W`` is ``(bond OUT, bond IN)``, diagonal and real; ``V`` is
+    ``(*left legs, bond IN)``. The map must be square *space-wise* — see
+    :func:`_check_square` — and for a square map ``_lower``'s ``min(rows, cols)``
+    is a no-op, so the bond space is literally the fused domain.
+
+    **Hermiticity of the numbers is the caller's responsibility and is deliberately
+    not checked.** A numerical check needs a tolerance, and a tolerance comparison
+    is a data-dependent branch, which cannot run inside a traced region (invariant
+    9); ``eigh`` is fixed-structure and must stay jittable. A non-Hermitian input
+    is *not* refused: the backend reads one triangle and you get whatever that
+    gives. The user-side check needs no new API::
+
+        max(norm(B - B.conj().T) for B in tenet.to_matrices(tenet.repartition(T, l, r)).values())
+
+    run once, outside the hot loop.
+
+    **Eigenvalues come back in the backend's order — ascending within each coupled
+    sector** (LAPACK's), in deliberate contrast to :func:`svd`'s descending ``S``.
+    Re-sorting would be a cosmetic permutation of ``W`` and of ``V``'s columns, and
+    would still buy nothing across sectors, where no global order exists either way.
+    ``W`` is real even for complex input.
+    """
+    m, bond, mats = _lower(t, axes)
+    _check_square(m)
+    parts = {c: ar.do("linalg.eigh", b) for c, b in mats.items()}
+    return (
+        from_matrices(
+            TensorStructure((Leg(bond, OUT), Leg(bond, IN))),
+            {c: ar.do("diag", p[0]) for c, p in parts.items()},
+        ),
+        from_matrices(
+            TensorStructure((*m.codomain, Leg(bond, IN))), {c: p[1] for c, p in parts.items()}
+        ),
+    )
+
+
+def polar(
+    t: "SymmetricTensor", axes: Axes = None, side: str = "left"
+) -> tuple["SymmetricTensor", "SymmetricTensor"]:
+    """``T = W ∘ P`` (``side="left"``) or ``T = P ∘ W`` (``side="right"``).
+
+    Always returns ``(W, P)`` — the isometry first, whichever side it sits on. The
+    name says *which side the isometry sits on*, TensorKit's convention; a tuple
+    whose order depended on a keyword would be a footgun.
+
+    ``W`` carries exactly ``repartition(t, left, right)``'s structure and ``P`` is
+    an endomorphism of the domain (``side="left"``) or of the codomain
+    (``side="right"``), its legs mirrored from that side. No bond leg survives, so
+    ``polar`` is the one M7 decomposition insensitive to the ``min``-rank bond
+    convention — and the reason it is the gauge-fixing primitive for M8.
+
+    ``W`` is only a *partial* isometry when some ``B_c`` is rank-deficient: then
+    ``W†W`` is an orthogonal projector rather than the identity and ``P`` is
+    singular. Same fact as ``svd``'s zero-rank sectors — structure is metadata,
+    rank is data.
+
+    ponytail: ``PolarViaSVD``, MatrixAlgebraKit's own default, because ``autoray``
+    has no uniform ``linalg.polar`` and the alternative is a Newton-Schulz
+    iteration, i.e. a convergence tolerance and a second numerical framework. Swap
+    a backend ``polar`` into the sector loop below if one ever becomes uniform.
+    """
+    if side not in ("left", "right"):
+        raise ValueError(f"polar: side must be 'left' or 'right', got {side!r}")
+    m, _, mats = _lower(t, axes)
+
+    isometry, positive = {}, {}
+    for c, b in mats.items():
+        u, s, vh = ar.do("linalg.svd", b, full_matrices=False)
+        isometry[c] = ar.do("matmul", u, vh)
+        d = ar.do("diag", s)
+        positive[c] = (
+            ar.do("matmul", _dagger(vh), ar.do("matmul", d, vh))
+            if side == "left"
+            else ar.do("matmul", u, ar.do("matmul", d, _dagger(u)))
+        )
+
+    mirrored = m.domain if side == "left" else m.codomain
+    return (
+        from_matrices(m.structure, isometry),
+        from_matrices(
+            TensorStructure(
+                (
+                    *(replace(leg, side=OUT) for leg in mirrored),
+                    *(replace(leg, side=IN) for leg in mirrored),
+                )
+            ),
+            positive,
+        ),
+    )
+
+
+def lq(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "SymmetricTensor"]:
+    """``T = L ∘ Q``, the reduced LQ. Same bond space as :func:`qr`, by construction.
+
+    Legs: ``L`` is ``(*left legs, bond IN)`` and ``Q`` is ``(bond OUT, *right legs)``.
+    Per sector ``B† = q r`` gives ``B = r† q†``: two dense conjugate-transposes in
+    the loop, no new backend primitive and no capability at all. The categorical
+    spelling ``adjoint → qr → adjoint`` would give factors whose public axis order
+    is ``(bond, *left)``, and straightening that needs ``tenet.transpose`` — i.e.
+    ``PermutationCoefficients`` and the fermionic Koszul signs — for the same numbers.
+
+    No stabilization: the sign of ``L``'s diagonal is the backend's, as in :func:`qr`.
+    """
+    m, bond, mats = _lower(t, axes)
+    parts = {c: ar.do("linalg.qr", _dagger(b)) for c, b in mats.items()}
+    return (
+        from_matrices(
+            TensorStructure((*m.codomain, Leg(bond, IN))),
+            {c: _dagger(p[1]) for c, p in parts.items()},
+        ),
+        from_matrices(
+            TensorStructure((Leg(bond, OUT), *m.domain)),
+            {c: _dagger(p[0]) for c, p in parts.items()},
         ),
     )
 
