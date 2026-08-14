@@ -1,4 +1,4 @@
-"""Pairwise contraction — ``tenet.tensordot`` and ``tenet.trace`` — Milestone 5.
+"""Pairwise contraction — ``tenet.tensordot``, ``tenet.trace``, ``tenet.einsum`` — M5.
 
 There is no new mathematics here, and that is the point (README "Composition
 remains first-class", "Bending and contraction"). A contraction is lowered to
@@ -38,10 +38,19 @@ both operands, *including free legs*, which is the non-obvious half.
 ``compose``'s own check stays as a redundant guard and can no longer fire on
 user error; if it does, this module's rewriting is wrong.
 
+``einsum`` sits on top and owns no mathematics at all: it parses the equation
+into label→axis maps, hands the shared labels to :func:`tensordot` as one axis
+pair, and hands the requested output order to :func:`~tenet.transpose`. The
+parser is hand-rolled — ``opt_einsum`` parses ellipsis, unicode labels, the
+interleaved format and shape-driven broadcasting, none of which is meaningful
+for symmetric tensors, and README places ``opt_einsum``/``cotengra`` at the
+*path* level (M8, three or more operands) instead.
+
 No ``to_dense``, no NumPy and no provider branching here (invariants 8/9).
 """
 
 import operator
+from collections import Counter
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -54,7 +63,7 @@ from tenet.symmetry.base import BendingCoefficients, CapabilityError, requires
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["contractible", "outward_dual", "tensordot", "trace"]
+__all__ = ["contractible", "einsum", "outward_dual", "tensordot", "trace"]
 
 Axes = Any
 """``((i, ...), (j, ...))`` or the NumPy integer form ``n``."""
@@ -236,3 +245,130 @@ def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
     i, j = axes
     p = 0 if t.legs[j].side is OUT else 1
     return tensordot(t, identity((t.legs[j],)), axes=((i, j), (p, 1 - p)))
+
+
+def _parse(equation: str, operands: tuple["SymmetricTensor", ...]) -> tuple[list[str], str]:
+    """``(terms, output)`` for a one- or two-operand equation, or a loud refusal.
+
+    Every refusal below is a categorical statement, not a parser limitation, and
+    each one names what to write instead.
+    """
+    if not operands:
+        raise ValueError(
+            f"einsum: equation {equation!r} was given no operands; einsum takes one or two "
+            "tensors after the equation, as in tenet.einsum('abc,cde->abde', A, B)"
+        )
+    if "." in equation:
+        raise ValueError(
+            f"einsum: equation {equation!r} contains '...'; ellipsis means broadcasting over "
+            "unlabelled axes, and symmetric tensors do not broadcast (README 'Supported "
+            "ndarray operations should be explicit'). Label every axis explicitly"
+        )
+    lhs, arrow, rhs = equation.replace(" ", "").partition("->")
+    terms = lhs.split(",")
+    for label in lhs.replace(",", "") + rhs:
+        if not label.isalpha() or not label.isascii():
+            raise ValueError(
+                f"einsum: label {label!r} in equation {equation!r} is not an ASCII letter; "
+                "labels are single letters a-z / A-Z, one per axis"
+            )
+    if len(operands) > 2 or len(terms) > 2:
+        raise ValueError(
+            f"einsum: equation {equation!r} with {len(operands)} operands asks for a "
+            "contraction over three or more tensors, which needs a contraction *path*; "
+            "pairwise contraction must be correct before a path planner is added (README "
+            "'Milestone 5'), and planner hand-off to opt_einsum/cotengra is Milestone 8. "
+            "Chain two calls today, choosing the order yourself: "
+            "tenet.einsum('ij,jk->ik', tenet.einsum('ab,bi->ai', A, B), C)"
+        )
+    if len(terms) != len(operands):
+        raise ValueError(
+            f"einsum: equation {equation!r} has {len(terms)} comma-separated term(s) but "
+            f"{len(operands)} operand(s) were given; there is exactly one term per operand"
+        )
+    for k, (term, t) in enumerate(zip(terms, operands, strict=True)):
+        if len(term) != t.ndim:
+            raise ValueError(
+                f"einsum: term {term!r} labels {len(term)} axes but operand {k} is "
+                f"{t.ndim}-dimensional; every axis gets exactly one label"
+            )
+    counts = Counter(lhs.replace(",", ""))
+    over = [label for label, n in counts.items() if n > 2]
+    if over:
+        raise ValueError(
+            f"einsum: label {over[0]!r} occurs {counts[over[0]]} times in {equation!r}; a label "
+            "names one wire and so occurs at most twice, once on each of its two ends"
+        )
+    for k, term in enumerate(terms):
+        repeated = [label for label, n in Counter(term).items() if n > 1]
+        if repeated:
+            label = repeated[0]
+            if arrow and label in rhs:
+                raise ValueError(
+                    f"einsum: label {label!r} is repeated inside term {term!r} and also appears "
+                    "in the output, i.e. a diagonal. A diagonal is not defined for a symmetric "
+                    "tensor: it is not equivariant unless the two legs' bases are identified, "
+                    "which is extra data the tensor does not carry (invariant 11)"
+                )
+            # ponytail: refused, not lowered. `trace(t, (i, j))` would serve "ii->" in
+            # one line; add it when a caller actually writes the equation that way.
+            raise ValueError(
+                f"einsum: label {label!r} is repeated inside term {term!r}, i.e. a trace over "
+                f"two axes of operand {k}. einsum contracts *between* operands; use "
+                f"tenet.trace(t, axes) for the trace, then einsum on the result"
+            )
+
+    # NumPy's implicit rule: every label occurring exactly once, alphabetically
+    out = rhs if arrow else "".join(sorted(label for label, n in counts.items() if n == 1))
+    seen: set[str] = set()
+    for label in out:
+        if label in seen:
+            raise ValueError(
+                f"einsum: label {label!r} is repeated in the output {out!r}; two output axes "
+                "cannot carry the same label"
+            )
+        seen.add(label)
+        if label not in counts:
+            raise ValueError(
+                f"einsum: output label {label!r} of {equation!r} appears in no input term; "
+                f"the input labels are {''.join(sorted(counts))!r}"
+            )
+    for label, n in counts.items():
+        if n == 1 and label not in seen:
+            raise ValueError(
+                f"einsum: input label {label!r} of {equation!r} is missing from the output, "
+                "which would mean summing that axis away. Summing an axis is a contraction "
+                "with the all-ones vector, which is not equivariant and has no categorical "
+                "meaning (invariant 11); keep the label, or contract it against another tensor"
+            )
+    return terms, out
+
+
+def einsum(equation: str, *operands: "SymmetricTensor") -> "SymmetricTensor":
+    """``tenet.einsum("abc,cde->abde", A, B)`` — one or two operands.
+
+    Labels are single letters. ``->`` may be omitted, in which case the output is
+    every label occurring exactly once, sorted (the NumPy rule). Repeated labels
+    within one operand (a trace or a diagonal), ellipsis, and three or more
+    operands are refused; see the message on each.
+
+    Shared labels are contracted in order of first appearance in the **first**
+    operand — any order gives the same tensor, but a nondeterministic one would
+    fragment plan caches and make ``jit`` retrace. The final transpose is a
+    public permutation and therefore fully categorical (a Koszul sign for a
+    fermionic provider, a braid for SU(2)); it is never skipped, and
+    ``permutation_plan``'s case A already makes the identity permutation free.
+    """
+    terms, out = _parse(equation, operands)
+    if len(operands) == 1:
+        return transpose(operands[0], tuple(terms[0].index(label) for label in out))
+
+    shared = [label for label in terms[0] if label in terms[1]]
+    axes = (
+        tuple(terms[0].index(label) for label in shared),
+        tuple(terms[1].index(label) for label in shared),
+    )
+    # tensordot's output is a's free legs then b's free legs, in each operand's order
+    free = [label for label in terms[0] if label not in shared]
+    free += [label for label in terms[1] if label not in shared]
+    return transpose(tensordot(*operands, axes), tuple(free.index(label) for label in out))

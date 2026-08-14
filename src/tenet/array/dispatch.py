@@ -2,11 +2,14 @@
 
 Registration only — no numerical logic lives here, ever. Every entry is an
 already-implemented Milestone 2 function; the list is **closed**, so
-``ar.do("einsum", ...)``, ``ar.do("reshape", ...)``, ``ar.do("exp", ...)``,
-``ar.do("svd", ...)`` and friends raise rather than leak through to a backend
-(invariant 11). Adding a name here is the deliberate act of declaring its
-categorical meaning defined — ``"tensordot"`` and ``"trace"`` joined the list
-with #51, and ``"einsum"`` waits for #52.
+``ar.do("reshape", ...)``, ``ar.do("exp", ...)``, ``ar.do("svd", ...)`` and
+friends raise rather than leak through to a backend (invariant 11). Adding a
+name here is the deliberate act of declaring its categorical meaning defined —
+``"tensordot"`` and ``"trace"`` joined the list with #51 and ``"einsum"`` with
+#52. ``"einsum"`` needs no ``ar.register_dispatch``: autoray ships an
+``einsum_dispatcher`` that infers the backend from *all* arguments, and a
+``str`` equation ranks below a ``SymmetricTensor``, so the string first argument
+resolves here on its own.
 
 autoray would find most of these anyway — it infers a class's backend from the
 module it is defined in and then looks the function up in that module, and
@@ -21,6 +24,7 @@ import autoray as ar
 from tenet.ops import (
     add,
     conj,
+    einsum,
     fuse,
     multiply,
     negative,
@@ -46,6 +50,7 @@ for _name, _fn in {
     "multiply": multiply,
     "negative": negative,
     "fuse": fuse,
+    "einsum": einsum,
     "tensordot": tensordot,
     "trace": trace,
     "shape": lambda t: t.shape,
