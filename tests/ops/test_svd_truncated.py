@@ -431,6 +431,57 @@ def test_untruncated_equivalence(name):
             assert tenet.allclose(got, want, rtol=0, atol=1e-12)
 
 
+# --- the pairing with svd(bond=...) (#77) --------------------------------------------------
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
+def test_svd_onto_the_decided_bond_is_svd_truncated(name):
+    """The whole point of ``bond=``: the same object, reached traceably.
+
+    ``svd_truncated`` decides the bond outside the traced region; feeding that
+    ``GradedSpace`` back into ``svd`` must reproduce it factor for factor, since the
+    kept indices are a per-sector prefix in both.
+    """
+    t = tensor(name, seed=14)
+    want = tenet.linalg.svd_truncated(t, axes=SPLIT, max_bond=full_bond(name).dim // 2)
+    bond = want[0].legs[-1].space
+
+    got = tenet.linalg.svd(t, axes=SPLIT, bond=bond)
+    for a, b in zip(got, want, strict=True):
+        assert a.structure == b.structure
+        assert tenet.allclose(a, b, rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize("name", ["u1", "su2"])
+def test_svd_onto_the_decided_bond_satisfies_eckart_young(name):
+    """#64's dense oracle, now reached through the traceable projection."""
+    t = tensor(name, seed=15)
+    axes = (t.structure.out_axes, t.structure.in_axes)
+    full = tenet.linalg.svd(t)[0].legs[-1].space
+    bond = tenet.linalg.svd_truncated(t, max_bond=full.dim // 2)[0].legs[-1].space
+
+    u, s, vh = tenet.linalg.svd(t, bond=bond)
+    error = float(np.linalg.norm(dense_matrix(t) - dense_matrix(u @ s @ vh)) ** 2)
+    assert error == pytest.approx(dropped_weight(t, bond, axes), abs=1e-12)
+
+    dense_sigma = np.sort(np.linalg.svd(dense_matrix(t), compute_uv=False))[::-1]
+    assert error == pytest.approx(float(np.sum(dense_sigma[bond.dim :] ** 2)), abs=1e-12)
+
+
+def test_the_decided_bond_survives_the_jit_boundary_svd_truncated_refuses():
+    """Both halves in one screen: decide out here, project in there."""
+    jax = use_jax()
+    t = tensor("su2", seed=16)
+    bond = tenet.linalg.svd_truncated(t, axes=SPLIT, max_bond=9)[0].legs[-1].space
+
+    with pytest.raises(StructureChangingError):
+        jax.jit(lambda x: tenet.linalg.svd_truncated(x, axes=SPLIT, max_bond=9)[0])(to_jax(t))
+
+    u = jax.jit(lambda x: tenet.linalg.svd(x, axes=SPLIT, bond=bond)[0])(to_jax(t))
+    assert u.legs[-1].space == bond
+    assert u.backend == "jax"
+
+
 # --- the map-style spelling ---------------------------------------------------------------
 
 

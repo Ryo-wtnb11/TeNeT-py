@@ -11,6 +11,7 @@ x64 is enabled process-globally in ``tests/conftest.py``; the finite-difference
 tolerances here depend on it, as in ``tests/backends/test_pytree.py``.
 """
 
+import itertools
 import pathlib
 import subprocess
 import sys
@@ -533,6 +534,316 @@ def test_a_gauge_dependent_objective_is_meaningless_at_degeneracy():
     assert max(np.abs(x - y).max() for x, y in zip(a, b, strict=True)) > 1e-3
 
 
+# --- svd(bond=...): differentiating through a truncation (#77) -------------------
+
+
+def with_spectrum(legs, values, seed=0):
+    """A tensor with a *designed* spectrum per sector, in random orthogonal bases.
+
+    A diagonal fill would make ``U`` and ``V`` permutations and hide half the backward;
+    the random bases put real content in the ``dU``/``dV`` cotangents, which is exactly
+    where a truncated backward can be wrong.
+    """
+    counter = itertools.count()
+
+    def fill(r, c):
+        rng = np.random.default_rng(seed * 97 + next(counter))
+        k = min(r, c)
+        m = np.zeros((r, c))
+        m[:k, :k] = np.diag(values(k))
+        q1 = np.linalg.qr(rng.standard_normal((r, r)))[0]
+        q2 = np.linalg.qr(rng.standard_normal((c, c)))[0]
+        return q1 @ m @ q2
+
+    return refill(jt(legs, seed), fill)
+
+
+def clean_gap(k):
+    """``1.0, 0.9, ...`` with the last value a factor ``1e-3`` below the one above it."""
+    d = 1.0 - 0.1 * np.arange(k)
+    d[-1] = d[-2] * 1e-3
+    return d
+
+
+def drop_one(t):
+    """The full ``min`` bond with one singular value taken off every sector."""
+    full = tenet.linalg.svd(t)[0].legs[-1].space
+    return GradedSpace.new(full.provider, {c: m - 1 for c, m in full.sectors if m > 1})
+
+
+def full_bond(t):
+    return tenet.linalg.svd(t)[0].legs[-1].space
+
+
+def overlap(t, bond, w):
+    """``<W, U S Vh>`` — gauge-invariant, and the cotangent reaches ``U`` and ``V``.
+
+    ``norm(U @ S @ Vh)`` and ``norm(S)`` depend on the kept singular *values* alone, so
+    their cotangents for ``U`` and ``Vh`` are symbolic zeros and a wrong truncated
+    backward is invisible in them. This one is the discriminating objective.
+    """
+    u, s, vh = tenet.linalg.svd(t, bond=bond)
+    x = u @ s @ vh
+    return sum(jnp.real(jnp.sum(a * b)) for a, b in zip(x.blocks, w.blocks, strict=True))
+
+
+@pytest.mark.parametrize("name", ["u1", "su2"])
+def test_finite_differences_through_a_truncation_clean_gap(name):
+    """Clean gap at the cut (``sigma_perp/sigma_min == 1e-3``), bond decided outside."""
+    tenet.ad.install()
+    legs = SQUARE[name]
+    t = with_spectrum(legs, clean_gap, seed=30)
+    bond = drop_one(t)
+    w = jt(legs, seed=31)
+    assert bond != full_bond(t)  # the truncation is not vacuous
+
+    objectives = {
+        "recon": lambda x: tenet.norm(
+            tenet.linalg.svd(x, bond=bond)[0]
+            @ tenet.linalg.svd(x, bond=bond)[1]
+            @ tenet.linalg.svd(x, bond=bond)[2]
+        ),
+        "spectrum": lambda x: tenet.norm(tenet.linalg.svd(x, bond=bond)[1]),
+        "overlap": lambda x: overlap(x, bond, w),
+    }
+    for label, f in objectives.items():
+        got = blocks(jax.grad(f)(t))
+        want = central_differences(f, t)
+        for a, b in zip(got, want, strict=True):
+            np.testing.assert_allclose(a, b, rtol=1e-6, atol=1e-6, err_msg=label)
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
+def test_the_full_bond_gradient_is_the_bond_none_gradient(name):
+    """The truncated backward degenerates to the compact one, as it must."""
+    tenet.ad.install()
+    legs = SQUARE[name]
+    t = jt(legs, seed=32)
+    w = jt(legs, seed=33)
+    bond = full_bond(t)
+
+    def plain(x):
+        u, s, vh = tenet.linalg.svd(x)
+        y = u @ s @ vh
+        return sum(jnp.real(jnp.sum(a * b)) for a, b in zip(y.blocks, w.blocks, strict=True))
+
+    for a, b in zip(
+        blocks(jax.grad(lambda x: overlap(x, bond, w))(t)), blocks(jax.grad(plain)(t)), strict=True
+    ):
+        np.testing.assert_allclose(a, b, rtol=0, atol=1e-12)
+
+
+# --- the approximation, measured rather than assumed ------------------------------
+
+
+def _zeroth_order_truncated_svd(k):
+    """The rule #77 set out to ship: #76's VJP formed against the **kept** factors only.
+
+    Francuz, Schuch and Vanhecke (Phys. Rev. Research 7, 013237 (2025)) Eqs. (14)-(15)
+    write the exact truncated pullback as
+
+        (1 - U U†) dA V   = (1 - U U†)(dU S - A dV)
+        (1 - V V†) dA† U  = (1 - V V†)(dV S - A† dU)
+
+    whose underlined ``A dV`` / ``A† dU`` terms have the *discarded* block
+    ``A_perp = A - U S V†`` as their kernel; substituting ``A -> U S V†`` drops them and
+    leaves exactly the formula below. This function exists to measure what that costs.
+    """
+
+    @jax.custom_vjp
+    def f(b):
+        u, s, vh = jnp.linalg.svd(b, full_matrices=False)
+        return u[:, :k], s[:k], vh[:k, :]
+
+    def fwd(b):
+        u, s, vh = jnp.linalg.svd(b, full_matrices=False)
+        out = (u[:, :k], s[:k], vh[:k, :])
+        return out, out
+
+    f.defvjp(fwd, tenet.ad._svd_bwd)  # the kept factors are the only residuals it sees
+    return f
+
+
+def test_the_truncated_backward_is_exact_and_the_zeroth_order_one_is_first_order():
+    """What ``bond=`` actually computes, measured against the rule #77 planned to ship.
+
+    The finding, and the reason the Francuz-Schuch-Vanhecke follow-up is **not** needed:
+    ``ops/linalg.py`` computes the *full* compact SVD (``k = min(rows_c, cols_c)``, #57's
+    bond rule) and only then slices, so the discarded space never leaves the
+    factorization. JAX zero-pads the slice's cotangent, and the resulting cross block of
+    #76's broadened ``F`` matrix -- rows ``i > k`` against columns ``j <= k``, weighted by
+    ``1/(sigma_j - sigma_i)`` -- *is* the ``A_perp dV`` correction. So the composition is
+    the exact truncated pullback, not the zeroth-order one, and it stays exact as the gap
+    at the cut closes.
+
+    Measured relative deviation from central differences, ``sigma_perp/sigma_min = r``,
+    3x3 block, ``k = 1`` (this test's numbers, float64, ``h = 1e-6``):
+
+    ====== ==================== ==========================
+    ``r``  ``svd(bond=)``       zeroth-order (Eqs. 14-15
+                                without the underlined term)
+    ====== ==================== ==========================
+    0.1    ~2e-10 (FD noise)    1.1e-1
+    0.3    ~4e-10 (FD noise)    3.1e-1
+    0.5    ~3e-10 (FD noise)    4.9e-1
+    0.7    ~2e-10 (FD noise)    6.6e-1
+    0.9    ~2e-10 (FD noise)    8.4e-1
+    ====== ==================== ==========================
+
+    So the zeroth-order error is ``O(sigma_perp/sigma_min)`` -- **first** order, log-log
+    slope 0.97 measured down to ``r = 3e-3``, not the second order the issue conjectured
+    from MatrixAlgebraKit's ``(A_perp A_perp†)/S**2`` doubling iteration -- and ours is
+    flat at finite-difference noise across the whole sweep.
+    """
+    tenet.ad.install()
+    rng = np.random.default_rng(9)
+    w = rng.standard_normal((3, 3))
+    zeroth = _zeroth_order_truncated_svd(1)
+
+    def exact(b):
+        u, s, vh = tenet.ad._svd(b)
+        return u[:, :1], s[:1], vh[:1, :]
+
+    def objective(f, b):
+        u, s, vh = f(b)
+        return jnp.real(jnp.sum(w * (u @ jnp.diag(s) @ vh)))
+
+    def block(r, seed=3):
+        gen = np.random.default_rng(seed)
+        q1 = np.linalg.qr(gen.standard_normal((3, 3)))[0]
+        q2 = np.linalg.qr(gen.standard_normal((3, 3)))[0]
+        return jnp.asarray(q1 @ np.diag([1.0, r, 0.9 * r]) @ q2)
+
+    def differences(f, b, h=1e-6):
+        g = np.zeros(b.shape)
+        for idx in np.ndindex(b.shape):
+            plus = float(objective(f, b.at[idx].add(h)))
+            minus = float(objective(f, b.at[idx].add(-h)))
+            g[idx] = (plus - minus) / (2 * h)
+        return g
+
+    ratios = (0.1, 0.3, 0.5, 0.7, 0.9)
+    ours, theirs = [], []
+    for r in ratios:
+        b = block(r)
+        reference = differences(exact, b)
+        scale = np.abs(reference).max()
+        ours.append(
+            np.abs(np.asarray(jax.grad(lambda x: objective(exact, x))(b)) - reference).max() / scale
+        )
+        theirs.append(
+            np.abs(np.asarray(jax.grad(lambda x: objective(zeroth, x))(b)) - reference).max()
+            / scale
+        )
+
+    # ours: exact, and flat -- no growth as the gap closes
+    assert max(ours) < 1e-7, ours
+    assert max(ours) / min(ours) < 50, ours
+    # the zeroth-order rule: linear in the gap ratio, and already 10% at r = 0.1
+    assert theirs[0] > 0.05, theirs
+    slope = float(np.polyfit(np.log(ratios), np.log(theirs), 1)[0])
+    assert 0.85 < slope < 1.25, (slope, theirs)
+
+
+# --- degeneracy, carried through the projection ----------------------------------
+
+
+def kept_degenerate(k):
+    """``1, 1, ...`` with a tail a factor ``1e-3`` down: the pair sits inside the cut."""
+    d = np.ones(k)
+    d[-1] = 1e-3
+    return d
+
+
+def exactly(legs, values, seed):
+    """:func:`with_spectrum` without the random bases — because *exact* is the point.
+
+    ``q1 @ diag(sigma) @ q2`` reproduces ``sigma`` only to rounding, and a degeneracy
+    that holds to 1e-16 is not a degeneracy: stock JAX survives it. The diagonal fill
+    is what puts two bit-identical singular values in one coupled sector.
+    """
+    return refill(jt(legs, seed), diagonal_fill(values))
+
+
+def straddling(k):
+    """A degenerate pair split by the cut: ``1, 0.5, 0.5`` where ``k == 3``."""
+    return np.array([1.0, 0.5, 0.5]) if k == 3 else np.array([0.9, 0.4])
+
+
+def test_a_degeneracy_inside_a_kept_sector_survives_the_projection():
+    """#76's broadening carrying through the slice, asserted rather than assumed."""
+    legs = SQUARE["u1"]  # sector 0 is 3x3: two equal values kept, one tail dropped
+    t = exactly(legs, kept_degenerate, seed=34)
+    bond = drop_one(t)
+    w = jt(legs, seed=35)
+    sigma = np.diagonal(np.asarray(to_matrices(tenet.linalg.svd(t)[1])[U1Sector(0)]))
+    assert sigma[0] == pytest.approx(sigma[1], abs=1e-12)  # the degeneracy is real
+    assert bond.degeneracy(U1Sector(0)) == 2  # and both members are kept
+
+    assert has_nan(jax.grad(lambda x: overlap(x, bond, w))(t))
+    tenet.ad.install()
+    g = jax.grad(lambda x: overlap(x, bond, w))(t)
+    assert not has_nan(g)
+    assert all(np.isfinite(b).all() for b in blocks(g))
+
+
+def test_a_degenerate_pair_straddling_the_cut():
+    """Finite with ``install()``, ``NaN`` without — and the tie-break is svd_truncated's.
+
+    A multiplet split by the cut makes the kept subspace gauge-*dependent*, so the
+    number is meaningless (tenet.ad's documented precondition); what is asserted here is
+    that it is finite and that the structural decision is reproducible. Francuz et al.
+    say the same from the physics side: "one should be careful not to split multiplets".
+    """
+    legs = SQUARE["u1"]
+    t = exactly(legs, straddling, seed=36)
+    w = jt(legs, seed=37)
+
+    # global descending order: 1.0 (c0, 0), 0.9 (c1, 0), 0.5 (c0, 1), 0.5 (c0, 2), 0.4
+    bond = tenet.linalg.svd_truncated(t, max_bond=3)[0].legs[-1].space
+    assert bond.sectors == ((U1Sector(0), 2), (U1Sector(1), 1))
+    # the tie went to the lower index: the kept set is a prefix, deterministically
+    kept = np.diagonal(np.asarray(to_matrices(tenet.linalg.svd(t, bond=bond)[1])[U1Sector(0)]))
+    np.testing.assert_allclose(kept, [1.0, 0.5], rtol=0, atol=1e-12)
+
+    assert has_nan(jax.grad(lambda x: overlap(x, bond, w))(t))
+    tenet.ad.install()
+    assert not has_nan(jax.grad(lambda x: overlap(x, bond, w))(t))
+
+
+# --- the shape of the use case ---------------------------------------------------
+
+
+def test_a_mini_differentiable_ctmrg_step():
+    """Three power-iteration steps, each projecting onto one bond decided outside.
+
+    The shape of Liao-Liu-Wang-Xiang Fig. 2(b): a truncated SVD *inside* the region
+    being differentiated, with the kept subspace frozen across it. One
+    ``jax.jit(jax.grad(...))``, one trace.
+    """
+    tenet.ad.install()
+    legs = SQUARE["u1"]
+    t = with_spectrum(legs, clean_gap, seed=38)
+    bond, w = drop_one(t), jt(legs, seed=39)
+    traces = []
+
+    def power(x0):
+        traces.append(1)  # a Python side effect: it runs at trace time only
+        x = x0
+        for _ in range(3):
+            u, s, vh = tenet.linalg.svd(x @ x0, bond=bond)
+            x = u @ s @ vh
+        return sum(jnp.real(jnp.sum(a * b)) for a, b in zip(x.blocks, w.blocks, strict=True))
+
+    differentiate = jax.jit(jax.grad(power))
+    g = differentiate(t)
+    differentiate(with_spectrum(legs, clean_gap, seed=40))  # same structure: cache hit
+    assert len(traces) == 1
+    assert not has_nan(g)
+    for a, b in zip(blocks(g), central_differences(power, t), strict=True):
+        np.testing.assert_allclose(a, b, rtol=1e-5, atol=1e-5)
+
+
 # --- the example still runs ------------------------------------------------------
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples"))
@@ -546,3 +857,18 @@ def test_vmc_example_is_unchanged(provider):
     np.testing.assert_allclose(vmc_mps.main(provider=provider), reference, rtol=0, atol=1e-10)
     tenet.ad.install()
     np.testing.assert_allclose(vmc_mps.main(provider=provider), reference, rtol=0, atol=1e-8)
+
+
+@pytest.mark.parametrize("provider", ["u1", "su2"])
+def test_vmc_example_pairs_compress_with_project(provider):
+    """``compress`` decides the bond outside; ``project`` differentiates onto it inside."""
+    tenet.ad.install()
+    t = vmc_mps.build_mps(4, provider=provider, seed=5)[1]
+    bond = vmc_mps.compress(t, max_bond=2)[0].legs[-1].space
+
+    with pytest.raises(tenet.StructureChangingError):
+        jax.jit(lambda x: vmc_mps.compress(x)[0])(t)
+
+    g = jax.jit(jax.grad(lambda x: tenet.norm(vmc_mps.project(x, bond)[1])))(t)
+    assert not has_nan(g)
+    assert vmc_mps.project(t, bond)[0].legs[-1].space == bond

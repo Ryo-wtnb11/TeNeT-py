@@ -15,7 +15,9 @@ What this demonstrates, entirely with library code that already exists (no new
 * ``jax.grad`` straight through that objective, and a one-line SGD step written with
   ``jax.tree.map``;
 * ``tenet.linalg.svd`` (exact, shape-static) *inside* the differentiated and jitted
-  path, and ``tenet.linalg.svd_truncated`` (structure-changing) *outside* it.
+  path, and ``tenet.linalg.svd_truncated`` (structure-changing) *outside* it -- plus
+  the pairing of the two, ``compress`` deciding a bond space out here and ``project``
+  running ``svd(t, bond=...)`` in there.
 
 **Trivial boundary legs, not a rank-0 tensor.** ``SymmetricTensor`` has no rank 0, and
 it does not need one: the standard MPS convention gives the left and right boundary
@@ -114,8 +116,28 @@ def compress(t: SymmetricTensor, max_bond: int = 2):
     ``float(sigma)`` raises, and ``tenet.StructureChangingError`` is raised with an
     explanation. Structure-changing steps belong between optimization steps (or in a
     setup phase), never inside one.
+
+    The escape hatch is to keep the *decision* out here and take only its result in::
+
+        bond = compress(t0, max_bond=D)[0].legs[-1].space   # decided once, outside
+        jax.jit(jax.grad(lambda t: tenet.norm(project(t, bond)[1])))(t)
+
+    -- see :func:`project`. That is the shape a differentiable CTMRG or variational
+    iPEPS has: a truncation lives inside the differentiated loop, and the kept
+    subspace is frozen across it, because re-deciding it every iteration would mean
+    differentiating through a discrete choice, which has no derivative.
     """
     return tenet.linalg.svd_truncated(t, max_bond=max_bond)
+
+
+def project(t: SymmetricTensor, bond):
+    """``svd`` onto a bond space :func:`compress` decided -- **inside** ``jit``/``grad``.
+
+    Fixed shape, so it traces and differentiates like any other ``svd``. The only
+    thing that changes is exactness: this is the best approximation at ``bond``'s
+    per-sector ranks, not a factorization of ``t`` (see :func:`tenet.linalg.svd`).
+    """
+    return tenet.linalg.svd(t, bond=bond)
 
 
 def contract(mps: list[SymmetricTensor]) -> SymmetricTensor:

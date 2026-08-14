@@ -23,6 +23,9 @@ Fixed-structure only (README "Structure-changing differentiation", invariant
 zero-sector elimination. A sector whose ``B_c`` happens to be rank-deficient
 keeps its full ``min`` bond degeneracy and carries zero singular values;
 dropping them is structure-changing and belongs outside the jit boundary.
+``svd(..., bond=B)`` is not an exception: ``B`` is a ``GradedSpace`` the caller
+decided *outside* the traced region, so it is static metadata like every other
+structure here, and the projection onto it is a per-sector prefix slice.
 
 Conventions:
 
@@ -94,31 +97,112 @@ def _lower(t: "SymmetricTensor", axes: Axes) -> tuple["SymmetricTensor", GradedS
     return m, bond, to_matrices(m)
 
 
+def _keep_counts(bond: GradedSpace | None, untruncated: GradedSpace) -> dict:
+    """``{c: k_c}``, the per-sector prefix length ``svd`` keeps.
+
+    Pure metadata: a ``GradedSpace`` against a ``GradedSpace``, no block value
+    anywhere, so the refusal is total and raises identically inside and outside a
+    trace. ``bond=None`` keeps everything, which is the identity slice.
+    """
+    if bond is None:
+        return dict(untruncated.sectors)
+    for c, k in bond.sectors:
+        available = untruncated.degeneracy(c)
+        if k > available:
+            raise ValueError(
+                f"svd: bond asks for {k} singular values in sector {c!r}, but this "
+                f"tensor's untruncated bond degeneracy there is {available}"
+                + (
+                    " (the sector does not appear in the map layout at all)"
+                    if available == 0
+                    else " = min(rows_c, cols_c)"
+                )
+                + ". bond= selects a prefix of an existing spectrum, so it must be a "
+                "subspace of the untruncated bond; a missing or short sector is never "
+                "padded with zeros, which would declare a bond the tensor does not have "
+                "and divide by zero in the gradient. Take bond from "
+                "tenet.linalg.svd_truncated on this tensor and this partition."
+            )
+    return dict(bond.sectors)
+
+
 def svd(
-    t: "SymmetricTensor", axes: Axes = None
+    t: "SymmetricTensor", axes: Axes = None, *, bond: GradedSpace | None = None
 ) -> tuple["SymmetricTensor", "SymmetricTensor", "SymmetricTensor"]:
-    """``T = U ∘ S ∘ Vh``, exactly — the *compact* SVD. No truncation.
+    """``T = U ∘ S ∘ Vh`` (``bond=None``) or ``T ≈ U ∘ S ∘ Vh`` on a **pre-decided** bond.
 
     ``axes=(left, right)`` names public axes in ``t``'s own numbering; ``left``
     becomes the codomain and ``right`` the domain. ``axes=None`` uses the current
     partition and is what ``t.as_map().svd()`` calls.
 
-    Legs: ``U`` is ``(*left legs, bond IN)``, ``S`` is ``(bond OUT, bond IN)`` and
-    ``Vh`` is ``(bond OUT, *right legs)``, so ``U @ S @ Vh`` equals
-    ``repartition(t, left, right)`` block for block.
+    ``bond=None`` is the *compact* SVD: exact, on the ``min(rows_c, cols_c)`` bond,
+    no truncation. **``bond=B`` is the same factorization projected onto ``B``, and
+    then the reconstruction is no longer exact** — ``U @ S @ Vh`` is the best
+    approximation of ``repartition(t, left, right)`` at those per-sector ranks
+    (Eckart-Young), not equal to it. In each sector ``c`` of ``B`` the largest
+    ``B.degeneracy(c)`` singular values are kept — a prefix, since ``sigma_c`` comes
+    back descending — and every sector absent from ``B`` is dropped. The truncation
+    error stays one line by Pythagoras: ``norm(t)**2 - norm(U @ S @ Vh)**2``.
+
+    ``B`` must be a **subspace** of the untruncated bond: every sector of ``B`` is a
+    sector of the ``min`` bond, with no larger degeneracy. Refused with a
+    ``ValueError`` naming the sector and both degeneracies, structurally and before a
+    single block is read, so the refusal is as traceable as the rest of the function.
+    Nothing is ever silently zero-padded.
+
+    ``bond=`` does *not* make this function structure-changing, which is why it is a
+    keyword here while truncation is a separate :func:`svd_truncated`: a
+    :class:`~tenet.space.GradedSpace` is frozen, hashable, array-free metadata that
+    the **caller** decided, so ``svd(t, bond=B)`` is exactly as shape-static, jittable
+    and differentiable as ``svd(t)``. What #64 refused to make a keyword is the
+    *decision*; what is a keyword here is the decision's *result*. The pairing::
+
+        _, s, _ = tenet.linalg.svd_truncated(t0, axes, max_bond=D)   # outside jit/grad
+        bond = s.structure.legs[0].space
+
+        @jax.jit
+        def step(t):
+            u, s, vh = tenet.linalg.svd(t, axes, bond=bond)          # inside, fixed shape
+
+    **The gradient under ``bond=`` is the exact truncated backward, and it needed no
+    code.** Reverse mode differentiates the per-sector prefix slice generically,
+    zero-padding the cotangent, and the *matrix* SVD underneath is the compact one
+    from :mod:`tenet.ad`. That composition is not the usual approximation: because
+    the bond degeneracy is ``min(rows_c, cols_c)`` and never the numerical rank, the
+    discarded space never leaves the factorization, and the cross block of
+    :mod:`tenet.ad`'s broadened ``F`` — rows ``i > k`` against columns ``j <= k``,
+    weighted by ``1/(sigma_j - sigma_i)`` — is exactly the correction
+    Francuz-Schuch-Vanhecke add in Eqs. (14)-(15) of Phys. Rev. Research 7, 013237
+    (2025). Measured against central differences it is flat at finite-difference
+    noise across ``sigma_perp/sigma_min`` from ``0.1`` to ``0.9``, while the
+    zeroth-order rule (the same VJP formed against the *kept* factors only, which is
+    what the CTMRG/iPEPS literature runs on) is off by 11% at a ratio of ``0.1``, i.e.
+    ``O(sigma_perp/sigma_min)``. Both numbers are pinned in
+    ``tests/backends/test_ad.py``. Degeneracy is the one remaining caveat, and it is
+    :mod:`tenet.ad`'s: a multiplet *straddling* the cut makes the kept subspace
+    gauge-dependent, so the gradient there is finite but meaningless.
+
+    Legs, in both modes: ``U`` is ``(*left legs, bond IN)``, ``S`` is
+    ``(bond OUT, bond IN)`` and ``Vh`` is ``(bond OUT, *right legs)``.
     """
-    m, bond, mats = _lower(t, axes)
-    parts = {c: ar.do("linalg.svd", b, full_matrices=False) for c, b in mats.items()}
+    m, untruncated, mats = _lower(t, axes)
+    keep = _keep_counts(bond, untruncated)  # structural; before any block is factorized
+    space = untruncated if bond is None else bond
+    parts = {c: ar.do("linalg.svd", mats[c], full_matrices=False) for c in keep}
+    # sigma_c is descending, so the kept indices are a prefix -- and at full rank the
+    # slice is the identity, which is why bond=<the full min bond> is not a code path.
     return (
         from_matrices(
-            TensorStructure((*m.codomain, Leg(bond, IN))), {c: p[0] for c, p in parts.items()}
+            TensorStructure((*m.codomain, Leg(space, IN))),
+            {c: parts[c][0][:, :k] for c, k in keep.items()},
         ),
         from_matrices(
-            TensorStructure((Leg(bond, OUT), Leg(bond, IN))),
-            {c: ar.do("diag", p[1]) for c, p in parts.items()},
+            TensorStructure((Leg(space, OUT), Leg(space, IN))),
+            {c: ar.do("diag", parts[c][1][:k]) for c, k in keep.items()},
         ),
         from_matrices(
-            TensorStructure((Leg(bond, OUT), *m.domain)), {c: p[2] for c, p in parts.items()}
+            TensorStructure((Leg(space, OUT), *m.domain)),
+            {c: parts[c][2][:k, :] for c, k in keep.items()},
         ),
     )
 
@@ -403,6 +487,11 @@ def svd_truncated(
     distinction README says the library must never hide. Under ``jax.jit`` or
     ``jax.grad`` it raises
     :class:`~tenet.symmetry.base.StructureChangingError`.
+
+    The bond space returned here is the input to ``svd(t, axes, bond=...)``, which is
+    the traceable half of the pairing: decide the structure once, out here, then
+    project onto it inside ``jit``/``grad``. ``bond=`` is a keyword on :func:`svd`
+    because it carries the *result* of the decision, not the decision.
 
     Selection is over **one global spectrum**, always, in every mode:
 

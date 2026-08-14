@@ -428,6 +428,181 @@ def test_jit_of_a_single_factor_traces():
     assert u.backend == "jax"
 
 
+# --- svd(bond=...): the projection onto a pre-decided bond space (#77) ---------------
+
+
+def full_bond_space(name, axes=SPLIT, seed=0):
+    return tenet.linalg.svd(tensor(name, seed=seed), axes=axes)[0].legs[-1].space
+
+
+def halved(space):
+    """``space`` with every degeneracy halved (at least 1) — a genuine subspace."""
+    return GradedSpace.new(space.provider, {c: max(1, m // 2) for c, m in space.sectors})
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
+def test_bond_keeps_the_largest_singular_values_per_sector(name):
+    """The kept set is a per-sector *prefix*, checked against an independent slice."""
+    t = tensor(name, seed=20)
+    b = halved(full_bond_space(name, seed=20))
+    _, s_full, _ = tenet.linalg.svd(t, axes=SPLIT)
+    u, s, vh = tenet.linalg.svd(t, axes=SPLIT, bond=b)
+
+    assert u.legs[-1].space == b
+    assert s.legs == (Leg(b, OUT), Leg(b, IN))
+    assert vh.legs[0] == Leg(b, OUT)
+    full, kept = singular_values(s_full), singular_values(s)
+    assert set(kept) == set(b)
+    for c, k in b.sectors:
+        np.testing.assert_allclose(kept[c], np.sort(full[c])[::-1][:k], rtol=0, atol=1e-12)
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
+def test_bond_drops_a_sector_entirely(name):
+    """A sector absent from ``B`` is gone from the factors, not zeroed."""
+    space = full_bond_space(name, seed=21)
+    dropped = space.sectors[0][0]
+    b = GradedSpace.new(space.provider, [(c, m) for c, m in space.sectors if c != dropped])
+    if len(b) == 0:
+        pytest.skip("single-sector layout")
+    u, s, vh = tenet.linalg.svd(tensor(name, seed=21), axes=SPLIT, bond=b)
+    assert dropped not in u.legs[-1].space
+    assert set(singular_values(s)) == set(b)
+    assert vh.legs[0].space == b
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
+def test_the_full_bond_reproduces_bond_none_exactly(name):
+    """Not a code path: the projection at full rank is the identity slice."""
+    t = tensor(name, seed=22)
+    want = tenet.linalg.svd(t, axes=SPLIT)
+    got = tenet.linalg.svd(t, axes=SPLIT, bond=want[0].legs[-1].space)
+    for a, b in zip(got, want, strict=True):
+        assert a.structure == b.structure
+        for x, y in zip(a.blocks, b.blocks, strict=True):
+            np.testing.assert_array_equal(np.asarray(x), np.asarray(y))
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
+def test_as_map_svd_with_a_bond_agrees_and_bends_nothing(name, monkeypatch):
+    t = tensor(name, seed=23)
+    axes = (t.structure.out_axes, t.structure.in_axes)
+    b = halved(tenet.linalg.svd(t)[0].legs[-1].space)
+
+    def no_bends(*args, **kwargs):  # pragma: no cover - the assertion is that it is unused
+        raise AssertionError("as_map().svd(bond=...) must perform zero bends")
+
+    monkeypatch.setattr(REPARTITION_MODULE, "bend", no_bends)
+    for got, want in zip(
+        t.as_map().svd(bond=b), tenet.linalg.svd(t, axes=axes, bond=b), strict=True
+    ):
+        assert got.structure == want.structure
+        assert tenet.allclose(got, want, rtol=0, atol=1e-14)
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
+def test_bond_is_the_best_approximation_and_pythagoras_still_measures_the_error(name):
+    t = tensor(name, seed=24)
+    space = full_bond_space(name, seed=24)
+    b = halved(space)
+    u, s, vh = tenet.linalg.svd(t, axes=SPLIT, bond=b)
+    m = tenet.repartition(t, *SPLIT)
+    assert not tenet.allclose(u @ s @ vh, m, rtol=0, atol=1e-6)  # exactness is conditional now
+
+    full = singular_values(tenet.linalg.svd(t, axes=SPLIT)[1])
+    qdim = t.provider.qdim
+    dropped = sum(
+        qdim(c) * float(np.sum(np.sort(sigma)[::-1][b.degeneracy(c) :] ** 2))
+        for c, sigma in full.items()
+    )
+    error = float(tenet.norm(m)) ** 2 - float(tenet.norm(u @ s @ vh)) ** 2
+    assert error == pytest.approx(dropped, abs=1e-12)
+
+
+def bad_bonds(name="u1"):
+    space = full_bond_space(name)
+    absent = GradedSpace.new(U1, {U1Sector(7): 1})
+    c, m = space.sectors[0]
+    too_big = GradedSpace.new(space.provider, {c: m + 3})
+    return absent, too_big, c, m
+
+
+def test_a_bond_with_an_absent_sector_is_a_value_error():
+    absent, _, _, _ = bad_bonds()
+    with pytest.raises(ValueError) as excinfo:
+        tenet.linalg.svd(tensor("u1"), axes=SPLIT, bond=absent)
+    message = str(excinfo.value)
+    assert repr(U1Sector(7)) in message
+    assert "asks for 1 singular values" in message  # both degeneracies are named
+    assert "degeneracy there is 0" in message
+    assert "does not appear" in message
+
+
+def test_a_bond_asking_for_too_many_singular_values_is_a_value_error():
+    _, too_big, c, m = bad_bonds()
+    with pytest.raises(ValueError) as excinfo:
+        tenet.linalg.svd(tensor("u1"), axes=SPLIT, bond=too_big)
+    message = str(excinfo.value)
+    assert repr(c) in message
+    assert f"{m + 3} singular values" in message
+    assert f"degeneracy there is {m}" in message
+    assert "min(rows_c, cols_c)" in message
+
+
+def test_the_refusal_reads_no_block_value():
+    """NaN everywhere and the refusal is unchanged: it is metadata against metadata."""
+    t = tensor("u1")
+    nan = SymmetricTensor(t.structure, tuple(np.full_like(b, np.nan) for b in t.blocks))
+    _, too_big, _, _ = bad_bonds()
+    with pytest.raises(ValueError, match="subspace of the untruncated bond"):
+        tenet.linalg.svd(nan, axes=SPLIT, bond=too_big)
+
+
+@pytest.mark.parametrize("which", [0, 1], ids=["absent-sector", "too-large-degeneracy"])
+def test_the_refusals_are_identical_inside_and_outside_jit(which):
+    jax = use_jax()
+    b = bad_bonds()[which]
+    t = tensor("u1", seed=25)
+
+    with pytest.raises(ValueError) as eager:
+        tenet.linalg.svd(t, axes=SPLIT, bond=b)
+    with pytest.raises(ValueError) as traced:
+        jax.jit(lambda x: tenet.linalg.svd(x, axes=SPLIT, bond=b)[1])(to_jax(t))
+    assert str(traced.value) == str(eager.value)
+
+
+def test_jit_and_grad_go_straight_through_a_fixed_bond():
+    """The traceable half of the boundary; ``svd_truncated``'s refusal is the other."""
+    jax = use_jax()
+    t = to_jax(tensor("su2", seed=26))
+    b = halved(full_bond_space("su2", seed=26))
+
+    s = jax.jit(lambda x: tenet.linalg.svd(x, axes=SPLIT, bond=b)[1])(t)
+    assert s.legs[0].space == b
+    assert s.backend == "jax"
+
+    g = jax.grad(lambda x: tenet.norm(tenet.linalg.svd(x, axes=SPLIT, bond=b)[1]))(t)
+    assert all(np.isfinite(np.asarray(blk)).all() for blk in g.blocks)
+
+
+def test_the_bond_is_part_of_the_static_signature():
+    """Changing ``B`` retraces; changing block values does not."""
+    jax = use_jax()
+    traces = []
+    space = full_bond_space("su2", seed=27)
+
+    def raw(x, b):
+        traces.append(b)
+        return tenet.linalg.svd(x, axes=SPLIT, bond=b)[1]
+
+    factorize = jax.jit(raw, static_argnums=1)
+    factorize(to_jax(tensor("su2", seed=27)), space)
+    factorize(to_jax(tensor("su2", seed=28)), space)  # different values, same signature
+    assert len(traces) == 1
+    factorize(to_jax(tensor("su2", seed=27)), halved(space))
+    assert len(traces) == 2
+
+
 # --- module hygiene ----------------------------------------------------------------
 
 

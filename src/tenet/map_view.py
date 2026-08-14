@@ -247,11 +247,15 @@ class TensorMapView:
 
         return adjoint(self.tensor)
 
-    def svd(self) -> tuple["SymmetricTensor", "SymmetricTensor", "SymmetricTensor"]:
-        """``U, S, Vh`` for the current partition. See :func:`tenet.linalg.svd`."""
+    def svd(self, *, bond=None) -> tuple["SymmetricTensor", "SymmetricTensor", "SymmetricTensor"]:
+        """``U, S, Vh`` for the current partition. See :func:`tenet.linalg.svd`.
+
+        ``bond=<GradedSpace>`` projects onto a pre-decided bond space, exactly as the
+        free function does — still shape-static, still traceable.
+        """
         from tenet.ops.linalg import svd
 
-        return svd(self.tensor)
+        return svd(self.tensor, bond=bond)
 
     def svd_truncated(
         self, **kwargs
