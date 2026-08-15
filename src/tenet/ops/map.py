@@ -33,8 +33,10 @@ trade places. And it needs no block transpose because reduced axes travel with
 their own legs (invariant 7) and the public axis order is untouched: the whole
 transpose is absorbed into the key swap ``(ot, it) → (it, ot)``.
 
-No ``to_dense`` here, no provider branching, and NumPy appears only as
-:func:`identity`'s default dtype.
+No ``to_dense`` here and no provider branching. NumPy appears as
+:func:`identity`'s default dtype and as :func:`random_isometry`'s draw — a
+constructor runs at setup time, outside any trace, and ``to_backend`` is the
+documented route onto a device (#9's convention, unchanged).
 """
 
 from collections.abc import Sequence
@@ -47,12 +49,21 @@ import numpy as np
 
 from tenet.leg import IN, OUT, Leg
 from tenet.map_view import as_map, from_matrices, map_layout, to_matrices
+from tenet.ops.embed import embed
 from tenet.structure import FusionBlockKey, TensorStructure
 
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["AdjointPlan", "adjoint", "adjoint_plan", "compose", "identity"]
+__all__ = [
+    "AdjointPlan",
+    "adjoint",
+    "adjoint_plan",
+    "compose",
+    "identity",
+    "isometry",
+    "random_isometry",
+]
 
 
 def _check_composable(a: "SymmetricTensor", b: "SymmetricTensor") -> None:
@@ -147,6 +158,121 @@ def identity(legs: Sequence[Leg], *, dtype: Any = np.float64) -> "SymmetricTenso
         structure,
         {c: ar.do("eye", layout.shape(c)[0], dtype=dtype, like="numpy") for c in layout.sectors},
     )
+
+
+# --- issue #89: isometry and random_isometry ------------------------------------------
+
+
+def _mirrored(codomain: Sequence[Leg], domain: Sequence[Leg]) -> TensorStructure:
+    """``(*codomain OUT, *domain IN)`` — ``identity``'s stance for two spaces.
+
+    ``space``, ``dual`` and ``name`` are kept from the arguments and only ``side``
+    is set.
+    """
+    return TensorStructure(
+        (
+            *(replace(leg, side=OUT) for leg in codomain),
+            *(replace(leg, side=IN) for leg in domain),
+        )
+    )
+
+
+def isometry(
+    codomain: Sequence[Leg], domain: Sequence[Leg], *, dtype: Any = np.float64
+) -> "SymmetricTensor":
+    """The inclusion ``domain -> codomain``: ``W† W = id(domain)``, ``(W W†)² = W W†``.
+
+    ``codomain[i]`` must contain ``domain[i]`` sector-wise — same provider, same
+    ``dual``, every sector of the domain present in the codomain with a degeneracy
+    at least as large. ``side`` is *set*, not compared, exactly as
+    :func:`identity` does, and the result's legs are ``(*codomain OUT, *domain
+    IN)``.
+
+    The whole body, and every refusal, is :func:`~tenet.embed` of
+    :func:`identity`: the blocks come from the identity morphism and the placement
+    — each degeneracy slot into the *same* slot of the larger leg — is ``embed``'s
+    prefix convention, the one ``svd(..., bond=)`` and ``restrict`` already share.
+    A per-coupled-sector rectangular ``eye`` would also produce an isometry, and it
+    was rejected for naming a *different* map: it sends the ``j``-th column band to
+    the ``j``-th row band, an arbitrary correspondence whenever the two sides' band
+    orders do not line up.
+
+    Containment is required **per leg**, which is stricter than the fused,
+    sector-wise ``domain ≾ codomain`` TensorKit imposes: a target where no single
+    leg contains its partner but the fusion does is refused here.
+    ponytail: per-leg containment. The fused case is a coupled-sector ``eye`` and
+    about four lines, and it lands when a caller can say *which* basis
+    correspondence they meant — making that choice silently, inside a function
+    called ``isometry``, is what gets found six months later as a gauge bug.
+    """
+    domain = tuple(domain)
+    return embed(identity(domain, dtype=dtype), _mirrored(codomain, domain).legs)
+
+
+def random_isometry(
+    codomain: Sequence[Leg],
+    domain: Sequence[Leg],
+    *,
+    seed: int | None = None,
+    dtype: Any = np.float64,
+) -> "SymmetricTensor":
+    """A Haar-random isometry: ``W† W = id(domain)``, independent per coupled sector.
+
+    Per coupled sector ``c``, a ``(rows_c, cols_c)`` Gaussian draw, a QR, and the
+    sign fix that makes the result Haar-distributed. Requires ``rows_c >= cols_c``
+    in every coupled sector — the *fused* containment condition, read structurally
+    off :class:`~tenet.map_view.MapLayout`, which is weaker than
+    :func:`isometry`'s per-leg one; a sector that fails it is a ``ValueError``
+    naming the sector and both dimensions, raised before any draw.
+
+    **"Haar per coupled sector" is the product of per-sector Haar measures, not
+    Haar on the dense space.** A symmetric isometry lives in a product of unitary
+    groups, one per coupled sector, so the block-diagonal ensemble is the correct
+    one — but a moment computed against a *dense* Haar formula will not match, and
+    that is the ensemble, not a bug.
+
+    NumPy draws through ``np.random.default_rng(seed)``, exactly as
+    ``SymmetricTensor.random`` and ``identity``'s NumPy fill already do: a
+    constructor is not a traced operation, and ``t.to_backend("jax")`` is the route
+    onto a device. ``seed=None`` is non-reproducible.
+
+    A complex ``dtype`` gets a genuinely complex (Ginibre) draw, deliberately
+    departing from ``SymmetricTensor.random``'s "real draws cast to dtype"
+    shortcut: a real orthogonal matrix cast to ``complex128`` *is* an isometry and
+    would pass every other criterion here, while being Haar on ``O(n)`` rather than
+    on ``U(n)``. Three lines, and it is a correctness trap otherwise.
+    """
+    structure = _mirrored(codomain, domain)
+    layout = map_layout(structure)
+    shapes = tuple((c, layout.shape(c)) for c in layout.sectors)
+    wide = [(c, s) for c, s in shapes if s[0] < s[1]]
+    if wide:
+        c, (rows, cols) = wide[0]
+        raise ValueError(
+            f"random_isometry: coupled sector {c!r} has rows={rows} < cols={cols}, so no "
+            f"isometry exists there — W† W = id(domain) needs every coupled sector to be "
+            f"tall or square. This is the *fused* condition, read off the map layout, and "
+            f"it is weaker than tenet.isometry's per-leg containment: a codomain leg may "
+            f"be smaller than its domain partner and still pass here. All sector shapes: "
+            + ", ".join(f"{s!r}: (rows={r}, cols={k})" for s, (r, k) in shapes)
+        )
+
+    rng = np.random.default_rng(seed)
+    complex_draw = np.issubdtype(np.dtype(dtype), np.complexfloating)
+    mats = {}
+    for c, shape in shapes:
+        a = rng.standard_normal(shape)
+        if complex_draw:
+            a = a + 1j * rng.standard_normal(shape)
+        q, r = np.linalg.qr(a)
+        # Mezzadri, Notices of the AMS 54, 592 (2007): plain QR of a Gaussian is
+        # NOT Haar — LAPACK leaves R's diagonal with arbitrary signs (phases),
+        # which biases Q's columns. Q * diag(d/|d|) is the correction, and it is
+        # the same normalization TensorKit's positive-R `randisometry` applies.
+        # Do not delete this line as redundant; a test measures the bias without it.
+        d = np.diagonal(r)
+        mats[c] = (q * (d / np.abs(d))).astype(dtype)
+    return from_matrices(structure, mats)
 
 
 @dataclass(frozen=True, slots=True)

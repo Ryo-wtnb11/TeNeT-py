@@ -71,7 +71,19 @@ from tenet.symmetry.base import QuantumDimension, StructureChangingError, requir
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["eig", "eigh", "eigvals", "expm", "lq", "polar", "qr", "svd", "svd_truncated"]
+__all__ = [
+    "eig",
+    "eigh",
+    "eigvals",
+    "expm",
+    "left_null",
+    "lq",
+    "polar",
+    "qr",
+    "right_null",
+    "svd",
+    "svd_truncated",
+]
 
 Axes = tuple[Sequence[int], Sequence[int]] | None
 
@@ -401,6 +413,108 @@ def lq(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sym
             TensorStructure((Leg(bond, OUT), *m.domain)),
             {c: _dagger(p[0]) for c, p in parts.items()},
         ),
+    )
+
+
+# --- issue #88: left_null and right_null ----------------------------------------------
+
+
+def _complement(layout, caller: str) -> dict:
+    """``{c: extra_c}``, the structural complement's per-sector degeneracy.
+
+    ``rows_c - cols_c`` for ``left_null`` and ``cols_c - rows_c`` for
+    ``right_null``, kept only where positive. Metadata against metadata — a
+    :class:`~tenet.map_view.MapLayout` and nothing else — so the refusal is total
+    and raises identically inside and outside a trace, before any block is
+    factorized. Sectors with no complement are simply absent: ``GradedSpace.new``
+    refuses ``m <= 0``, so a zero-degeneracy sector cannot be carried anyway.
+    """
+    other = "right_null" if caller == "left_null" else "left_null"
+    per_sector = tuple((c, layout.shape(c)) for c in layout.sectors)
+    keep = {}
+    for c, (rows, cols) in per_sector:
+        extra = rows - cols if caller == "left_null" else cols - rows
+        if extra > 0:
+            keep[c] = extra
+    if not keep:
+        shapes = ", ".join(f"{c!r}: (rows={r}, cols={k})" for c, (r, k) in per_sector)
+        raise ValueError(
+            f"{caller}: no coupled sector has "
+            + ("rows_c > cols_c" if caller == "left_null" else "cols_c > rows_c")
+            + f" for this partition, so the orthogonal complement is empty and a space "
+            f"with no sectors is not a tensor. Per-sector shapes: {shapes}. "
+            f"The complement on the other side is tenet.linalg.{other}."
+        )
+    return keep
+
+
+def left_null(t: "SymmetricTensor", axes: Axes = None) -> "SymmetricTensor":
+    """The isometry onto the orthogonal complement of ``T``'s image: ``N† T = 0``.
+
+    Legs: ``N`` is ``(*left legs, bond IN)`` — :func:`qr`'s ``Q`` legs exactly — so
+    that ``adjoint(N) @ N == identity(bond)`` and ``adjoint(N) @ repartition(t,
+    left, right)`` is zero. "Left" and "null" compose into the wrong intuition
+    about half the time, so the identity rather than the word is the contract:
+    this is the *cokernel*, the null space of ``T†``.
+
+    The bond space is **structural**: degeneracy ``rows_c - cols_c`` in every
+    coupled sector where ``rows_c > cols_c``, and the sector is **omitted** where
+    it is not. It is read off :class:`~tenet.map_view.MapLayout` — metadata
+    against metadata, no block value anywhere — so this is shape-static, jittable
+    and differentiable, the same argument ``svd(..., bond=)`` and ``embed`` make.
+
+    **This is the shape null space, not the numerical one.** A rank-deficient
+    ``B_c`` has a *larger* true null space; what is returned is a subspace of it —
+    always orthogonal to ``T``, never complete. Determining the numerical rank
+    would make the output structure depend on block values, which is ``_lower``'s
+    standing refusal ("min(rows_c, cols_c) is metadata, never the numerical rank")
+    applied to the complement.
+    ponytail: shape-null only. A numerical sibling taking a rank tolerance arrives
+    as a **separate, non-traceable** function raising ``StructureChangingError``
+    under a trace — ``svd``/``svd_truncated``'s split, reused — when a caller
+    turns up with an opinion about the discarded directions.
+
+    Complete QR, not a full SVD, and the reason is measured: JAX refuses to
+    differentiate a full SVD (``_svd_jvp_rule``'s "not implemented for full
+    matrices") for exactly the non-square shapes that have a null space, while the
+    complete QR differentiates since JAX 0.10 ("and when ``full_matrices`` is
+    ``True``"), which is the floor this library already declares.
+
+    Raises ``ValueError`` if no coupled sector has ``rows_c > cols_c``: the
+    complement is empty, and the message names every sector's ``(rows, cols)``.
+    """
+    m, _, mats = _lower(t, axes)
+    layout = map_layout(m.structure)
+    keep = _complement(layout, "left_null")  # structural; before any block is factorized
+    bond = GradedSpace.new(m.provider, keep)
+    parts = {c: ar.do("linalg.qr", mats[c], mode="complete") for c in keep}
+    return from_matrices(
+        TensorStructure((*m.codomain, Leg(bond, IN))),
+        {c: parts[c][0][:, layout.shape(c)[1] :] for c in keep},
+    )
+
+
+def right_null(t: "SymmetricTensor", axes: Axes = None) -> "SymmetricTensor":
+    """The mirror of :func:`left_null` on the domain side: ``T N† = 0``, ``N N† = id``.
+
+    Legs: ``N`` is ``(bond OUT, *right legs)`` — :func:`lq`'s ``Q`` legs — and the
+    bond degeneracy is ``cols_c - rows_c`` where positive. This is the *kernel*,
+    where :func:`left_null` is the cokernel.
+
+    Per sector ``B† = q r`` complete and ``N = (q[:, rows_c:])†``: the same two
+    dense conjugate-transposes :func:`lq` already uses, no new backend primitive
+    and no second implementation of the factorization. Every paragraph of
+    :func:`left_null` — the structural bond, the shape-versus-numerical stance,
+    the complete QR and the refusal — applies unchanged.
+    """
+    m, _, mats = _lower(t, axes)
+    layout = map_layout(m.structure)
+    keep = _complement(layout, "right_null")  # structural; before any block is factorized
+    bond = GradedSpace.new(m.provider, keep)
+    parts = {c: ar.do("linalg.qr", _dagger(mats[c]), mode="complete") for c in keep}
+    return from_matrices(
+        TensorStructure((Leg(bond, OUT), *m.domain)),
+        {c: _dagger(parts[c][0][:, layout.shape(c)[0] :]) for c in keep},
     )
 
 

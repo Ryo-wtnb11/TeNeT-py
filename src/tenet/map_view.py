@@ -304,6 +304,20 @@ class TensorMapView:
 
         return polar(self.tensor, side=side)
 
+    def left_null(self) -> "SymmetricTensor":
+        """``N`` with ``N† T = 0`` for the current partition. See
+        :func:`tenet.linalg.left_null`."""
+        from tenet.ops.linalg import left_null
+
+        return left_null(self.tensor)
+
+    def right_null(self) -> "SymmetricTensor":
+        """``N`` with ``T N† = 0`` for the current partition. See
+        :func:`tenet.linalg.right_null`."""
+        from tenet.ops.linalg import right_null
+
+        return right_null(self.tensor)
+
     def lq(self) -> tuple["SymmetricTensor", "SymmetricTensor"]:
         """``L, Q`` for the current partition. See :func:`tenet.linalg.lq`."""
         from tenet.ops.linalg import lq
