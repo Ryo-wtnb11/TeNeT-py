@@ -16,6 +16,23 @@ jax = [
     # sector and lq on a tall one raise NotImplementedError (#80).
     "jax>=0.10",
 ]
+torch = [
+    # Eager only: `tenet.ad` stays JAX-only, and `torch.compile` / `torch.func`
+    # are out of scope (#95). See tests/backends/test_torch.py.
+    "torch>=2.0",
+]
+
+# CPU wheels on linux. Measured on x86_64-unknown-linux-gnu: the default index
+# resolves 24 packages, 13 of them NVIDIA CUDA wheels plus Triton; this index
+# resolves 10, `torch==2.6.0+cpu`, zero NVIDIA wheels. macOS keeps the ordinary
+# PyPI wheel, which is already CPU-only on arm64.
+[tool.uv.sources]
+torch = { index = "pytorch-cpu", marker = "sys_platform == 'linux'" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [dependency-groups]
 dev = [

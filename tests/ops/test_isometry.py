@@ -198,7 +198,9 @@ def test_the_identity_case_copies_nothing(name, monkeypatch):
     real_do = ar.do
 
     def no_pad(fn, *args, **kwargs):
-        if fn == "pad":  # pragma: no cover - the assertion is that it is unused
+        # "concatenate" since #95: ``embed`` pads by concatenating a zero slab,
+        # autoray's torch ``pad`` translation being wrong. Same assertion.
+        if fn in ("pad", "concatenate"):  # pragma: no cover - it is unused
             raise AssertionError("isometry(legs, legs) must not pad")
         return real_do(fn, *args, **kwargs)
 

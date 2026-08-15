@@ -60,6 +60,8 @@ from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
+import autoray as ar
+
 from tenet.leg import IN, OUT, Leg
 from tenet.ops.map import compose, identity
 from tenet.ops.permutation import transpose
@@ -329,10 +331,20 @@ def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
     (which needs a bend) and an OUT/IN pair are the same code path — TensorKit
     keeps a separate ``trace_permute!`` as a *performance* special case, not as
     different mathematics.
+
+    The identity is built on ``t``'s own backend and dtype — the
+    ``dtype=ar.get_dtype_name(ref), like=ref`` spelling ``ops/map.py::compose``
+    already uses for its zero-filled sectors (#95). Without it a torch-backed
+    ``t`` would meet NumPy blocks in ``matmul``.
     """
     i, j = axes
     p = 0 if t.legs[j].side is OUT else 1
-    return tensordot(t, identity((t.legs[j],)), axes=((i, j), (p, 1 - p)))
+    ref = t.blocks[0]
+    return tensordot(
+        t,
+        identity((t.legs[j],), dtype=ar.get_dtype_name(ref), like=ref),
+        axes=((i, j), (p, 1 - p)),
+    )
 
 
 def _parse(equation: str, operands: tuple["SymmetricTensor", ...]) -> tuple[list[str], str]:
