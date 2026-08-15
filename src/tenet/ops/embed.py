@@ -124,6 +124,29 @@ def _check_containment(small: TensorStructure, large: TensorStructure, *, op: st
                 )
 
 
+def _pad(x: Any, pad_width: tuple[tuple[int, int], ...]) -> Any:
+    """``ar.do("pad", x, pad_width)``, spelled so every backend agrees (#95).
+
+    autoray 0.10.1's torch translation is
+    ``tuple(chain.from_iterable(pad_width))[::-1]``, which reverses each
+    ``(before, after)`` pair as well as the axis order that torch wants — so a
+    ``((0, 1), (0, 2))`` pad lands the data in the *trailing* slots instead of the
+    leading ones. Right shape, wrong slots, no error: measured on autoray 0.10.1
+    with torch 2.13.0. Concatenation against a zero slab needs no translation and
+    is the same values on every backend, so it replaces ``pad`` here rather than a
+    backend test being written around it.
+    """
+    for axis, (before, after) in enumerate(pad_width):
+        for width, leading in ((before, True), (after, False)):
+            if not width:
+                continue
+            shape = list(ar.do("shape", x))
+            shape[axis] = width
+            zeros = ar.do("zeros", tuple(shape), dtype=ar.get_dtype_name(x), like=x)
+            x = ar.do("concatenate", (zeros, x) if leading else (x, zeros), axis=axis)
+    return x
+
+
 def embed(t: "SymmetricTensor", legs: Sequence["Leg"]) -> "SymmetricTensor":
     """``t`` re-expressed on larger legs: same data, leading slots, zeros elsewhere.
 
@@ -154,7 +177,7 @@ def embed(t: "SymmetricTensor", legs: Sequence["Leg"]) -> "SymmetricTensor":
         src = t.blocks[index[key]]
         pad = tuple((0, n - m) for n, m in zip(shape, t.structure.block_shape(key), strict=True))
         # identity axes stay identity objects: no pad call, no copy
-        blocks.append(src if not any(hi for _, hi in pad) else ar.do("pad", src, pad))
+        blocks.append(src if not any(hi for _, hi in pad) else _pad(src, pad))
     return SymmetricTensor(new, tuple(blocks))
 
 
@@ -234,7 +257,7 @@ def _refuse_discarded(t: "SymmetricTensor", kept: "SymmetricTensor", atol: float
 
     residual = math.sqrt(discarded_sq)
     if atol is None:
-        dtype = np.promote_types(getattr(t.blocks[0], "dtype", np.float64), np.float32)
+        dtype = np.promote_types(ar.get_dtype_name(t.blocks[0]), np.float32)  # see #95
         atol = math.sqrt(float(np.finfo(dtype).eps)) * math.sqrt(total_sq)
     if residual > atol:
         raise ValueError(
@@ -343,7 +366,7 @@ def direct_sum(
     ref = t.blocks[0]
     # Promoted once, up front, and applied to every part: a key only one operand
     # contributes to must not come out at that operand's own dtype.
-    dtype = np.promote_types(ref.dtype, u.blocks[0].dtype).name
+    dtype = np.promote_types(ar.get_dtype_name(ref), ar.get_dtype_name(u.blocks[0])).name  # #95
     if t.backend != u.backend:
         # `add` gets promotion for free because every one of its blocks meets
         # both operands; here a key only `t` touches would never see `u`'s
@@ -373,7 +396,7 @@ def direct_sum(
                 )
                 for ax, a in enumerate(sectors)
             )
-            part = ar.do("astype", ar.do("pad", operand.blocks[i], pad), dtype)
+            part = ar.do("astype", _pad(operand.blocks[i], pad), dtype)
             acc = part if acc is None else acc + part
         if acc is None:
             # reachable only with two or more summed axes: the key takes one

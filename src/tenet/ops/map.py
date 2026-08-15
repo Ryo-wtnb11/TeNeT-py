@@ -137,7 +137,9 @@ def compose(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
     return from_matrices(structure, mats)
 
 
-def identity(legs: Sequence[Leg], *, dtype: Any = np.float64) -> "SymmetricTensor":
+def identity(
+    legs: Sequence[Leg], *, dtype: Any = np.float64, like: Any = "numpy"
+) -> "SymmetricTensor":
     """``id`` on ``ProductSpace(legs)``: the legs mirrored as ``(OUT..., IN...)``.
 
     ``space``, ``dual`` and ``name`` are kept and only ``side`` is set, so that
@@ -148,6 +150,12 @@ def identity(legs: Sequence[Leg], *, dtype: Any = np.float64) -> "SymmetricTenso
     sharpest test of ``MapLayout``: this is the identity morphism only because the
     row and column orderings are *derived* from ``block_order`` rather than
     invented, so mirrored legs give mirrored bands.
+
+    ``like`` is anything ``ar.do`` accepts — a backend name or a reference array —
+    and defaults to today's ``"numpy"``: ``identity(legs)`` has no tensor to infer
+    a backend from, so a caller that *does* have one (``ops/contraction.py::trace``)
+    passes it. Before #95 this was hard-coded, which made ``trace`` on a torch
+    tensor contract torch blocks against NumPy ones.
     """
     legs = tuple(legs)
     structure = TensorStructure(
@@ -156,7 +164,7 @@ def identity(legs: Sequence[Leg], *, dtype: Any = np.float64) -> "SymmetricTenso
     layout = map_layout(structure)
     return from_matrices(
         structure,
-        {c: ar.do("eye", layout.shape(c)[0], dtype=dtype, like="numpy") for c in layout.sectors},
+        {c: ar.do("eye", layout.shape(c)[0], dtype=dtype, like=like) for c in layout.sectors},
     )
 
 

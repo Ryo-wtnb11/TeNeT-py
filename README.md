@@ -2422,6 +2422,30 @@ The categorical structure is unchanged.
 
 Only the reduced numerical arrays move.
 
+## What "PyTorch backend" means, exactly
+
+Install it with the `torch` extra (`pip install tenet-py[torch]`).
+
+Supported and tested (`tests/backends/test_torch.py`, issue #95): every public
+op on torch blocks — arithmetic, `norm`, `transpose` (SU(2) braiding and
+fermionic Koszul signs), `repartition`, `fuse`/`unfuse`, `adjoint`, `compose`,
+`tensordot`, `trace`, `einsum`, `to_dense`/`from_dense`, `embed`/`restrict`,
+`direct_sum`, `cast`, the whole of `tenet.linalg`, and `get_params`/`set_params`
+— with results bit-identical to the NumPy ones for everything `tenet` computes
+itself. **Eager** autograd works through the parameter protocol and nothing
+else:
+
+```python
+t = t.set_params(tuple(b.detach().clone().requires_grad_(True) for b in t.get_params()))
+tenet.norm(t).backward()
+```
+
+Not supported: `torch.compile`, `torch.jit`, `torch.func` transforms
+(`grad`/`vmap`/`jacrev`), and `tenet.ad` — the broadened degenerate-SVD VJP is
+JAX-only, so a degenerate SVD under torch gives `NaN` gradients. There is no
+torch analogue of `tenet.pytree`; eager torch needs none. GPU/MPS placement is
+untested; CI is CPU-only.
+
 ---
 
 # Dense expansion
@@ -2826,7 +2850,9 @@ Coupled-sector matrices are retained as the canonical lowering for composition a
 
 NumPy, JAX, and PyTorch should see ordinary arrays at the numerical
 boundary. Structural metadata is immutable, hashable, and array-free — F/R
-and other coefficient arrays never live in structural fields.
+and other coefficient arrays never live in structural fields. All three are
+enforced, not asserted: `tests/backends/test_torch.py` walks every public op on
+torch blocks (see "What 'PyTorch backend' means, exactly").
 
 ---
 

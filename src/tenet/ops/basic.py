@@ -15,7 +15,9 @@ Two rules the rest of Milestone 2 leans on:
 
 There is deliberately no NumPy call anywhere in this module: arithmetic must
 already work on JAX (or torch) blocks, so every array touch goes through
-``autoray``.
+``autoray``. ``tests/backends/test_torch.py`` is what enforces the torch half of
+that (#95) — it runs every function here on torch blocks and compares against
+the NumPy result.
 """
 
 import numbers

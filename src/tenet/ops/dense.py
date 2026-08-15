@@ -399,7 +399,10 @@ def _check_symmetric(
 
     residual = math.sqrt(residual_sq)
     if atol is None:
-        dtype = np.promote_types(getattr(dense, "dtype", np.float64), np.float32)
+        # ar.get_dtype_name, not `.dtype`: a torch tensor's dtype is not a NumPy
+        # one and `np.promote_types(torch.float64, ...)` raises (#95). Same
+        # spelling as ops/map.py::compose.
+        dtype = np.promote_types(ar.get_dtype_name(dense), np.float32)
         atol = math.sqrt(float(np.finfo(dtype).eps)) * math.sqrt(total)
     if residual > atol:
         raise ValueError(
