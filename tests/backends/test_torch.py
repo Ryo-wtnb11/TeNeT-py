@@ -136,7 +136,15 @@ def same(a, b):
 
 
 def close(a, b, atol=1e-12):
-    """For results of a ``matmul`` chain: torch's summation order is its own."""
+    """Whenever the value comes out of a backend *kernel* rather than out of ``tenet``.
+
+    ``same`` is for what the library computes itself — data movement and the
+    categorical coefficients — and it holds exactly on every platform. A ``matmul``
+    (``compose``, ``tensordot``, ``einsum``, ``trace``) sums in the backend's order,
+    and torch's vectorized ``sqrt`` is not the correctly-rounded one NumPy calls, so
+    those differ in the last ulp: measured 0.0 on macOS arm64 and nonzero on the
+    linux CI runner, i.e. a BLAS/kernel property and not a tenet one.
+    """
     assert a.structure == b.structure
     for x, y in zip(npb(a), npb(b), strict=True):
         np.testing.assert_allclose(x, y, rtol=0, atol=atol)
@@ -296,7 +304,7 @@ def test_apply_blocks_sqrt_power(name):
     t = tenet.apply_blocks(tt(LEGS[name], seed=13), lambda b: ar.do("abs", b))
     assert is_torch(t)
     r = t.to_backend("numpy")
-    same(tenet.sqrt(t), tenet.sqrt(r))
+    close(tenet.sqrt(t), tenet.sqrt(r), atol=1e-12)  # torch's vectorized sqrt, to a ulp
     close(tenet.power(t, 3), tenet.power(r, 3), atol=1e-12)  # `pow` is torch's, to a ulp
     same(t.apply_blocks(lambda b: b * 2), r.apply_blocks(lambda b: b * 2))
 
@@ -350,11 +358,11 @@ def test_einsum_two_and_three_operands(name):
     ra, rb, rc = (x.to_backend("numpy") for x in (a, b, c))
     two = tenet.einsum("abcd,defg->abcefg", a, b)
     assert is_torch(two)
-    same(two, tenet.einsum("abcd,defg->abcefg", ra, rb))
+    close(two, tenet.einsum("abcd,defg->abcefg", ra, rb))  # a matmul: see `close`
     # three operands: the opt_einsum path (#67)
     three = tenet.einsum("abcd,defg,ghij->abcefhij", a, b, c)
     assert is_torch(three)
-    same(three, tenet.einsum("abcd,defg,ghij->abcefhij", ra, rb, rc))
+    close(three, tenet.einsum("abcd,defg,ghij->abcefhij", ra, rb, rc))
 
 
 @pytest.mark.parametrize("name", ["u1", "su2"])
@@ -381,7 +389,7 @@ def test_trace_stays_on_torch(name, axes):
     t = tt(legs, seed=21)
     got = tenet.trace(t, axes)
     assert is_torch(got)
-    same(got, tenet.trace(t.to_backend("numpy"), axes))
+    close(got, tenet.trace(t.to_backend("numpy"), axes))  # a matmul: see `close`
 
 
 def test_identity_still_defaults_to_numpy():
