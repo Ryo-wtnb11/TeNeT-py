@@ -2533,15 +2533,17 @@ TeNeT-py/
 │       │
 │       ├── pytree.py
 │       │
-│       └── network/
-│           ├── einsum.py
-│           └── planning.py
+│       └── network/          # M11a: the driver layer
+│           ├── mps.py
+│           ├── env.py
+│           └── dmrg.py
 │
 ├── tests/
 │   ├── symmetry/
 │   ├── tensor/
 │   ├── ops/
 │   ├── backends/
+│   ├── network/
 │   └── integration/
 │
 └── pyproject.toml
@@ -2758,6 +2760,69 @@ Candidate optimizations include:
 - custom GPU kernels where justified.
 
 These changes must not alter the public semantic representation.
+
+---
+
+## Milestone 11 — `tenet.network`, the driver layer
+
+`examples/dmrg.py` and `examples/ctmrg.py` proved that a complete tensor-network
+algorithm can be written over the public API with nothing added to `src/tenet/`.
+M11 promotes one algorithm's worth of that machinery into a library layer, under a
+migration rule that keeps it honest: the example is rewritten on top of the layer and
+its energies compare **exactly equal**, so the promotion cannot quietly reorder a
+contraction.
+
+`tenet.network` (M11a) contains:
+
+- `MPS` — a finite open-boundary state on `(left bond OUT, physical OUT, right bond IN)`,
+  with `center: int | None` and a `__setitem__` write barrier that repartitions a factor
+  from `lq`, `qr` or `svd_truncated` back onto the site partition;
+- `MPO` — a separate class, no shape flag, built by `from_w` through
+  `SymmetricTensor.from_dense` at its default relative `atol`, so a wrong grading raises;
+- `Env` — the `<psi|H|psi>` partial contractions keyed by *directed* bond, with
+  `setup_`/`update_`/`clear_`, `heff2` and `measure()`;
+- `lanczos`, `sweep`, `dmrg()` and `DMRG_out`.
+
+It is reachable as `tenet.network` and listed in `tenet.__all__`, and it is deliberately
+**not** flattened into the top-level namespace: `dmrg` is not a tensor operation. The
+dependency edge is one-way — `network` imports `ops`/`tensor`, never the reverse — in the
+shape `ops` already uses for `tensor`. Everything here is built on **public `tenet` API
+only**: no `jax`, `torch`, `scipy`, `quimb` or `opt_einsum`, no reach into another
+module's private names, and no numerical use of reduced blocks. The one named exception
+is reading `t.provider`, `provider.qdim` and `provider.unit`, which the qdim-weighted
+scalar exit needs; `tests/network/test_hygiene.py` enforces all of it.
+
+**Outside `jit`/`grad` by construction, and that is the layer's own invariant.** This is
+the complement of invariant 9 rather than an exception to it: invariant 9 says
+structure-changing operations live outside compile boundaries and the library never hides
+the distinction, and `tenet.network` is where the data-dependent control flow is then
+*allowed to live* — `svd_truncated` re-deciding a bond `GradedSpace` at every bond of
+every sweep, a happy breakdown comparing a norm to a tolerance, a loop exiting on a
+measured energy change. Nothing in M11a is traced, and it makes no differentiability
+claim.
+
+**`MPS` and `Env` are mutable containers of immutable tensors**, which leaves
+`REPOSITORY_RULES.md`'s "structural/categorical types are immutable" intact: every
+`Leg`, `GradedSpace`, `TensorStructure` and `SymmetricTensor` they hold is still frozen.
+An MPS is a container plus an orthogonality centre that *moves* — a state machine, not a
+categorical object — and in-place methods carry a trailing underscore (`canonize_`,
+`setup_`, `update_`, `clear_`) so the invalidation discipline reads as mutation at the
+call site.
+
+The split:
+
+- **M11a** — `MPS`, `MPO`, `Env`, `lanczos`, `dmrg()`; `examples/dmrg.py` rewritten on
+  top of it at identical numbers.
+- **M11b** — the CTMRG analogue (`Absorb`, `move`, `converge`, `unrolled`), separate
+  because its invariants differ: half of it must survive `jax.jit(jax.grad(...))`, so its
+  API carries the `svd_truncated`-outside / `svd(bond=)`-inside pairing in its signatures
+  where M11a's carries no trace at all.
+- **M11c** — `MPS.save`/`load` (a directory of per-tensor `tenet.save` files plus a small
+  JSON header), a standalone `compress_`, and a measurement API beyond `Env.measure()`.
+  Each is small and none has a caller today, which is why none is in M11a.
+
+Not planned: TDVP, iDMRG, excited states, fermionic swap gates, PEPS containers, and a
+term-list MPO generator.
 
 ---
 
