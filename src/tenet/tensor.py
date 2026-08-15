@@ -348,6 +348,12 @@ class SymmetricTensor:
 
         return embed(self, legs)
 
+    def cast(self, target: FusionProvider, *, atol: float | None = None) -> "SymmetricTensor":
+        """Restrict to a smaller symmetry, e.g. SU(2) -> U(1). See :func:`tenet.cast`."""
+        from tenet.ops.cast import cast
+
+        return cast(self, target, atol=atol)
+
     def __repr__(self) -> str:
         def safe(get) -> Any:
             try:
