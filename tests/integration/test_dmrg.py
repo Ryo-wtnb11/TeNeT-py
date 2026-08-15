@@ -1,0 +1,328 @@
+"""Issue #110 — finite-chain two-site DMRG against exact diagonalization.
+
+``examples/dmrg.py`` variationally minimizes a U(1)-graded MPS against the open-boundary
+spin-1/2 Heisenberg chain, and this module judges it against the *many-body ground state*
+rather than against a self-consistency check. Like ``tests/integration/test_ctmrg.py``
+(#102) and ``test_vmc.py`` (#69) it adds nothing to ``src/tenet`` and nothing to the
+example: it imports ``examples/dmrg.py`` and drives it, so the example cannot rot.
+
+**The N=12 oracle is computed here, not trusted.** The Heisenberg Hamiltonian restricted
+to ``S^z_tot = 0`` at N=12 is 924 x 924, which ``np.linalg.eigvalsh`` diagonalizes in
+milliseconds with no ``scipy``; :func:`test_the_computed_oracle_is_the_open_chain` pins
+that computed value at ``-5.142090632840532`` before anything is judged against it. The
+number ``-5.387390917445203`` that a first pass at this issue reached for is the
+**periodic** N=12 energy: an open-boundary MPS cannot reproduce it, and a test that asked
+it to would fail by 0.245 and look like a DMRG bug. The distinction is recorded here so
+nobody re-derives the confusion.
+
+The N=20 value ``-8.682473334398956`` is a hard-coded literal *with its provenance* --
+measured for #110 by ``scipy.sparse.linalg.eigsh(k=1, which='SA', tol=0)`` on the same
+Hamiltonian -- because ``C(20, 10) = 184 756`` is past what a test should diagonalize.
+That is the recorded-baseline pattern ``test_ctmrg.py``:555 already uses.
+
+**Runtime: the budget is 60 s** and the module measures **33.7 s**, dominated by the
+``main_runs`` fixture (24.7 s: the N=32 chi=32 run inside ``dmrg.main()`` is the single
+most expensive thing here, and it is deliberately *shared* with the large-N band check
+and the N=12 oracle rather than run three times) and
+:func:`test_n20_matches_the_recorded_literal` (5.6 s). Unlike
+``test_ctmrg.py``, whose ~47 s floor is one-off XLA compilation, **there is no compile
+floor here**: nothing in this module is traced, jitted or differentiated, so the whole
+number is arithmetic and it scales with ``N`` and ``chi`` and nothing else. If the N=32
+run ever exceeds ~30 s on its own, #110 says the fix is to drop it to N=20 rather than to
+raise the budget.
+
+x64 is enabled process-globally in ``tests/conftest.py``; every tolerance here depends on
+it.
+"""
+
+import pathlib
+import sys
+
+import numpy as np
+import pytest
+
+import tenet
+from tenet import GradedSpace
+from tenet.symmetry import U1, U1Sector
+
+sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples"))
+import dmrg  # noqa: E402
+
+# The open-boundary ground-state energies measured for #110 by sparse Lanczos on
+# H = Sum_i S_i . S_{i+1}, J = 1, S = 1/2. -5.387390917445203 is the **periodic** N=12
+# energy and is not a target for an OBC MPS anywhere in this file.
+E_OBC_12 = -5.142090632840532
+E_OBC_20 = -8.682473334398956
+
+# ponytail: a plain dict of completed runs, as ``test_ctmrg._ENVS`` is. A DMRG run is the
+# expensive thing in this module and nothing here mutates one.
+_RUNS: dict = {}
+
+
+def run(n_sites: int, chi: int, **kwargs):
+    key = (n_sites, chi, tuple(sorted(kwargs.items())))
+    if key not in _RUNS:
+        _RUNS[key] = dmrg.dmrg(n_sites, chi, **kwargs)
+    return _RUNS[key]
+
+
+@pytest.fixture(scope="module")
+def main_runs():
+    """``dmrg.main()``'s own ``(N=12 chi=64, N=32 chi=32)`` pair, run exactly once."""
+    return dmrg.main()
+
+
+# --- the oracle --------------------------------------------------------------------
+
+
+def heisenberg_sz0(n_sites: int) -> np.ndarray:
+    """The open Heisenberg chain restricted to ``S^z_tot = 0``, dense. No ``scipy``.
+
+    Basis: the ``C(n, n/2)`` bitstrings with ``n/2`` ones (bit ``b`` set = spin up on site
+    ``b``), in ascending integer order. ``S^z_i S^z_{i+1}`` is ``+-1/4`` on the diagonal
+    and the exchange ``(S^+ S^- + S^- S^+)/2`` flips an antialigned pair with amplitude
+    ``1/2``. At N=12 that is 924 x 924 and ``eigvalsh`` costs milliseconds.
+    """
+    states = [s for s in range(1 << n_sites) if bin(s).count("1") == n_sites // 2]
+    index = {s: i for i, s in enumerate(states)}
+    h = np.zeros((len(states), len(states)))
+    for i, s in enumerate(states):
+        for b in range(n_sites - 1):
+            up, right = (s >> b) & 1, (s >> (b + 1)) & 1
+            if up == right:
+                h[i, i] += 0.25
+            else:
+                h[i, i] -= 0.25
+                h[index[s ^ (1 << b) ^ (1 << (b + 1))], i] += 0.5
+    return h
+
+
+def test_the_computed_oracle_is_the_open_chain():
+    """The 924 x 924 ``S^z_tot = 0`` block reproduces the recorded OBC value to 1e-12.
+
+    Nothing else in this module compares DMRG to a literal at N=12; it compares to *this*,
+    and this is checked first. The periodic value ``-5.387390917445203`` differs by 0.245
+    and is the number an OBC test must not reach for.
+    """
+    h = heisenberg_sz0(12)
+    assert h.shape == (924, 924)
+    assert np.linalg.eigvalsh(h)[0] == pytest.approx(E_OBC_12, abs=1e-12)
+    assert abs(E_OBC_12 - (-5.387390917445203)) > 0.24  # OBC is not PBC
+
+
+# --- the MPO, checked as an operator before any ground state is computed ------------
+
+
+def test_mpo_is_the_heisenberg_hamiltonian_at_n8():
+    """Contract the MPO to its dense 256 x 256 matrix and compare against explicit ``kron``.
+
+    The MPO is judged as an *operator* first: if this fails, every energy below is
+    measuring the wrong Hamiltonian and the ground state would still look plausible.
+    """
+    n_sites = 8
+    tensors = [np.asarray(w.to_dense()) for w in dmrg.mpo(n_sites)]
+    acc = tensors[0]
+    for w in tensors[1:]:
+        acc = np.einsum("a...b,bcde->a...cde", acc, w)
+    acc = acc[0, ..., 0]  # the D=1 MPO boundary legs
+    order = list(range(0, 2 * n_sites, 2)) + list(range(1, 2 * n_sites, 2))
+    from_mpo = acc.transpose(order).reshape(2**n_sites, 2**n_sites)
+
+    eye, sz, sp, sm = dmrg._spin_half()
+
+    def at(op, site):
+        out = np.array([[1.0]])
+        for k in range(n_sites):
+            out = np.kron(out, op if k == site else eye)
+        return out
+
+    from_kron = sum(
+        at(sz, i) @ at(sz, i + 1) + 0.5 * (at(sp, i) @ at(sm, i + 1) + at(sm, i) @ at(sp, i + 1))
+        for i in range(n_sites - 1)
+    )
+    assert np.abs(from_mpo - from_kron).max() < 1e-12
+
+
+def test_mpo_refuses_a_perturbed_grading():
+    """Move the ``+2`` sector of the MPO bond to ``-2`` and ``from_dense`` must *raise*.
+
+    This is the proof that the grading in :data:`dmrg.MPO_BOND` is right. A passing
+    ``allclose`` on the dense reconstruction would not be: the projection onto a wrong
+    grading is still *a* tensor, just not this Hamiltonian. Same argument #104 makes for
+    the Z2 magnetization, applied to construction instead of to a symmetry claim.
+    """
+    perturbed = GradedSpace.new(U1, {U1Sector(0): 3, U1Sector(-2): 2})
+    assert perturbed.dim == dmrg.MPO_BOND.dim
+    with pytest.raises(ValueError, match="not symmetric"):
+        dmrg.mpo(6, bond=perturbed)
+
+
+# --- the Krylov solver -------------------------------------------------------------
+
+
+def test_lanczos_finds_the_lowest_eigenvalue():
+    """:func:`dmrg.lanczos` against ``np.linalg.eigvalsh`` on a small dense Hermitian.
+
+    The "vector" is a rank-2 tensor on ``(X OUT, BOUNDARY IN)``, so the trivial boundary
+    leg restricts it to ``X``'s charge-0 block exactly as the MPS boundary legs restrict
+    the chain to ``S^z_tot = 0`` -- and the eigenvalue to beat is that block's.
+
+    ``ncv=3`` is one Krylov space and no restart, so a single call is not expected to
+    converge; the loop below is what a DMRG sweep does anyway (reseed and repeat).
+    """
+    space = GradedSpace.new(U1, {U1Sector(-2): 2, U1Sector(0): 3, U1Sector(2): 2})
+    rng = np.random.default_rng(0)
+    dense = np.zeros((7, 7))
+    for lo, hi in ((0, 2), (2, 5), (5, 7)):
+        block = rng.standard_normal((hi - lo, hi - lo))
+        dense[lo:hi, lo:hi] = block + block.T
+    legs = (tenet.Leg(space, tenet.OUT), tenet.Leg(space, tenet.IN))
+    operator = tenet.SymmetricTensor.from_dense(dense, legs)
+    expected = np.linalg.eigvalsh(dense[2:5, 2:5])[0]
+
+    v = tenet.SymmetricTensor.random(
+        (tenet.Leg(space, tenet.OUT), tenet.Leg(dmrg.BOUNDARY, tenet.IN)), seed=3
+    )
+    value = None
+    for _ in range(10):
+        value, v = dmrg.lanczos(lambda x: tenet.einsum("ab,bc->ac", operator, x), v)
+    assert value == pytest.approx(expected, abs=1e-10)
+
+
+def test_inner_product_agrees_with_the_norm():
+    """``inner(v, v) == norm(v)**2`` -- the one identity :func:`dmrg.lanczos` leans on."""
+    v = dmrg.canonicalize(dmrg.random_mps(6, seed=11))[0]
+    assert float(dmrg.inner(v, v)) == pytest.approx(float(tenet.norm(v)) ** 2, rel=1e-12)
+
+
+# --- the environment cache ---------------------------------------------------------
+
+
+def test_swept_environments_match_a_rebuild_from_scratch():
+    """The only check that catches a missed :func:`dmrg.invalidate`.
+
+    A stale ``F[(n, n+1)]`` after site ``n`` changed gives an energy that is *plausible
+    and wrong*, which is the worst failure mode a DMRG has. After one full two-direction
+    sweep every right-directed environment must equal the one a fresh
+    :func:`dmrg.setup_envs` builds from the final MPS, to 1e-12 -- and the left-directed
+    ones must be *gone*, because the return leg of the sweep invalidated every one of them.
+    """
+    n_sites = 8
+    psi = dmrg.canonicalize(dmrg.random_mps(n_sites, seed=1))
+    w = dmrg.mpo(n_sites)
+    envs = dmrg.setup_envs(psi, w)
+    dmrg.sweep(psi, w, envs, {}, chi=16, cutoff=1e-14)
+
+    rebuilt = dmrg.setup_envs(psi, w)
+    assert set(envs) == set(rebuilt) | {(-1, 0)}
+    for key, expected in rebuilt.items():
+        assert envs[key].structure == expected.structure, key
+        assert float(tenet.norm(tenet.subtract(envs[key], expected))) < 1e-12, key
+
+
+# --- the ground state --------------------------------------------------------------
+
+
+def test_n12_reaches_the_computed_oracle(main_runs):
+    """DMRG at chi=64 against the value :func:`heisenberg_sz0` computes, to 1e-10.
+
+    chi=64 is *exact* for N=12: the middle-cut Schmidt rank is bounded by 2^6 = 64, so
+    there is nothing for the truncation to discard and this is a statement about the
+    sweep, the eigensolver and the MPO rather than about a bond dimension.
+    """
+    exact = np.linalg.eigvalsh(heisenberg_sz0(12))[0]
+    small, _ = main_runs
+    assert small.energy == pytest.approx(exact, abs=1e-10)
+    assert small.max_discarded_weight < 1e-12
+
+
+def test_n20_matches_the_recorded_literal():
+    """N=20 at chi=64 against ``-8.682473334398956`` to 1e-8 (provenance in the header)."""
+    out = run(20, 64)
+    assert out.energy == pytest.approx(E_OBC_20, abs=1e-8)
+
+
+def test_n32_lands_in_the_fitted_band(main_runs):
+    """N=32 at chi=32 in ``[-14.01, -13.98]``.
+
+    The band is a *measured fit*, not a hand-wave at the Bethe limit: fitting
+    ``E(N) = N e_inf + a - c/N`` on #110's own N=18/N=20 pair gives ``a = 0.18796``,
+    ``c = 0.1498`` and hence ``E(32) ~ -13.997``. Comparing ``E/N`` to
+    ``e_inf = -0.4431471805599453`` instead would be a ~1.2% statement and would pass for
+    a badly converged run.
+    """
+    _, big = main_runs
+    assert -14.01 <= big.energy <= -13.98
+    assert big.energy / 32 > dmrg.E_INF  # a finite open chain sits above the limit
+
+
+# --- the three variational checks --------------------------------------------------
+
+
+def test_energy_is_monotone_across_sweeps(main_runs):
+    """It is variational: a DMRG whose energy rises is broken, full stop.
+
+    The tolerance is 1e-12 and it is float noise, not slack -- once the run is converged
+    consecutive energies differ in the last bits of a number near -14.
+    """
+    for out in (*main_runs, run(20, 64)):
+        energies = [e for e, *_ in out.history]
+        for previous, current in zip(energies, energies[1:], strict=False):
+            assert current <= previous + 1e-12, out.history
+
+
+@pytest.mark.parametrize("chis", [(4, 8, 16)])
+def test_energy_and_discarded_weight_are_monotone_in_chi(chis):
+    """Three chi values: the energy falls, and the reported discarded weight falls with it.
+
+    Cheaper than either oracle and it catches a different bug -- a truncation that keeps
+    the wrong singular values gets the *ordering* wrong long before it gets the N=12
+    energy wrong.
+    """
+    runs = [run(12, chi) for chi in chis]
+    energies = [out.energy for out in runs]
+    weights = [out.max_discarded_weight for out in runs]
+    assert energies == sorted(energies, reverse=True)
+    assert weights == sorted(weights, reverse=True)
+    assert energies[-1] > E_OBC_12  # still variational at chi=16
+
+
+# --- the sector is structural ------------------------------------------------------
+
+
+def test_the_target_sector_is_structural(main_runs):
+    """Every ``S^z_tot != 0`` amplitude of the converged N=12 MPS is **exactly** zero.
+
+    No tolerance, because this is not a numerical statement: the boundary legs are
+    ``{U1Sector(0): 1}`` at both ends, so every forbidden entry of every site tensor's
+    dense expansion is a structural zero and every amplitude that would need one is a sum
+    of products each carrying a zero factor. This is the claim ``vmc_mps.SPACES``'s
+    comment makes in passing and that no test in the repository had cashed.
+    """
+    small, _ = main_runs
+    amplitudes = np.asarray(small.psi[0].to_dense())
+    for site in small.psi[1:]:
+        amplitudes = np.einsum("a...b,bcd->a...cd", amplitudes, np.asarray(site.to_dense()))
+    amplitudes = amplitudes[0, ..., 0].reshape(-1)
+
+    n_sites = len(small.psi)
+    # dense physical index 0 is charge -1 (down) and 1 is charge +1 (up); the leading axis
+    # is site 0, so `s`'s binary expansion read from the top names the configuration.
+    forbidden = [s for s in range(2**n_sites) if bin(s).count("1") != n_sites // 2]
+    assert np.count_nonzero(amplitudes[forbidden]) == 0
+    assert np.linalg.norm(amplitudes) == pytest.approx(1.0, abs=1e-10)
+
+
+# --- the example runs standalone ---------------------------------------------------
+
+
+def test_main_runs(main_runs):
+    """``dmrg.main()`` at its own N and chi, as ``test_ctmrg.py``:664 does.
+
+    The pair it returns is the module fixture every large-N assertion above reads, so the
+    expensive N=32 run happens exactly once in this file.
+    """
+    small, big = main_runs
+    assert small.sweeps > 1 and big.sweeps > 1
+    assert len(small.history) == small.sweeps
+    assert small.denergy < 1e-12 and small.max_dSchmidt < 1e-8
