@@ -219,7 +219,7 @@ def test_z_matrix_is_only_used_by_to_dense_in_library_code():
     }
     # #82 moved `_tree_cgt` (the one caller of `z_matrix`) out of tensor.py and
     # into ops/dense.py, where the dense boundary now lives, unedited.
-    assert users == {"dense.py", "su2.py", "u1.py", "fz2.py", "_su2_coeff.py"}
+    assert users == {"dense.py", "su2.py", "u1.py", "fz2.py", "z2.py", "_su2_coeff.py"}
 
 
 def test_to_dense_still_refuses_a_provider_without_dual_basis():

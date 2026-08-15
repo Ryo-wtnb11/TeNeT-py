@@ -22,17 +22,23 @@ The pairing #77 designed and ``examples/vmc_mps.py::compress`` only documents:
 differentiable. The ``GradedSpace`` is the only thing that crosses the boundary, and
 it is metadata: frozen, hashable, array-free, a legitimate jit cache key.
 
-**The Ising half runs on the trivial provider, deliberately.** YASTN's CTMRG Ising
-example passes ``sym='Z2'`` to stop a finite-chi environment from breaking the symmetry
-spuriously in the ordered phase. TeNeT-py has no *bosonic* Z2 today: the providers are
-``U1``, ``SU2``, ``FZ2`` and ``Trivial``, and ``FZ2`` is fermion *parity* -- fermionic
-braiding, ``twist(odd) == -1``, Koszul signs on permutation -- so grading a bosonic
-Boltzmann weight with it would silently insert sign flips. The Ising half is therefore
-ungraded and every number here is taken at ``beta < beta_c = ln(1+sqrt 2)/2``, in the
-disordered phase, where the hazard the Z2 grading protects against does not arise.
-ponytail: trivial-provider Ising. A bosonic ``Z2Provider`` is ``U1Provider`` with mod-2
-fusion and trivial braiding; this file is its first concrete caller, and the ordered
-phase is what needs it.
+**The Ising half is Z2-graded**, on the bosonic ``Z2`` provider (#104), for the reason
+YASTN's CTMRG Ising example passes ``sym='Z2'``: it stops a finite-chi environment from
+breaking the symmetry spuriously in the ordered phase, which is what lets this file run
+at ``beta > beta_c = ln(1+sqrt 2)/2`` against Onsager at all. Two further things the
+grading buys, both asserted in ``tests/integration/test_ctmrg.py``: zero magnetization
+becomes *structural* -- a spin insertion is a Z2-odd tensor, which no invariant
+``SymmetricTensor`` can hold, so ``from_dense`` refuses it and the refusal is the
+statement -- and the ordered-phase corner spectrum acquires **exact** two-fold
+degeneracy, every partner pair carrying opposite parity. Because that doubling is
+*cross*-sector and ``tenet.ad`` broadens *per coupled sector*, the graded run never hands
+one SVD a degenerate pair: grading is what removes the ``NaN``, not what creates it.
+
+The grading changed no arithmetic. The symmetric splitting
+``W = [[sqrt cosh b, sqrt sinh b], [sqrt cosh b, -sqrt sinh b]]`` *is* the parity change
+of basis -- ``W[s,0]`` is independent of ``s`` and ``W[s,1]`` is odd under ``s -> -s`` --
+so the sum over ``s`` already killed every entry with an odd number of odd legs. The
+example was not missing a symmetry; it was declining to declare one.
 
 **The iPEPS half is a plumbing result, not a physics result, and cannot be otherwise
 with a one-site unit cell.** Liao et al. get a single-site AFM Heisenberg cell by
@@ -92,11 +98,13 @@ two models; the SU(2) provider is instead run through the *same* iPEPS path via 
   ``adjoint(u)`` contracts the *outgoing* one.
 """
 
+import math
+
 import autoray as ar
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-from tenet.symmetry import SU2, U1, SU2Sector, Trivial, TrivialSector, U1Sector
+from tenet.symmetry import SU2, U1, Z2, SU2Sector, U1Sector, Z2Sector
 
 BETA_C = 0.4406867935097714  # ln(1 + sqrt(2)) / 2
 
@@ -168,18 +176,31 @@ def ising_bulk(beta):
 
     ``a[l,u,r,d] = sum_s W[s,l] W[s,u] W[s,r] W[s,d]`` with ``W W^T`` the bond Boltzmann
     matrix ``[[e^b, e^-b], [e^-b, e^b]]``, i.e. the standard symmetric splitting
-    ``W = [[sqrt cosh b, sqrt sinh b], [sqrt cosh b, -sqrt sinh b]]``. One coupled sector,
-    one ``(2, 2, 2, 2)`` block -- the trivial provider, see the module docstring.
+    ``W = [[sqrt cosh b, sqrt sinh b], [sqrt cosh b, -sqrt sinh b]]``.
+
+    That ``W`` is *already the parity basis*: ``W[s, 0]`` does not depend on ``s`` and
+    ``W[s, 1]`` is odd under ``s -> -s``, so summing over ``s`` gives
+    ``a[l,u,r,d] = 2 (cosh b)^{n0/2} (sinh b)^{n1/2} [n1 even]`` with ``n1`` the number of
+    odd legs. Eight of the sixteen entries are *structurally* zero, and the ``Z2`` legs
+    over ``{Z2Sector(0): 1, Z2Sector(1): 1}`` are what stops us storing them.
 
     ``beta`` may be a *traced scalar*: the block is built through ``autoray``, so
-    ``jax.grad`` has something to differentiate and no backend is hard-coded.
+    ``jax.grad`` has something to differentiate and no backend is hard-coded. That is why
+    ``from_dense`` is called with ``atol=math.inf`` -- #82's documented "project, don't
+    check" spelling, because the symmetry check is a concrete-value question and would
+    raise under a trace. The check is not lost, it is *moved*: an untraced test in
+    ``tests/integration/test_ctmrg.py`` runs the same array through ``from_dense`` at the
+    **default** relative ``atol`` and it passes.
+
+    ponytail: dense-then-gather at setup on a 16-element array. The ceiling is
+    ``prod dim_i`` and there is no upgrade path worth naming at this size.
     """
     c, s = ar.do("sqrt", ar.do("cosh", beta)), ar.do("sqrt", ar.do("sinh", beta))
     w = ar.do("stack", (ar.do("stack", (c, s)), ar.do("stack", (c, -s))))
     block = ar.do("einsum", "sl,su,sr,sd->lurd", w, w, w, w)
-    space = GradedSpace.new(Trivial, {TrivialSector(): 2})
+    space = GradedSpace.new(Z2, {Z2Sector(0): 1, Z2Sector(1): 1})
     legs = (Leg(space, OUT), Leg(space, OUT), Leg(space, IN), Leg(space, IN))
-    return SymmetricTensor.from_legs(legs, (block,))
+    return SymmetricTensor.from_dense(block, legs, atol=math.inf)
 
 
 def _fuse_pair(t: SymmetricTensor, i: int, j: int) -> SymmetricTensor:
@@ -270,14 +291,16 @@ def init_env(bulk: SymmetricTensor) -> tuple[SymmetricTensor, SymmetricTensor]:
     and needs no partial trace of the bulk to seed it. The corner is the identity on the
     unit sector and the edge is all ones, i.e. YASTN's free boundary.
 
-    **All ones rather than a random draw, and that is a physics decision.** In the ``W``
-    basis this file splits the Boltzmann weight into, index 0 of a bulk leg is the even
-    (``cosh``) component and index 1 the odd (``sinh``) one. A seed whose even component is
-    small is a boundary made almost entirely of domain walls: it has almost no overlap
-    with the dominant even eigenvector, and CTMRG then spends dozens of sweeps climbing
-    out of the odd sector -- measurably, a per-sweep contraction of 0.97 instead of 0.75
-    at ``beta = 0.4``. This is precisely the symmetry hazard a Z2 grading would remove
-    structurally; without one, the seed has to be even by construction.
+    **All ones rather than a random draw, and for the Ising bulk the grading now makes
+    that structural.** In the ``W`` basis this file splits the Boltzmann weight into,
+    index 0 of a bulk leg is the even (``cosh``) component and index 1 the odd (``sinh``)
+    one. A seed whose even component is small is a boundary made almost entirely of
+    domain walls: it has almost no overlap with the dominant even eigenvector, and CTMRG
+    then spends dozens of sweeps climbing out of the odd sector -- measurably, a per-sweep
+    contraction of 0.97 instead of 0.75 at ``beta = 0.4``. On a one-dimensional
+    *unit-sector* environment space the only allowed edge block is the even one, so under
+    the ``Z2`` grading the seed is even by construction rather than by luck; the ungraded
+    iPEPS route still relies on ``ones_like`` for the same effect.
 
     ponytail: a 1-dimensional seed, not YASTN's ``init='dl'`` partial trace and not
     ``tenet.random_isometry``. The isometry seed is what a ``chi > D**2`` start needs,
