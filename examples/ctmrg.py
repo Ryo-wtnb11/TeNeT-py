@@ -86,19 +86,28 @@ two models; the SU(2) provider is instead run through the *same* iPEPS path via 
 * bulk ``(l OUT, u OUT, r IN, d IN)`` -- ``l``/``u`` share a side and ``r``/``d`` share
   one, so the C4v diagonal mirror is the plain transpose ``(1, 0, 3, 2)`` and *one*
   edge tensor serves both the top and the left of a corner;
-* corner ``c`` ``(X OUT, X IN)`` and edge ``e`` ``(X IN, X OUT, V IN)``, i.e. both are
-  oriented maps on the environment space, so the boundary ring closes as
+* corner ``c`` ``(X OUT, X IN)`` -- for **both** halves -- and edge ``e``
+  ``(X IN, X OUT, V IN)`` for the Ising bulk, ``(X IN, X OUT, V_ket IN, V_bra IN dual)``
+  for the iPEPS. The iPEPS edge carries the ket bond and its conjugate as two separate
+  legs and **never fuses them** (#107, froSTspin ``ctm_environment.py``:16-33): the
+  ``dual=True`` is the leg bend the fused convention used to hide, only the ``X`` leg is
+  ever truncated, and the site enters as a ket and then a bra rather than as a product.
+  Both edges are oriented maps on the environment space, so the boundary ring closes as
   ``c -> e -> ... -> adjoint(c) -> adjoint(e) -> ...``: the far corners and edges of the
   ring are the ``tenet.adjoint`` of the near ones, which for a real environment is what
   "the same tensor seen from the other side" means;
-* the enlarged corner is a *bilinear form*, not a map -- its two index pairs are
+* the enlarged corner is a *bilinear form*, not a map -- its two index groups are
   related by the diagonal mirror, so they sit on the same side -- and the single leg
   bend that ``svd(axes=...)`` performs to make it a map is exactly that mirror. It is
-  why the projector ``u`` contracts the *incoming* pair of an enlarged edge while
-  ``adjoint(u)`` contracts the *outgoing* one.
+  why the projector ``u`` contracts the *incoming* group of an enlarged edge while
+  ``adjoint(u)`` contracts the *outgoing* one. The groups are the tensor's two halves,
+  which is why :func:`move` partitions at ``ndim // 2`` rather than branching on the
+  model: rank 4 for Ising, rank 6 for the iPEPS.
 """
 
 import math
+from collections.abc import Callable
+from typing import NamedTuple
 
 import autoray as ar
 
@@ -203,13 +212,6 @@ def ising_bulk(beta):
     return SymmetricTensor.from_dense(block, legs, atol=math.inf)
 
 
-def _fuse_pair(t: SymmetricTensor, i: int, j: int) -> SymmetricTensor:
-    """Fuse axes ``i``, ``j`` (same side) into a leading leg. ``tenet.fuse`` wants the
-    pair to be the first legs of its side, so transpose them there first."""
-    order = (i, j, *(k for k in range(t.ndim) if k not in (i, j)))
-    return tenet.fuse(tenet.transpose(t, order), (0, 1))
-
-
 def c4v(a: SymmetricTensor) -> SymmetricTensor:
     """Symmetrize an iPEPS tensor under the C4v diagonal mirror ``l <-> u``, ``r <-> d``.
 
@@ -228,56 +230,29 @@ def c4v(a: SymmetricTensor) -> SymmetricTensor:
     return (a + tenet.transpose(a, (0, 2, 1, 4, 3))) / 2
 
 
-def ipeps_bulk(a: SymmetricTensor) -> SymmetricTensor:
-    """Double layer of a single-site iPEPS ``a``, legs ``(l OUT, u OUT, r IN, d IN)``.
+def ipeps_layers(a: SymmetricTensor) -> tuple[SymmetricTensor, SymmetricTensor]:
+    """``(ket, bra)``: the two rank-5 layers the environment absorbs one after the other.
 
-    ``a`` has legs ``(P OUT, l OUT, u OUT, r IN, d IN)`` and is :func:`c4v`-symmetrized
-    first. One ``tenet.einsum`` call now that #67 landed contracts the physical leg of
-    ``adjoint(a)`` against ``a``; one ``repartition`` puts every bra/ket pair on one side
-    (bending flips ``dual``, which is exactly what makes ``V (x) V*`` fuse); four ``fuse``
-    calls collapse the pairs.
+    * ket ``c4v(a)``, legs ``(P OUT, l OUT, u OUT, r IN, d IN)``;
+    * bra ``repartition(adjoint(ket), (1, 2), (0, 3, 4))``, legs
+      ``(L OUT dual, U OUT dual, s IN, R IN dual, D IN dual)``.
 
-    The bra layer is bent **before** the ``einsum``, not after (#105). Bending afterwards
-    means bending a rank-10, 841-block intermediate: 4 808 ``repartition_plan`` terms, one
-    ``ar.do("transpose", ...)`` each. Bending ``adjoint(a)`` while it is still rank 5 and
-    12 blocks costs a handful, and then the ``repartition`` below is handed a tensor whose
-    partition it already wants, so it takes the "no leg crosses" early return in
-    ``src/tenet/ops/repartition.py`` (line 305) down to a plain transpose -- whose
-    permutation is the identity, which ``permutation_plan`` (``src/tenet/ops/
-    permutation.py``, line 116, case A) hands back for free. Both mechanisms were already
-    there; the old order simply never reached them. Measured on the SU(2) chi=6 case:
-    ``ipeps_bulk_open`` 23 163 -> 18 546 ``ar.do`` calls, 0.413 s -> 0.309 s.
+    **Their product is never formed** (#107). The old ``ipeps_bulk``/``ipeps_bulk_open``
+    contracted these two into a rank-10 intermediate and fused its four bra/ket pairs into
+    one bond per side; at SU(2) chi=6 that intermediate carries 841 blocks and cost 18 546
+    ``ar.do`` calls before any environment tensor had been touched. Both reference
+    implementations decline to build it -- froSTspin absorbs ``A`` then ``A.dagger()``
+    (``ctmrg/ctm_contract.py``:42,53), YASTN keeps ``bra`` and ``ket`` as separate fields
+    of a ``DoublePepsTensor`` and contracts them one at a time
+    (``fpeps/envs/_env_contractions.py``:221-224) -- and so does :func:`ipeps_absorber`.
+
+    The bra is bent here, at rank 5 and 12 blocks (#105's fix B, kept): bending is what
+    flips ``dual``, and it is the flip that makes the bra's bonds meet the ``dual=True``
+    bra bonds of the rank-4 environment edge. The old convention hid that flip inside a
+    ``fuse`` of a ``(V, V*)`` pair; naming it is half the point of the redesign.
     """
-    a = c4v(a)
-    bra = tenet.repartition(tenet.adjoint(a), (1, 2), (0, 3, 4))  # (L, U, s, R, D)
-    dl = tenet.einsum("LUsRD,slurd->lLuUrRdD", bra, a)
-    dl = tenet.repartition(dl, (0, 1, 2, 3), (4, 5, 6, 7))  # already this partition: free
-    for i in range(4):
-        dl = _fuse_pair(dl, i, i + 1)
-    return tenet.transpose(dl, (3, 2, 1, 0))
-
-
-def ipeps_bulk_open(a: SymmetricTensor) -> SymmetricTensor:
-    """As :func:`ipeps_bulk` but keeping the two physical legs open.
-
-    Legs ``(P IN, P OUT, l OUT, u OUT, r IN, d IN)``: the bra's ``P IN`` meets an
-    operator's ``P OUT``, and the ket's ``P OUT`` meets its ``P IN``. Its virtual legs are
-    identical to :func:`ipeps_bulk`'s, which is what lets one environment serve both.
-
-    Same bend-early ordering as :func:`ipeps_bulk`, and this is where it pays: the rank-10
-    intermediate is this function's, and the ``einsum`` output is written in exactly the
-    order the ``repartition`` below wants so that it early-returns (``repartition.py``:305)
-    to an identity transpose (``permutation.py``:116, case A).
-    """
-    a = c4v(a)
-    bra = tenet.repartition(tenet.adjoint(a), (1, 2), (0, 3, 4))  # (L, U, S, R, D)
-    dl = tenet.einsum("LUSRD,slurd->slLuUSrRdD", bra, a)
-    dl = tenet.repartition(dl, (0, 1, 2, 3, 4), (5, 6, 7, 8, 9))  # already this partition
-    # (s, l, L, u, U | S, r, R, d, D); each fuse lands at 0 and shifts the rest along
-    for i, j in ((1, 2), (2, 3), (4, 5), (5, 6)):
-        dl = _fuse_pair(dl, i, j)
-    # now (dD, rR, uU, lL, s, S): put it back into (S, s, l, u, r, d)
-    return tenet.transpose(dl, (5, 4, 3, 2, 1, 0))
+    ket = c4v(a)
+    return ket, tenet.repartition(tenet.adjoint(ket), (1, 2), (0, 3, 4))
 
 
 def build_ipeps(provider: str = "u1", seed: int = 1) -> SymmetricTensor:
@@ -301,8 +276,120 @@ def build_h(provider: str = "u1", seed: int = 100) -> SymmetricTensor:
 # --- CTMRG: one C4v move -----------------------------------------------------------
 
 
-def init_env(bulk: SymmetricTensor) -> tuple[SymmetricTensor, SymmetricTensor]:
+class Absorb(NamedTuple):
+    """How one model grows an environment: ``corner(c, e)`` and ``edge(e, p)``.
+
+    Everything else -- :func:`move`, :func:`converge`, :func:`unrolled`,
+    :func:`spectrum` -- is model-independent and shared. That is the whole reason this
+    type exists, and it is why it is allowed to: it abstracts over *two* implementations
+    whose environments have different ranks, not over one. The alternative, two full
+    ``move``/``converge`` stacks, would duplicate the #77 outside-decide/inside-
+    differentiate pairing, which is the single most load-bearing thing in this file.
+    """
+
+    corner: Callable[[SymmetricTensor, SymmetricTensor], SymmetricTensor]
+    edge: Callable[[SymmetricTensor, SymmetricTensor], SymmetricTensor]
+
+
+def ising_absorber(bulk: SymmetricTensor) -> Absorb:
+    """The Ising half's absorber: one rank-4 Boltzmann tensor, one bond per side.
+
+    Unchanged arithmetic -- both bodies are #102's ``enlarged_corner`` and
+    ``enlarged_edge`` moved here verbatim. #107's redesign does not apply to this half
+    and does not touch it: there is no bra and no ket, so there is no pair to fuse and
+    nothing that was hiding a leg bend.
+    """
+
+    def corner(c: SymmetricTensor, e: SymmetricTensor) -> SymmetricTensor:
+        """The 2x2 object the projector diagonalizes: corner, two edges, one bulk tensor.
+
+        Legs ``(X OUT, V IN, X IN, V IN)``. The two index pairs are the diagonal mirror of
+        each other, so this is a bilinear form rather than a map -- see the module
+        docstring.
+        """
+        return tenet.einsum("ab,ace,fbg,gehi->chfi", c, e, e, bulk)
+
+    def edge(e: SymmetricTensor, p: SymmetricTensor) -> SymmetricTensor:
+        """One edge with one bulk tensor absorbed -- legs ``(X IN, X OUT, V OUT, V IN,
+        V IN)`` -- then projected with ``p`` on its incoming pair and ``adjoint(p)`` on
+        its outgoing one."""
+        big_e = tenet.einsum("abe,gehi->abghi", e, bulk)
+        return tenet.einsum("abghi,agx,bhy->xyi", big_e, p, tenet.adjoint(p))
+
+    return Absorb(corner, edge)
+
+
+def ipeps_absorber(ket: SymmetricTensor, bra: SymmetricTensor) -> Absorb:
+    """The iPEPS half's absorber: **environment first, then the ket, then the bra**.
+
+    This is froSTspin's ``contract_enlarged_corner`` order (``ctmrg/ctm_contract.py``:
+    ``ul = T1 @ C1``, ``ul = ul @ T4``, then ``ul = A @ ul`` at :42 and
+    ``ul = A.permute(...).dagger() @ ul`` at :53, which closes the physical legs at the
+    moment the bra enters) and YASTN's, mirrored (``fpeps/envs/_env_contractions.py``:
+    ``unfuse_legs`` at :221 splits the environment vector's ``[t t']``/``[l l']`` back
+    into separate bra and ket bonds, then :223 contracts the bra and :224 the ket).
+    YASTN *can* materialize the product -- ``DoublePepsTensor.fuse_layers()``,
+    ``_doublePepsTensor.py``:291-307 -- and makes you ask for it by name; nothing here
+    asks. The peak is froSTspin's ``2*a*d*chi**2*D**4`` (the comment at :52): rank 6 and
+    51 blocks at SU(2) chi=6, against the deleted rank-10's 841, and never ``d**2 D**8``.
+
+    The edge is **projected before it absorbs**, per ``ctm_renormalize.py``:145-166
+    (``nT = T @ P``, then ``A``, then ``A.dagger()``, then ``Pt``), which is why no
+    rank-8 enlarged edge is materialized either: the environment leg is cut to ``chi'``
+    first and every later step carries it instead of a full ``chi``.
+    """
+
+    def corner(c: SymmetricTensor, e: SymmetricTensor) -> SymmetricTensor:
+        """Rank 6, legs ``(X OUT, r_ket, r_bra, X IN, d_ket, d_bra)`` -- froSTspin's
+        ``contract_enlarged_corner`` return, ``permute((2,0,4),(3,1,5))``, in tenet
+        spelling. Its two index triples are the diagonal mirror of each other, exactly as
+        the Ising corner's two pairs are."""
+        env = tenet.einsum("ab,acjJ,fbgG->cfgGjJ", c, e, e)  # (X, X, l_k, l_b, u_k, u_b)
+        env = tenet.einsum("cfgGjJ,sgjri->csfGJri", env, ket)  # rank 7, physical open
+        return tenet.einsum("csfGJri,GJsRI->crRfiI", env, bra)
+
+    def edge(e: SymmetricTensor, p: SymmetricTensor) -> SymmetricTensor:
+        """``T @ P``, ket, bra, ``Pt`` -- four steps, peak rank 7, result rank 4."""
+        t = tenet.einsum("abuU,alLx->buUlLx", e, p)
+        t = tenet.einsum("buUlLx,slurd->bULxsrd", t, ket)
+        t = tenet.einsum("bULxsrd,LUsRD->bxrRdD", t, bra)
+        return tenet.einsum("bxrRdD,brRy->xydD", t, tenet.adjoint(p))
+
+    return Absorb(corner, edge)
+
+
+def ising_ctm(bulk: SymmetricTensor) -> tuple[Absorb, SymmetricTensor, SymmetricTensor]:
+    """``(absorber, c, e)`` for a rank-4 bulk tensor: one virtual bond per edge."""
+    return ising_absorber(bulk), *init_env(bulk, Leg(bulk.legs[0].space, IN))
+
+
+def ipeps_ctm(a: SymmetricTensor) -> tuple[Absorb, SymmetricTensor, SymmetricTensor]:
+    """``(absorber, c, e)`` for a single-site iPEPS. The edge is **rank 4**.
+
+    Legs ``(X IN, X OUT, V_ket IN, V_bra IN dual)``: the ket bond and its conjugate as two
+    separate legs, never fused. ``dual=True`` on the bra bond is the bend flip that the
+    deleted ``_fuse_pair`` used to hide inside a fused ``(V, V*)`` pair, and writing it
+    down is what lets :func:`ipeps_absorber` meet the bent bra without a fuse. froSTspin
+    makes the same choice -- ``ctmrg/ctm_environment.py``:16-33 builds every ``T`` with
+    signature ``[..., site_tensor.signature[k], ~site_tensor.signature[k], ...]`` -- and
+    it is why ``T`` can stay rank 4 forever: only the ``X`` leg is ever truncated, the two
+    ``D`` bonds never are.
+
+    Strictly cheaper than the deleted route, too: seeding an environment no longer needs a
+    double layer to exist first.
+    """
+    ket, bra = ipeps_layers(a)
+    virt = ket.legs[1].space
+    seed = init_env(ket, Leg(virt, IN), Leg(virt, IN, dual=True))
+    return ipeps_absorber(ket, bra), *seed
+
+
+def init_env(site: SymmetricTensor, *bonds: Leg) -> tuple[SymmetricTensor, SymmetricTensor]:
     """Corner ``c`` and edge ``e`` on a *one-dimensional* environment space.
+
+    ``bonds`` are the edge's virtual legs: one for the Ising bulk, two -- the ket bond and
+    its dual bra partner -- for an iPEPS. ``site`` supplies only the provider, a block to
+    match dtype against and the backend.
 
     The environment then grows one bulk leg per move -- ``X -> X (x) V`` truncated to
     ``chi`` -- which is the original "grow the lattice out of a corner" reading of CTMRG
@@ -325,33 +412,16 @@ def init_env(bulk: SymmetricTensor) -> tuple[SymmetricTensor, SymmetricTensor]:
     where growing from one dimension takes an extra sweep or two to fill the space;
     ``tenet.isometry``/``random_isometry`` slot straight in at that point.
     """
-    unit = GradedSpace.new(bulk.provider, {bulk.provider.unit: 1})
-    virt = bulk.legs[0].space
-    c = tenet.identity((Leg(unit, OUT),), like=bulk.blocks[0])
-    e = SymmetricTensor.zeros((Leg(unit, IN), Leg(unit, OUT), Leg(virt, IN)))
-    return c, e.apply_blocks(lambda b: ar.do("ones_like", b)).to_backend(bulk.backend)
-
-
-def enlarged_corner(
-    c: SymmetricTensor, e: SymmetricTensor, bulk: SymmetricTensor
-) -> SymmetricTensor:
-    """The 2x2 object the projector diagonalizes: corner, two edges and one bulk tensor.
-
-    Legs ``(X OUT, V IN, X IN, V IN)``. The two index pairs are the diagonal mirror of
-    each other, so this is a bilinear form rather than a map -- see the module docstring.
-    """
-    return tenet.einsum("ab,ace,fbg,gehi->chfi", c, e, e, bulk)
-
-
-def enlarged_edge(e: SymmetricTensor, bulk: SymmetricTensor) -> SymmetricTensor:
-    """One edge with one bulk tensor absorbed: legs ``(X IN, X OUT, V OUT, V IN, V IN)``."""
-    return tenet.einsum("abe,gehi->abghi", e, bulk)
+    unit = GradedSpace.new(site.provider, {site.provider.unit: 1})
+    c = tenet.identity((Leg(unit, OUT),), like=site.blocks[0])
+    e = SymmetricTensor.zeros((Leg(unit, IN), Leg(unit, OUT), *bonds))
+    return c, e.apply_blocks(lambda b: ar.do("ones_like", b)).to_backend(site.backend)
 
 
 def move(
     c: SymmetricTensor,
     e: SymmetricTensor,
-    bulk: SymmetricTensor,
+    absorb: Absorb,
     *,
     bond: GradedSpace | None = None,
     chi: int | None = None,
@@ -377,15 +447,19 @@ def move(
     consistent contraction whose corner and edge differ by a diagonal of signs, which is
     one more reason the iPEPS half claims plumbing and not physics. Fixing it wants
     ``eigh(t, bond=)`` -- #77's explicit non-goal -- or four directional moves.
+
+    ``absorb`` is the only thing that knows which model this is: the Ising corner is rank
+    4 and the iPEPS one rank 6, and the partition is ``ndim // 2`` rather than a branch,
+    because a bilinear form's two index groups are always its two halves.
     """
-    axes = ((0, 1), (2, 3))
-    big_c = enlarged_corner(c, e, bulk)
+    big_c = absorb.corner(c, e)
+    n = big_c.ndim // 2  # (0..n-1 | n..2n-1): 2 for Ising, 3 for iPEPS
+    axes = (tuple(range(n)), tuple(range(n, 2 * n)))
     if bond is None:
         p, s, _ = tenet.linalg.svd_truncated(big_c, axes, max_bond=chi)
     else:
         p, s, _ = tenet.linalg.svd(big_c, axes, bond=bond)
-    new_e = tenet.einsum("abghi,agx,bhy->xyi", enlarged_edge(e, bulk), p, tenet.adjoint(p))
-    return renormalized(s), renormalized(new_e), p.legs[-1].space
+    return renormalized(s), renormalized(absorb.edge(e, p)), p.legs[-1].space
 
 
 def spectrum(c: SymmetricTensor) -> list[float]:
@@ -410,19 +484,26 @@ def _spectrum_change(old: list[float], new: list[float]) -> float:
 
 
 def converge(
-    bulk: SymmetricTensor, chi: int = 16, tol: float = 1e-10, max_sweeps: int = 100
+    absorb: Absorb,
+    c: SymmetricTensor,
+    e: SymmetricTensor,
+    chi: int = 16,
+    tol: float = 1e-10,
+    max_sweeps: int = 100,
 ) -> tuple[SymmetricTensor, SymmetricTensor, GradedSpace, list[float]]:
     """**Outside** ``jit``/``grad``. Sweep to a fixed corner spectrum.
+
+    Takes the ``(absorber, c, e)`` triple :func:`ising_ctm` / :func:`ipeps_ctm` return, so
+    ``converge(*ising_ctm(bulk), chi=16)`` is the whole call.
 
     Returns ``(c, e, bond, history)`` where ``bond`` is the frozen environment
     :class:`~tenet.GradedSpace` -- the one and only thing that crosses into the
     differentiated region -- and ``history`` is the per-sweep corner-spectrum change, so a
     caller can *assert* convergence rather than assume it.
     """
-    c, e = init_env(bulk)
     bond, previous, history = None, spectrum(c), []
     for _ in range(max_sweeps):
-        c, e, bond = move(c, e, bulk, chi=chi)
+        c, e, bond = move(c, e, absorb, chi=chi)
         current = spectrum(c)
         history.append(_spectrum_change(previous, current))
         previous = current
@@ -434,7 +515,7 @@ def converge(
 def unrolled(
     c: SymmetricTensor,
     e: SymmetricTensor,
-    bulk: SymmetricTensor,
+    absorb: Absorb,
     bond: GradedSpace,
     k: int = 4,
 ) -> tuple[SymmetricTensor, SymmetricTensor]:
@@ -444,7 +525,7 @@ def unrolled(
     the loop being static is what makes the whole region one trace.
     """
     for _ in range(k):
-        c, e, _ = move(c, e, bulk, bond=bond)
+        c, e, _ = move(c, e, absorb, bond=bond)
     return c, e
 
 
@@ -472,7 +553,7 @@ def log_kappa(beta, env, k: int = 4):
     """
     c0, e0, bond = env
     bulk = ising_bulk(beta)
-    c, e = unrolled(c0, e0, bulk, bond, k=k)
+    c, e = unrolled(c0, e0, ising_absorber(bulk), bond, k=k)
     cc, ca, ec, ea = _ring(c, e)
     z_c = scalar(tenet.einsum("ab,ac,dc,eb->de", cc, ca, cc, ca))
     z_h = scalar(tenet.einsum("ab,ac,dcf,ed,eg,ghf->hb", cc, ca, ea, cc, ca, ec, optimize=PATH))
@@ -522,13 +603,20 @@ def onsager(beta: float, points: int = 200_001) -> float:
     return -(np.log(2.0) / 2.0 + np.trapezoid(integrand, theta) / (2.0 * np.pi))
 
 
-def _halves(ring, site1, site2, phys1: str = "", phys2: str = ""):
+def _halves(ring, ket, bra, phys1: str = "", phys2: str = ""):
     """The 2x1 environment, split down the middle into two halves.
 
     ``left`` is the bottom-left corner, the left edge, the top-left corner, the first top
-    and bottom edges and the first site: legs ``(*phys1, b, c, k, h, m)`` where ``b``/``k``
-    are the ring's one open bond, ``c``/``h`` the cut through the top and bottom rows and
-    ``m`` the bulk leg between the two sites. ``right`` is the mirror image.
+    and bottom edges and the first site: legs ``(*phys1, b, c, k, h, r, R)`` where
+    ``b``/``k`` are the ring's one open bond, ``c``/``h`` the cut through the top and
+    bottom rows and ``r``/``R`` the ket and bra bonds between the two sites. ``right`` is
+    the mirror image. ``phys`` is ``""`` (the physical legs closed, the denominator) or
+    ``"Ww"`` -- bra first, then ket -- for the numerator.
+
+    Each half is built the way :func:`ipeps_absorber` builds a corner: environment first,
+    then the ket, then the bra, so the peak is rank 7 (rank 8 with the physical legs open
+    -- froSTspin's ``rdm.py``:30-69 ``contract_open_corner``, ``a*d*chi**2*D**4``) and the
+    two double layers this used to need are never formed.
 
     ponytail: two hand-written halves instead of one twelve-operand equation. The
     contraction is identical; what changes is that the intermediates are rank 5 and rank 3
@@ -539,12 +627,16 @@ def _halves(ring, site1, site2, phys1: str = "", phys2: str = ""):
     contraction-path planner that costs a graded network by its *blocks*, which is M9.
     """
     cc, ca, ec, ea = ring
-    left = tenet.einsum(
-        f"ab,acp,ij,jku,iht,{phys1}upmt->{phys1}bckhm", cc, ec, ca, ec, ea, site1, optimize=PATH
-    )
-    right = tenet.einsum(
-        f"cdq,de,fer,gf,hgs,{phys2}mqrs->{phys2}chm", ec, ca, ea, cc, ea, site2, optimize=PATH
-    )
+    k1, b1 = (phys1[1], phys1[0]) if phys1 else ("s", "s")
+    k2, b2 = (phys2[1], phys2[0]) if phys2 else ("s", "s")
+    left = tenet.einsum("ij,jklL,ihdD->khlLdD", ca, ec, ea)
+    left = tenet.einsum(f"khlLdD,{k1}lurd->khLD{k1}ur", left, ket)
+    left = tenet.einsum(f"khLD{k1}ur,LU{b1}RD->{phys1}khuUrR", left, bra)
+    left = tenet.einsum(f"{phys1}khuUrR,ab,acuU->{phys1}bckhrR", left, cc, ec, optimize=PATH)
+    right = tenet.einsum("cduU,de,ferR->cfuUrR", ec, ca, ea)
+    right = tenet.einsum(f"cfuUrR,{k2}lurd->cfUR{k2}ld", right, ket)
+    right = tenet.einsum(f"cfUR{k2}ld,LU{b2}RD->{phys2}cflLdD", right, bra)
+    right = tenet.einsum(f"{phys2}cflLdD,gf,hgdD->{phys2}chlL", right, cc, ea, optimize=PATH)
     return left, right
 
 
@@ -552,20 +644,27 @@ def energy(a: SymmetricTensor, h: SymmetricTensor, env, k: int = 4):
     """``<h> / <1>`` on a 2x1 patch, from ``k`` unrolled moves at the current ``a``.
 
     The environment ring is four corners, two top edges, two bottom edges and one edge on
-    each side; the two sites are :func:`ipeps_bulk_open` double layers, so ``h`` closes
-    their physical legs in the numerator and :func:`ipeps_bulk` closes them in the
-    denominator. One bond of the ring is left open for :func:`scalar`, as everywhere else.
+    each side; each site enters as a ket and a bra absorbed one after the other, with the
+    physical legs left **open** in the numerator so that ``h`` closes them, and closed
+    against each other in the denominator. One bond of the ring is left open for
+    :func:`scalar`, as everywhere else.
+
+    ponytail: ``h`` closes two open physical legs (froSTspin ``contract_open_corner``)
+    rather than being inserted into the ket (YASTN's ``DoublePepsTensor(op=...)``,
+    ``_env_contractions.py``:216-217). YASTN's route is genuinely cheaper for a *one-site*
+    operator; ``h`` here is two-site, so inserting it means splitting it across the bond --
+    an SVD of ``h``, a new bond space and a truncation decision, i.e. a third factorization
+    in a file that already teaches two. Measured, the open route costs 2 315 ``ar.do``
+    calls per corner against 18 546 for the double layer it replaces; there is nothing
+    left to buy.
     """
     c0, e0, bond = env
-    bulk = ipeps_bulk(a)
-    ring = _ring(*unrolled(c0, e0, bulk, bond, k=k))
-    # One tensor, not two: both sites of the 2x1 patch are the same double layer, and
-    # calling ipeps_bulk_open twice built it twice and differentiated it twice (#105).
-    site = ipeps_bulk_open(a)
-    left, right = _halves(ring, site, site, "Ww", "Xx")
-    numerator = scalar(tenet.einsum("Wwbckhm,Xxchm,WXwx->kb", left, right, h, optimize=PATH))
-    left, right = _halves(ring, bulk, bulk)
-    denominator = scalar(tenet.einsum("bckhm,chm->kb", left, right))
+    ket, bra = ipeps_layers(a)
+    ring = _ring(*unrolled(c0, e0, ipeps_absorber(ket, bra), bond, k=k))
+    left, right = _halves(ring, ket, bra, "Ww", "Xx")
+    numerator = scalar(tenet.einsum("WwbckhrR,XxchrR,WXwx->kb", left, right, h, optimize=PATH))
+    left, right = _halves(ring, ket, bra)
+    denominator = scalar(tenet.einsum("bckhrR,chrR->kb", left, right))
     return numerator / denominator
 
 
@@ -587,7 +686,7 @@ def main(chi_ising: int = 16, chi_ipeps: dict | None = None, k: int = 4, steps: 
     tenet.ad.install()
 
     for beta in (0.3, 0.4, 0.5):
-        env = converge(ising_bulk(beta), chi=chi_ising)[:3]
+        env = converge(*ising_ctm(ising_bulk(beta)), chi=chi_ising)[:3]
         bf = float(beta_free_energy(beta, env, k=k))
         grad = float(jax.grad(beta_free_energy)(beta, env, k))
         print(
@@ -597,7 +696,7 @@ def main(chi_ising: int = 16, chi_ipeps: dict | None = None, k: int = 4, steps: 
 
     for provider in ("u1", "su2"):
         a, h = build_ipeps(provider), build_h(provider)
-        env = converge(ipeps_bulk(a), chi=(chi_ipeps or CHI_IPEPS)[provider])[:3]
+        env = converge(*ipeps_ctm(a), chi=(chi_ipeps or CHI_IPEPS)[provider])[:3]
         trace = []
         for _ in range(steps):
             a, value = step(a, h, env, lr=0.01, k=k)
