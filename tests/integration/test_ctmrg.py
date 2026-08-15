@@ -20,6 +20,12 @@ Like ``tests/integration/test_vmc.py`` (#69) it adds nothing to ``src/tenet`` an
 the example: it imports ``examples/ctmrg.py`` and runs it, so the example cannot rot. The
 only code of its own is the second Onsager form and the tolerances.
 
+**Since #114 the environment machinery is ``tenet.network``** -- ``Absorb``, both absorbers
+(under their model-free names ``single_layer``/``double_layer``), ``move``, ``converge``
+and ``unrolled`` -- so this module resolves those names there and the example's own names
+are the physics: the bulk tensor, the C4v ansatz constraint and the observables. Nothing
+else changed: every number below is bit-identical to the pre-promotion run.
+
 x64 is enabled process-globally in ``tests/conftest.py``; every tolerance here depends on it.
 
 **Runtime: the budget is 100 s, and #102's 30 s is withdrawn with arithmetic** (#105, #107).
@@ -121,16 +127,18 @@ _ENVS: dict = {}
 
 
 def converged(beta: float, chi: int = CHI, tol: float = 1e-10, max_sweeps: int = 100):
-    """``(c, e, bond, history)``, memoized on the full set of knobs that decides it."""
+    """``(CTMEnv, history)``, memoized on the full set of knobs that decides it."""
     key = (beta, chi, tol, max_sweeps)
     if key not in _ENVS:
         bulk = ctmrg.ising_bulk(beta)
-        _ENVS[key] = ctmrg.converge(*ctmrg.ising_ctm(bulk), chi=chi, tol=tol, max_sweeps=max_sweeps)
+        _ENVS[key] = tenet.network.converge(
+            *tenet.network.single_layer_ctm(bulk), chi=chi, tol=tol, max_sweeps=max_sweeps
+        )
     return _ENVS[key]
 
 
 def env(beta: float, chi: int = CHI, tol: float = 1e-10, max_sweeps: int = 100):
-    return converged(beta, chi, tol, max_sweeps)[:3]
+    return converged(beta, chi, tol, max_sweeps)[0]
 
 
 def ordered_env(beta: float, chi: int = CHI):
@@ -140,7 +148,7 @@ def ordered_env(beta: float, chi: int = CHI):
 def spectrum_by_sector(c: SymmetricTensor) -> dict[int, list[float]]:
     """The corner spectrum split by Z2 charge, each half descending.
 
-    ``ctmrg.spectrum`` deliberately throws the sector labels away; every ordered-phase
+    ``tenet.network.spectrum`` deliberately throws the sector labels away; every ordered-phase
     criterion below is *about* those labels, so they are recovered here rather than in the
     example. The corner is diagonal by construction, so this reads block diagonals.
     """
@@ -162,7 +170,8 @@ def ipeps_env(provider: str):
     if provider not in _ENVS:
         a, h = ctmrg.build_ipeps(provider), ctmrg.build_h(provider)
         chi = ctmrg.CHI_IPEPS[provider]
-        _ENVS[provider] = (a, h, ctmrg.converge(*ctmrg.ipeps_ctm(a), chi=chi)[:3])
+        env = tenet.network.converge(*tenet.network.double_layer_ctm(ctmrg.c4v(a)), chi=chi)
+        _ENVS[provider] = (a, h, env[0])
     return _ENVS[provider]
 
 
@@ -220,14 +229,14 @@ def test_free_energy_matches_onsager_in_the_ordered_phase(beta):
     deviations: ``5.5e-14`` at ``beta=0.5`` and ``5.6e-16`` at ``beta=0.6``.
     """
     assert beta > ctmrg.BETA_C
-    got = float(ctmrg.beta_free_energy(beta, ordered_env(beta)[:3], k=K))
+    got = float(ctmrg.beta_free_energy(beta, ordered_env(beta)[0], k=K))
     assert got == pytest.approx(ctmrg.onsager(beta), rel=1e-6)
 
 
 def test_convergence_is_monotone_and_terminating():
     """Asserted, not assumed: the corner-spectrum change reaches ``tol`` inside
     ``max_sweeps``, decreases over the run, and takes a pinned number of sweeps."""
-    history = converged(0.4)[3]
+    history = converged(0.4)[1]
     assert history[-1] < 1e-10
     assert len(history) < 100  # terminated on the tolerance, not on max_sweeps
     assert 40 <= len(history) <= 120  # 72 as measured under the Z2 grading; the range is the pin
@@ -256,7 +265,7 @@ def test_grad_matches_the_onsager_internal_energy_in_the_ordered_phase():
     deviation ``8.6e-11``; the corner spectrum there is exactly doubled across the parity
     sectors, and the gradient is finite anyway -- see :func:`test_the_retired_nan_criterion`."""
     beta, delta = 0.6, 1e-5
-    got = float(jax.grad(ctmrg.beta_free_energy)(beta, ordered_env(beta)[:3], K))
+    got = float(jax.grad(ctmrg.beta_free_energy)(beta, ordered_env(beta)[0], K))
     oracle = (ctmrg.onsager(beta + delta) - ctmrg.onsager(beta - delta)) / (2 * delta)
     assert got == pytest.approx(oracle, rel=1e-4)
 
@@ -274,7 +283,9 @@ def test_k_dependence_is_measured_not_assumed():
     assert max(abs(g / converged[8] - 1) for g in converged.values()) < 1e-11
 
     beta = 0.25
-    loose = ctmrg.converge(*ctmrg.ising_ctm(ctmrg.ising_bulk(beta)), chi=CHI, tol=1e-6)[:3]
+    loose = tenet.network.converge(
+        *tenet.network.single_layer_ctm(ctmrg.ising_bulk(beta)), chi=CHI, tol=1e-6
+    )[0]
     gradients = {k: float(jax.grad(ctmrg.beta_free_energy)(beta, loose, k)) for k in (1, 2, 4, 8)}
     first = abs(gradients[1] - gradients[2])
     last = abs(gradients[4] - gradients[8])
@@ -295,11 +306,11 @@ def test_unrolled_traces_once_and_the_frozen_bond_is_static():
         count += 1  # a Python side effect: trace time only
         # the absorber is built inside, from the traced bulk: it is two closures, so the
         # gradient w.r.t. `bulk` still flows -- the closure is captured under the trace
-        new_c, _ = ctmrg.unrolled(c, e, ctmrg.ising_absorber(bulk), bond, k=k)
+        new_c, _ = tenet.network.unrolled(c, e, tenet.network.single_layer(bulk), bond, k=k)
         dagger = tenet.adjoint(new_c)
         # the four-corner ring of `log_kappa`; `norm(new_c)` would be the constant 1,
         # since every move renormalizes, and a constant has nothing to differentiate
-        return ctmrg.scalar(tenet.einsum("ab,ac,dc,eb->de", new_c, dagger, new_c, dagger))
+        return tenet.network.scalar(tenet.einsum("ab,ac,dc,eb->de", new_c, dagger, new_c, dagger))
 
     grad = jax.grad(objective, argnums=2)
     a = grad(c, e, ctmrg.ising_bulk(beta), bond, K)
@@ -310,7 +321,9 @@ def test_unrolled_traces_once_and_the_frozen_bond_is_static():
         for x, y in zip(a.blocks, b.blocks, strict=True)
     )
 
-    smaller = ctmrg.converge(*ctmrg.ising_ctm(ctmrg.ising_bulk(beta)), chi=8)[2]
+    smaller = tenet.network.converge(
+        *tenet.network.single_layer_ctm(ctmrg.ising_bulk(beta)), chi=8
+    )[0].bond
     assert smaller != bond
     grad(c, e, ctmrg.ising_bulk(beta), bond, K)
     assert count == 1  # the same frozen bond does not retrace ...
@@ -327,11 +340,13 @@ def test_svd_truncated_is_refused_under_jit():
     even before it gets there -- a data-dependent loop exit is not a tracing edge case, it
     is the thing the outside/inside split exists to keep outside.
     """
-    absorb, c, e = ctmrg.ising_ctm(ctmrg.ising_bulk(0.4))
+    absorb, c, e = tenet.network.single_layer_ctm(ctmrg.ising_bulk(0.4))
     with pytest.raises(tenet.StructureChangingError, match="tenet.linalg.svd"):
-        jax.jit(partial(ctmrg.move, chi=4), static_argnums=(2,))(c, e, absorb)
+        jax.jit(partial(tenet.network.move, chi=4), static_argnums=(2,))(c, e, absorb)
     with pytest.raises(jax.errors.ConcretizationTypeError):
-        jax.jit(partial(ctmrg.converge, chi=4, max_sweeps=1), static_argnums=(0,))(absorb, c, e)
+        jax.jit(partial(tenet.network.converge, chi=4, max_sweeps=1), static_argnums=(0,))(
+            absorb, c, e
+        )
 
 
 @pytest.mark.parametrize(("beta", "chi"), [(0.44, CHI), (0.6, CHI)])
@@ -367,9 +382,9 @@ def test_the_retired_nan_criterion(beta, chi):
     healthy.
     """
     if beta > ctmrg.BETA_C:
-        c, e, bond = ordered_env(beta, chi)[:3]
+        c, e, bond = ordered_env(beta, chi)[0]
     else:
-        c, e, bond = converged(beta, chi, 1e-10, 60)[:3]
+        c, e, bond = converged(beta, chi, 1e-10, 60)[0]
 
     broadened = float(jax.grad(ctmrg.beta_free_energy)(beta, (c, e, bond), K))
     assert np.isfinite(broadened)
@@ -450,7 +465,7 @@ def test_ordered_phase_spectrum_is_an_exact_cross_sector_doublet(beta):
     ``2.5e-3`` a phase-blind test would accept.)
     """
     assert beta > ctmrg.BETA_C
-    halves = spectrum_by_sector(ordered_env(beta)[0])
+    halves = spectrum_by_sector(ordered_env(beta)[0].c)
     assert len(halves[0]) == len(halves[1])
     top = halves[0][0]
     deviations = [abs(x - y) / top for x, y in zip(halves[0], halves[1], strict=True)]
@@ -465,7 +480,7 @@ def test_disordered_phase_has_no_such_pairing(beta, chi):
     ordered phase — and the full spectrum has no degeneracy at all.
     """
     assert beta < ctmrg.BETA_C
-    halves = spectrum_by_sector(converged(beta, chi, 1e-10, 200)[0])
+    halves = spectrum_by_sector(converged(beta, chi, 1e-10, 200)[0].c)
     top = max(halves[0][0], halves[1][0])
     n = min(len(halves[0]), len(halves[1]))
     closest = min(abs(halves[0][i] - halves[1][i]) / top for i in range(n))
@@ -484,7 +499,7 @@ def test_no_exact_within_sector_degeneracy_anywhere(beta, chi, tol):
     within-sector relative gaps — ``1.1e-3`` (0.3/8), ``5.1e-2`` (0.44/8), ``6.6e-3``
     (0.44/16), ``1.6e-7`` (0.4/16), and in the ordered phase ``5.1e-7`` (0.5/16) and
     ``3.6e-10`` (0.6/16), the closest approach anywhere measured."""
-    halves = spectrum_by_sector(converged(beta, chi, tol, 200)[0])
+    halves = spectrum_by_sector(converged(beta, chi, tol, 200)[0].c)
     top = max(halves[0][0], halves[1][0])
     gaps = [
         abs(x - y) / top
@@ -496,7 +511,7 @@ def test_no_exact_within_sector_degeneracy_anywhere(beta, chi, tol):
 
 @pytest.mark.parametrize("beta", [0.5, 0.6])
 def test_no_exact_within_sector_degeneracy_in_the_ordered_phase(beta):
-    halves = spectrum_by_sector(ordered_env(beta)[0])
+    halves = spectrum_by_sector(ordered_env(beta)[0].c)
     top = max(halves[0][0], halves[1][0])
     gaps = [
         abs(x - y) / top
@@ -516,7 +531,7 @@ def test_even_chi_never_splits_a_doublet(chi):
     CTM"*) — cheaper here, because the multiplet size is 2 and known. Asserted, not assumed.
     """
     assert chi % 2 == 0
-    halves = spectrum_by_sector(ordered_env(0.6, chi)[0])
+    halves = spectrum_by_sector(ordered_env(0.6, chi)[0].c)
     assert len(halves[0]) == len(halves[1]) == chi // 2  # equal degeneracy in both sectors
     top = halves[0][0]
     assert max(abs(x - y) / top for x, y in zip(halves[0], halves[1], strict=True)) < 1e-12
@@ -574,7 +589,7 @@ def _fuse_pair(t, i, j):
 def legacy_double_layer(a):
     """``ctmrg.ipeps_bulk``, deleted by #107: the fused rank-4 double layer, built through
     the rank-10 intermediate (841 blocks at SU(2) chi=6) this redesign removed."""
-    ket, bra = ctmrg.ipeps_layers(a)
+    ket, bra = tenet.network.layers(ctmrg.c4v(a))
     dl = tenet.einsum("LUsRD,slurd->lLuUrRdD", bra, ket)
     dl = tenet.repartition(dl, (0, 1, 2, 3), (4, 5, 6, 7))
     for i in range(4):
@@ -605,11 +620,15 @@ def test_the_unfused_corner_gives_the_old_projector(provider):
 
     fused = tenet.transpose(_fuse_pair(e, 2, 3), (1, 2, 0))  # (X IN, X OUT, V IN)
     old = tenet.einsum("ab,ace,fbg,gehi->chfi", c, fused, fused, legacy_double_layer(a))
-    new = ctmrg.ipeps_absorber(*ctmrg.ipeps_layers(a)).corner(c, e)
+    new = tenet.network.double_layer(*tenet.network.layers(ctmrg.c4v(a))).corner(c, e)
     assert (old.ndim, new.ndim) == (4, 6)
 
-    old_s = ctmrg.spectrum(tenet.linalg.svd_truncated(old, ((0, 1), (2, 3)), max_bond=chi)[1])
-    new_s = ctmrg.spectrum(tenet.linalg.svd_truncated(new, ((0, 1, 2), (3, 4, 5)), max_bond=chi)[1])
+    old_s = tenet.network.spectrum(
+        tenet.linalg.svd_truncated(old, ((0, 1), (2, 3)), max_bond=chi)[1]
+    )
+    new_s = tenet.network.spectrum(
+        tenet.linalg.svd_truncated(new, ((0, 1, 2), (3, 4, 5)), max_bond=chi)[1]
+    )
     np.testing.assert_allclose(new_s, old_s, atol=1e-14)
     assert float(tenet.norm(new)) == pytest.approx(float(tenet.norm(old)), abs=1e-15)
 
@@ -650,8 +669,8 @@ def test_structures_survive_the_traced_region(provider):
     c, edge, bond = e
     before = (a.structure, c.structure, edge.structure)
     ipeps_grad(provider)  # the traced region has run by now
-    absorb = ctmrg.ipeps_absorber(*ctmrg.ipeps_layers(a))
-    out_c, out_e = ctmrg.unrolled(c, edge, absorb, bond, k=K_IPEPS)
+    absorb = tenet.network.double_layer(*tenet.network.layers(ctmrg.c4v(a)))
+    out_c, out_e = tenet.network.unrolled(c, edge, absorb, bond, k=K_IPEPS)
     assert all(
         x is y for x, y in zip((a.structure, c.structure, edge.structure), before, strict=True)
     )

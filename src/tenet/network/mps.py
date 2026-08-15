@@ -1,64 +1,23 @@
-"""The containers: :class:`MPS`, :class:`MPO`, and the scalar exits they need.
+"""The containers: :class:`MPS` and :class:`MPO`.
 
-Promoted from ``examples/dmrg.py`` (#110) with no arithmetic change: ``scalar`` :136-146,
-``inner`` :149-157, ``spectrum`` :160-173, ``random_mps`` :266-274, ``_as_site`` :277-286
-(now the :meth:`MPS.__setitem__` write barrier), ``canonicalize`` :289-306 (now
-:meth:`MPS.canonize_`) and ``mpo`` :220-240 (now :meth:`MPO.from_w`).
+Promoted from ``examples/dmrg.py`` (#110) with no arithmetic change: ``random_mps``
+:266-274, ``_as_site`` :277-286 (now the :meth:`MPS.__setitem__` write barrier),
+``canonicalize`` :289-306 (now :meth:`MPS.canonize_`) and ``mpo`` :220-240 (now
+:meth:`MPO.from_w`). ``scalar``, ``inner`` and ``spectrum`` lived here until #114 moved
+them to :mod:`tenet.network.common`, where ``network/ctmrg.py`` can reach them without
+importing a driver it shares no concept with; they are re-exported below so
+``from tenet.network.mps import scalar`` is unchanged for every caller.
 """
 
 import string
 from collections.abc import Iterable, Sequence
 from typing import Any
 
-import autoray as ar
-
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet.network.common import inner, scalar, spectrum
 
 __all__ = ["MPO", "MPS", "inner", "scalar", "spectrum"]
-
-
-# --- leaving the tensor world ------------------------------------------------------
-
-
-def scalar(t: SymmetricTensor) -> Any:
-    """The categorical trace of a rank-2 map ``(X OUT, X IN)``: ``sum_c d_c tr(M_c)``.
-
-    ``SymmetricTensor`` has no rank 0, so every fully closed network here contracts down
-    to a rank-2 tensor with one bond left open, and closing that bond is a trace carrying
-    the same ``qdim`` weight :func:`tenet.norm` carries. This is where the tensor world
-    is left explicitly, and it is the one place this package reads ``t.provider``.
-    """
-    qdim = t.provider.qdim
-    return sum(qdim(c) * ar.do("trace", m) for c, m in tenet.to_matrices(t).items())
-
-
-def inner(a: SymmetricTensor, b: SymmetricTensor) -> Any:
-    """``<a|b>``: contract every axis but the first, then :func:`scalar` the rest.
-
-    Works at any rank, which is what lets :func:`~tenet.network.lanczos` be a plain
-    vector-space algorithm: the adjoint flips every leg, so axis 0 of ``adjoint(a)`` is IN
-    and axis 0 of ``b`` is OUT, and the leftover rank-2 map is exactly what :func:`scalar`
-    traces.
-    """
-    rest = string.ascii_lowercase[1 : a.ndim]
-    return scalar(tenet.einsum(f"L{rest},l{rest}->lL", tenet.adjoint(a), b))
-
-
-def spectrum(s: SymmetricTensor) -> list[float]:
-    """The Schmidt values on a bond, descending.
-
-    ``s`` comes from :func:`tenet.linalg.svd_truncated` and is diagonal by construction,
-    so this reads its diagonal; the ``sqrt(qdim)`` weight is the same one
-    :func:`tenet.norm` carries, and it is 1 throughout for U(1).
-    """
-    qdim = s.provider.qdim
-    out = [
-        float(v)
-        for sector, m in tenet.to_matrices(s).items()
-        for v in ar.do("diag", m) * qdim(sector) ** 0.5
-    ]
-    return sorted(out, reverse=True)
 
 
 # --- the state ----------------------------------------------------------------------

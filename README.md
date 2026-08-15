@@ -2533,10 +2533,12 @@ TeNeT-py/
 │       │
 │       ├── pytree.py
 │       │
-│       └── network/          # M11a: the driver layer
+│       └── network/          # M11: the driver layer
+│           ├── common.py     #   scalar, inner, spectrum, ones
 │           ├── mps.py
 │           ├── env.py
-│           └── dmrg.py
+│           ├── dmrg.py
+│           └── ctmrg.py      #   M11b: the traced half
 │
 ├── tests/
 │   ├── symmetry/
@@ -2783,6 +2785,30 @@ contraction.
   `setup_`/`update_`/`clear_`, `heff2` and `measure()`;
 - `lanczos`, `sweep`, `dmrg()` and `DMRG_out`.
 
+`tenet.network` (M11b) adds the CTMRG half, promoted from `examples/ctmrg.py`:
+
+- `CTMEnv` — a `NamedTuple` `(c, e, bond)`, the *outside* container: `bond` is the frozen
+  `GradedSpace` the differentiated region reuses, a jit **cache key** and never a jit
+  argument, which is why `unrolled` takes `c`, `e` and `bond` separately (a `NamedTuple`
+  is a pytree, and a `GradedSpace` is not a leaf);
+- `Absorb` — two closures, `corner(c, e) -> big_c` of rank `2n` whose index groups are
+  diagonal mirrors (which licenses `move`'s `ndim // 2`) and `edge(e, p) -> new_e`. Two
+  real implementations, no `Protocol`: the closures must be able to capture *traced*
+  values, and a `NamedTuple` of functions is hashable for `static_argnums`;
+- `single_layer(bulk)` for any rank-4 `(l OUT, u OUT, r IN, d IN)`, `double_layer(ket,
+  bra)` and `layers(ket)` for any rank-5 iPEPS ket — model-free names, because neither
+  einsum has ever heard of Ising or of a Hamiltonian;
+- `init_env`, `single_layer_ctm`, `double_layer_ctm`, `move`, `converge`, `unrolled`,
+  `renormalized`, `ring`.
+
+The C4v restriction (one corner and one edge, a 1×1 unit cell) is a documented
+**precondition** on the tensor the caller hands in, never a symmetrization the library
+performs — which is why `c4v` stayed in the example, together with the observables
+(`_halves`/`energy` are a measurement API with one geometry) and the bulk tensor.
+`network/common.py` holds `scalar`, `inner`, `spectrum` and `ones`, moved out of `mps.py`
+and `env.py` with their bodies unchanged so that `ctmrg.py` need not import a driver it
+shares no concept with.
+
 It is reachable as `tenet.network` and listed in `tenet.__all__`, and it is deliberately
 **not** flattened into the top-level namespace: `dmrg` is not a tensor operation. The
 dependency edge is one-way — `network` imports `ops`/`tensor`, never the reverse — in the
@@ -2792,14 +2818,23 @@ module's private names, and no numerical use of reduced blocks. The one named ex
 is reading `t.provider`, `provider.qdim` and `provider.unit`, which the qdim-weighted
 scalar exit needs; `tests/network/test_hygiene.py` enforces all of it.
 
-**Outside `jit`/`grad` by construction, and that is the layer's own invariant.** This is
-the complement of invariant 9 rather than an exception to it: invariant 9 says
+**Which side of a trace a module lives on is a per-module statement, and it is the
+complement of invariant 9 rather than an exception to it.** Invariant 9 says
 structure-changing operations live outside compile boundaries and the library never hides
-the distinction, and `tenet.network` is where the data-dependent control flow is then
-*allowed to live* — `svd_truncated` re-deciding a bond `GradedSpace` at every bond of
-every sweep, a happy breakdown comparing a norm to a tolerance, a loop exiting on a
-measured energy change. Nothing in M11a is traced, and it makes no differentiability
-claim.
+the distinction; `tenet.network` is where the data-dependent control flow is then *allowed
+to live* — `svd_truncated` re-deciding a bond `GradedSpace` at every bond of every sweep, a
+happy breakdown comparing a norm to a tolerance, a loop exiting on a measured energy
+change. `mps.py`, `env.py` and `dmrg.py` are **outside** by construction and make no
+differentiability claim; `common.py` is trace-neutral and used on both sides; and since
+M11b `ctmrg.py` is **both**, stated per function.
+
+The worked example is `converge` against `unrolled`. `converge` reads singular *values* to
+decide a bond and a corner spectrum to decide when to stop, so it raises under any trace —
+`jax.jit` over it fails at the loop exit, before it ever reaches an SVD. `unrolled` runs
+exactly `k` moves at that already-decided bond through `svd(bond=)`, shape-static and
+differentiable, and traces once across different block values. `move` is the boundary
+itself: `chi=` is the structure-deciding half, `bond=B` the traceable one. The frozen
+`GradedSpace` is the only object that crosses, and it crosses as metadata.
 
 **`MPS` and `Env` are mutable containers of immutable tensors**, which leaves
 `REPOSITORY_RULES.md`'s "structural/categorical types are immutable" intact: every
@@ -2813,10 +2848,13 @@ The split:
 
 - **M11a** — `MPS`, `MPO`, `Env`, `lanczos`, `dmrg()`; `examples/dmrg.py` rewritten on
   top of it at identical numbers.
-- **M11b** — the CTMRG analogue (`Absorb`, `move`, `converge`, `unrolled`), separate
-  because its invariants differ: half of it must survive `jax.jit(jax.grad(...))`, so its
-  API carries the `svd_truncated`-outside / `svd(bond=)`-inside pairing in its signatures
-  where M11a's carries no trace at all.
+- **M11b** — the CTMRG analogue (`CTMEnv`, `Absorb`, both absorbers, `move`, `converge`,
+  `unrolled`) in `network/ctmrg.py`, plus `network/common.py`. It was a separate PR because
+  its invariants differ: half of it must survive `jax.jit(jax.grad(...))`, so its API
+  carries the `svd_truncated`-outside / `svd(bond=)`-inside pairing in its signatures where
+  M11a's carries no trace at all. `examples/ctmrg.py` was rewritten on top of it and every
+  recorded number — free energies and their gradients, corner spectra, sweep counts, iPEPS
+  energies and gradient blocks, SGD traces — is **bit-identical** to the pre-promotion run.
 - **M11c** — `MPS.save`/`load` (a directory of per-tensor `tenet.save` files plus a small
   JSON header), a standalone `compress_`, and a measurement API beyond `Env.measure()`.
   Each is small and none has a caller today, which is why none is in M11a.
