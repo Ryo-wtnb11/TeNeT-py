@@ -36,6 +36,7 @@ from tenet.symmetry.fz2 import FZ2_GAUGE, FZ2Provider, FZ2Sector
 from tenet.symmetry.product import ProductProvider, ProductSector
 from tenet.symmetry.su2 import SU2_GAUGE, SU2Provider, SU2Sector
 from tenet.symmetry.u1 import U1Provider, U1Sector
+from tenet.symmetry.z2 import Z2Provider, Z2Sector
 
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
@@ -56,18 +57,21 @@ _PROVIDERS: dict[str, Any] = {
     "U1": U1Provider,
     "SU2": SU2Provider,
     "fZ2": FZ2Provider,
+    "Z2": Z2Provider,
 }
 _SECTORS: dict[str, Any] = {
     "Trivial": TrivialSector,
     "U1": U1Sector,
     "SU2": SU2Sector,
     "fZ2": FZ2Sector,
+    "Z2": Z2Sector,
 }
 _KINDS: dict[type, str] = {
     TrivialProvider: "Trivial",
     U1Provider: "U1",
     SU2Provider: "SU2",
     FZ2Provider: "fZ2",
+    Z2Provider: "Z2",
     ProductProvider: "Product",
 }
 _GAUGES: dict[str, str] = {"SU2": SU2_GAUGE, "fZ2": FZ2_GAUGE}
