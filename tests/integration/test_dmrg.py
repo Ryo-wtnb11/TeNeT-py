@@ -42,7 +42,7 @@ import numpy as np
 import pytest
 
 import tenet
-from tenet import GradedSpace
+from tenet import GradedSpace, network
 from tenet.symmetry import U1, U1Sector
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples"))
@@ -161,7 +161,7 @@ def test_mpo_refuses_a_perturbed_grading():
 
 
 def test_lanczos_finds_the_lowest_eigenvalue():
-    """:func:`dmrg.lanczos` against ``np.linalg.eigvalsh`` on a small dense Hermitian.
+    """:func:`tenet.network.lanczos` against ``np.linalg.eigvalsh`` on a small dense Hermitian.
 
     The "vector" is a rank-2 tensor on ``(X OUT, BOUNDARY IN)``, so the trivial boundary
     leg restricts it to ``X``'s charge-0 block exactly as the MPS boundary legs restrict
@@ -185,39 +185,39 @@ def test_lanczos_finds_the_lowest_eigenvalue():
     )
     value = None
     for _ in range(10):
-        value, v = dmrg.lanczos(lambda x: tenet.einsum("ab,bc->ac", operator, x), v)
+        value, v = network.lanczos(lambda x: tenet.einsum("ab,bc->ac", operator, x), v)
     assert value == pytest.approx(expected, abs=1e-10)
 
 
 def test_inner_product_agrees_with_the_norm():
-    """``inner(v, v) == norm(v)**2`` -- the one identity :func:`dmrg.lanczos` leans on."""
-    v = dmrg.canonicalize(dmrg.random_mps(6, seed=11))[0]
-    assert float(dmrg.inner(v, v)) == pytest.approx(float(tenet.norm(v)) ** 2, rel=1e-12)
+    """``inner(v, v) == norm(v)**2`` -- the one identity :func:`tenet.network.lanczos` leans on."""
+    v = network.MPS.random(dmrg.PHYS, dmrg.bond_spaces(6), seed=11).canonize_()[0]
+    assert float(network.inner(v, v)) == pytest.approx(float(tenet.norm(v)) ** 2, rel=1e-12)
 
 
 # --- the environment cache ---------------------------------------------------------
 
 
 def test_swept_environments_match_a_rebuild_from_scratch():
-    """The only check that catches a missed :func:`dmrg.invalidate`.
+    """The only check that catches a missed :meth:`tenet.network.Env.clear_`.
 
     A stale ``F[(n, n+1)]`` after site ``n`` changed gives an energy that is *plausible
     and wrong*, which is the worst failure mode a DMRG has. After one full two-direction
     sweep every right-directed environment must equal the one a fresh
-    :func:`dmrg.setup_envs` builds from the final MPS, to 1e-12 -- and the left-directed
+    :meth:`tenet.network.Env.setup_` builds from the final MPS, to 1e-12 -- and the left-directed
     ones must be *gone*, because the return leg of the sweep invalidated every one of them.
     """
     n_sites = 8
-    psi = dmrg.canonicalize(dmrg.random_mps(n_sites, seed=1))
+    psi = network.MPS.random(dmrg.PHYS, dmrg.bond_spaces(n_sites), seed=1).canonize_()
     w = dmrg.mpo(n_sites)
-    envs = dmrg.setup_envs(psi, w)
-    dmrg.sweep(psi, w, envs, {}, chi=16, cutoff=1e-14)
+    env = network.Env(psi, w).setup_()
+    network.sweep(psi, w, env, {}, chi=16, cutoff=1e-14)
 
-    rebuilt = dmrg.setup_envs(psi, w)
-    assert set(envs) == set(rebuilt) | {(-1, 0)}
+    rebuilt = network.Env(psi, w).setup_().F
+    assert set(env.F) == set(rebuilt) | {(-1, 0)}
     for key, expected in rebuilt.items():
-        assert envs[key].structure == expected.structure, key
-        assert float(tenet.norm(tenet.subtract(envs[key], expected))) < 1e-12, key
+        assert env.F[key].structure == expected.structure, key
+        assert float(tenet.norm(tenet.subtract(env.F[key], expected))) < 1e-12, key
 
 
 # --- the ground state --------------------------------------------------------------
@@ -301,7 +301,7 @@ def test_the_target_sector_is_structural(main_runs):
     """
     small, _ = main_runs
     amplitudes = np.asarray(small.psi[0].to_dense())
-    for site in small.psi[1:]:
+    for site in small.psi.sites[1:]:
         amplitudes = np.einsum("a...b,bcd->a...cd", amplitudes, np.asarray(site.to_dense()))
     amplitudes = amplitudes[0, ..., 0].reshape(-1)
 
