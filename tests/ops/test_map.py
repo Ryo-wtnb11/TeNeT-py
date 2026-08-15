@@ -2,6 +2,7 @@
 
 import dataclasses
 import pathlib
+import re
 
 import autoray as ar
 import numpy as np
@@ -376,8 +377,19 @@ def test_ops_map_has_no_dense_expansion_and_no_provider_branching():
     assert "to_dense(" not in src
     assert "if provider ==" not in src
     assert "isinstance(provider" not in src
-    # numpy appears exactly once, as identity's default dtype
-    assert src.count("np.") == 1 and "np.float64" in src
+    # numpy appears as identity's/isometry's default dtype and as random_isometry's
+    # seeded draw (#89) — constructors run at setup time, outside any trace. Never
+    # in an operation on a tensor, which is what the closed list above is about.
+    assert set(re.findall(r"np\.\w+", src)) == {
+        "np.float64",
+        "np.random",
+        "np.issubdtype",
+        "np.dtype",
+        "np.complexfloating",
+        "np.linalg",
+        "np.diagonal",
+        "np.abs",
+    }
 
 
 def test_view_and_helpers_are_exported():
