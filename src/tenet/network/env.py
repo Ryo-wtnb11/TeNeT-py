@@ -7,19 +7,12 @@ Promoted from ``examples/dmrg.py`` (#110) with no arithmetic change: ``boundary_
 
 from typing import Any
 
-import autoray as ar
-
 import tenet
 from tenet import IN, OUT, Leg, SymmetricTensor
-from tenet.network.mps import MPO, MPS, scalar
+from tenet.network.common import ones, scalar
+from tenet.network.mps import MPO, MPS
 
 __all__ = ["Env"]
-
-
-def _ones(legs: tuple[Leg, ...]) -> SymmetricTensor:
-    """A tensor of ones on ``legs`` -- ``examples/ctmrg.py::init_env``'s seed spelling."""
-    t = SymmetricTensor.zeros(legs)
-    return t.apply_blocks(lambda b: ar.do("ones_like", b))
 
 
 class Env:
@@ -55,8 +48,8 @@ class Env:
         bond_l, bond_r = psi[0].legs[0].space, psi[n - 1].legs[2].space
         mpo_l, mpo_r = h[0].legs[0].space, h[n - 1].legs[3].space
         self.F = {
-            (-1, 0): _ones((Leg(bond_l, IN), Leg(mpo_l, OUT), Leg(bond_l, OUT))),
-            (n, n - 1): _ones((Leg(bond_r, OUT), Leg(mpo_r, IN), Leg(bond_r, IN))),
+            (-1, 0): ones((Leg(bond_l, IN), Leg(mpo_l, OUT), Leg(bond_l, OUT))),
+            (n, n - 1): ones((Leg(bond_r, OUT), Leg(mpo_r, IN), Leg(bond_r, IN))),
         }
 
     def setup_(self, to: int = 0) -> "Env":

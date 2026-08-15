@@ -22,8 +22,9 @@ import numpy as np
 
 import tenet
 from tenet import SymmetricTensor
+from tenet.network.common import inner, spectrum
 from tenet.network.env import Env
-from tenet.network.mps import MPO, MPS, inner, spectrum
+from tenet.network.mps import MPO, MPS
 
 __all__ = ["DMRG_out", "dmrg", "lanczos", "sweep"]
 

@@ -7,7 +7,7 @@ a test below:
   ``tests/test_import.py`` and REPOSITORY_RULES:31-33 ("core never imports them") to the
   new package. ``numpy`` and ``autoray`` are core dependencies and are allowed;
 * no reach into a ``_``-prefixed name of another ``tenet`` module. The package's own
-  private helpers (``mps._as_site``, ``dmrg._schmidt_change``, ``env._ones``) are its
+  private helpers (``mps._as_site``, ``dmrg._schmidt_change``, ``ctmrg._spectrum_change``) are its
   own business; importing someone else's is not;
 * no **numerical** use of ``t.blocks``. Reduced blocks are the library's storage, and a
   driver that reads them is doing arithmetic below the public API.
@@ -19,12 +19,17 @@ of a qdim-weighted trace. That is *symmetry-generic metadata*: ``provider.qdim(c
 fine, ``isinstance(provider, SU2Provider)`` is not, and the second is what the branch test
 below forbids.
 
-**A finding this promotion surfaced and deliberately did not fix.** Three files now write
-the same five-line ``sum(qdim(c) * trace(m))``: ``examples/ctmrg.py``:154-166,
-``examples/vmc_mps.py``:158-160 and ``tenet/network/mps.py::scalar``. That is an argument
-for a scalar exit in ``tenet.ops`` next to ``trace``, and it is a separate issue --
-adding it inside a PR whose whole claim is that it moves code without changing numbers
-would be exactly the ``src/tenet/`` scope creep #112 rules out.
+**The duplicated-``scalar`` finding #112 recorded, corrected and resolved (#114).** It was
+recorded as *three* files writing the same five-line ``sum(qdim(c) * trace(m))``; it was
+**two**. ``examples/vmc_mps.py``:158-160 is a *different* function -- ``t.blocks[0][0, 0]``,
+the trivial-leg shortcut for a network with no non-unit sector on the open bond, not
+qdim-weighted at all -- and it is deliberately untouched. The two real copies were
+``examples/ctmrg.py`` and ``tenet/network/mps.py::scalar``, and #114 resolved them by
+moving ``scalar``, ``inner``, ``spectrum`` and ``env._ones`` into ``network/common.py``
+with their bodies unchanged; the example imports them. The *bigger* step -- a qdim-weighted
+trace in ``tenet.ops`` next to ``trace`` -- stays a separate issue, because it changes
+``src/tenet/`` public semantics inside a PR whose whole claim is that it moves code without
+changing numbers.
 """
 
 import ast
@@ -43,7 +48,14 @@ def trees():
 
 
 def test_the_package_has_the_modules_it_claims():
-    assert {p.name for p in MODULES} == {"__init__.py", "mps.py", "env.py", "dmrg.py"}
+    assert {p.name for p in MODULES} == {
+        "__init__.py",
+        "common.py",
+        "mps.py",
+        "env.py",
+        "dmrg.py",
+        "ctmrg.py",
+    }
 
 
 @pytest.mark.parametrize("path", MODULES, ids=lambda p: p.name)
