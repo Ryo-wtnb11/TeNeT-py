@@ -22,7 +22,7 @@ only code of its own is the second Onsager form and the tolerances.
 
 x64 is enabled process-globally in ``tests/conftest.py``; every tolerance here depends on it.
 
-**Runtime: the budget is 110 s, and #102's 30 s is withdrawn with arithmetic** (#105).
+**Runtime: the budget is 100 s, and #102's 30 s is withdrawn with arithmetic** (#105, #107).
 #102 asked for 30 s for this module against
 ``test_vmc.py``'s 2.92 s. The Ising half -- every test with an oracle behind it -- was 5.7 s
 ungraded and is **11.0 s** graded, of which about 1.5 s is #104's new tests and the rest is
@@ -37,46 +37,49 @@ within-sector gap is ``6.6e-3`` there against ``5.1e-2`` at ``chi=8``, the same 
 What would actually move this number is the graded plan cache, which is M9's work, not a
 tolerance here.
 
-The iPEPS half is the rest, and it is not ``chi`` or ``K``: those are already at 4/6 and 2,
-and lowering them further makes SU(2) *slower*, not faster. It is the double-layer tensor,
-and #105 profiled it rather than guessing. **The earlier diagnosis here was half wrong**,
-which is worth keeping because the two halves point at opposite fixes:
+The iPEPS half is the rest, and since #107 the old diagnosis in this paragraph is
+**retired rather than restated**, on four points:
 
-1. **Plan construction is cached and is not the cost.** ``permutation_plan``,
-   ``repartition_plan``, ``map_layout``, ``fusion_plan`` and ``fusion_trees`` appear
-   *nowhere* in the top 22 of a warm ``cProfile`` of the SU(2) gradient: the
-   ``functools.cache``\\ s in ``structure.py``, ``permutation.py``, ``fusion.py`` and
-   ``map_view.py`` all hit. There is no cache to add. The old text here said "fusion-tree
-   enumeration and per-block plan construction", and that half is measured false.
-2. **The warm cost is eager per-block dispatch:** ~64 k tiny JAX primitives per SU(2)
-   gradient (``apply_primitive``), of which ~49 k are one-block-at-a-time ``transpose``\\ s
-   -- the ``ar.do("transpose", ...)`` loops at ``ops/repartition.py``:309 and
-   ``ops/permutation.py``:166. Thousands of Python-level blocks: that half was right.
-3. **The floor is compilation, not arithmetic.** Nothing here is jitted, and eager JAX
-   still compiles a one-primitive XLA program per distinct ``(primitive, aval, params)``
-   and caches it per *process*: ~2 640 of them at ~9 ms is ~60 s, essentially all of it in
-   the two ``test_ipeps_energy_is_real`` cases, which are the first to touch
-   ``ipeps_grad``. A contraction-order change halves the number of *dispatches* and cannot
-   touch the number of *distinct programs* -- which is exactly what #105 measured: 120 290
-   -> 64 029 ``apply_primitive`` calls, 2 642 -> 2 640 compiles. That is why the warm tests
-   below moved 1.6-1.9x and the two cold ones did not move at all.
-4. **The residual is #74's block-batching item**, and #105 supplied its missing number:
-   every one of the 841 blocks of the SU(2) rank-10 double-layer intermediate has the
-   *same shape*, and all 4 808 of its ``repartition_plan`` terms share one ``plan.perm``.
-   The bucket multiplicity for those two loops is **841:1** at SU(2) chi=6 and 196:1 at
-   U(1) chi=4 -- one stacked transpose plus a scatter-add where there are now 4 808 calls.
-   It is the only lever that reduces distinct programs rather than call counts.
-
-What #105 *did* land is contraction order in ``examples/ctmrg.py``, which is why this
-module is 116.6 s -> 100.0 s here: ``energy`` builds the open double layer once instead of
-twice, and both bulk builders bend the bra layer at rank 5 (12 blocks) instead of bending
-the rank-10 product (841 blocks). Warm SU(2) ``value_and_grad(energy)`` 9.48 s -> 4.96 s.
-``jax.jit`` was measured and rejected: compiling the SU(2) gradient costs more than running
-the three eager ones this module needs, and it would hide the point that ``converge`` sits
-outside the trace and ``unrolled`` inside it. **110 s is the budget the measurement
-supports** (99.97 s measured, plus load headroom); under 30 s needs #74's bucketing, and
-deleting the SU(2) parametrization -- the only alternative -- would delete the reason the
-iPEPS half exists.
+1. **The rank-10 double layer no longer exists.** ``ipeps_bulk``, ``ipeps_bulk_open`` and
+   their four fused ``(D_ket, D_bra)`` bonds are deleted; the environment edge carries the
+   ket bond and its conjugate as two rank-4 legs and the site enters as a ket and then a
+   bra (froSTspin ``ctm_contract.py``:42,53, YASTN ``_env_contractions.py``:221-224). So
+   the 841-block intermediate that every earlier version of this paragraph was about is
+   not slow any more, it is *absent*, and #105's 4 808 ``repartition_plan`` terms with it.
+2. **The peak is now rank 6 / 51 blocks** at SU(2) chi=6, against rank 10 / 841 --
+   froSTspin's ``2*a*d*chi**2*D**4`` instead of ``d**2 D**8``. Per enlarged corner: 4 852 ->
+   1 839 ``ar.do`` calls and 95 -> 52 distinct program keys at SU(2); for the open corner
+   the physics energy needs, 18 546 -> 2 315 calls. The edge, measured on its own rather
+   than assumed to follow the corner, goes the other way on calls and the right way on
+   keys: 906 -> 1 836 ``ar.do`` calls but 133 -> 52 program keys at SU(2) (599 -> 1 026
+   and 78 -> 50 at U(1)), because it no longer absorbs a pre-built double layer. The
+   forward ``energy`` is 0.48 s -> 0.36 s at SU(2). The *warm* gradient is not faster --
+   4.84 s -> 5.42 s at SU(2), 1.22 s -> 2.01 s at U(1) -- because unfusing trades a few
+   large blocks for many small ones and eager per-block dispatch is charged per block.
+   That is the same mechanism as (3) seen from the other end, and it is the honest half
+   of the trade.
+3. **What remains is one-off XLA compiles**, and that is where the redesign pays: the
+   *cold* SU(2) ``value_and_grad(energy)`` is 37.5 s -> 23.8 s and
+   ``test_ipeps_energy_is_real[su2]`` 36.8 s -> 27.0 s, because the number of distinct
+   ``(primitive, aval, params)`` programs falls with the number of distinct block shapes.
+   The U(1) cold case does not move at all (22.8 s -> 22.8 s): U(1) has no multiplets, so
+   there was no fusion blow-up to remove, and its warm regression is not bought back. #105
+   measured the floor itself -- ~2 640 compiles at ~9 ms is ~60 s -- and roughly 47 s of
+   this module is still exactly that. #74's block bucketing is its fix; nothing in
+   ``examples/`` substitutes for it.
+4. **#102's 30 s is still not reached and #74 is the only thing that reaches it.** A
+   contraction order changes how many primitives run and how many distinct *shapes* they
+   see; it cannot make a distinct shape stop implying a distinct program. **The budget is
+   100 s** (95.8-98.1 s measured over two runs, plus load headroom), from 110 s: the whole
+   module is where it was -- 97.8 s for 48 tests before #107, 95.8-98.1 s for 52 after,
+   the four new ones being the ~4.2 s migration criteria -- because the ~10 s the SU(2)
+   compile path gives back is spent again on warm dispatch. #107's win is a *structural*
+   one (no rank-10, a peak that scales as ``chi**2 D**4``) plus a cold-path one; it was
+   never going to be a wall-clock one on a module whose floor is compilation. Deleting the
+   SU(2) parametrization -- the only alternative -- would delete the reason the iPEPS half
+   exists, and ``jax.jit`` stays rejected (#105: compiling the SU(2) gradient costs more
+   than running the three eager ones this module needs, and it would hide the point that
+   ``converge`` sits outside the trace and ``unrolled`` inside it).
 """
 
 import math
@@ -121,7 +124,8 @@ def converged(beta: float, chi: int = CHI, tol: float = 1e-10, max_sweeps: int =
     """``(c, e, bond, history)``, memoized on the full set of knobs that decides it."""
     key = (beta, chi, tol, max_sweeps)
     if key not in _ENVS:
-        _ENVS[key] = ctmrg.converge(ctmrg.ising_bulk(beta), chi=chi, tol=tol, max_sweeps=max_sweeps)
+        bulk = ctmrg.ising_bulk(beta)
+        _ENVS[key] = ctmrg.converge(*ctmrg.ising_ctm(bulk), chi=chi, tol=tol, max_sweeps=max_sweeps)
     return _ENVS[key]
 
 
@@ -158,7 +162,7 @@ def ipeps_env(provider: str):
     if provider not in _ENVS:
         a, h = ctmrg.build_ipeps(provider), ctmrg.build_h(provider)
         chi = ctmrg.CHI_IPEPS[provider]
-        _ENVS[provider] = (a, h, ctmrg.converge(ctmrg.ipeps_bulk(a), chi=chi)[:3])
+        _ENVS[provider] = (a, h, ctmrg.converge(*ctmrg.ipeps_ctm(a), chi=chi)[:3])
     return _ENVS[provider]
 
 
@@ -270,7 +274,7 @@ def test_k_dependence_is_measured_not_assumed():
     assert max(abs(g / converged[8] - 1) for g in converged.values()) < 1e-11
 
     beta = 0.25
-    loose = ctmrg.converge(ctmrg.ising_bulk(beta), chi=CHI, tol=1e-6)[:3]
+    loose = ctmrg.converge(*ctmrg.ising_ctm(ctmrg.ising_bulk(beta)), chi=CHI, tol=1e-6)[:3]
     gradients = {k: float(jax.grad(ctmrg.beta_free_energy)(beta, loose, k)) for k in (1, 2, 4, 8)}
     first = abs(gradients[1] - gradients[2])
     last = abs(gradients[4] - gradients[8])
@@ -289,7 +293,9 @@ def test_unrolled_traces_once_and_the_frozen_bond_is_static():
     def objective(c, e, bulk, bond, k):
         nonlocal count
         count += 1  # a Python side effect: trace time only
-        new_c, _ = ctmrg.unrolled(c, e, bulk, bond, k=k)
+        # the absorber is built inside, from the traced bulk: it is two closures, so the
+        # gradient w.r.t. `bulk` still flows -- the closure is captured under the trace
+        new_c, _ = ctmrg.unrolled(c, e, ctmrg.ising_absorber(bulk), bond, k=k)
         dagger = tenet.adjoint(new_c)
         # the four-corner ring of `log_kappa`; `norm(new_c)` would be the constant 1,
         # since every move renormalizes, and a constant has nothing to differentiate
@@ -304,7 +310,7 @@ def test_unrolled_traces_once_and_the_frozen_bond_is_static():
         for x, y in zip(a.blocks, b.blocks, strict=True)
     )
 
-    smaller = ctmrg.converge(ctmrg.ising_bulk(beta), chi=8)[2]
+    smaller = ctmrg.converge(*ctmrg.ising_ctm(ctmrg.ising_bulk(beta)), chi=8)[2]
     assert smaller != bond
     grad(c, e, ctmrg.ising_bulk(beta), bond, K)
     assert count == 1  # the same frozen bond does not retrace ...
@@ -321,12 +327,11 @@ def test_svd_truncated_is_refused_under_jit():
     even before it gets there -- a data-dependent loop exit is not a tracing edge case, it
     is the thing the outside/inside split exists to keep outside.
     """
-    bulk = ctmrg.ising_bulk(0.4)
-    c, e = ctmrg.init_env(bulk)
+    absorb, c, e = ctmrg.ising_ctm(ctmrg.ising_bulk(0.4))
     with pytest.raises(tenet.StructureChangingError, match="tenet.linalg.svd"):
-        jax.jit(partial(ctmrg.move, chi=4))(c, e, bulk)
+        jax.jit(partial(ctmrg.move, chi=4), static_argnums=(2,))(c, e, absorb)
     with pytest.raises(jax.errors.ConcretizationTypeError):
-        jax.jit(partial(ctmrg.converge, chi=4, max_sweeps=1))(bulk)
+        jax.jit(partial(ctmrg.converge, chi=4, max_sweeps=1), static_argnums=(0,))(absorb, c, e)
 
 
 @pytest.mark.parametrize(("beta", "chi"), [(0.44, CHI), (0.6, CHI)])
@@ -540,6 +545,75 @@ def test_ipeps_energy_is_real(provider):
     assert abs(complex(value).imag) < 1e-12
 
 
+# The energies the *fused double-layer* formulation reported, before #107 replaced it with
+# the env->ket->bra absorption order. Ten significant figures, which is what the two
+# formulations being the same bilinear form entitles us to; measured agreement is 5.3e-15
+# (su2) and 8.9e-16 (u1) relative, i.e. the last bits.
+ENERGY_BASELINE = {"su2": -0.038475159359, "u1": -0.310993394006}
+
+
+def test_ipeps_energy_matches_the_pre_redesign_baseline(provider):
+    """#107's migration criterion, second half: same environment, same energy.
+
+    The environment is now converged by the *new* code and the energy computed through the
+    open-corner route; the numbers are the ones the deleted ``ipeps_bulk``/
+    ``ipeps_bulk_open`` produced. If a truncation tie ever broke differently the two would
+    separate at the truncation level rather than at 1e-15 -- that has not happened at
+    either provider, at ``CHI_IPEPS`` 4 and 6.
+    """
+    value, _ = ipeps_grad(provider)
+    assert float(value) == pytest.approx(ENERGY_BASELINE[provider], rel=1e-10)
+
+
+def _fuse_pair(t, i, j):
+    """``ctmrg._fuse_pair``, deleted by #107 and kept here for the migration test alone."""
+    order = (i, j, *(k for k in range(t.ndim) if k not in (i, j)))
+    return tenet.fuse(tenet.transpose(t, order), (0, 1))
+
+
+def legacy_double_layer(a):
+    """``ctmrg.ipeps_bulk``, deleted by #107: the fused rank-4 double layer, built through
+    the rank-10 intermediate (841 blocks at SU(2) chi=6) this redesign removed."""
+    ket, bra = ctmrg.ipeps_layers(a)
+    dl = tenet.einsum("LUsRD,slurd->lLuUrRdD", bra, ket)
+    dl = tenet.repartition(dl, (0, 1, 2, 3), (4, 5, 6, 7))
+    for i in range(4):
+        dl = _fuse_pair(dl, i, i + 1)
+    return tenet.transpose(dl, (3, 2, 1, 0))
+
+
+def test_the_unfused_corner_gives_the_old_projector(provider):
+    """#107's migration criterion, first half — and the thing that licenses the redesign.
+
+    The enlarged corner is *for* the projector and for nothing else, so the two
+    formulations agree iff their truncated spectra do. On one converged environment, the
+    rank-6 corner (env -> ket -> bra, two ``D`` bonds per edge) is compared against the
+    rank-4 one (one fused ``(D_ket, D_bra)`` bond, one double layer) by fusing the very
+    same edge back down: same tensor, seen through a unitary refusal-to-fuse.
+
+    Measured maximum absolute deviation over the spectrum: ``1.7e-16`` at SU(2) chi=6 and
+    ``5.6e-17`` at U(1) chi=4, with equal ``tenet.norm`` to the last bit.
+
+    Fusing the converged edge is also where the old convention's hidden M4 dependency
+    shows: ``tenet.fuse`` wants its pair to lead the side, and ``tenet.unfuse`` -- the
+    direction the old code would have needed to get here -- refuses a non-leading leg
+    outright ("splitting a non-leading leg needs an F-move, which is Milestone 4"). The
+    redesigned example never fuses, so it never asks.
+    """
+    a, _, (c, e, _) = ipeps_env(provider)
+    chi = ctmrg.CHI_IPEPS[provider]
+
+    fused = tenet.transpose(_fuse_pair(e, 2, 3), (1, 2, 0))  # (X IN, X OUT, V IN)
+    old = tenet.einsum("ab,ace,fbg,gehi->chfi", c, fused, fused, legacy_double_layer(a))
+    new = ctmrg.ipeps_absorber(*ctmrg.ipeps_layers(a)).corner(c, e)
+    assert (old.ndim, new.ndim) == (4, 6)
+
+    old_s = ctmrg.spectrum(tenet.linalg.svd_truncated(old, ((0, 1), (2, 3)), max_bond=chi)[1])
+    new_s = ctmrg.spectrum(tenet.linalg.svd_truncated(new, ((0, 1, 2), (3, 4, 5)), max_bond=chi)[1])
+    np.testing.assert_allclose(new_s, old_s, atol=1e-14)
+    assert float(tenet.norm(new)) == pytest.approx(float(tenet.norm(old)), abs=1e-15)
+
+
 def test_ipeps_grad_matches_central_differences_on_one_block(provider):
     a, h, e = ipeps_env(provider)
     grads = ipeps_grad(provider)[1]
@@ -576,8 +650,8 @@ def test_structures_survive_the_traced_region(provider):
     c, edge, bond = e
     before = (a.structure, c.structure, edge.structure)
     ipeps_grad(provider)  # the traced region has run by now
-    bulk = tenet.trace(ctmrg.ipeps_bulk_open(a), (0, 1))
-    out_c, out_e = ctmrg.unrolled(c, edge, bulk, bond, k=K_IPEPS)
+    absorb = ctmrg.ipeps_absorber(*ctmrg.ipeps_layers(a))
+    out_c, out_e = ctmrg.unrolled(c, edge, absorb, bond, k=K_IPEPS)
     assert all(
         x is y for x, y in zip((a.structure, c.structure, edge.structure), before, strict=True)
     )
