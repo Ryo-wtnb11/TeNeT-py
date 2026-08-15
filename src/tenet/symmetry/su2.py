@@ -25,7 +25,14 @@ import numpy as np
 
 from tenet.symmetry import _su2_coeff
 from tenet.symmetry._su2_coeff import cg_tensor, triangle
-from tenet.symmetry.base import Sector, bend_braided, permute_braided_tree
+from tenet.symmetry.base import (
+    CapabilityError,
+    FusionProvider,
+    Sector,
+    bend_braided,
+    permute_braided_tree,
+)
+from tenet.symmetry.u1 import U1Provider, U1Sector
 
 if TYPE_CHECKING:
     from tenet.fusion_tree import FusionTree
@@ -173,6 +180,24 @@ class SU2Provider:
         if not isinstance(a, SU2Sector):
             raise ValueError(f"{self.name}: {a!r} is not an SU(2) sector")
         return _su2_coeff.z_matrix(a.two_j)
+
+    def branch(self, target: FusionProvider, a: SU2Sector) -> tuple[Sector, ...]:
+        """SU(2) -> U(1): the magnetic quantum numbers, doubled, descending.
+
+        :meth:`cgc`'s magnetic indices run descending, so index ``k`` of ``V_j``
+        carries ``S_z = j - k`` and charge ``2 S_z = two_j - 2 k``. Identical to
+        froSTspin's ``np.arange(irr - 1, -irr - 1, -2)``.
+
+        Dual-agnostic: on a ``dual`` leg ``to_dense`` applies :meth:`z_matrix`,
+        an antidiagonal ``±1`` signed permutation, so reversing the magnetic
+        order and negating the weight are the same operation and cancel.
+        """
+        if not isinstance(target, U1Provider):
+            raise CapabilityError(
+                f"{self.name}: cannot branch to {getattr(target, 'name', target)!r}; "
+                "the only target SU2Provider can restrict to is U1"
+            )
+        return tuple(U1Sector(a.two_j - 2 * k) for k in range(a.two_j + 1))
 
 
 SU2 = SU2Provider()

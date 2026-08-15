@@ -23,6 +23,7 @@ __all__ = [
     "RecouplingData",
     "Sector",
     "StructureChangingError",
+    "SymmetryCast",
     "Trivial",
     "TrivialProvider",
     "TrivialSector",
@@ -146,6 +147,24 @@ class DualBasis(Protocol):
 
     def z_matrix(self, a: Sector) -> np.ndarray:
         """``Z_a``, shape ``(d_a, d_dual(a))``, in the provider's own dense basis."""
+        ...
+
+
+@runtime_checkable
+class SymmetryCast(Protocol):
+    """Providers that can be restricted to a smaller symmetry in the dense basis."""
+
+    def branch(self, target: FusionProvider, a: Sector) -> tuple[Sector, ...]:
+        """The ``target`` sector of each of ``a``'s ``d_a`` dense basis vectors.
+
+        Length is exactly ``irrep_dim(a)``, in the provider's **own** dense
+        (magnetic) order — the same order ``cgc`` and ``z_matrix`` use, so this
+        composes with ``to_dense``'s ``alpha * d_a + m`` layout without a second
+        convention. Every returned sector must satisfy
+        ``target.irrep_dim(...) == 1``: one target label per basis vector is only
+        well-defined when the target's irreps are one-dimensional, i.e. when the
+        target is abelian. ``CapabilityError`` for an unsupported target.
+        """
         ...
 
 

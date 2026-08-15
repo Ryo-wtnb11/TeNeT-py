@@ -14,6 +14,7 @@ from tenet.ops.basic import (
     norm,
     subtract,
 )
+from tenet.ops.cast import cast
 from tenet.ops.contraction import einsum, tensordot, trace
 from tenet.ops.embed import embed
 from tenet.ops.fusion import fuse, unfuse
@@ -26,6 +27,7 @@ __all__ = [
     "adjoint",
     "allclose",
     "bend",
+    "cast",
     "compose",
     "conj",
     "divide",
