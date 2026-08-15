@@ -280,6 +280,24 @@ class TensorMapView:
 
         return eigh(self.tensor)
 
+    def eig(self) -> tuple["SymmetricTensor", "SymmetricTensor"]:
+        """``W, V`` for the current partition. See :func:`tenet.linalg.eig`."""
+        from tenet.ops.linalg import eig
+
+        return eig(self.tensor)
+
+    def eigvals(self) -> "SymmetricTensor":
+        """``W`` for the current partition. See :func:`tenet.linalg.eigvals`."""
+        from tenet.ops.linalg import eigvals
+
+        return eigvals(self.tensor)
+
+    def expm(self, *, alpha: Any = 1.0) -> "SymmetricTensor":
+        """``exp(alpha * T)`` for the current partition. See :func:`tenet.linalg.expm`."""
+        from tenet.ops.linalg import expm
+
+        return expm(self.tensor, alpha=alpha)
+
     def polar(self, side: str = "left") -> tuple["SymmetricTensor", "SymmetricTensor"]:
         """``W, P`` for the current partition. See :func:`tenet.linalg.polar`."""
         from tenet.ops.linalg import polar

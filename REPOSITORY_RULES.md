@@ -42,6 +42,17 @@ and `AGENTS.md` (condensed).
     categorical statement, unlike every other refusal in that module. It is
     imported lazily, inside the three-or-more-operand branch, so `import tenet`
     and the pairwise path never pay for it.
+  - `scipy` was **not** added for `expm` (#86), and the contrast with `opt-einsum`
+    is the reason: it is a large compiled, platform-specific wheel with its own
+    dependency tree, i.e. it fails every criterion that admitted `opt-einsum`.
+    `tenet.linalg.expm` on the NumPy backend therefore raises an `ImportError`
+    naming `pip install scipy` — autoray resolves NumPy's `linalg.expm` to
+    `scipy.linalg.expm`, and NumPy ships no matrix exponential — while the JAX
+    backend needs nothing extra. That is a packaging cliff of the kind the
+    `opt-einsum` entry above refused, and it is accepted here only because it is
+    one function rather than the primary contraction API, and because the message
+    names the fix. `scipy` sits in the dev group (it already arrives transitively
+    via JAX and quimb) so the NumPy-backend `expm` tests run in CI.
 
 ## Tests
 
