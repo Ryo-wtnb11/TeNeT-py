@@ -304,6 +304,41 @@ class SymmetricTensor:
         """qdim-weighted Frobenius norm (a backend scalar). See :func:`tenet.norm`."""
         return self._ops().norm(self)
 
+    # --- elementwise block maps (coefficient space, not dense space) -----------
+
+    def apply_blocks(self, fn: Any) -> "SymmetricTensor":
+        """``fn`` on each reduced block. See :func:`tenet.apply_blocks` for the caveat."""
+        from tenet.ops import blocks
+
+        return blocks.apply_blocks(self, fn)
+
+    def sqrt(self) -> "SymmetricTensor":
+        """Blockwise ``sqrt`` — *not* ``sqrt(self.to_dense())``. See :func:`tenet.sqrt`."""
+        from tenet.ops import blocks
+
+        return blocks.sqrt(self)
+
+    def power(self, p: Any) -> "SymmetricTensor":
+        """Blockwise ``self ** p`` for a scalar ``p``. See :func:`tenet.power`."""
+        from tenet.ops import blocks
+
+        return blocks.power(self, p)
+
+    # --- serialization --------------------------------------------------------
+
+    def save(self, path: Any, *, compress: bool = False) -> None:
+        """Write to ``path`` as a single ``.npz``. See :func:`tenet.save`."""
+        from tenet.serialize import save
+
+        save(self, path, compress=compress)
+
+    @classmethod
+    def load(cls, path: Any) -> "SymmetricTensor":
+        """Read a file written by :meth:`save`; NumPy blocks. See :func:`tenet.load`."""
+        from tenet.serialize import load
+
+        return load(path)
+
     def transpose(self, *axes: Any) -> "SymmetricTensor":
         """``T.transpose(2, 0, 1)``, ``T.transpose((2, 0, 1))`` or ``T.transpose()``.
 
