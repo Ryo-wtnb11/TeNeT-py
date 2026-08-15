@@ -474,14 +474,19 @@ def test_fz2_module_is_array_free_apart_from_two_constants():
 
 
 def test_no_provider_identity_branching_outside_fz2():
+    # serialize.py (#94) names every provider type, and must: a file format needs a
+    # kind <-> type registry to rebuild a provider from JSON. That is a dict lookup
+    # on ``type(provider)``, not a behavioural branch on provider identity — the
+    # ``isinstance``/``==`` assertions below still apply to it.
+    naming_allowed = ("__init__.py", "serialize.py")
     for path in SRC.rglob("*.py"):
         if path.name == "fz2.py":
             continue
         text = path.read_text()
-        assert "FZ2Provider" not in text or path.name == "__init__.py"
+        assert "FZ2Provider" not in text or path.name in naming_allowed
         assert "isinstance(provider, FZ2" not in text
         assert "provider == " not in text
-        assert "fZ2" not in text or path.name == "__init__.py"
+        assert "fZ2" not in text or path.name in naming_allowed
 
 
 def test_capability_gate_is_still_opt_in():

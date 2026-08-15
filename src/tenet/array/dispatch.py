@@ -63,6 +63,31 @@ def _fuse(t: SymmetricTensor, *axes_groups: object) -> SymmetricTensor:
     return fuse(t, axes_groups[0])  # type: ignore[arg-type]
 
 
+def _elementwise_refused(name: str):
+    """Refuse a dense-elementwise name that ``tenet`` happens to export (#93).
+
+    ``tenet.sqrt`` and ``tenet.power`` are module-level, and autoray resolves an
+    unregistered name by importing the backend's module and looking it up — so
+    without this, ``ar.do("sqrt", t)`` would silently reach the *blockwise* map.
+    autoray's ``"sqrt"`` means the dense elementwise one, and for a non-Abelian
+    provider the two are different operations: measured off by ``1.673`` on a
+    dense scale of ``3.82`` for a rank-3 SU(2) tensor. Same voice as
+    ``"reshape"`` — a refusal about meaning, not about effort — and, like it, no
+    addition to the defined-operation list.
+    """
+
+    def refuse(t: SymmetricTensor, *args: object, **kwargs: object) -> SymmetricTensor:
+        raise ValueError(
+            f"{name} is not defined for a symmetric tensor: autoray's {name!r} is the dense "
+            "elementwise operation, and no non-linear function commutes with "
+            "T = sum_tau A^(tau) (x) C^(tau) (measured 1.673 off on a dense scale of 3.82 "
+            f"for SU(2)). The blockwise map on the coefficients is tenet.{name}(t) / "
+            "tenet.apply_blocks(t, fn); for dense semantics, densify explicitly."
+        )
+
+    return refuse
+
+
 def _reshape(t: SymmetricTensor, *args: object, **kwargs: object) -> SymmetricTensor:
     """Refuse ``reshape`` in our own voice rather than as autoray's ``ImportError``."""
     raise ValueError(
@@ -86,6 +111,10 @@ for _name, _fn in {
     # not an addition to the list: an explicit, categorical refusal in place of
     # autoray's "couldn't find function 'reshape' for backend 'tenet'".
     "reshape": _reshape,
+    # likewise not additions: explicit refusals shadowing the module-level
+    # tenet.sqrt / tenet.power that autoray's module lookup would otherwise find.
+    "sqrt": _elementwise_refused("sqrt"),
+    "power": _elementwise_refused("power"),
     "einsum": einsum,
     "tensordot": tensordot,
     "trace": trace,

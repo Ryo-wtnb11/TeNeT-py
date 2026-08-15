@@ -14,6 +14,7 @@ from tenet.ops.basic import (
     norm,
     subtract,
 )
+from tenet.ops.blocks import apply_blocks, power, sqrt
 from tenet.ops.cast import cast
 from tenet.ops.contraction import einsum, tensordot, trace
 from tenet.ops.embed import direct_sum, embed, restrict
@@ -26,6 +27,7 @@ __all__ = [
     "add",
     "adjoint",
     "allclose",
+    "apply_blocks",
     "bend",
     "cast",
     "compose",
@@ -39,8 +41,10 @@ __all__ = [
     "multiply",
     "negative",
     "norm",
+    "power",
     "repartition",
     "restrict",
+    "sqrt",
     "subtract",
     "tensordot",
     "trace",
