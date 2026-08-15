@@ -236,10 +236,22 @@ def ipeps_bulk(a: SymmetricTensor) -> SymmetricTensor:
     ``adjoint(a)`` against ``a``; one ``repartition`` puts every bra/ket pair on one side
     (bending flips ``dual``, which is exactly what makes ``V (x) V*`` fuse); four ``fuse``
     calls collapse the pairs.
+
+    The bra layer is bent **before** the ``einsum``, not after (#105). Bending afterwards
+    means bending a rank-10, 841-block intermediate: 4 808 ``repartition_plan`` terms, one
+    ``ar.do("transpose", ...)`` each. Bending ``adjoint(a)`` while it is still rank 5 and
+    12 blocks costs a handful, and then the ``repartition`` below is handed a tensor whose
+    partition it already wants, so it takes the "no leg crosses" early return in
+    ``src/tenet/ops/repartition.py`` (line 305) down to a plain transpose -- whose
+    permutation is the identity, which ``permutation_plan`` (``src/tenet/ops/
+    permutation.py``, line 116, case A) hands back for free. Both mechanisms were already
+    there; the old order simply never reached them. Measured on the SU(2) chi=6 case:
+    ``ipeps_bulk_open`` 23 163 -> 18 546 ``ar.do`` calls, 0.413 s -> 0.309 s.
     """
     a = c4v(a)
-    dl = tenet.einsum("sLURD,slurd->lLuUrRdD", tenet.adjoint(a), a)
-    dl = tenet.repartition(dl, (0, 1, 2, 3), (4, 5, 6, 7))
+    bra = tenet.repartition(tenet.adjoint(a), (1, 2), (0, 3, 4))  # (L, U, s, R, D)
+    dl = tenet.einsum("LUsRD,slurd->lLuUrRdD", bra, a)
+    dl = tenet.repartition(dl, (0, 1, 2, 3), (4, 5, 6, 7))  # already this partition: free
     for i in range(4):
         dl = _fuse_pair(dl, i, i + 1)
     return tenet.transpose(dl, (3, 2, 1, 0))
@@ -251,10 +263,16 @@ def ipeps_bulk_open(a: SymmetricTensor) -> SymmetricTensor:
     Legs ``(P IN, P OUT, l OUT, u OUT, r IN, d IN)``: the bra's ``P IN`` meets an
     operator's ``P OUT``, and the ket's ``P OUT`` meets its ``P IN``. Its virtual legs are
     identical to :func:`ipeps_bulk`'s, which is what lets one environment serve both.
+
+    Same bend-early ordering as :func:`ipeps_bulk`, and this is where it pays: the rank-10
+    intermediate is this function's, and the ``einsum`` output is written in exactly the
+    order the ``repartition`` below wants so that it early-returns (``repartition.py``:305)
+    to an identity transpose (``permutation.py``:116, case A).
     """
     a = c4v(a)
-    dl = tenet.einsum("SLURD,slurd->SslLuUrRdD", tenet.adjoint(a), a)
-    dl = tenet.repartition(dl, (1, 2, 3, 4, 5), (0, 6, 7, 8, 9))
+    bra = tenet.repartition(tenet.adjoint(a), (1, 2), (0, 3, 4))  # (L, U, S, R, D)
+    dl = tenet.einsum("LUSRD,slurd->slLuUSrRdD", bra, a)
+    dl = tenet.repartition(dl, (0, 1, 2, 3, 4), (5, 6, 7, 8, 9))  # already this partition
     # (s, l, L, u, U | S, r, R, d, D); each fuse lands at 0 and shifts the rest along
     for i, j in ((1, 2), (2, 3), (4, 5), (5, 6)):
         dl = _fuse_pair(dl, i, j)
@@ -541,7 +559,10 @@ def energy(a: SymmetricTensor, h: SymmetricTensor, env, k: int = 4):
     c0, e0, bond = env
     bulk = ipeps_bulk(a)
     ring = _ring(*unrolled(c0, e0, bulk, bond, k=k))
-    left, right = _halves(ring, ipeps_bulk_open(a), ipeps_bulk_open(a), "Ww", "Xx")
+    # One tensor, not two: both sites of the 2x1 patch are the same double layer, and
+    # calling ipeps_bulk_open twice built it twice and differentiated it twice (#105).
+    site = ipeps_bulk_open(a)
+    left, right = _halves(ring, site, site, "Ww", "Xx")
     numerator = scalar(tenet.einsum("Wwbckhm,Xxchm,WXwx->kb", left, right, h, optimize=PATH))
     left, right = _halves(ring, bulk, bulk)
     denominator = scalar(tenet.einsum("bckhm,chm->kb", left, right))

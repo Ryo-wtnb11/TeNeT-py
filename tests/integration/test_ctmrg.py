@@ -22,7 +22,8 @@ only code of its own is the second Onsager form and the tolerances.
 
 x64 is enabled process-globally in ``tests/conftest.py``; every tolerance here depends on it.
 
-**Runtime, measured and over budget.** #102 asked for 30 s for this module against
+**Runtime: the budget is 110 s, and #102's 30 s is withdrawn with arithmetic** (#105).
+#102 asked for 30 s for this module against
 ``test_vmc.py``'s 2.92 s. The Ising half -- every test with an oracle behind it -- was 5.7 s
 ungraded and is **11.0 s** graded, of which about 1.5 s is #104's new tests and the rest is
 the grading making the *existing* gradient tests slower. #104 asked for ``chi`` to come down
@@ -36,15 +37,46 @@ within-sector gap is ``6.6e-3`` there against ``5.1e-2`` at ``chi=8``, the same 
 What would actually move this number is the graded plan cache, which is M9's work, not a
 tolerance here.
 
-The iPEPS half is the other 100 s, and it is not ``chi`` or ``K``: those are already at 4/6
-and 2, and lowering them further makes SU(2) *slower*, not faster. It is the double-layer
-tensor. Building ``adjoint(a) . a`` with the physical legs open goes through a rank-10
-intermediate whose fusion-tree enumeration and per-block plan construction is thousands of
-Python-level blocks, and reverse mode walks all of it again: for SU(2) one forward energy
-costs 0.7 s and one gradient 6 s, of which 3 s is that one tensor. Nothing in this file
-fixes that; what would is a cheaper double-layer construction in ``src/tenet`` (fusing
-before contracting, or a graded contraction planner that costs a network by its blocks
-rather than by its dense shapes), which is M9's contraction-path work and its own issue.
+The iPEPS half is the rest, and it is not ``chi`` or ``K``: those are already at 4/6 and 2,
+and lowering them further makes SU(2) *slower*, not faster. It is the double-layer tensor,
+and #105 profiled it rather than guessing. **The earlier diagnosis here was half wrong**,
+which is worth keeping because the two halves point at opposite fixes:
+
+1. **Plan construction is cached and is not the cost.** ``permutation_plan``,
+   ``repartition_plan``, ``map_layout``, ``fusion_plan`` and ``fusion_trees`` appear
+   *nowhere* in the top 22 of a warm ``cProfile`` of the SU(2) gradient: the
+   ``functools.cache``\\ s in ``structure.py``, ``permutation.py``, ``fusion.py`` and
+   ``map_view.py`` all hit. There is no cache to add. The old text here said "fusion-tree
+   enumeration and per-block plan construction", and that half is measured false.
+2. **The warm cost is eager per-block dispatch:** ~64 k tiny JAX primitives per SU(2)
+   gradient (``apply_primitive``), of which ~49 k are one-block-at-a-time ``transpose``\\ s
+   -- the ``ar.do("transpose", ...)`` loops at ``ops/repartition.py``:309 and
+   ``ops/permutation.py``:166. Thousands of Python-level blocks: that half was right.
+3. **The floor is compilation, not arithmetic.** Nothing here is jitted, and eager JAX
+   still compiles a one-primitive XLA program per distinct ``(primitive, aval, params)``
+   and caches it per *process*: ~2 640 of them at ~9 ms is ~60 s, essentially all of it in
+   the two ``test_ipeps_energy_is_real`` cases, which are the first to touch
+   ``ipeps_grad``. A contraction-order change halves the number of *dispatches* and cannot
+   touch the number of *distinct programs* -- which is exactly what #105 measured: 120 290
+   -> 64 029 ``apply_primitive`` calls, 2 642 -> 2 640 compiles. That is why the warm tests
+   below moved 1.6-1.9x and the two cold ones did not move at all.
+4. **The residual is #74's block-batching item**, and #105 supplied its missing number:
+   every one of the 841 blocks of the SU(2) rank-10 double-layer intermediate has the
+   *same shape*, and all 4 808 of its ``repartition_plan`` terms share one ``plan.perm``.
+   The bucket multiplicity for those two loops is **841:1** at SU(2) chi=6 and 196:1 at
+   U(1) chi=4 -- one stacked transpose plus a scatter-add where there are now 4 808 calls.
+   It is the only lever that reduces distinct programs rather than call counts.
+
+What #105 *did* land is contraction order in ``examples/ctmrg.py``, which is why this
+module is 116.6 s -> 100.0 s here: ``energy`` builds the open double layer once instead of
+twice, and both bulk builders bend the bra layer at rank 5 (12 blocks) instead of bending
+the rank-10 product (841 blocks). Warm SU(2) ``value_and_grad(energy)`` 9.48 s -> 4.96 s.
+``jax.jit`` was measured and rejected: compiling the SU(2) gradient costs more than running
+the three eager ones this module needs, and it would hide the point that ``converge`` sits
+outside the trace and ``unrolled`` inside it. **110 s is the budget the measurement
+supports** (99.97 s measured, plus load headroom); under 30 s needs #74's bucketing, and
+deleting the SU(2) parametrization -- the only alternative -- would delete the reason the
+iPEPS half exists.
 """
 
 import math
