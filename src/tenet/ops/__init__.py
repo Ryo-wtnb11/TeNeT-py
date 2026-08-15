@@ -16,7 +16,7 @@ from tenet.ops.basic import (
 )
 from tenet.ops.cast import cast
 from tenet.ops.contraction import einsum, tensordot, trace
-from tenet.ops.embed import embed
+from tenet.ops.embed import direct_sum, embed, restrict
 from tenet.ops.fusion import fuse, unfuse
 from tenet.ops.map import adjoint, compose, identity
 from tenet.ops.permutation import transpose
@@ -30,6 +30,7 @@ __all__ = [
     "cast",
     "compose",
     "conj",
+    "direct_sum",
     "divide",
     "einsum",
     "embed",
@@ -39,6 +40,7 @@ __all__ = [
     "negative",
     "norm",
     "repartition",
+    "restrict",
     "subtract",
     "tensordot",
     "trace",

@@ -354,6 +354,18 @@ class SymmetricTensor:
 
         return cast(self, target, atol=atol)
 
+    def restrict(self, legs: Sequence[Leg], *, atol: float | None = None) -> "SymmetricTensor":
+        """Slice down to smaller, contained legs. See :func:`tenet.restrict`."""
+        from tenet.ops.embed import restrict
+
+        return restrict(self, legs, atol=atol)
+
+    def direct_sum(self, other: "SymmetricTensor", axes: int | Sequence[int]) -> "SymmetricTensor":
+        """``self ⊕ other`` along ``axes``. See :func:`tenet.direct_sum`."""
+        from tenet.ops.embed import direct_sum
+
+        return direct_sum(self, other, axes)
+
     def __repr__(self) -> str:
         def safe(get) -> Any:
             try:
