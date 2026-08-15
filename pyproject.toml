@@ -23,6 +23,11 @@ dev = [
     "pytest>=8.0",
     "quimb>=1.11",
     "ruff>=0.8",
+    # NOT a core dependency: autoray's NumPy `linalg.expm` is `scipy.linalg.expm`, so
+    # `tenet.linalg.expm` on a NumPy tensor needs it and raises an ImportError naming
+    # `pip install scipy` without it (#86). Declared here — it already arrives
+    # transitively via JAX and quimb — so the NumPy-backend expm tests run in CI.
+    "scipy>=1.11",
 ]
 
 [build-system]

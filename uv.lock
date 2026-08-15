@@ -570,6 +570,7 @@ dev = [
     { name = "pytest" },
     { name = "quimb" },
     { name = "ruff" },
+    { name = "scipy" },
 ]
 
 [package.metadata]
@@ -587,6 +588,7 @@ dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "quimb", specifier = ">=1.11" },
     { name = "ruff", specifier = ">=0.8" },
+    { name = "scipy", specifier = ">=1.11" },
 ]
 
 [[package]]

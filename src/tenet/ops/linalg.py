@@ -57,7 +57,7 @@ No ``svd``/``qr`` registration in ``array/dispatch.py``: that list is closed and
 
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
@@ -71,7 +71,7 @@ from tenet.symmetry.base import QuantumDimension, StructureChangingError, requir
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["eigh", "lq", "polar", "qr", "svd", "svd_truncated"]
+__all__ = ["eig", "eigh", "eigvals", "expm", "lq", "polar", "qr", "svd", "svd_truncated"]
 
 Axes = tuple[Sequence[int], Sequence[int]] | None
 
@@ -242,13 +242,17 @@ def _dagger(mat):
     return ar.do("conj", ar.do("transpose", mat))
 
 
-def _check_square(m: "SymmetricTensor") -> None:
+def _check_square(m: "SymmetricTensor", caller: str) -> None:
     """Refuse a map whose domain is not its codomain, as ``(space, dual)`` in order.
 
     Not a new checker: the predicate is ``ProductSpace.matches``, the identical
     call ``ops.map._check_composable`` makes — ``m`` composability-checked against
     itself. Only the message is new. Structural and total; the *numbers* are never
     inspected (see :func:`eigh`).
+
+    ``caller`` is the name the message opens with. Four square-map operations share
+    this paragraph (``eigh``, ``expm``, ``eig``, ``eigvals``); a copy per caller is
+    a paragraph that would need editing four times.
     """
     codomain, domain = as_map(m).codomain, as_map(m).domain
     i = codomain.matches(domain)
@@ -259,10 +263,10 @@ def _check_square(m: "SymmetricTensor") -> None:
         return f"public axis {axes[i]}: {legs[i]!r}" if i < len(legs) else "no leg"
 
     raise ValueError(
-        f"eigh: the map is not square at position {i} "
+        f"{caller}: the map is not square at position {i} "
         f"(codomain {at(m.structure.out_axes, codomain.legs)}; "
         f"domain {at(m.structure.in_axes, domain.legs)}). "
-        "eigh requires the domain to be the codomain as (space, dual) in the same order — "
+        f"{caller} requires the domain to be the codomain as (space, dual) in the same order — "
         "side is not compared and name is ignored, and dimensions alone are never enough "
         "(a charge-reversed U(1) partner has the same dimension and the wrong space). "
         "Matching only up to a reordering would be a within-side transpose, i.e. a braid; "
@@ -296,7 +300,7 @@ def eigh(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "S
     ``W`` is real even for complex input.
     """
     m, bond, mats = _lower(t, axes)
-    _check_square(m)
+    _check_square(m, "eigh")
     parts = {c: ar.do("linalg.eigh", b) for c, b in mats.items()}
     return (
         from_matrices(
@@ -397,6 +401,143 @@ def lq(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sym
             TensorStructure((Leg(bond, OUT), *m.domain)),
             {c: _dagger(p[0]) for c, p in parts.items()},
         ),
+    )
+
+
+# --- issue #86: expm ----------------------------------------------------------------
+
+_NO_SCIPY = (
+    "tenet.linalg.expm on the NumPy backend needs SciPy, which is not a dependency of "
+    "this library: autoray resolves linalg.expm to scipy.linalg.expm there, and NumPy "
+    "itself ships no matrix exponential. Install it with `pip install scipy` (or "
+    "`uv add scipy`), or move the tensor to the JAX backend, whose linalg.expm is "
+    "jax.scipy.linalg.expm and needs nothing extra. SciPy is deliberately not declared: "
+    "it is a large compiled, platform-specific wheel, which is exactly what the "
+    "dependency rule in REPOSITORY_RULES.md admitted opt-einsum by *not* being."
+)
+
+
+def expm(t: "SymmetricTensor", axes: Axes = None, *, alpha: Any = 1.0) -> "SymmetricTensor":
+    """``exp(alpha * T)`` for a square map, one dense exponential per coupled sector.
+
+    ``axes=(left, right)`` names public axes in ``t``'s own numbering, as everywhere
+    in this module; ``axes=None`` uses the current partition and is what
+    ``t.as_map().expm()`` calls. The map must be square *space-wise* — the same
+    ``(space, dual)``-in-order requirement, and the same refusal, :func:`eigh` has —
+    because ``exp`` of a morphism is only defined for an endomorphism.
+
+    The result carries ``repartition(t, left, right)``'s structure exactly: no bond
+    leg is created and no leg changes, so ``expm`` is the second decomposition (with
+    :func:`polar`'s ``W``) that is insensitive to the ``min``-rank bond convention.
+
+    ``alpha`` is a scalar multiplying ``T`` before exponentiation, and it is where
+    ``-i dt`` goes: ``expm(h, alpha=-1j * dt)`` is the Trotter gate. A complex
+    ``alpha`` promotes real blocks to complex by the backend's own rule, one coupled
+    sector at a time, which is why it is a multiplier here rather than the caller's
+    ``expm(alpha * t)``.
+
+    **Hermiticity is neither required nor assumed.** Unlike an ``eigh``-based
+    exponential — ``V diag(exp(alpha w)) V†``, which reads one triangle and returns a
+    plausible wrong answer off the Hermitian locus — this is correct for any square
+    map, and its gradient carries no ``1/(w_i - w_j)``, so a degenerate spectrum is
+    finite under stock JAX and :mod:`tenet.ad` is not needed here at all.
+
+    **The ceiling is JAX's and it is silent.** ``jax.scipy.linalg.expm`` is
+    scaling-and-squaring with Padé under a ``max_squarings=16`` limit enforced by
+    ``lax.cond(n_squarings > max_squarings, _nan, _compute, ...)``
+    (``jax/_src/scipy/linalg.py``): a block whose ``‖alpha·B_c‖`` needs more
+    squarings comes back as ``NaN`` rather than raising. No guard is added here — a
+    norm comparison is a data-dependent branch and could not run inside a trace
+    (invariant 9) — and the caller's escape is the one physics already uses,
+    ``exp(alpha H) = exp(alpha H / n)**n``.
+    ponytail: no norm guard; add one only outside the traced region, in the caller.
+
+    On the NumPy backend the exponential is SciPy's, and SciPy is *not* a dependency
+    of this library; without it the call raises an ``ImportError`` naming
+    ``pip install scipy``.
+    """
+    m, _, mats = _lower(t, axes)
+    _check_square(m, "expm")
+    try:
+        blocks = {c: ar.do("linalg.expm", alpha * b) for c, b in mats.items()}
+    except ImportError as exc:  # loud and actionable, as tenet.ad's JAX import is
+        raise ImportError(_NO_SCIPY) from exc
+    return from_matrices(m.structure, blocks)
+
+
+# --- issue #87: eig and eigvals ------------------------------------------------------
+# Siblings of eigh, sharing its skeleton, its return order and its refusal. Two names
+# rather than one keyword because they have *different contracts*: eigvals is
+# differentiable and eig is not, and a keyword flipping that would hide exactly the
+# distinction svd/svd_truncated exists to show.
+
+
+def eig(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "SymmetricTensor"]:
+    """``T V = V W`` for a square, not necessarily Hermitian ``T``. Returns ``(W, V)``.
+
+    Legs, and the return order, are :func:`eigh`'s exactly: ``W`` is
+    ``(bond OUT, bond IN)`` and diagonal, ``V`` is ``(*left legs, bond IN)``, and for
+    a square map ``_lower``'s ``min(rows, cols)`` is a no-op so the bond space is the
+    fused domain. Same ``(space, dual)``-in-order square-map refusal.
+
+    **Both outputs are complex, always, even for a real input** — a real matrix has
+    complex eigenvalues in conjugate pairs, so there is no real answer to return.
+    ``W`` is complex where :func:`eigh`'s is real. Without ``x64`` under JAX it is
+    ``complex64``, the backend's own dtype policy, as ``to_backend`` documents.
+
+    **``V`` is not an isometry.** Right eigenvectors of a non-normal matrix are not
+    orthogonal: ``adjoint(V) @ V`` is not the identity, and the reconstruction is
+    ``V W V^-1``, which this library cannot spell because it has no ``inv``. The
+    checkable statement, and the one the tests use, is the residual ``T @ V - V @ W``.
+
+    Eigenvalues come back in the backend's order, **unsorted**. :func:`eigh`'s
+    argument, only stronger: complex numbers have no order at all, so "sorted" would
+    have to mean "by ``|λ|`` descending", a choice — and the caller is the one who
+    knows whether "dominant" means largest modulus, largest real part, or largest
+    within a chosen sector. It is one ``max`` over one comprehension out there.
+
+    **Not differentiable under JAX** — ``jax.grad`` raises JAX's own
+    ``NotImplementedError`` naming ``enable_eigvec_derivs``, and that error is
+    propagated unchanged, neither caught nor re-phrased and above all not opted into:
+    the flag turns on an eigenvector derivative under assumptions on the input that
+    JAX cannot check, and a library may not make an unverifiable numerical assumption
+    on every caller's behalf. Apply it to your own blocks if you want it. Use
+    :func:`eigvals` when the objective needs only the spectrum; it is differentiable.
+
+    Platform, as measured rather than as upstream's stale docstring has it: CPU
+    **and** NVIDIA GPU (cuSolver by default since JAX 0.8.0); TPU has no lowering.
+    """
+    m, bond, mats = _lower(t, axes)
+    _check_square(m, "eig")
+    parts = {c: ar.do("linalg.eig", b) for c, b in mats.items()}
+    return (
+        from_matrices(
+            TensorStructure((Leg(bond, OUT), Leg(bond, IN))),
+            {c: ar.do("diag", p[0]) for c, p in parts.items()},
+        ),
+        from_matrices(
+            TensorStructure((*m.codomain, Leg(bond, IN))), {c: p[1] for c, p in parts.items()}
+        ),
+    )
+
+
+def eigvals(t: "SymmetricTensor", axes: Axes = None) -> "SymmetricTensor":
+    """The eigenvalues of a square map, as a diagonal ``(bond OUT, bond IN)`` tensor.
+
+    **Differentiable**, unlike :func:`eig`: JAX implements the eigenvalues-only JVP
+    unconditionally, and it needs no assumption a library cannot check. Jittable on
+    CPU and on NVIDIA GPU — the "CPU backend" line in ``jax.numpy``'s own ``eigvals``
+    docstring is stale upstream text, not behaviour. Complex always, order is the
+    backend's, exactly as :func:`eig`'s.
+
+    Equal to ``eig(t)[0]`` — the same LAPACK/cuSolver driver with the eigenvector job
+    switched off — and it is the values-only call that carries the gradient.
+    """
+    m, bond, mats = _lower(t, axes)
+    _check_square(m, "eigvals")
+    return from_matrices(
+        TensorStructure((Leg(bond, OUT), Leg(bond, IN))),
+        {c: ar.do("diag", ar.do("linalg.eigvals", b)) for c, b in mats.items()},
     )
 
 
