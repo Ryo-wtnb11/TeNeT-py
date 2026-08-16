@@ -106,7 +106,11 @@ def sweep_(
     why no caller in this package ever spells a ``repartition``.
 
     Returns ``(energy, max_discarded_weight)``; ``schmidt`` is updated in place with the
-    per-bond Schmidt spectra, which is the second convergence criterion's input.
+    per-bond Schmidt spectra, which is the second convergence criterion's input. The
+    discarded weight here is the **maximum** over bonds, because it feeds a per-sweep
+    convergence report where the worst bond is the diagnostic;
+    :meth:`~tenet.network.MPS.compress_` returns the **total** instead, because its caller
+    is asking how much of the state was thrown away. Two conventions, two names.
     """
     n_sites = len(psi)
     energy, max_dw = 0.0, 0.0

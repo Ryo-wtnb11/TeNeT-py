@@ -58,6 +58,36 @@ The `svd_truncated`-outside / `svd(bond=)`-inside pairing has two legitimate hal
 this example uses one: [CTMRG](ctmrg.md) needs the inside half because it differentiates
 through its sweeps; DMRG needs only the outside half because it does not.
 
+## What to do with the converged state
+
+`dmrg_` hands back a `DMRG_out` whose `psi` is an ordinary `MPS`, and four calls cover
+what a user wants from it on the first day — checkpoint it, read it back, measure a local
+observable, and trade bond dimension for size:
+
+```python
+import tenet
+from tenet import IN, OUT, Leg
+from tenet.network import MPS, expectation_1site
+
+out = dmrg(8, chi=32)  # examples/dmrg.py
+
+out.psi.save("ground-state")  # a directory: 000.npz .. 007.npz plus mps.json
+psi = MPS.load("ground-state")  # NumPy blocks; .to_backend("jax") per site to restore
+
+sz = tenet.SymmetricTensor.from_dense(  # S^z on this example's physical space
+    np.diag([-0.5, 0.5]), (Leg(PHYS, OUT), Leg(PHYS, IN))
+)
+print([expectation_1site(psi, sz, n) for n in range(len(psi))])  # <S^z_n>, normalized
+
+discarded = psi.compress_(chi=8)  # in place; the total discarded weight, sqrt(sum_bond dw)
+```
+
+`expectation_1site` divides by `<psi|psi>`, so it is an expectation value on any state,
+canonical or not — unlike `Env.measure()`, which returns the unnormalized `<psi|H|psi>`.
+`compress_` returns the **total** discarded weight, where `sweep_` returns the per-bond
+**maximum**: one answers "how much of my state did I throw away", the other "which bond is
+the convergence diagnostic".
+
 ## Deliberate limits
 
 - **Two-site DMRG only.** Single-site plus subspace expansion (Hubig–McCulloch–
@@ -72,5 +102,6 @@ through its sweeps; DMRG needs only the outside half because it does not.
 
 ## Reference
 
-- [`tenet.network`](../api/network.md) — `MPS`, `MPO`, `Env`, `lanczos`, `sweep_`, `dmrg_`
+- [`tenet.network`](../api/network.md) — `MPS`, `MPO`, `Env`, `lanczos`, `sweep_`, `dmrg_`,
+  `expectation_1site`, `expectation_2site`
 - [`tenet.linalg`](../api/linalg.md) — `svd_truncated`

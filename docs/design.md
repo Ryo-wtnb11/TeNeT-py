@@ -2855,9 +2855,22 @@ The split:
   M11a's carries no trace at all. `examples/ctmrg.py` was rewritten on top of it and every
   recorded number — free energies and their gradients, corner spectra, sweep counts, iPEPS
   energies and gradient blocks, SGD traces — is **bit-identical** to the pre-promotion run.
-- **M11c** — `MPS.save`/`load` (a directory of per-tensor `tenet.save` files plus a small
-  JSON header), a standalone `compress_`, and a measurement API beyond `Env.measure()`.
-  Each is small and none has a caller today, which is why none is in M11a.
+- **M11c** — shipped: `MPS.save`/`load` (a directory of per-tensor `tenet.save` files plus
+  an `mps.json` carrying `format`, `n_sites` and `center`, so #94's coefficient-gauge
+  verification is inherited per tensor rather than re-implemented), `MPS.compress_`
+  (`canonize_(0)` plus one truncating sweep, returning the *total* discarded weight where
+  `sweep_` returns the per-bond *maximum*), the two measurements `expectation_1site` /
+  `expectation_2site` (both divided by `<psi|psi>`, which is what the name promises and
+  what YASTN's undivided `measure_*` does not), and `CTMRG_out` — `ctmrg`'s return, a
+  `DMRG_out`-shaped `NamedTuple` replacing the bare `(CTMEnv, history)` tuple two test
+  files were re-deriving convergence from, at bit-identical numbers.
+  Two items stayed deferred. The CTMRG measurement half (`rdm_1x1`/`rdm_2x1`, froSTspin's
+  `ctmrg/rdm.py` as the design) stays in `examples/ctmrg.py` because `_halves` and
+  `energy` are C4v- *and* 1×1- *and* 2×1-specific in their indices, so promoting them
+  would move physics out of the file whose job is to teach in exchange for a library
+  function with one geometry. `MPO.save`/`load` is refused rather than deferred, because
+  `MPO.from_w` rebuilds the whole Hamiltonian from one dense `W` in milliseconds and a
+  checkpoint of a regenerable object is a second source of truth.
 
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates, PEPS containers, and a
 term-list MPO generator.

@@ -139,10 +139,11 @@ def test_ring_is_the_four_adjoint_paired_tensors(provider):
 
 
 def test_converge_reaches_tol_and_freezes_the_projector_bond():
-    env, history = ctmrg(*single_layer_ctm(example.ising_bulk(BETA)), chi=CHI, tol=1e-10)
+    out = ctmrg(*single_layer_ctm(example.ising_bulk(BETA)), chi=CHI, tol=1e-10)
+    env = out.env
     assert isinstance(env, CTMEnv)
-    assert history[-1] < 1e-10
-    assert len(history) < 100  # it stopped on the tolerance, not on max_sweeps
+    assert out.converged  # the field, not a re-derivation: it stopped on the tolerance
+    assert out.sweeps < 100 and out.max_dsv == out.history[-1]
 
     # the frozen bond *is* the projector's space: one more move on it changes no structure
     again = move(env.c, env.e, single_layer(example.ising_bulk(BETA)), bond=env.bond)
@@ -151,10 +152,8 @@ def test_converge_reaches_tol_and_freezes_the_projector_bond():
 
 
 def test_converge_stops_at_max_sweeps_when_the_tolerance_is_unreachable():
-    _env, history = ctmrg(
-        *single_layer_ctm(example.ising_bulk(BETA)), chi=CHI, tol=0.0, max_sweeps=3
-    )
-    assert len(history) == 3
+    out = ctmrg(*single_layer_ctm(example.ising_bulk(BETA)), chi=CHI, tol=0.0, max_sweeps=3)
+    assert out.sweeps == 3 and not out.converged
 
 
 def test_layers_bends_the_bra_and_flips_dual():
@@ -178,8 +177,8 @@ def test_move_on_a_frozen_bond_traces_once_and_retraces_on_a_different_one():
     from functools import partial
 
     absorb, c, e = single_layer_ctm(example.ising_bulk(BETA))
-    env, _ = ctmrg(absorb, c, e, chi=CHI)
-    smaller, _ = ctmrg(*single_layer_ctm(example.ising_bulk(BETA)), chi=2)
+    env = ctmrg(absorb, c, e, chi=CHI).env
+    smaller = ctmrg(*single_layer_ctm(example.ising_bulk(BETA)), chi=2).env
     assert smaller.bond != env.bond
 
     count = 0

@@ -13,7 +13,9 @@ so it is written where it holds:
   they make no differentiability claim. ``tenet.linalg.svd_truncated`` re-decides a bond
   :class:`~tenet.GradedSpace` at every bond of every sweep, :func:`lanczos`'s happy
   breakdown tests a norm against ``tol``, and :func:`dmrg_`'s loop exits on a measured
-  energy change;
+  energy change, and M11c's :meth:`MPS.save` / :meth:`MPS.load`, :meth:`MPS.compress_`
+  and :func:`expectation_1site` / :func:`expectation_2site` are outside for the same
+  reasons -- filesystem I/O, a re-decided bond space, and a truncating split;
 * ``common.py`` -- **trace-neutral**, and used on both sides: :func:`scalar` runs inside a
   differentiated region in ``examples/ctmrg.py``, :func:`spectrum` only ever outside one;
 * ``ctmrg.py`` -- **both**, stated per function in its own docstrings. :func:`ctmrg`
@@ -32,7 +34,10 @@ Contents. M11a: :class:`MPS`, :class:`MPO`, :class:`Env`, :func:`lanczos`, :func
 :func:`dmrg_`. M11b: :class:`CTMEnv`, :class:`Absorb`, :func:`single_layer`,
 :func:`layers`, :func:`double_layer`, :func:`single_layer_ctm`, :func:`double_layer_ctm`,
 :func:`init_env`, :func:`move`, :func:`ctmrg`, :func:`ctmrg_unrolled`, :func:`normalized`
-and :func:`ring`. Shared: the two scalar exits :func:`scalar` and :func:`inner`, the bond
+and :func:`ring`. M11c: :meth:`MPS.save` / :meth:`MPS.load` and :meth:`MPS.compress_`,
+the two measurements :func:`expectation_1site` and :func:`expectation_2site`, and
+:class:`CTMRG_out` -- :func:`ctmrg`'s return, which was a bare ``(CTMEnv, history)``
+tuple. Shared: the two scalar exits :func:`scalar` and :func:`inner`, the bond
 spectrum :func:`spectrum` and the :func:`ones` seed. Promoted verbatim from
 ``examples/dmrg.py`` (#110) and ``examples/ctmrg.py`` (#102/#104/#105/#107) under the rule
 that no number may move.
@@ -49,6 +54,7 @@ from tenet.network.common import inner, ones, scalar, spectrum
 from tenet.network.ctmrg import (
     Absorb,
     CTMEnv,
+    CTMRG_out,
     ctmrg,
     ctmrg_unrolled,
     double_layer,
@@ -63,13 +69,14 @@ from tenet.network.ctmrg import (
 )
 from tenet.network.dmrg import DMRG_out, dmrg_, lanczos, sweep_
 from tenet.network.env import Env
-from tenet.network.mps import MPO, MPS
+from tenet.network.mps import MPO, MPS, expectation_1site, expectation_2site
 
 __all__ = [
     "MPO",
     "MPS",
     "Absorb",
     "CTMEnv",
+    "CTMRG_out",
     "DMRG_out",
     "Env",
     "ctmrg",
@@ -77,6 +84,8 @@ __all__ = [
     "dmrg_",
     "double_layer",
     "double_layer_ctm",
+    "expectation_1site",
+    "expectation_2site",
     "init_env",
     "inner",
     "lanczos",
