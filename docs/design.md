@@ -2155,6 +2155,17 @@ The number in that block is `⟨ψ|ψ⟩`. The rank-0 tensor is a separate desig
 question — it would require every leg's provider to be carried explicitly — and is
 deliberately not answered by this pattern's existence.
 
+**Open diagrams are tensors; closed diagrams exit to backend scalars, explicitly and by
+name.** `tensordot`, `einsum` and `trace` never return a scalar — a contraction that
+closes a network is a `ValueError`, and a `SymmetricTensor` still has no rank 0. Leaving
+the tensor world is a separate, named call — `norm`, `full_trace`, `inner` — which
+returns the backend's own scalar and is therefore traceable and differentiable.
+
+`full_trace(t)` is `Σ_c qdim(c) · tr(M_c)`, the categorical trace of an endomorphism,
+closing the map view (codomain against domain, in order) at any rank and refusing a
+non-square map with the same `check_square` message `eigh`/`expm`/`eig`/`eigvals` raise.
+It gives the *user* a scalar exit, not the tensor a rank-0 one (#126).
+
 ---
 
 # Braiding is the important limit of ndarray syntax
@@ -2534,7 +2545,7 @@ TeNeT-py/
 │       ├── pytree.py
 │       │
 │       └── network/          # M11: the driver layer
-│           ├── common.py     #   scalar, inner, spectrum, ones
+│           ├── common.py     #   spectrum, ones
 │           ├── mps.py
 │           ├── env.py
 │           ├── dmrg.py
@@ -2805,9 +2816,10 @@ The C4v restriction (one corner and one edge, a 1×1 unit cell) is a documented
 **precondition** on the tensor the caller hands in, never a symmetrization the library
 performs — which is why `c4v` stayed in the example, together with the observables
 (`_halves`/`energy` are a measurement API with one geometry) and the bulk tensor.
-`network/common.py` holds `scalar`, `inner`, `spectrum` and `ones`, moved out of `mps.py`
-and `env.py` with their bodies unchanged so that `ctmrg.py` need not import a driver it
-shares no concept with.
+`network/common.py` holds `spectrum` and `ones`, moved out of `mps.py` and `env.py` with
+their bodies unchanged so that `ctmrg.py` need not import a driver it shares no concept
+with. The `scalar` and `inner` that moved with them left the driver layer again in #126,
+as `tenet.full_trace` and `tenet.inner`.
 
 It is reachable as `tenet.network` and listed in `tenet.__all__`, and it is deliberately
 **not** flattened into the top-level namespace: `dmrg_` is not a tensor operation. The
@@ -2815,8 +2827,9 @@ dependency edge is one-way — `network` imports `ops`/`tensor`, never the rever
 shape `ops` already uses for `tensor`. Everything here is built on **public `tenet` API
 only**: no `jax`, `torch`, `scipy`, `quimb` or `opt_einsum`, no reach into another
 module's private names, and no numerical use of reduced blocks. The one named exception
-is reading `t.provider`, `provider.qdim` and `provider.unit`, which the qdim-weighted
-scalar exit needs; `tests/network/test_hygiene.py` enforces all of it.
+is reading `t.provider`, `provider.qdim` and `provider.unit`: two reads, one owner each —
+`spectrum`'s `sqrt(qdim)` Schmidt weight and `ctmrg.py`'s unit sector.
+`tests/network/test_hygiene.py` enforces all of it.
 
 **Which side of a trace a module lives on is a per-module statement, and it is the
 complement of invariant 9 rather than an exception to it.** Invariant 9 says

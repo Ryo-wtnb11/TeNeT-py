@@ -325,7 +325,7 @@ def test_unrolled_traces_once_and_the_frozen_bond_is_static():
         dagger = tenet.adjoint(new_c)
         # the four-corner ring of `log_kappa`; `norm(new_c)` would be the constant 1,
         # since every move renormalizes, and a constant has nothing to differentiate
-        return tenet.network.scalar(tenet.einsum("ab,ac,dc,eb->de", new_c, dagger, new_c, dagger))
+        return tenet.full_trace(tenet.einsum("ab,ac,dc,eb->de", new_c, dagger, new_c, dagger))
 
     grad = jax.grad(objective, argnums=2)
     a = grad(c, e, ctmrg.ising_bulk(beta), bond, K)

@@ -62,7 +62,7 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 
 from tenet.leg import IN, OUT, Leg
-from tenet.map_view import as_map, from_matrices, map_layout, to_matrices
+from tenet.map_view import check_square, from_matrices, map_layout, to_matrices
 from tenet.ops.repartition import repartition
 from tenet.space import GradedSpace
 from tenet.structure import TensorStructure
@@ -254,44 +254,12 @@ def _dagger(mat):
     return ar.do("conj", ar.do("transpose", mat))
 
 
-def _check_square(m: "SymmetricTensor", caller: str) -> None:
-    """Refuse a map whose domain is not its codomain, as ``(space, dual)`` in order.
-
-    Not a new checker: the predicate is ``ProductSpace.matches``, the identical
-    call ``ops.map._check_composable`` makes — ``m`` composability-checked against
-    itself. Only the message is new. Structural and total; the *numbers* are never
-    inspected (see :func:`eigh`).
-
-    ``caller`` is the name the message opens with. Four square-map operations share
-    this paragraph (``eigh``, ``expm``, ``eig``, ``eigvals``); a copy per caller is
-    a paragraph that would need editing four times.
-    """
-    codomain, domain = as_map(m).codomain, as_map(m).domain
-    i = codomain.matches(domain)
-    if i is None:
-        return
-
-    def at(axes: tuple[int, ...], legs: tuple[Leg, ...]) -> str:
-        return f"public axis {axes[i]}: {legs[i]!r}" if i < len(legs) else "no leg"
-
-    raise ValueError(
-        f"{caller}: the map is not square at position {i} "
-        f"(codomain {at(m.structure.out_axes, codomain.legs)}; "
-        f"domain {at(m.structure.in_axes, domain.legs)}). "
-        f"{caller} requires the domain to be the codomain as (space, dual) in the same order — "
-        "side is not compared and name is ignored, and dimensions alone are never enough "
-        "(a charge-reversed U(1) partner has the same dimension and the wrong space). "
-        "Matching only up to a reordering would be a within-side transpose, i.e. a braid; "
-        "use tenet.transpose, or repartition (#32), to build a square map first."
-    )
-
-
 def eigh(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "SymmetricTensor"]:
     """``T = V ∘ W ∘ V†`` for a self-adjoint ``T``. Returns ``(W, V)``.
 
     Legs: ``W`` is ``(bond OUT, bond IN)``, diagonal and real; ``V`` is
     ``(*left legs, bond IN)``. The map must be square *space-wise* — see
-    :func:`_check_square` — and for a square map ``_lower``'s ``min(rows, cols)``
+    :func:`~tenet.map_view.check_square` — and for a square map ``_lower``'s ``min(rows, cols)``
     is a no-op, so the bond space is literally the fused domain.
 
     **Hermiticity of the numbers is the caller's responsibility and is deliberately
@@ -312,7 +280,7 @@ def eigh(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "S
     ``W`` is real even for complex input.
     """
     m, bond, mats = _lower(t, axes)
-    _check_square(m, "eigh")
+    check_square(m, "eigh")
     parts = {c: ar.do("linalg.eigh", b) for c, b in mats.items()}
     return (
         from_matrices(
@@ -571,7 +539,7 @@ def expm(t: "SymmetricTensor", axes: Axes = None, *, alpha: Any = 1.0) -> "Symme
     ``pip install scipy``.
     """
     m, _, mats = _lower(t, axes)
-    _check_square(m, "expm")
+    check_square(m, "expm")
     try:
         blocks = {c: ar.do("linalg.expm", alpha * b) for c, b in mats.items()}
     except ImportError as exc:  # loud and actionable, as tenet.ad's JAX import is
@@ -622,7 +590,7 @@ def eig(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sy
     **and** NVIDIA GPU (cuSolver by default since JAX 0.8.0); TPU has no lowering.
     """
     m, bond, mats = _lower(t, axes)
-    _check_square(m, "eig")
+    check_square(m, "eig")
     parts = {c: ar.do("linalg.eig", b) for c, b in mats.items()}
     return (
         from_matrices(
@@ -648,7 +616,7 @@ def eigvals(t: "SymmetricTensor", axes: Axes = None) -> "SymmetricTensor":
     switched off — and it is the values-only call that carries the gradient.
     """
     m, bond, mats = _lower(t, axes)
-    _check_square(m, "eigvals")
+    check_square(m, "eigvals")
     return from_matrices(
         TensorStructure((Leg(bond, OUT), Leg(bond, IN))),
         {c: ar.do("diag", ar.do("linalg.eigvals", b)) for c, b in mats.items()},

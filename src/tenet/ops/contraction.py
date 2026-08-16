@@ -54,6 +54,7 @@ No ``to_dense``, no NumPy and no provider branching here (invariants 8/9).
 """
 
 import operator
+import string
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -63,11 +64,17 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 
 from tenet.leg import IN, OUT, Leg
-from tenet.ops.map import compose, identity
+from tenet.map_view import check_square, to_matrices
+from tenet.ops.map import adjoint, compose, identity
 from tenet.ops.permutation import transpose
 from tenet.ops.repartition import repartition
 from tenet.structure import TensorStructure
-from tenet.symmetry.base import BendingCoefficients, CapabilityError, requires
+from tenet.symmetry.base import (
+    BendingCoefficients,
+    CapabilityError,
+    QuantumDimension,
+    requires,
+)
 
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
@@ -77,6 +84,8 @@ __all__ = [
     "contractible",
     "contraction_plan",
     "einsum",
+    "full_trace",
+    "inner",
     "outward_dual",
     "tensordot",
     "trace",
@@ -345,6 +354,53 @@ def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
         identity((t.legs[j],), dtype=ar.get_dtype_name(ref), like=ref),
         axes=((i, j), (p, 1 - p)),
     )
+
+
+def full_trace(t: "SymmetricTensor") -> Any:
+    """``Σ_c qdim(c) · tr(M_c)`` — the categorical trace of an endomorphism, a scalar.
+
+    **Open diagrams are tensors; closed diagrams exit to backend scalars, explicitly
+    and by name.** :func:`tensordot`, :func:`einsum` and :func:`trace` never return a
+    scalar — a contraction that closes a network is a ``ValueError``, and a
+    ``SymmetricTensor`` still has no rank 0. Leaving the tensor world is a separate,
+    named call — :func:`~tenet.norm`, ``full_trace``, :func:`inner` — which returns the
+    backend's own scalar and is therefore traceable and differentiable.
+
+    The pair closed is the **map view**: codomain against domain, in order, the same
+    view ``eigh``, ``expm``, ``svd`` and ``to_matrices`` act through. Any rank with a
+    square map, so a rank-4 ``(V OUT, W OUT | V IN, W IN)`` gives ``np.einsum("abab->")``
+    and not an axis-adjacent pairing; :func:`trace` remains the way to close one *chosen*
+    pair and to keep a tensor.
+
+    The ``qdim`` weight is the same one :func:`~tenet.norm` carries, and it is what makes
+    ``full_trace(t) == np.trace(t.to_dense())`` hold for a rank-2 map; dropping it is
+    wrong for any non-Abelian provider. Returns the backend's own scalar — no ``float()``,
+    which would make the function unusable under ``jit``/``grad``/``vmap``; callers
+    needing a Python float say ``float(tenet.full_trace(t))``.
+    """
+    requires(t.provider, QuantumDimension)
+    check_square(t, "full_trace")
+    if not t.blocks:
+        return 0.0
+    qdim = t.provider.qdim
+    return sum(qdim(c) * ar.do("trace", m) for c, m in to_matrices(t).items())
+
+
+def inner(a: "SymmetricTensor", b: "SymmetricTensor") -> Any:
+    """``<a|b>``: contract every axis but the first, then :func:`full_trace` the rest.
+
+    Sesquilinear in ``a``, and :func:`~tenet.norm`'s sibling — ``inner(a, a)`` is
+    ``norm(a)**2``. Works at any rank, which is what lets
+    :func:`~tenet.network.lanczos` be a plain vector-space algorithm: the adjoint flips
+    every leg, so axis 0 of ``adjoint(a)`` is IN and axis 0 of ``b`` is OUT, and the
+    leftover rank-2 map is exactly what :func:`full_trace` closes.
+
+    The ``string.ascii_lowercase`` labelling caps this at rank 26, above which
+    :func:`einsum`'s own parser raises with a clear message. A rank-27 tensor has other
+    problems.
+    """
+    rest = string.ascii_lowercase[1 : a.ndim]
+    return full_trace(einsum(f"L{rest},l{rest}->lL", adjoint(a), b))
 
 
 def _parse(equation: str, operands: tuple["SymmetricTensor", ...]) -> tuple[list[str], str]:

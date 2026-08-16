@@ -22,7 +22,7 @@ import numpy as np
 
 import tenet
 from tenet import SymmetricTensor
-from tenet.network.common import inner, spectrum
+from tenet.network.common import spectrum
 from tenet.network.env import Env
 from tenet.network.mps import MPO, MPS
 
@@ -45,7 +45,7 @@ def lanczos(
     own DMRG defaults (``_dmrg.py``:151-152) and are not knobs this layer tunes.
 
     The only tensor operations are ``tenet.add``/``subtract``, scalar multiply/divide,
-    ``tenet.norm`` and :func:`~tenet.network.inner` -- a Krylov solver needs a vector
+    ``tenet.norm`` and :func:`tenet.inner` -- a Krylov solver needs a vector
     space and nothing else, and a ``SymmetricTensor`` is one.
 
     ponytail: **no reorthogonalization**, and neither has YASTN. At ``ncv=3`` the
@@ -62,7 +62,7 @@ def lanczos(
     betas: list[float] = []
     for j in range(ncv):
         w = matvec(vecs[j])
-        alphas.append(float(inner(vecs[j], w)))
+        alphas.append(float(tenet.inner(vecs[j], w)))
         w = tenet.subtract(w, vecs[j] * alphas[j])
         if j:
             w = tenet.subtract(w, vecs[j - 1] * betas[j - 1])
