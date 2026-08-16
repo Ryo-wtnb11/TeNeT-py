@@ -13,23 +13,23 @@ a test below:
   driver that reads them is doing arithmetic below the public API.
 
 **The one named exception**, spelled out because it is a line and not a loophole:
-reading ``t.provider``, ``provider.qdim`` and ``provider.unit`` is allowed.
-``scalar()`` and ``spectrum()`` need the ``qdim`` weight and there is no public spelling
-of a qdim-weighted trace. That is *symmetry-generic metadata*: ``provider.qdim(c)`` is
-fine, ``isinstance(provider, SU2Provider)`` is not, and the second is what the branch test
-below forbids.
+reading ``t.provider``, ``provider.qdim`` and ``provider.unit`` is allowed. Two reads are
+left, and each has one owner: ``common.spectrum`` needs ``sqrt(qdim)`` for its Schmidt
+weights, and ``ctmrg.py`` needs ``provider.unit`` for the trivial sector. That is
+*symmetry-generic metadata*: ``provider.qdim(c)`` is fine, ``isinstance(provider,
+SU2Provider)`` is not, and the second is what the branch test below forbids.
 
-**The duplicated-``scalar`` finding #112 recorded, corrected and resolved (#114).** It was
-recorded as *three* files writing the same five-line ``sum(qdim(c) * trace(m))``; it was
-**two**. ``examples/vmc_mps.py``:158-160 is a *different* function -- ``t.blocks[0][0, 0]``,
-the trivial-leg shortcut for a network with no non-unit sector on the open bond, not
-qdim-weighted at all -- and it is deliberately untouched. The two real copies were
-``examples/ctmrg.py`` and ``tenet/network/mps.py::scalar``, and #114 resolved them by
-moving ``scalar``, ``inner``, ``spectrum`` and ``env._ones`` into ``network/common.py``
-with their bodies unchanged; the example imports them. The *bigger* step -- a qdim-weighted
-trace in ``tenet.ops`` next to ``trace`` -- stays a separate issue, because it changes
-``src/tenet/`` public semantics inside a PR whose whole claim is that it moves code without
-changing numbers.
+**The duplicated-``scalar`` finding #112 recorded, corrected and closed (#114, #126).** It
+was recorded as *three* files writing the same five-line ``sum(qdim(c) * trace(m))``; it
+was **two**. ``examples/vmc_mps.py``:158-160 is a *different* function --
+``t.blocks[0][0, 0]``, the trivial-leg shortcut for a network with no non-unit sector on
+the open bond, not qdim-weighted at all -- and it is deliberately untouched. The two real
+copies were ``examples/ctmrg.py`` and ``tenet/network/mps.py::scalar``; #114 moved them
+into ``network/common.py`` with their bodies unchanged, and #126 finished the job by
+promoting the qdim-weighted trace to ``tenet.full_trace`` (and ``inner`` to
+``tenet.inner``) in ``tenet.ops``, next to ``trace``. There is now a public spelling, so
+``scalar`` is deleted rather than allowed, and ``spectrum`` alone owns the ``qdim``
+allowance above.
 """
 
 import ast

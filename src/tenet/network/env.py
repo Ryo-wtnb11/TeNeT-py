@@ -9,7 +9,7 @@ from typing import Any
 
 import tenet
 from tenet import IN, OUT, Leg, SymmetricTensor
-from tenet.network.common import ones, scalar
+from tenet.network.common import ones
 from tenet.network.mps import MPO, MPS
 
 __all__ = ["Env"]
@@ -119,7 +119,8 @@ class Env:
         env = Env(self.psi, self.h)
         for site in range(n):
             env.update_(site, to="last")
-        return float(scalar(tenet.einsum("rms,Rms->Rr", env.F[n - 1, n], env.F[n, n - 1])))
+        closed = tenet.einsum("rms,Rms->Rr", env.F[n - 1, n], env.F[n, n - 1])
+        return float(tenet.full_trace(closed))
 
     def __repr__(self) -> str:
         return f"Env(sites={len(self.psi)}, bonds={sorted(self.F)})"

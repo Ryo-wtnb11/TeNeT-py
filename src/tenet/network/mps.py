@@ -5,8 +5,8 @@ Promoted from ``examples/dmrg.py`` (#110) with no arithmetic change: ``random_mp
 ``canonicalize`` :289-306 (now :meth:`MPS.canonize_`) and ``mpo`` :220-240 (now
 :meth:`MPO.from_w`). ``scalar``, ``inner`` and ``spectrum`` lived here until #114 moved
 them to :mod:`tenet.network.common`, where ``network/ctmrg.py`` can reach them without
-importing a driver it shares no concept with; they are re-exported below so
-``from tenet.network.mps import scalar`` is unchanged for every caller.
+importing a driver it shares no concept with; #126 then promoted the first two out of the
+driver layer entirely, as :func:`tenet.full_trace` and :func:`tenet.inner`.
 """
 
 import json
@@ -17,7 +17,7 @@ from typing import Any
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-from tenet.network.common import inner, scalar, spectrum
+from tenet.network.common import spectrum
 
 __all__ = [
     "MPO",
@@ -25,8 +25,6 @@ __all__ = [
     "MPS_FORMAT_VERSION",
     "expectation_1site",
     "expectation_2site",
-    "inner",
-    "scalar",
     "spectrum",
 ]
 
@@ -163,7 +161,7 @@ class MPS:
         return self
 
     def norm(self) -> float:
-        """``sqrt(<psi|psi>)`` by one bra-ket transfer pass, closed with :func:`scalar`.
+        """``sqrt(<psi|psi>)`` by one bra-ket transfer pass, closed with :func:`tenet.full_trace`.
 
         No dense expansion and no environment object: two ``tenet.einsum`` calls per site,
         the same pairwise shape :meth:`Env.update_` uses with the MPO row removed.
@@ -172,7 +170,7 @@ class MPS:
         for n in range(1, len(self)):
             t = tenet.einsum("Rr,rps->Rps", t, self[n])
             t = tenet.einsum("RpS,Rps->Ss", tenet.adjoint(self[n]), t)
-        return float(scalar(t)) ** 0.5
+        return float(tenet.full_trace(t)) ** 0.5
 
     def to_dense(self) -> Any:
         """The full ``d**N`` amplitude array, ``D=1`` boundaries dropped.
@@ -324,7 +322,7 @@ def _braket(bra: Sequence[SymmetricTensor], ket: Sequence[SymmetricTensor]) -> A
     for n in range(1, len(ket)):
         t = tenet.einsum("Rr,rps->Rps", t, ket[n])
         t = tenet.einsum("RpS,Rps->Ss", tenet.adjoint(bra[n]), t)
-    return scalar(t)
+    return tenet.full_trace(t)
 
 
 def _check(psi: MPS, o: SymmetricTensor, n: int, ndim: int, last: int) -> None:

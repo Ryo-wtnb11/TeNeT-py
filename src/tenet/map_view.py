@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 
 from tenet.fusion_tree import FusionTree
+from tenet.leg import Leg
 from tenet.space import ProductSpace
 from tenet.structure import FusionBlockKey, TensorStructure
 from tenet.symmetry.base import Sector
@@ -55,6 +56,7 @@ __all__ = [
     "MapLayout",
     "TensorMapView",
     "as_map",
+    "check_square",
     "from_matrices",
     "map_layout",
     "to_matrices",
@@ -328,6 +330,40 @@ class TensorMapView:
 def as_map(t: "SymmetricTensor") -> TensorMapView:
     """View ``t`` as a morphism. Zero-copy: no block is read, moved or allocated."""
     return TensorMapView(t)
+
+
+def check_square(m: "SymmetricTensor", caller: str) -> None:
+    """Refuse a map whose domain is not its codomain, as ``(space, dual)`` in order.
+
+    Not a new checker: the predicate is ``ProductSpace.matches``, the identical
+    call ``ops.map._check_composable`` makes — ``m`` composability-checked against
+    itself. Only the message is new. Structural and total; the *numbers* are never
+    inspected (see :func:`~tenet.linalg.eigh`).
+
+    ``caller`` is the name the message opens with. Five square-map operations share
+    this paragraph (``eigh``, ``expm``, ``eig``, ``eigvals``, ``full_trace``); a copy
+    per caller is a paragraph that would need editing five times. It lives here, next
+    to :func:`as_map`, because the predicate is pure map-view metadata — ``ops`` used
+    to hold it privately and its fifth caller is in another ``ops`` module (#126).
+    """
+    codomain, domain = as_map(m).codomain, as_map(m).domain
+    i = codomain.matches(domain)
+    if i is None:
+        return
+
+    def at(axes: tuple[int, ...], legs: tuple[Leg, ...]) -> str:
+        return f"public axis {axes[i]}: {legs[i]!r}" if i < len(legs) else "no leg"
+
+    raise ValueError(
+        f"{caller}: the map is not square at position {i} "
+        f"(codomain {at(m.structure.out_axes, codomain.legs)}; "
+        f"domain {at(m.structure.in_axes, domain.legs)}). "
+        f"{caller} requires the domain to be the codomain as (space, dual) in the same order — "
+        "side is not compared and name is ignored, and dimensions alone are never enough "
+        "(a charge-reversed U(1) partner has the same dimension and the wrong space). "
+        "Matching only up to a reordering would be a within-side transpose, i.e. a braid; "
+        "use tenet.transpose, or repartition (#32), to build a square map first."
+    )
 
 
 def _check(layout: MapLayout, mats: Mapping[Sector, Any]) -> None:

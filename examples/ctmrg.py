@@ -61,7 +61,6 @@ from tenet.network import (
     double_layer_ctm,
     layers,
     ring,
-    scalar,
     single_layer,
     single_layer_ctm,
 )
@@ -169,7 +168,7 @@ def log_kappa(beta, env, k: int = 4):
     ``kappa = Z(L+1,L+1) Z(L,L) / Z(L+1,L) Z(L,L+1)``, Baxter's corner-transfer
     telescoping: four corners cover an ``L x L`` patch, adding four edges and one bulk
     tensor covers ``(L+1) x (L+1)``, and adding only the left and right edges covers
-    ``L x (L+1)``. Every leg closes except one bond, which ``scalar`` traces. ``env`` is
+    ``L x (L+1)``. Every leg closes except one bond, which ``tenet.full_trace`` closes. ``env`` is
     the ``CTMEnv`` from ``ctmrg``: the truncated backprop's *initial condition*, which
     carries no gradient, while the ``k`` moves inside do.
     """
@@ -177,9 +176,11 @@ def log_kappa(beta, env, k: int = 4):
     bulk = ising_bulk(beta)
     c, e = ctmrg_unrolled(c0, e0, single_layer(bulk), bond, k=k)
     cc, ca, ec, ea = ring(c, e)
-    z_c = scalar(tenet.einsum("ab,ac,dc,eb->de", cc, ca, cc, ca))
-    z_h = scalar(tenet.einsum("ab,ac,dcf,ed,eg,ghf->hb", cc, ca, ea, cc, ca, ec, optimize=PATH))
-    z_a = scalar(
+    z_c = tenet.full_trace(tenet.einsum("ab,ac,dc,eb->de", cc, ca, cc, ca))
+    z_h = tenet.full_trace(
+        tenet.einsum("ab,ac,dcf,ed,eg,ghf->hb", cc, ca, ea, cc, ca, ec, optimize=PATH)
+    )
+    z_a = tenet.full_trace(
         tenet.einsum(
             "ab,acp,cd,edq,fe,gfr,gh,hks,spqr->kb",
             cc,
@@ -265,7 +266,7 @@ def energy(a: SymmetricTensor, h: SymmetricTensor, env, k: int = 4):
     The ring is four corners, two top edges, two bottom edges and one edge on each side;
     each site enters as a ket and a bra absorbed one after the other, physical legs left
     **open** in the numerator so ``h`` closes them and closed against each other in the
-    denominator. One bond stays open for ``scalar``. With :func:`_halves` this is a
+    denominator. One bond stays open for ``tenet.full_trace``. With :func:`_halves` this is a
     reduced-density-matrix API at one geometry, which is why it stayed out of the library.
 
     ponytail: ``h`` closes two open physical legs (froSTspin ``contract_open_corner``)
@@ -278,9 +279,11 @@ def energy(a: SymmetricTensor, h: SymmetricTensor, env, k: int = 4):
     ket, bra = layers(c4v(a))
     r = ring(*ctmrg_unrolled(c0, e0, double_layer(ket, bra), bond, k=k))
     left, right = _halves(r, ket, bra, "Ww", "Xx")
-    numerator = scalar(tenet.einsum("WwbckhrR,XxchrR,WXwx->kb", left, right, h, optimize=PATH))
+    numerator = tenet.full_trace(
+        tenet.einsum("WwbckhrR,XxchrR,WXwx->kb", left, right, h, optimize=PATH)
+    )
     left, right = _halves(r, ket, bra)
-    denominator = scalar(tenet.einsum("bckhrR,chrR->kb", left, right))
+    denominator = tenet.full_trace(tenet.einsum("bckhrR,chrR->kb", left, right))
     return numerator / denominator
 
 

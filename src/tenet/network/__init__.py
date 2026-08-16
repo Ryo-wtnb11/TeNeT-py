@@ -16,8 +16,8 @@ so it is written where it holds:
   energy change, and M11c's :meth:`MPS.save` / :meth:`MPS.load`, :meth:`MPS.compress_`
   and :func:`expectation_1site` / :func:`expectation_2site` are outside for the same
   reasons -- filesystem I/O, a re-decided bond space, and a truncating split;
-* ``common.py`` -- **trace-neutral**, and used on both sides: :func:`scalar` runs inside a
-  differentiated region in ``examples/ctmrg.py``, :func:`spectrum` only ever outside one;
+* ``common.py`` -- **trace-neutral**; :func:`spectrum` is nonetheless only ever called
+  outside a trace, its ``sorted`` Python list being driver output rather than a tensor;
 * ``ctmrg.py`` -- **both**, stated per function in its own docstrings. :func:`ctmrg`
   reads singular values and a corner spectrum, so it raises under any trace;
   :func:`ctmrg_unrolled` and ``move(bond=B)`` are shape-static and differentiable; and
@@ -37,20 +37,21 @@ Contents. M11a: :class:`MPS`, :class:`MPO`, :class:`Env`, :func:`lanczos`, :func
 and :func:`ring`. M11c: :meth:`MPS.save` / :meth:`MPS.load` and :meth:`MPS.compress_`,
 the two measurements :func:`expectation_1site` and :func:`expectation_2site`, and
 :class:`CTMRG_out` -- :func:`ctmrg`'s return, which was a bare ``(CTMEnv, history)``
-tuple. Shared: the two scalar exits :func:`scalar` and :func:`inner`, the bond
-spectrum :func:`spectrum` and the :func:`ones` seed. Promoted verbatim from
+tuple. Shared: the bond spectrum :func:`spectrum` and the :func:`ones` seed -- the two
+scalar exits that sat beside them left for ``tenet.ops`` in #126, as
+:func:`tenet.full_trace` and :func:`tenet.inner`. Promoted verbatim from
 ``examples/dmrg.py`` (#110) and ``examples/ctmrg.py`` (#102/#104/#105/#107) under the rule
 that no number may move.
 
 Uses **public ``tenet`` API only**: no ``jax``/``torch``/``scipy``/``quimb``/
 ``opt_einsum``, no ``_``-prefixed reach into other modules, no numerical use of
 ``t.blocks``. The one named exception is reading ``t.provider`` / ``provider.qdim`` /
-``provider.unit``, which :func:`scalar` and :func:`spectrum` need because there is no
-public spelling of a qdim-weighted trace; that is symmetry-generic metadata, not a
-provider branch. ``tests/network/test_hygiene.py`` enforces both halves.
+``provider.unit``, which :func:`spectrum`'s ``sqrt(qdim)`` diagonal weight and
+``ctmrg.py``'s unit sector need; that is symmetry-generic metadata, not a provider
+branch. ``tests/network/test_hygiene.py`` enforces both halves.
 """
 
-from tenet.network.common import inner, ones, scalar, spectrum
+from tenet.network.common import ones, spectrum
 from tenet.network.ctmrg import (
     Absorb,
     CTMEnv,
@@ -87,14 +88,12 @@ __all__ = [
     "expectation_1site",
     "expectation_2site",
     "init_env",
-    "inner",
     "lanczos",
     "layers",
     "move",
     "normalized",
     "ones",
     "ring",
-    "scalar",
     "single_layer",
     "single_layer_ctm",
     "spectrum",

@@ -189,12 +189,6 @@ def test_lanczos_finds_the_lowest_eigenvalue():
     assert value == pytest.approx(expected, abs=1e-10)
 
 
-def test_inner_product_agrees_with_the_norm():
-    """``inner(v, v) == norm(v)**2`` -- the one identity :func:`tenet.network.lanczos` leans on."""
-    v = network.MPS.random(dmrg.PHYS, dmrg.bond_spaces(6), seed=11).canonize_()[0]
-    assert float(network.inner(v, v)) == pytest.approx(float(tenet.norm(v)) ** 2, rel=1e-12)
-
-
 # --- the environment cache ---------------------------------------------------------
 
 
