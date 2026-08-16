@@ -3,6 +3,7 @@ name = "tenet-py"
 version = "0.1.0"
 description = "Non-Abelian symmetric tensors with ndarray-style Python APIs and backend-native numerical execution"
 readme = "README.md"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "autoray>=0.10.1",

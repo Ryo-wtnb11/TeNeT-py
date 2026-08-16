@@ -1,6 +1,6 @@
 """PyTorch as a backend, measured rather than claimed (issue #95).
 
-``README`` lists PyTorch in five places and ``ops/basic.py`` says arithmetic "must
+``docs/design.md`` lists PyTorch in five places and ``ops/basic.py`` says arithmetic "must
 already work on JAX (or torch) blocks"; this module is what makes those statements
 enforceable. Every array touch in ``src/`` goes through ``ar.do``, so the coverage
 here is **breadth of ops** — every public op once on torch blocks — rather than

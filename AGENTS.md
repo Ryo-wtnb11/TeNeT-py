@@ -5,7 +5,7 @@ Guide for coding agents (and humans) working in this repository.
 ## What this project is
 
 `TeNeT-py`: non-Abelian symmetric tensors with ndarray-style Python APIs and
-backend-native numerical execution. **`README.md` is the design document.**
+backend-native numerical execution. **`docs/design.md` is the design document.**
 Read the relevant section of it before implementing anything; it defines the
 architecture, milestones, and invariants. `REPOSITORY_RULES.md` defines
 process rules.
@@ -32,11 +32,11 @@ CI runs exactly: `ruff check`, `ruff format --check`, `pytest`. All must pass.
 ## Layout
 
 ```text
-src/tenet/       library code (src layout; see "Proposed package structure" in README.md)
+src/tenet/       library code (src layout; see "Proposed package structure" in docs/design.md)
 tests/           pytest tests, mirroring src/tenet/ structure
 ```
 
-## Design invariants (condensed from README.md — full list there is authoritative)
+## Design invariants (condensed from docs/design.md — full list there is authoritative)
 
 1. Every `SymmetricTensor` has exact TensorMap semantics: `domain`/`codomain`
    derived from leg metadata.
@@ -80,5 +80,5 @@ tests/           pytest tests, mirroring src/tenet/ structure
 - Integration surface: `get_params`/`set_params` (quimb-compatible) is core;
   JAX PyTree registration is opt-in via `tenet.pytree` (import-guarded, core
   never imports jax/torch).
-- Follow the milestone order in README.md ("Initial implementation strategy")
+- Follow the milestone order in docs/design.md ("Initial implementation strategy")
   unless told otherwise.

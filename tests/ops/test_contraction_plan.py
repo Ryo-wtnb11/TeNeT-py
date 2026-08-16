@@ -4,7 +4,7 @@ No new mathematics is tested here, deliberately: #53 moved code, and #51/#52's
 dense oracles are its regression suite. What *is* tested is the planning
 contract — array-freeness, cache identity, prediction of the output structure
 without executing, refusal before one sub-plan is built, and the reuse the
-README's "Plan caching" section promises, counted with ``cache_info()`` instead
+docs/design.md's "Plan caching" section promises, counted with ``cache_info()`` instead
 of asserted in a docstring.
 """
 
@@ -240,7 +240,7 @@ def test_refusal_happens_before_one_sub_plan_is_built():
 
 
 def test_fifty_calls_are_one_miss_and_forty_nine_hits_for_every_plan_cache():
-    """README "Plan caching" as a checked property, over the whole sub-plan chain."""
+    """docs/design.md "Plan caching" as a checked property, over the whole sub-plan chain."""
     case = bending(V_SU2, W_SU2)
     a_legs, b_legs, axes = case
     tensors = [

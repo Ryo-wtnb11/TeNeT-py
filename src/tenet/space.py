@@ -117,7 +117,7 @@ class GradedSpace(_HashMemo):
 class ProductSpace:
     """An ordered tuple of legs, viewed as one factor of ``Hom(domain, codomain)``.
 
-    A TensorMap-level value type (README "``ProductSpace``"): nobody constructs one
+    A TensorMap-level value type (docs/design.md "``ProductSpace``"): nobody constructs one
     to make an ordinary five-axis tensor, and ``SymmetricTensor.codomain`` keeps
     returning plain legs. It appears on :class:`~tenet.map_view.TensorMapView`.
 

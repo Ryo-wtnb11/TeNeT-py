@@ -23,7 +23,7 @@ so it is written where it holds:
   :class:`~tenet.GradedSpace` is the **only** object that crosses between them, and it
   crosses as a jit cache key, never as a jit argument.
 
-That is the complement of README invariant 9, not an exception to it: invariant 9 says
+That is the complement of docs/design.md invariant 9, not an exception to it: invariant 9 says
 structure-changing operations live outside compile boundaries and the library never hides
 the distinction; this package is where data-dependent control flow is *allowed to live*,
 and ``ctmrg.py`` is where the two sides meet and are named.

@@ -48,7 +48,7 @@ design), ``lanczos``'s happy breakdown tests a norm against ``tol``, and ``dmrg`
 exits on a measured energy change. Every one of those is precisely what tenet refuses to
 trace, and correctly. So this module runs on the eager NumPy backend and makes no
 differentiability claim of any kind -- and neither does ``tenet.network``, which is
-outside ``jit``/``grad`` by construction (README, M11). The #77 pairing --
+outside ``jit``/``grad`` by construction (docs/design.md, M11). The #77 pairing --
 ``svd_truncated`` *outside* the trace, ``svd(bond=)`` *inside* it -- has **two**
 legitimate halves, and this file uses one: ``ctmrg.py`` needs the inside half because it
 differentiates through its sweeps; DMRG needs only the outside half because it does not.

@@ -14,7 +14,7 @@ a non-equivariant result. Order cannot be waived either — matching "up to a
 reordering" would need a within-side transpose, which is a braid (#21).
 
 :func:`adjoint` is the dagger, and it is one of four operations that are easy to
-confuse and are deliberately kept apart (invariant 2, README "Conjugation,
+confuse and are deliberately kept apart (invariant 2, docs/design.md "Conjugation,
 duality, and adjoint are distinct"):
 
 ======================  ==========  ==========  =======================  ==============

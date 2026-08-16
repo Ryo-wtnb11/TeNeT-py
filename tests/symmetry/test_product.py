@@ -83,7 +83,7 @@ def su(two_j: int, c: int) -> ProductSector:
 # --- spaces and tensors -------------------------------------------------------------
 
 UU_SPACE = GradedSpace.new(UU, {uu(0, 0): 2, uu(1, 0): 1, uu(0, 1): 1, uu(1, 1): 1})
-# a genuine "fermionic U(1)": parity is charge mod 2, README's motivating example
+# a genuine "fermionic U(1)": parity is charge mod 2, docs/design.md's motivating example
 UF_SPACE = GradedSpace.new(UF, {uf(0, 0): 2, uf(1, 1): 1, uf(-1, 1): 1})
 SU_SPACE = GradedSpace.new(SU, {su(0, 0): 1, su(1, 1): 1})
 

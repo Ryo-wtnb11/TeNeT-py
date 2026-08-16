@@ -3,7 +3,7 @@
 Milestone 7. Every function here is the same lowering with a different backend
 call and a different set of output legs; ``_lower`` is shared verbatim.
 
-The lowering is the one README "Linear algebra" draws, and every arrow of it is
+The lowering is the one docs/design.md "Linear algebra" draws, and every arrow of it is
 already built: :func:`~tenet.ops.repartition.repartition` puts the requested
 ``left`` into the codomain and ``right`` into the domain, :func:`to_matrices`
 hands back one dense ``B_c`` per coupled sector, and the backend factorizes each
@@ -18,7 +18,7 @@ whose degeneracy at ``c`` is ``min(*layout.shape(c))``, read straight off
 :class:`~tenet.map_view.MapLayout`. It is static metadata, so both functions are
 shape-static and traceable.
 
-Fixed-structure only (README "Structure-changing differentiation", invariant
+Fixed-structure only (docs/design.md "Structure-changing differentiation", invariant
 10): this is the *compact* SVD/QR, with no truncation, no tolerance and no
 zero-sector elimination. A sector whose ``B_c`` happens to be rank-deficient
 keeps its full ``min`` bond degeneracy and carries zero singular values;
@@ -754,11 +754,11 @@ def svd_truncated(
     Same factor legs, same conventions and the same capability refusals as
     :func:`svd`; the only difference is the bond :class:`~tenet.space.GradedSpace`,
     whose degeneracy at ``c`` is the number of kept singular values there and which
-    **omits ``c`` entirely** when that number is zero. That is README Milestone 7's
+    **omits ``c`` entirely** when that number is zero. That is docs/design.md Milestone 7's
     "graded bond-space reconstruction", and it is why this is a sibling of
     :func:`svd` rather than a keyword on it: a keyword would make one function
     traceable or not depending on the value of an argument, which is exactly the
-    distinction README says the library must never hide. Under ``jax.jit`` or
+    distinction docs/design.md says the library must never hide. Under ``jax.jit`` or
     ``jax.grad`` it raises
     :class:`~tenet.symmetry.base.StructureChangingError`.
 
