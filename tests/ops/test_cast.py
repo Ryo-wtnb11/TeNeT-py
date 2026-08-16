@@ -427,7 +427,7 @@ def test_cast_owns_no_plan_and_no_cache_and_records_the_shortcut():
     src = inspect.getsource(sys.modules["tenet.ops.cast"])
     assert "@cache" not in src and "lru_cache" not in src
     assert "class " not in src  # no plan object of its own; it reuses dense_plan's
-    assert "ponytail:" in src
+    assert "Simplification: " in src
 
 
 def test_dispatch_list_is_untouched():

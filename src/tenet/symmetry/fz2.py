@@ -22,7 +22,7 @@ and absorbs the parity endomorphism into the right-evaluation map, which is
 exactly why the Frobenius-Schur phase stays ``+1`` while the twist carries the
 sign. Nothing in TeNeT-py consumes the twist yet — ``norm`` is qdim-weighted and
 every qdim is ``1``, so it is unaffected.
-ponytail: ``trace`` and ``adjoint`` (#31), and any closed fermion loop, are the
+Simplification: ``trace`` and ``adjoint`` (#31), and any closed fermion loop, are the
 operations that will need it; add a ``Twist`` capability then, not before.
 
 Source for every constant asserted above, TensorKitSectors ``src/fermions.jl`` at
@@ -76,7 +76,7 @@ def koszul_sign(uncoupled: tuple[Sector, ...], perm: tuple[int, ...]) -> float:
     """
     odd = [i for i in perm if uncoupled[i].parity]  # old positions of odd lines, in NEW order
     inversions = sum(1 for j in range(len(odd)) for k in range(j + 1, len(odd)) if odd[j] > odd[k])
-    # ponytail: O(n^2). Merge-sort inversion count if tree ranks ever leave single digits.
+    # Simplification: O(n^2). Merge-sort inversion count if tree ranks ever leave single digits.
     return -1.0 if inversions % 2 else 1.0
 
 

@@ -87,7 +87,7 @@ class ProductSector(Sector):
 def mu_encode(ns: tuple[int, ...], mus: tuple[int, ...]) -> int:
     """Mixed radix, first factor most significant: ``sum_i mu_i * prod_{j>i} n_j``.
 
-    ponytail: every product of multiplicity-free factors is multiplicity-free, so
+    Simplification: every product of multiplicity-free factors is multiplicity-free, so
     no shipped provider ever reaches ``n > 1`` here. It is implemented anyway
     (three lines; omitting it would mean rewriting ``project``/``assemble`` later)
     and its only coverage is the ``n_symbol == 2`` stub in

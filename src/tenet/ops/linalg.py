@@ -40,7 +40,7 @@ Conventions:
   ``absorb`` enum is needed. The raw singular values are
   ``{c: ar.do("diagonal", m) for c, m in tenet.to_matrices(S).items()}``.
   ``S`` is real even when ``U`` and ``Vh`` are complex.
-  ponytail: ``S`` stores a dense ``m_c × m_c`` block per sector where a vector
+  Simplification: ``S`` stores a dense ``m_c × m_c`` block per sector where a vector
   would do; add a diagonal storage type when a bond dimension makes that memory
   actually hurt, i.e. never before truncation exists.
 * Reconstruction is exact against ``repartition(t, left, right)``, not against
@@ -313,7 +313,7 @@ def polar(
     singular. Same fact as ``svd``'s zero-rank sectors — structure is metadata,
     rank is data.
 
-    ponytail: ``PolarViaSVD``, MatrixAlgebraKit's own default, because ``autoray``
+    Simplification: ``PolarViaSVD``, MatrixAlgebraKit's own default, because ``autoray``
     has no uniform ``linalg.polar`` and the alternative is a Newton-Schulz
     iteration, i.e. a convergence tolerance and a second numerical framework. Swap
     a backend ``polar`` into the sector loop below if one ever becomes uniform.
@@ -437,7 +437,7 @@ def left_null(t: "SymmetricTensor", axes: Axes = None) -> "SymmetricTensor":
     would make the output structure depend on block values, which is ``_lower``'s
     standing refusal ("min(rows_c, cols_c) is metadata, never the numerical rank")
     applied to the complement.
-    ponytail: shape-null only. A numerical sibling taking a rank tolerance arrives
+    Simplification: shape-null only. A numerical sibling taking a rank tolerance arrives
     as a **separate, non-traceable** function raising ``StructureChangingError``
     under a trace — ``svd``/``svd_truncated``'s split, reused — when a caller
     turns up with an opinion about the discarded directions.
@@ -532,7 +532,7 @@ def expm(t: "SymmetricTensor", axes: Axes = None, *, alpha: Any = 1.0) -> "Symme
     norm comparison is a data-dependent branch and could not run inside a trace
     (invariant 9) — and the caller's escape is the one physics already uses,
     ``exp(alpha H) = exp(alpha H / n)**n``.
-    ponytail: no norm guard; add one only outside the traced region, in the caller.
+    Simplification: no norm guard; add one only outside the traced region, in the caller.
 
     On the NumPy backend the exponential is SciPy's, and SciPy is *not* a dependency
     of this library; without it the call raises an ``ImportError`` naming

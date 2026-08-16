@@ -44,7 +44,7 @@ ROUND_TRIP_LEGS = [
 
 def use_jax():
     jax = pytest.importorskip("jax")
-    # ponytail: global x64, same as tests/ops/test_basic.py — the 1e-12
+    # Simplification: global x64, same as tests/ops/test_basic.py — the 1e-12
     # tolerances below are meaningless in float32.
     jax.config.update("jax_enable_x64", True)
     return jax

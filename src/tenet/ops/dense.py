@@ -191,7 +191,7 @@ def dense_plan(structure: TensorStructure) -> DensePlan:
     ``GradedSpace``s holding the frozen provider *value*, so provider identity —
     and with it the gauge — is already in the key.
 
-    ponytail: unbounded ``functools.cache``, as every other plan cache. The
+    Simplification: unbounded ``functools.cache``, as every other plan cache. The
     ceiling is larger here than for the array-free plans — a plan holds
     ``Σ_cells K·Π d_i`` floats, i.e. every CG tensor of the structure at once —
     so swap in ``lru_cache(maxsize=...)`` if a workload ever densifies many

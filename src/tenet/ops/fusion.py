@@ -206,7 +206,7 @@ def _check_axes(s: TensorStructure, axes: tuple[int, ...], op: str = "fuse") -> 
     bad = tuple(ax for ax in axes if not isinstance(ax, int) or isinstance(ax, bool))
     if bad:
         raise TypeError(f"{op}: axes must be ints, got {bad!r}")
-    # ponytail: no negative-axis normalization. `fuse` places the result at
+    # Simplification: no negative-axis normalization. `fuse` places the result at
     # min(axes), and mixing -1 with 0 makes "min" mean two things.
     out_of_range = tuple(ax for ax in axes if not 0 <= ax < s.ndim)
     if out_of_range:
@@ -302,7 +302,7 @@ def _unapply(step: FusionStep, blocks: tuple[Any, ...]) -> tuple[Any, ...]:
         offset = 0
         for i, shape in chunks:
             extent = shape[step.axis] * shape[step.axis + 1]
-            # ponytail: basic slicing, not an ar.do — every backend spells a
+            # Simplification: basic slicing, not an ar.do — every backend spells a
             # contiguous slice the same way, and autoray has no split wrapper.
             piece = block[(slice(None),) * step.axis + (slice(offset, offset + extent),)]
             piece = ar.do("reshape", piece, shape)

@@ -68,7 +68,7 @@ class TensorStructure(_HashMemo):
 
     def __post_init__(self) -> None:
         if not self.legs:
-            # ponytail: a leg-less scalar has no provider to enumerate against.
+            # Simplification: a leg-less scalar has no provider to enumerate against.
             # Give TensorStructure an explicit provider field if scalars ever matter.
             raise ValueError("TensorStructure needs at least one leg")
         object.__setattr__(self, "legs", tuple(self.legs))
@@ -163,7 +163,7 @@ class TensorStructure(_HashMemo):
 
 
 # --- derived values: module-level caches keyed on the (frozen, hashable) structure ---
-# ponytail: unbounded caches, deliberately — structures are small, few and long-lived,
+# Simplification: unbounded caches, deliberately — structures are small, few and long-lived,
 # and sharing across equal structures is the point. Swap for lru_cache if that changes.
 
 

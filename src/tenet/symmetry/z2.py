@@ -29,7 +29,7 @@ sits next to ``FermionParity`` there for exactly the reason two files sit next t
 each other here: same fusion rules, different ``BraidingStyle``.
 https://github.com/QuantumKitHub/TensorKitSectors.jl
 
-ponytail: mod-2 is hardcoded. ``Z_N`` for ``N > 2`` is a real generalization
+Simplification: mod-2 is hardcoded. ``Z_N`` for ``N > 2`` is a real generalization
 (non-self-dual sectors, ``dual(a) = N - a``); the upgrade path is a separate
 ``ZNProvider`` with an ``n`` field, not a flag on this one.
 """

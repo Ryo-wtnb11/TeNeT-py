@@ -60,7 +60,7 @@ round-trips our ``to_dense`` output at exactly 0.0 — validating the CG tree
 assembly, the ``alpha*d_a + m`` slab layout and the ``z_matrix`` duality
 handling end to end.
 
-ponytail: the upgrade path for a provider that can carry two gauges is a
+Simplification: the upgrade path for a provider that can carry two gauges is a
 ``gauge`` field on the provider itself, which then enters every existing cache
 key for free with zero cache-code changes — and which knowingly flips
 ``tests/symmetry/test_fz2.py::test_gauge_is_a_module_string_not_a_field``. One

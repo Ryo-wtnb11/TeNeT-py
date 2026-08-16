@@ -43,7 +43,7 @@ PAIRS = [
 
 def use_jax():
     jax = pytest.importorskip("jax")
-    # ponytail: global x64, same as tests/test_map_view.py — float32 would make
+    # Simplification: global x64, same as tests/test_map_view.py — float32 would make
     # the tolerances below meaningless.
     jax.config.update("jax_enable_x64", True)
     return jax

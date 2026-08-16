@@ -525,8 +525,8 @@ def test_module_is_numpy_free_and_provider_agnostic():
     assert "if provider ==" not in src
     assert "isinstance(provider" not in src
     assert 'ar.do("transpose"' in src
-    # #38 deleted the rejected rank-1 SU(2) shortcut, and with it its ponytail note
-    assert "ponytail:" not in src
+    # #38 deleted the rejected rank-1 SU(2) shortcut, and with it its simplification note
+    assert "Simplification: " not in src
     assert "Milestone 4" not in src
 
 

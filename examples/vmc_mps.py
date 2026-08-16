@@ -35,7 +35,7 @@ a set of ansaetze sharing one sector pattern (equivalently, one total charge), w
 is the physically meaningful batching for a symmetric ansatz anyway. Sampling itself
 is out of scope here.
 
-ponytail: ``h`` is a *random* symmetric two-site operator, not a Heisenberg term.
+Simplification: ``h`` is a *random* symmetric two-site operator, not a Heisenberg term.
 Equivariance is automatic from the legs and the pipeline under test is identical;
 build the physical operator when a physics result -- not a plumbing result -- is
 wanted.
@@ -188,7 +188,7 @@ def step(mps: list[SymmetricTensor], h: SymmetricTensor, lr: float):
 def main(n_sites: int = 4, steps: int = 20, seed: int = 5, provider: str = "u1", lr: float = 0.01):
     """Run the loop and return the energy trace (one entry per step, pre-update).
 
-    ponytail: ``seed=5`` is not magic, it is a seed whose initial state is far enough
+    Simplification: ``seed=5`` is not magic, it is a seed whose initial state is far enough
     from the minimum that 20 steps of this ``lr`` are all still visibly downhill for
     both providers. On a converged plateau consecutive energies differ by less than
     float64 resolution and "strictly decreasing" stops meaning anything.

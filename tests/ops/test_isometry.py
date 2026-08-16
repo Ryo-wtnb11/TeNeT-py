@@ -267,7 +267,7 @@ def test_the_fused_containment_case_is_refused_per_leg():
     TensorKit accepts this (its condition is ``domain(t) ≾ codomain(t)`` on the
     fused spaces); we refuse it, because the only construction available is a
     coupled-sector ``eye``, which names an arbitrary basis correspondence — see
-    the ``ponytail:`` note in ``isometry``'s docstring.
+    the ``simplification:`` note in ``isometry``'s docstring.
     """
     domain = (
         Leg(GradedSpace.new(U1, {U1Sector(0): 2}), IN),

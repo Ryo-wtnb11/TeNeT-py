@@ -406,19 +406,19 @@ def direct_sum(
     return SymmetricTensor(new, tuple(blocks))
 
 
-# ponytail: no plan object and no cache. embed does a dict lookup and a
+# Simplification: no plan object and no cache. embed does a dict lookup and a
 # subtraction per block — there is no coefficient to compute, no tree to permute
 # and no capability to gate, and the categorical work (TensorStructure) is
 # already cached where it matters. Add a memoized boolean for
 # _check_containment if a profile ever shows it on the hot path — a plan, never.
-# ponytail: `_check_containment` is shared between embed and restrict, arguments
+# Simplification: `_check_containment` is shared between embed and restrict, arguments
 # swapped, with `op` naming the direction and the message prefix. Split it into
 # two checkers only if the two refusals ever need to say genuinely different
 # things — a third word of per-op wording is the trigger.
-# ponytail: `axes` as a set, deliberately — one loop covers the one-axis bond
+# Simplification: `axes` as a set, deliberately — one loop covers the one-axis bond
 # merge and the two-sided block-diagonal assembly. Split into named helpers only
 # if callers turn out to spell the two-sided case wrong often enough to matter.
-# ponytail: pairwise only. `reduce(lambda a, b: direct_sum(a, b, axes), ts)` is
+# Simplification: pairwise only. `reduce(lambda a, b: direct_sum(a, b, axes), ts)` is
 # one line at the call site and allocates exactly the intermediates a naive N-ary
 # version would; add a genuinely fused N-way pad when a profile shows those
 # intermediates dominating.

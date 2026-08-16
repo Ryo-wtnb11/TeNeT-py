@@ -17,7 +17,7 @@ Which target sectors a provider's dense basis vectors carry is a provider fact,
 asked through the :class:`~tenet.symmetry.base.SymmetryCast` capability — never
 an ``isinstance`` branch here (invariant 5).
 
-ponytail: the whole cast is ``to_dense``, one ``take`` per axis, ``from_dense``.
+Simplification: the whole cast is ``to_dense``, one ``take`` per axis, ``from_dense``.
 The ceiling is ``Π legs[i].space.dim`` floats live at once; the upgrade path is
 per-cell gathering over ``dense_plan(structure).cells``, the decomposition #82
 already computes and caches. Trigger: a cast whose dense array does not fit.

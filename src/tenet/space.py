@@ -69,7 +69,7 @@ class GradedSpace(_HashMemo):
 
     def degeneracy(self, a: Sector) -> int:
         """``m_a``, or ``0`` if ``a`` is absent (so filtering reads as a predicate)."""
-        # ponytail: linear scan; spaces hold a handful of sectors. Add a cached
+        # Simplification: linear scan; spaces hold a handful of sectors. Add a cached
         # dict if profiling ever shows this hot.
         for b, m in self.sectors:
             if b == a:
