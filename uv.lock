@@ -1039,6 +1039,14 @@ wheels = [
 ]
 
 [[package]]
+name = "racah-py"
+version = "0.1.0"
+source = { git = "https://github.com/Ryo-wtnb11/racah?subdirectory=racah-py#f303cf7274075ca9c11849bba8a8ff58a57fadc8" }
+dependencies = [
+    { name = "numpy" },
+]
+
+[[package]]
 name = "requests"
 version = "2.34.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1173,6 +1181,9 @@ dependencies = [
 jax = [
     { name = "jax" },
 ]
+sun = [
+    { name = "racah-py" },
+]
 torch = [
     { name = "torch", version = "2.13.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
     { name = "torch", version = "2.13.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
@@ -1183,6 +1194,7 @@ dev = [
     { name = "jax" },
     { name = "pytest" },
     { name = "quimb" },
+    { name = "racah-py" },
     { name = "ruff" },
     { name = "scipy" },
 ]
@@ -1197,16 +1209,18 @@ requires-dist = [
     { name = "jax", marker = "extra == 'jax'", specifier = ">=0.10" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "opt-einsum", specifier = ">=3.4.0" },
+    { name = "racah-py", marker = "extra == 'sun'" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'torch'", specifier = ">=2.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "sys_platform != 'linux' and extra == 'torch'", specifier = ">=2.0" },
 ]
-provides-extras = ["jax", "torch"]
+provides-extras = ["jax", "sun", "torch"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "jax", specifier = ">=0.10" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "quimb", specifier = ">=1.11" },
+    { name = "racah-py", git = "https://github.com/Ryo-wtnb11/racah?subdirectory=racah-py" },
     { name = "ruff", specifier = ">=0.8" },
     { name = "scipy", specifier = ">=1.11" },
 ]
