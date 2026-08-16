@@ -1,7 +1,7 @@
 """Line bending — ``T.repartition(outputs=..., inputs=...)`` — Milestone 3.
 
 Moving a leg between domain and codomain is a categorical **bend**, not a
-Boolean flip of ``side`` (README "Repartitioning is different from viewing").
+Boolean flip of ``side`` (docs/design.md "Repartitioning is different from viewing").
 Two structural facts outlive whatever coefficients a provider supplies, and both
 are fixed here:
 

@@ -1,4 +1,4 @@
-"""Explicit leg fusion and its inverse — the primitive README puts in place of ``reshape``.
+"""Explicit leg fusion and its inverse — the primitive docs/design.md puts in place of ``reshape``.
 
 The whole operation rests on one observation: a left-associated fusion tree
 ``uncoupled = (u_0, u_1, u_2, ...)`` *already contains* the map that fuses its

@@ -51,7 +51,7 @@ def _fuse(t: SymmetricTensor, *axes_groups: object) -> SymmetricTensor:
     such as quimb's ``tensor_split`` — ``do("fuse", x, left, right)`` — used to
     get a bare ``TypeError``. Adapt here, and refuse the multi-group form the
     way every other undefined operation is refused. ``tenet.fuse``'s own
-    signature, the one the README documents, is untouched.
+    signature, the one the docs/design.md documents, is untouched.
     """
     if len(axes_groups) != 1:
         raise ValueError(
@@ -93,7 +93,7 @@ def _reshape(t: SymmetricTensor, *args: object, **kwargs: object) -> SymmetricTe
     raise ValueError(
         "reshape by shape is not defined for a symmetric tensor; a tuple of physical "
         "dimensions does not say how graded spaces are to be fused or split. The "
-        "categorical operation is fuse/unfuse over named axes (README 'reshape and "
+        "categorical operation is fuse/unfuse over named axes (docs/design.md 'reshape and "
         "fusion'): tenet.fuse(t, (0, 1)), tenet.unfuse(t, 0)."
     )
 

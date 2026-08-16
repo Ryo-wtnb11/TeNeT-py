@@ -2,7 +2,7 @@
 
 This is the first test that composes ``tenet.pytree`` (#41), pairwise contraction
 (#51/#52) and fixed-structure ``svd`` (#57) into a single ``jax.grad``-ed objective,
-which is what README's "VMC and neural quantum states" diagram claims the library can
+which is what docs/design.md's "VMC and neural quantum states" diagram claims the library can
 already do. It adds nothing to ``src/tenet``: it imports ``examples/vmc_mps.py`` and
 runs it, so the example cannot rot.
 

@@ -1,6 +1,6 @@
 """The coupled-sector matrix lowering ``T ≃ ⊕_c B_c ⊗ id_c`` and its inverse.
 
-This is the "temporary map lowering" arrow of README "Reduced blocks follow
+This is the "temporary map lowering" arrow of docs/design.md "Reduced blocks follow
 public ndarray axes": public-axis-ordered reduced blocks in, one dense matrix
 per coupled sector out, exactly invertible. Nothing about the public axis order
 changes and nothing is cached in storage — :func:`to_matrices` allocates
@@ -214,7 +214,7 @@ class TensorMapView:
     """A *semantic* view of a tensor as a morphism. Nothing is moved or materialized.
 
     ``as_map`` allocates nothing: the view holds the tensor and every property is
-    derived from the ``side`` metadata the legs already carry (README "TensorMap
+    derived from the ``side`` metadata the legs already carry (docs/design.md "TensorMap
     views"). Materializing an ``(out..., in...)`` reordering here would violate
     invariant 3 and fork ``T.as_map().svd()`` from ``svd(T, axes=...)``.
     """

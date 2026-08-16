@@ -4,7 +4,7 @@ Fields are ``(structure, blocks)``, never ``(legs, blocks)``: the structure is t
 static, hashable half (a JAX treedef in Milestone 6) and ``blocks`` is the clean
 parameter tree of dynamic leaves, ordered by ``structure.block_order`` (invariant
 8). ``T.legs``, ``T.domain``, ``T.codomain``, ``T.block(key)`` and ``T.items()``
-are derived views; ``from_legs`` supplies the README's ergonomics.
+are derived views; ``from_legs`` supplies the docs/design.md's ergonomics.
 
 :meth:`SymmetricTensor.to_dense` and :meth:`SymmetricTensor.from_dense` are the
 only way to cross into the dense basis — there is deliberately no ``__array__``
@@ -62,7 +62,7 @@ class SymmetricTensor:
 
     @classmethod
     def from_legs(cls, legs: Sequence[Leg], blocks: Sequence[Array]) -> "SymmetricTensor":
-        """Build from public legs, in ``block_order``. The README's spelling."""
+        """Build from public legs, in ``block_order``. The docs/design.md's spelling."""
         return cls(TensorStructure(tuple(legs)), tuple(blocks))
 
     @classmethod

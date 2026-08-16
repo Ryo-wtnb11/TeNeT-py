@@ -143,7 +143,7 @@ def to_numpy(t: SymmetricTensor) -> SymmetricTensor:
     return SymmetricTensor(t.structure, tuple(np.asarray(x) for x in t.blocks))
 
 
-# --- README's own worked example ----------------------------------------------------
+# --- docs/design.md's own worked example ----------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -151,7 +151,7 @@ def to_numpy(t: SymmetricTensor) -> SymmetricTensor:
     [pytest.param(Q, P, Q, id="u1"), pytest.param(V, W, U, id="su2")],
 )
 def test_readme_array_style_contraction_example(x, y, z):
-    """README "Array-style contraction", literally: ``A.legs == (a, b, c)``,
+    """docs/design.md "Array-style contraction", literally: ``A.legs == (a, b, c)``,
     ``B.legs == (c_dual, d, e)``, ``tenet.einsum("abc,cde->abde", A, B)``."""
     c_leg = Leg(z, OUT)
     a = SymmetricTensor.random((Leg(x, OUT), Leg(y, OUT), c_leg), seed=0)

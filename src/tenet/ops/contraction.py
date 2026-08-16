@@ -1,6 +1,6 @@
 """Pairwise contraction — ``tenet.tensordot``, ``tenet.trace``, ``tenet.einsum`` — M5.
 
-There is no new mathematics here, and that is the point (README "Composition
+There is no new mathematics here, and that is the point (docs/design.md "Composition
 remains first-class", "Bending and contraction"). A contraction is lowered to
 operations that already exist and are already dense-oracle tested::
 
@@ -210,7 +210,7 @@ class ContractionPlan:
     small pure-Python derivation that decides *which* sub-plans run, plus
     :attr:`new_structure`, the output legs known without contracting anything.
 
-    ponytail: no ``src/tenet/planning/`` package (README's proposed tree). Today
+    ponytail: no ``src/tenet/planning/`` package (docs/design.md's proposed tree). Today
     it would hold re-exports of plans that already live next to their ops
     (``PermutationPlan``/``ops.permutation``, ``BendPlan``/``ops.repartition``,
     ``FusionPlan``/``ops.fusion``, ``AdjointPlan``/``ops.map``,
@@ -231,7 +231,7 @@ class ContractionPlan:
 
 # ponytail: unbounded `cache`, matching every other plan cache (see structure.py's
 # note). The ceiling is a workload that generates genuinely new structures per call
-# — data-dependent truncation inside a loop, which README already places outside
+# — data-dependent truncation inside a loop, which docs/design.md already places outside
 # JIT; the upgrade path is `lru_cache(maxsize=...)`.
 @cache
 def contraction_plan(a: TensorStructure, b: TensorStructure, axes: Axes) -> ContractionPlan:
@@ -361,7 +361,7 @@ def _parse(equation: str, operands: tuple["SymmetricTensor", ...]) -> tuple[list
     if "." in equation:
         raise ValueError(
             f"einsum: equation {equation!r} contains '...'; ellipsis means broadcasting over "
-            "unlabelled axes, and symmetric tensors do not broadcast (README 'Supported "
+            "unlabelled axes, and symmetric tensors do not broadcast (docs/design.md 'Supported "
             "ndarray operations should be explicit'). Label every axis explicitly"
         )
     lhs, arrow, rhs = equation.replace(" ", "").partition("->")

@@ -1,13 +1,16 @@
 # Repository rules
 
-Process rules for `TeNeT-py`. Design rules live in `README.md` (authoritative)
-and `AGENTS.md` (condensed).
+Process rules for `TeNeT-py`. Design rules live in `docs/design.md`
+(authoritative) and `AGENTS.md` (condensed).
 
 ## Source of truth
 
-- `README.md` is the design document. Code follows it; if implementation
-  experience shows the design is wrong, update `README.md` in the same PR and
-  say why.
+- `docs/design.md` is the design document. Code follows it; if implementation
+  experience shows the design is wrong, update `docs/design.md` in the same PR
+  and say why.
+- `README.md` is the user-facing page, not a design document. It may fall out
+  of date with the design only in the sense of omitting things, never of
+  contradicting them.
 - API is unstable pre-1.0. Breaking changes are allowed but must be
   intentional and noted in the commit/PR message.
 
@@ -18,7 +21,7 @@ and `AGENTS.md` (condensed).
   Solo direct commits to `main` are acceptable while the project is
   single-author, but CI must pass.
 - Commit messages: imperative summary line ≤ 72 chars; body explains *why*
-  when non-obvious. Reference the README milestone when relevant
+  when non-obvious. Reference the `docs/design.md` milestone when relevant
   (e.g. `M1: add SU2 fusion provider`).
 
 ## Code

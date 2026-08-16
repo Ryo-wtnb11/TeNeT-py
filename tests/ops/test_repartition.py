@@ -534,7 +534,7 @@ def test_public_exports_and_readme_spelling():
     assert tenet.repartition is repartition
     assert tenet.bend is bend
     t = u1()
-    # the README's keyword spelling, and the free-function form
+    # the docs/design.md's keyword spelling, and the free-function form
     assert t.repartition(outputs=(0, 1, 2), inputs=(3,)) == repartition(t, (0, 1, 2), (3,))
 
 
