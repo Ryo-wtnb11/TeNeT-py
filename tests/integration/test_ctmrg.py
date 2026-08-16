@@ -127,7 +127,7 @@ _ENVS: dict = {}
 
 
 def converged(beta: float, chi: int = CHI, tol: float = 1e-10, max_sweeps: int = 100):
-    """``(CTMEnv, history)``, memoized on the full set of knobs that decides it."""
+    """The :class:`CTMRG_out`, memoized on the full set of knobs that decides it."""
     key = (beta, chi, tol, max_sweeps)
     if key not in _ENVS:
         bulk = ctmrg.ising_bulk(beta)
@@ -138,7 +138,7 @@ def converged(beta: float, chi: int = CHI, tol: float = 1e-10, max_sweeps: int =
 
 
 def env(beta: float, chi: int = CHI, tol: float = 1e-10, max_sweeps: int = 100):
-    return converged(beta, chi, tol, max_sweeps)[0]
+    return converged(beta, chi, tol, max_sweeps).env
 
 
 def ordered_env(beta: float, chi: int = CHI):
@@ -171,7 +171,7 @@ def ipeps_env(provider: str):
         a, h = ctmrg.build_ipeps(provider), ctmrg.build_h(provider)
         chi = ctmrg.CHI_IPEPS[provider]
         env = tenet.network.ctmrg(*tenet.network.double_layer_ctm(ctmrg.c4v(a)), chi=chi)
-        _ENVS[provider] = (a, h, env[0])
+        _ENVS[provider] = (a, h, env.env)
     return _ENVS[provider]
 
 
@@ -229,17 +229,18 @@ def test_free_energy_matches_onsager_in_the_ordered_phase(beta):
     deviations: ``5.5e-14`` at ``beta=0.5`` and ``5.6e-16`` at ``beta=0.6``.
     """
     assert beta > ctmrg.BETA_C
-    got = float(ctmrg.beta_free_energy(beta, ordered_env(beta)[0], k=K))
+    got = float(ctmrg.beta_free_energy(beta, ordered_env(beta).env, k=K))
     assert got == pytest.approx(ctmrg.onsager(beta), rel=1e-6)
 
 
 def test_convergence_is_monotone_and_terminating():
     """Asserted, not assumed: the corner-spectrum change reaches ``tol`` inside
     ``max_sweeps``, decreases over the run, and takes a pinned number of sweeps."""
-    history = converged(0.4)[1]
-    assert history[-1] < 1e-10
-    assert len(history) < 100  # terminated on the tolerance, not on max_sweeps
-    assert 40 <= len(history) <= 120  # 72 as measured under the Z2 grading; the range is the pin
+    out = converged(0.4)
+    history = out.history
+    assert out.converged  # the field, not a re-derivation: terminated on the tolerance
+    assert out.sweeps < 100
+    assert 40 <= out.sweeps <= 120  # 72 as measured under the Z2 grading; the range is the pin
     tail = history[len(history) // 2 :]
     assert all(b < a for a, b in zip(tail, tail[1:], strict=False)), tail
 
@@ -265,7 +266,7 @@ def test_grad_matches_the_onsager_internal_energy_in_the_ordered_phase():
     deviation ``8.6e-11``; the corner spectrum there is exactly doubled across the parity
     sectors, and the gradient is finite anyway -- see :func:`test_the_retired_nan_criterion`."""
     beta, delta = 0.6, 1e-5
-    got = float(jax.grad(ctmrg.beta_free_energy)(beta, ordered_env(beta)[0], K))
+    got = float(jax.grad(ctmrg.beta_free_energy)(beta, ordered_env(beta).env, K))
     oracle = (ctmrg.onsager(beta + delta) - ctmrg.onsager(beta - delta)) / (2 * delta)
     assert got == pytest.approx(oracle, rel=1e-4)
 
@@ -285,7 +286,7 @@ def test_k_dependence_is_measured_not_assumed():
     beta = 0.25
     loose = tenet.network.ctmrg(
         *tenet.network.single_layer_ctm(ctmrg.ising_bulk(beta)), chi=CHI, tol=1e-6
-    )[0]
+    ).env
     gradients = {k: float(jax.grad(ctmrg.beta_free_energy)(beta, loose, k)) for k in (1, 2, 4, 8)}
     first = abs(gradients[1] - gradients[2])
     last = abs(gradients[4] - gradients[8])
@@ -321,9 +322,9 @@ def test_unrolled_traces_once_and_the_frozen_bond_is_static():
         for x, y in zip(a.blocks, b.blocks, strict=True)
     )
 
-    smaller_env, _ = tenet.network.ctmrg(
+    smaller_env = tenet.network.ctmrg(
         *tenet.network.single_layer_ctm(ctmrg.ising_bulk(beta)), chi=8
-    )
+    ).env
     smaller = smaller_env.bond
     assert smaller != bond
     grad(c, e, ctmrg.ising_bulk(beta), bond, K)
@@ -383,9 +384,9 @@ def test_the_retired_nan_criterion(beta, chi):
     healthy.
     """
     if beta > ctmrg.BETA_C:
-        c, e, bond = ordered_env(beta, chi)[0]
+        c, e, bond = ordered_env(beta, chi).env
     else:
-        c, e, bond = converged(beta, chi, 1e-10, 60)[0]
+        c, e, bond = converged(beta, chi, 1e-10, 60).env
 
     broadened = float(jax.grad(ctmrg.beta_free_energy)(beta, (c, e, bond), K))
     assert np.isfinite(broadened)
@@ -466,7 +467,7 @@ def test_ordered_phase_spectrum_is_an_exact_cross_sector_doublet(beta):
     ``2.5e-3`` a phase-blind test would accept.)
     """
     assert beta > ctmrg.BETA_C
-    halves = spectrum_by_sector(ordered_env(beta)[0].c)
+    halves = spectrum_by_sector(ordered_env(beta).env.c)
     assert len(halves[0]) == len(halves[1])
     top = halves[0][0]
     deviations = [abs(x - y) / top for x, y in zip(halves[0], halves[1], strict=True)]
@@ -481,7 +482,7 @@ def test_disordered_phase_has_no_such_pairing(beta, chi):
     ordered phase — and the full spectrum has no degeneracy at all.
     """
     assert beta < ctmrg.BETA_C
-    halves = spectrum_by_sector(converged(beta, chi, 1e-10, 200)[0].c)
+    halves = spectrum_by_sector(converged(beta, chi, 1e-10, 200).env.c)
     top = max(halves[0][0], halves[1][0])
     n = min(len(halves[0]), len(halves[1]))
     closest = min(abs(halves[0][i] - halves[1][i]) / top for i in range(n))
@@ -500,7 +501,7 @@ def test_no_exact_within_sector_degeneracy_anywhere(beta, chi, tol):
     within-sector relative gaps — ``1.1e-3`` (0.3/8), ``5.1e-2`` (0.44/8), ``6.6e-3``
     (0.44/16), ``1.6e-7`` (0.4/16), and in the ordered phase ``5.1e-7`` (0.5/16) and
     ``3.6e-10`` (0.6/16), the closest approach anywhere measured."""
-    halves = spectrum_by_sector(converged(beta, chi, tol, 200)[0].c)
+    halves = spectrum_by_sector(converged(beta, chi, tol, 200).env.c)
     top = max(halves[0][0], halves[1][0])
     gaps = [
         abs(x - y) / top
@@ -512,7 +513,7 @@ def test_no_exact_within_sector_degeneracy_anywhere(beta, chi, tol):
 
 @pytest.mark.parametrize("beta", [0.5, 0.6])
 def test_no_exact_within_sector_degeneracy_in_the_ordered_phase(beta):
-    halves = spectrum_by_sector(ordered_env(beta)[0].c)
+    halves = spectrum_by_sector(ordered_env(beta).env.c)
     top = max(halves[0][0], halves[1][0])
     gaps = [
         abs(x - y) / top
@@ -532,7 +533,7 @@ def test_even_chi_never_splits_a_doublet(chi):
     CTM"*) — cheaper here, because the multiplet size is 2 and known. Asserted, not assumed.
     """
     assert chi % 2 == 0
-    halves = spectrum_by_sector(ordered_env(0.6, chi)[0].c)
+    halves = spectrum_by_sector(ordered_env(0.6, chi).env.c)
     assert len(halves[0]) == len(halves[1]) == chi // 2  # equal degeneracy in both sectors
     top = halves[0][0]
     assert max(abs(x - y) / top for x, y in zip(halves[0], halves[1], strict=True)) < 1e-12

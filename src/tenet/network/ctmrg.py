@@ -351,6 +351,25 @@ def _spectrum_change(old: list[float], new: list[float]) -> float:
     return max(abs(a - b) for a, b in zip(old, new, strict=True))
 
 
+class CTMRG_out(NamedTuple):
+    """:class:`~tenet.network.DMRG_out`'s twin, with YASTN's names (``_env_ctm.py``:32-36).
+
+    ``sweeps`` is ``len(history)``, ``max_dsv`` its last entry and ``converged`` the
+    ``history[-1] < tol`` the loop already evaluates -- stored instead of discarded,
+    because two test files were re-deriving it from the tail. ``history`` stays a field,
+    so no caller loses information.
+
+    YASTN's ``max_D`` is deliberately absent: tenet's ``chi`` is an *input*, and the
+    realized environment bond is :attr:`CTMEnv.bond`.
+    """
+
+    sweeps: int
+    max_dsv: float
+    converged: bool
+    env: CTMEnv
+    history: list[float]
+
+
 def ctmrg(
     absorb: Absorb,
     c: SymmetricTensor,
@@ -358,7 +377,7 @@ def ctmrg(
     chi: int = 16,
     tol: float = 1e-10,
     max_sweeps: int = 100,
-) -> tuple[CTMEnv, list[float]]:
+) -> CTMRG_out:
     """**Outside** ``jit``/``grad``, and it cannot be otherwise. Sweep to a fixed spectrum.
 
     It reads singular values to decide a bond and a corner spectrum to decide when to
@@ -370,10 +389,11 @@ def ctmrg(
     :func:`double_layer_ctm` return, so ``ctmrg(*single_layer_ctm(bulk), chi=16)`` is
     the whole call.
 
-    Returns ``(env, history)``: a :class:`CTMEnv` whose ``bond`` is the frozen environment
-    :class:`~tenet.GradedSpace` -- the one and only thing that crosses into the
-    differentiated region -- and the per-sweep corner-spectrum change, so a caller can
-    *assert* convergence rather than assume it.
+    Returns a :class:`CTMRG_out`. Its ``env`` is a :class:`CTMEnv` whose ``bond`` is the
+    frozen environment :class:`~tenet.GradedSpace` -- the one and only thing that crosses
+    into the differentiated region -- and its ``history`` the per-sweep corner-spectrum
+    change, so a caller can *assert* convergence rather than assume it; ``converged`` is
+    that assertion already made.
     """
     bond, previous, history = None, spectrum(c), []
     for _ in range(max_sweeps):
@@ -383,7 +403,7 @@ def ctmrg(
         previous = current
         if history[-1] < tol:
             break
-    return CTMEnv(c, e, bond), history
+    return CTMRG_out(len(history), history[-1], history[-1] < tol, CTMEnv(c, e, bond), history)
 
 
 def ctmrg_unrolled(

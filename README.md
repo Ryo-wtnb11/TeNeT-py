@@ -83,7 +83,9 @@ print(g.legs == a.legs)
 - **Multi-backend.** The same code runs on NumPy, JAX or PyTorch blocks through
   [`autoray`](https://github.com/jcmgray/autoray) (torch eager-only).
 - **Algorithms included.** `tenet.network` ships DMRG and CTMRG building blocks —
-  MPS/MPO, environments, sweeps — specified by fully worked examples.
+  MPS/MPO, environments, sweeps — specified by fully worked examples, plus the
+  conveniences a converged state wants: `MPS.save`/`load` checkpointing, a standalone
+  `MPS.compress_`, and `expectation_1site`/`expectation_2site`.
 - **Checked against exact answers.** SU(2) conventions pinned by vendored fixtures;
   the examples are verified against exact diagonalization and Onsager's closed-form
   solution.

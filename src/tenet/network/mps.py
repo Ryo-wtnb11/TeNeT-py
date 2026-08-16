@@ -9,6 +9,8 @@ importing a driver it shares no concept with; they are re-exported below so
 ``from tenet.network.mps import scalar`` is unchanged for every caller.
 """
 
+import json
+import pathlib
 import string
 from collections.abc import Iterable, Sequence
 from typing import Any
@@ -17,7 +19,21 @@ import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.network.common import inner, scalar, spectrum
 
-__all__ = ["MPO", "MPS", "inner", "scalar", "spectrum"]
+__all__ = [
+    "MPO",
+    "MPS",
+    "MPS_FORMAT_VERSION",
+    "expectation_1site",
+    "expectation_2site",
+    "inner",
+    "scalar",
+    "spectrum",
+]
+
+#: Version of the :meth:`MPS.save` *directory* layout -- ``mps.json`` plus the ``NNN.npz``
+#: naming. Distinct from ``tenet.serialize.FORMAT_VERSION``, which versions the per-tensor
+#: ``.npz`` header: two formats, two owners, so bumping one is not a lie about the other.
+MPS_FORMAT_VERSION = 1
 
 
 # --- the state ----------------------------------------------------------------------
@@ -169,6 +185,113 @@ class MPS:
             out = tenet.einsum(f"a{body}x,xpr->a{body}pr", out, self[n])
         return out.to_dense()[0, ..., 0]
 
+    def compress_(self, *, chi: int, cutoff: float = 0.0) -> float:
+        """Truncate to bond ``chi`` in place; return the **total** discarded weight.
+
+        :meth:`canonize_` then one left-to-right ``svd_truncated`` sweep -- the per-bond
+        body of :func:`~tenet.network.sweep_` with the eigensolver removed -- leaving
+        ``center = len(self) - 1``. YASTN's ``truncate_`` (``_mps_obc.py``:379-413)
+        instead *assumes* a canonical input and takes ``to=``; canonizing here costs an
+        ``lq`` pass the caller usually needs anyway and removes the silently-wrong result
+        on a non-canonical state.
+
+        **The returned convention differs from** :func:`~tenet.network.sweep_`'s **on
+        purpose.** ``sweep_`` returns the per-bond *maximum*, because it feeds a per-sweep
+        convergence report where the worst bond is the diagnostic; this returns
+        ``sqrt(sum_bond dw)`` (YASTN's "norm of the truncated elements normalized by the
+        norm of the untruncated state"), because its caller is asking how much of the
+        state it just threw away. Two conventions, two names -- which is the mitigation.
+        """
+        self.canonize_(0)
+        total = 0.0
+        for n in range(len(self) - 1):
+            aa = tenet.einsum("apx,xqr->apqr", self[n], self[n + 1])
+            u, s, vh = tenet.linalg.svd_truncated(aa, ((0, 1), (2, 3)), max_bond=chi, cutoff=cutoff)
+            norm_s = tenet.norm(s)
+            total += 1.0 - float(norm_s / tenet.norm(aa)) ** 2
+            s = s / norm_s  # the two-site tensor is normalized; keep the MPS so
+            self[n], self[n + 1] = u, vh  # the write barrier bends ``vh`` back
+            self[n + 1] = tenet.einsum("xy,yqr->xqr", s, self[n + 1])
+        self.center = len(self) - 1
+        return max(total, 0.0) ** 0.5  # an untruncated bond lands on -1e-17, not on 0
+
+    # --- serialization --------------------------------------------------------------
+
+    def save(self, path: str | pathlib.Path) -> None:
+        """Write a **directory**: one ``NNN.npz`` per site plus ``mps.json``.
+
+        Per-tensor through :func:`tenet.save`, and that is the whole reason for the shape:
+        :func:`tenet.load` *verifies* the SU(2) and fermionic-parity coefficient gauges
+        (``serialize.py``:196-206), so a serializer that bypassed it would be the one place
+        gauge-mismatched coefficients could enter silently. A directory rather than a
+        zip-of-npz because ``np.load`` refuses nesting.
+
+        ``mps.json`` carries exactly ``format`` (:data:`MPS_FORMAT_VERSION`), ``n_sites``
+        and ``center``; ``center=None`` is JSON ``null``. Blocks save as NumPy whatever the
+        backend, so ``MPS.load(...)`` then ``to_backend("jax")`` per site is the restore --
+        a device placement is not a property of a tensor.
+
+        A non-empty destination is refused **before anything is written**: writing an
+        8-site MPS over a 12-site directory would leave ``008.npz`` onwards behind and the
+        loader would then reject the result, destroying the previous good checkpoint and
+        producing an unreadable new one.
+        """
+        path = pathlib.Path(path)
+        if path.exists() and any(path.iterdir()):
+            raise FileExistsError(f"{path}: destination is not empty; delete it or choose another")
+        path.mkdir(parents=True, exist_ok=True)
+        for n, t in enumerate(self.sites):
+            tenet.save(t, path / f"{n:03d}.npz")
+        meta = {"format": MPS_FORMAT_VERSION, "n_sites": len(self), "center": self.center}
+        (path / "mps.json").write_text(json.dumps(meta))
+
+    @classmethod
+    def load(cls, path: str | pathlib.Path) -> "MPS":
+        """Read a directory written by :meth:`save`. NumPy blocks; structures exactly equal.
+
+        Per-tensor version, gauge, block-count and member checks stay :func:`tenet.load`'s
+        job, unmodified. Only what the directory owns is added here: a present and
+        readable ``mps.json``, an exact file set, an in-range ``center``, and consecutive
+        sites whose bond spaces agree.
+
+        **The neighbour-bond check lives here and deliberately not in**
+        :meth:`__setitem__`. A half-written directory is a corrupt file and this is the
+        trust boundary; a sweeping MPS is transiently inconsistent *by construction* --
+        :func:`~tenet.network.sweep_` writes ``psi[n + 1] = vh`` before ``psi[n] = u``
+        (``dmrg.py``:120-127) -- so the same check in the write barrier would fire on
+        correct code. It is not to be "fixed" upward.
+        """
+        path = pathlib.Path(path)
+        meta_path = path / "mps.json"
+        if not meta_path.is_file():
+            raise ValueError(f"{meta_path}: not found; an MPS directory must contain mps.json")
+        meta = json.loads(meta_path.read_text())
+        if meta["format"] > MPS_FORMAT_VERSION:
+            raise ValueError(
+                f"{meta_path}: MPS directory format {meta['format']} is newer than this "
+                f"tenet's format {MPS_FORMAT_VERSION}; upgrade tenet to read it"
+            )
+        n_sites, center = meta["n_sites"], meta["center"]
+        expected = {f"{n:03d}.npz" for n in range(n_sites)}
+        found = {p.name for p in path.iterdir()} - {"mps.json"}
+        if found != expected:
+            raise ValueError(
+                f"{path}: mps.json says n_sites={n_sites}, but the directory is missing "
+                f"{sorted(expected - found)} and has unexpected {sorted(found - expected)}"
+            )
+        if center is not None and center not in range(n_sites):
+            raise ValueError(
+                f"{meta_path}: center {center} is neither null nor in range({n_sites})"
+            )
+        sites = [tenet.load(path / f"{n:03d}.npz") for n in range(n_sites)]
+        for n in range(n_sites - 1):
+            if sites[n].legs[2].space != sites[n + 1].legs[0].space:
+                raise ValueError(
+                    f"{path}: site {n}'s right bond space does not match site {n + 1}'s left "
+                    "bond space; the directory is corrupt"
+                )
+        return cls(sites, center)
+
 
 def _as_site(t: SymmetricTensor) -> SymmetricTensor:
     """Put a rank-3 tensor on the MPS partition ``(l, p | r)``, or refuse it."""
@@ -179,6 +302,71 @@ def _as_site(t: SymmetricTensor) -> SymmetricTensor:
     if sides != (OUT, OUT, IN):  # repartition guarantees it; the claim is stated anyway
         raise ValueError(f"an MPS site is (bond OUT, phys OUT, bond IN), got {sides}")
     return site
+
+
+# --- measurement --------------------------------------------------------------------
+#
+# Module-level, not methods and not a ``network/measure.py``: a measurement is not
+# container state, and a new module for ~30 lines buys a second entry in
+# ``tests/network/test_hygiene.py``'s module list and nothing else. ponytail: the day
+# ``correlation``, ``sample`` or ``rdm`` land, ``network/measure.py`` is the module and
+# YASTN's ``_measure.py`` the design -- ``measure_1site`` (:76) has a ~40-line body and
+# ``measure_2site`` (:130) a ~75-line one, which is the argument for not starting it now.
+
+
+def _braket(bra: Sequence[SymmetricTensor], ket: Sequence[SymmetricTensor]) -> Any:
+    """``<bra|ket>`` by one transfer pass -- :meth:`MPS.norm`'s body with two lists.
+
+    The two chains may carry *different* bond spaces: the transfer tensor holds one index
+    from each, which is what lets an operator-applied ket close against a plain bra.
+    """
+    t = tenet.einsum("apR,apr->Rr", tenet.adjoint(bra[0]), ket[0])
+    for n in range(1, len(ket)):
+        t = tenet.einsum("Rr,rps->Rps", t, ket[n])
+        t = tenet.einsum("RpS,Rps->Ss", tenet.adjoint(bra[n]), t)
+    return scalar(t)
+
+
+def _check(psi: MPS, o: SymmetricTensor, n: int, ndim: int, last: int) -> None:
+    if not 0 <= n <= last:
+        raise ValueError(f"site index {n} is out of range; expected 0 <= n <= {last}")
+    if o.ndim != ndim:
+        raise ValueError(f"the operator must be rank {ndim}, got rank {o.ndim}")
+
+
+def expectation_1site(psi: MPS, o: SymmetricTensor, n: int) -> float:
+    """``<psi|o_n|psi> / <psi|psi>``, with ``o`` rank 2 on ``(phys OUT, phys IN)``.
+
+    **Divided by the norm, and the name carries that.** YASTN spells the pair
+    ``measure_1site``/``measure_2site`` and does *not* divide; tenpy spells it
+    ``expectation_value`` and does. The references disagree, so conformance decides
+    nothing: in a package whose :meth:`Env.measure` also returns ``<psi|H|psi>`` undivided,
+    a second ``measure_*`` that quietly did the same would make one verb mean two things.
+    No ``normalize=`` opt-out -- a config for a value that never changes.
+    """
+    _check(psi, o, n, 2, len(psi) - 1)
+    ket = list(psi)
+    ket[n] = tenet.einsum("Pq,aqr->aPr", o, ket[n])
+    return float(_braket(psi.sites, ket) / _braket(psi.sites, psi.sites))
+
+
+def expectation_2site(psi: MPS, o: SymmetricTensor, n: int) -> float:
+    """``<psi|o_{n,n+1}|psi> / <psi|psi>``, ``o`` rank 4 on ``(p OUT, p OUT, p IN, p IN)``.
+
+    Divided by ``<psi|psi>`` for :func:`expectation_1site`'s reason, stated there.
+    Adjacent sites only: at arbitrary separation this becomes a transfer-matrix walk with
+    a caching strategy (YASTN's ``measure_2site(bonds=)``, a 75-line body; tenpy's
+    ``correlation_function``), and every Hamiltonian here is nearest-neighbour. The
+    operator-applied pair is split by the exact ``tenet.linalg.svd`` purely to hand
+    :func:`_braket` two rank-3 sites again.
+    """
+    _check(psi, o, n, 4, len(psi) - 2)
+    ket = list(psi)
+    pair = tenet.einsum("apx,xqr->apqr", ket[n], ket[n + 1])
+    pair = tenet.einsum("PQpq,apqr->aPQr", o, pair)
+    u, s, vh = tenet.linalg.svd(pair, ((0, 1), (2, 3)))
+    ket[n], ket[n + 1] = _as_site(u), tenet.einsum("xy,yqr->xqr", s, _as_site(vh))
+    return float(_braket(psi.sites, ket) / _braket(psi.sites, psi.sites))
 
 
 # --- the Hamiltonian ----------------------------------------------------------------

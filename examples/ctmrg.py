@@ -302,7 +302,7 @@ def main(chi_ising: int = 16, chi_ipeps: dict | None = None, k: int = 4, steps: 
     tenet.ad.install()
 
     for beta in (0.3, 0.4, 0.5):
-        env = ctmrg(*single_layer_ctm(ising_bulk(beta)), chi=chi_ising)[0]
+        env = ctmrg(*single_layer_ctm(ising_bulk(beta)), chi=chi_ising).env
         bf = float(beta_free_energy(beta, env, k=k))
         grad = float(jax.grad(beta_free_energy)(beta, env, k))
         print(
@@ -312,7 +312,7 @@ def main(chi_ising: int = 16, chi_ipeps: dict | None = None, k: int = 4, steps: 
 
     for provider in ("u1", "su2"):
         a, h = build_ipeps(provider), build_h(provider)
-        env = ctmrg(*double_layer_ctm(c4v(a)), chi=(chi_ipeps or CHI_IPEPS)[provider])[0]
+        env = ctmrg(*double_layer_ctm(c4v(a)), chi=(chi_ipeps or CHI_IPEPS)[provider]).env
         trace = []
         for _ in range(steps):
             a, value = step(a, h, env, lr=0.01, k=k)
