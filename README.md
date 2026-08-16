@@ -72,19 +72,21 @@ print(g.legs == a.legs)
 
 ## Features
 
-- **Exact SU(2) recoupling.** Racah-shaped coefficients computed in pure Python, with
-  vendored gauge fixtures so the convention is pinned and checkable.
-- **No implicit densification.** `to_dense()` is the one dense boundary, and it is
-  traceable; nothing else in the library expands a block-sparse tensor behind your back.
-- **ndarray-style API.** Legs with `side` and `dual`, `tenet.einsum` with equation
-  strings, explicit `fuse`/`unfuse` instead of a `reshape` that would quietly repartition.
-- **Autodiff.** `tenet.ad` supplies Lorentzian-broadened custom VJP rules for `svd`
-  and `eigh`, finite at the degenerate spectra symmetric tensors produce by construction.
-- **Truncation where it belongs.** `svd_truncated` decides a bond space *outside* a
-  trace; `svd(t, bond=B)` runs the same factorization at fixed structure *inside* one.
-- **Algorithms.** `tenet.network` ships `MPS`/`MPO`/`dmrg` and `CTMEnv`/`converge`/
-  `unrolled`.
-- **Backends.** NumPy, JAX and PyTorch via `autoray`; torch is eager-only.
+- **Non-Abelian symmetries, exactly.** SU(2) — and U(1), Z2, fermion parity, and their
+  products — via exact recoupling coefficients. Block-sparse all the way down, never a
+  dense embedding.
+- **An ndarray-style API.** Tensors carry legs; you write `tenet.einsum` equations and
+  `tenet.linalg` factorizations. The categorical machinery stays under the hood.
+- **Differentiable and jittable.** Tensors are JAX pytrees, so `jit`, `grad` and `vmap`
+  compose with the symmetry structure — including through truncations, and with
+  gradients that stay finite at the degenerate spectra symmetric tensors produce.
+- **Multi-backend.** The same code runs on NumPy, JAX or PyTorch blocks through
+  [`autoray`](https://github.com/jcmgray/autoray) (torch eager-only).
+- **Algorithms included.** `tenet.network` ships DMRG and CTMRG building blocks —
+  MPS/MPO, environments, sweeps — specified by fully worked examples.
+- **Checked against exact answers.** SU(2) conventions pinned by vendored fixtures;
+  the examples are verified against exact diagonalization and Onsager's closed-form
+  solution.
 
 ## Examples
 
