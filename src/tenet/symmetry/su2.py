@@ -12,7 +12,7 @@ dual SU(2) legs.
 
 F-, R- and B-symbols and Frobenius-Schur signs are available through the
 :class:`~tenet.symmetry.base.RecouplingData` capability; their gauge is pinned to
-the vendored TensorKitSectors fixtures (see ``SU2_GAUGE``). ``permute_tree`` is
+the vendored TensorKitSectors fixtures (see ``_SU2_GAUGE``). ``permute_tree`` is
 built on them, so ``transpose`` is total for SU(2), and ``bend_right`` /
 ``bend_left`` are built on the B-symbol and the Frobenius-Schur sign, so
 ``repartition`` is total for SU(2) too (#38).
@@ -38,34 +38,36 @@ if TYPE_CHECKING:
     from tenet.fusion_tree import FusionTree
     from tenet.structure import FusionBlockKey
 
-__all__ = ["SU2", "SU2_GAUGE", "SU2Provider", "SU2Sector"]
+__all__ = ["SU2", "SU2Provider", "SU2Sector"]
 
-SU2_GAUGE = "3j=condon-shortley;cg=condon-shortley;f=tks-su2irrep;r=tks-su2irrep;fs=tks-su2irrep"
-"""Gauge fingerprint (racah / TensorKitSectors conventions). Documentation, not a key.
+_SU2_GAUGE = "3j=condon-shortley;cg=condon-shortley;f=tks-su2irrep;r=tks-su2irrep;fs=tks-su2irrep"
+"""Internal gauge fingerprint (racah / TensorKitSectors conventions).
 
-Every plan cache (``permutation_plan``, ``bend_plan``, ``fusion_plan``,
-``map_layout``, ``contraction_plan``) is a :func:`functools.cache` keyed on
-``TensorStructure``, which contains ``Leg``s, which contain ``GradedSpace``s,
-which contain the **provider value**. :class:`SU2Provider` implements exactly
-this one hard-coded convention, so provider identity already pins the gauge
-one-for-one: appending this string to a key would be a constant on every key
-and could never change a lookup outcome.
+Keys: ``3j``/``cg`` — the 3j and Clebsch-Gordan phase convention (Condon-Shortley,
+magnetic indices descending); ``f``/``r``/``fs`` — F-symbols, R-symbols and
+Frobenius-Schur signs, all matching TensorKitSectors' ``SU2Irrep``. Written into a saved
+file's header by :func:`tenet.save` and compared on :func:`tenet.load`, which refuses a
+file recorded under a different convention.
 
 Cross-validated against froSTspin (2026-08-14; sympy Condon-Shortley lineage,
 descending-m, dimension-labeled irreps — an implementation lineage independent
 of racah/TensorKitSectors): all 215 admissible CG triples with ``dj <= 8``
 agree entrywise at 1.1e-16 with no phase correction, and froSTspin's
 ``SU2SymmetricTensor.from_array`` (which asserts SU(2) invariance internally)
-round-trips our ``to_dense`` output at exactly 0.0 — validating the CG tree
-assembly, the ``alpha*d_a + m`` slab layout and the ``z_matrix`` duality
-handling end to end.
-
-Simplification: the upgrade path for a provider that can carry two gauges is a
-``gauge`` field on the provider itself, which then enters every existing cache
-key for free with zero cache-code changes — and which knowingly flips
-``tests/symmetry/test_fz2.py::test_gauge_is_a_module_string_not_a_field``. One
-line, when and only when a second gauge exists.
+round-trips our ``to_dense`` output at exactly 0.0.
 """
+
+# Documentation, not a cache key. Every plan cache (``permutation_plan``, ``bend_plan``,
+# ``fusion_plan``, ``map_layout``, ``contraction_plan``) is a ``functools.cache`` keyed on
+# ``TensorStructure``, which contains ``Leg``s -> ``GradedSpace``s -> the provider *value*.
+# ``SU2Provider`` implements exactly this one hard-coded convention, so provider identity
+# already pins the gauge one-for-one: appending this string to a key would be a constant on
+# every key and could never change a lookup outcome.
+# Simplification: the upgrade path for a provider that can carry two gauges is a ``gauge``
+# field on the provider itself, which then enters every existing cache key for free with
+# zero cache-code changes — and which knowingly flips
+# ``tests/symmetry/test_fz2.py::test_gauge_is_a_module_string_not_a_field``. One line, when
+# and only when a second gauge exists.
 
 
 @dataclass(frozen=True, slots=True, order=True)

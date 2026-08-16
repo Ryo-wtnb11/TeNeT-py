@@ -48,15 +48,15 @@ def lanczos(
     ``tenet.norm`` and :func:`tenet.inner` -- a Krylov solver needs a vector
     space and nothing else, and a ``SymmetricTensor`` is one.
 
-    Simplification: **no reorthogonalization**, and neither has YASTN. At ``ncv=3`` the
-    recurrence has not had time to lose orthogonality, and the vector is reseeded from the
-    current MPS at every bond -- this is an inner solver inside an outer sweep, not a
-    standalone eigensolver. Ceiling: raise ``ncv`` past ~10 and full reorthogonalization
-    against the stored ``V`` becomes the two-line addition.
-
-    Simplification: numpy ``eigh`` on the ``(3, 3)`` tridiagonal, not ``tenet.linalg.eigh``. The
-    projected matrix has no symmetry structure to respect -- it is 9 floats.
+    This is an inner solver inside an outer sweep, not a standalone eigensolver: the
+    recurrence is **not reorthogonalized**, so ``ncv`` is meant to stay small.
     """
+    # Simplification: no reorthogonalization, and neither has YASTN. At ``ncv=3`` the
+    # recurrence has not had time to lose orthogonality, and the vector is reseeded from the
+    # current MPS at every bond. Ceiling: raise ``ncv`` past ~10 and full reorthogonalization
+    # against the stored ``V`` becomes the two-line addition.
+    # Simplification: numpy ``eigh`` on the ``(3, 3)`` tridiagonal, not
+    # ``tenet.linalg.eigh``. The projected matrix has no symmetry structure -- 9 floats.
     vecs = [v / tenet.norm(v)]
     alphas: list[float] = []
     betas: list[float] = []

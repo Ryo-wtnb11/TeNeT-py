@@ -22,16 +22,14 @@ from tenet.symmetry.base import (
     permute_unique_tree,
     requires,
 )
-from tenet.symmetry.fz2 import FZ2_GAUGE, FZ2Provider, FZ2Sector, fZ2
+from tenet.symmetry.fz2 import FZ2Provider, FZ2Sector, fZ2
 from tenet.symmetry.product import ProductProvider, ProductSector
-from tenet.symmetry.su2 import SU2, SU2_GAUGE, SU2Provider, SU2Sector
+from tenet.symmetry.su2 import SU2, SU2Provider, SU2Sector
 from tenet.symmetry.u1 import U1, U1Provider, U1Sector
 from tenet.symmetry.z2 import Z2, Z2Provider, Z2Sector
 
 __all__ = [
-    "FZ2_GAUGE",
     "SU2",
-    "SU2_GAUGE",
     "U1",
     "Z2",
     "BendingCoefficients",

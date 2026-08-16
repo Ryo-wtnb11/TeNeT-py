@@ -145,13 +145,14 @@ class MPS:
         Setup only: a two-site sweep leaves the state canonical by construction on the
         side it came from, which is precisely what an ``int`` centre records.
 
-        Simplification: only ``to=0`` (fully right-canonical) is implemented, because that is
-        the one form the sweep's setup wants. Ceiling: a general ``to`` is the same loop
-        run from both ends, and YASTN's ``canonize_(to='last')`` (``_mps_obc.py``:390) is
-        the spelling to copy the day a caller needs it.
+        Only ``to=0`` (fully right-canonical) is supported; any other ``to`` raises
+        :exc:`NotImplementedError`.
         """
+        # Simplification: only ``to=0``, because that is the one form the sweep's setup
+        # wants. Ceiling: a general ``to`` is the same loop run from both ends, and YASTN's
+        # ``canonize_(to='last')`` (``_mps_obc.py``:390) is the spelling to copy.
         if to != 0:
-            raise NotImplementedError("only to=0 (right-canonical) is implemented; see the note")
+            raise NotImplementedError("only to=0 (right-canonical) is implemented")
         for n in range(len(self) - 1, 0, -1):
             left, q = tenet.linalg.lq(self[n], ((0,), (1, 2)))
             self[n] = q

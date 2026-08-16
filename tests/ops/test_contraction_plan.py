@@ -10,6 +10,7 @@ of asserted in a docstring.
 
 import dataclasses
 import pathlib
+import sys
 
 import numpy as np
 import pytest
@@ -125,7 +126,10 @@ def test_cache_returns_one_object_for_equal_but_independent_structures():
 
 def test_no_planning_package_exists_and_the_decision_is_recorded():
     assert not (pathlib.Path(tenet.__file__).parent / "planning").exists()
-    assert "Simplification: no ``src/tenet/planning/`` package" in ContractionPlan.__doc__
+    # The note lives in a `#` comment, not the docstring: it is an engineering decision,
+    # not part of the rendered API contract. Pin it against the source text.
+    src = pathlib.Path(sys.modules[ContractionPlan.__module__].__file__).read_text()
+    assert "Simplification: no ``src/tenet/planning/`` package" in src
 
 
 # --- new_structure is predicted, not observed ---------------------------------------

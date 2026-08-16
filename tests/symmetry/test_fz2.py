@@ -32,7 +32,6 @@ from tenet.ops.permutation import permutation_plan
 from tenet.ops.repartition import bend, bend_plan
 from tenet.structure import FusionBlockKey
 from tenet.symmetry import (
-    FZ2_GAUGE,
     SU2,
     BendingCoefficients,
     ClebschGordan,
@@ -44,7 +43,7 @@ from tenet.symmetry import (
     QuantumDimension,
     fZ2,
 )
-from tenet.symmetry.fz2 import koszul_sign
+from tenet.symmetry.fz2 import _FZ2_GAUGE, koszul_sign
 
 # static conformance check: fails type checking if FZ2Provider drifts from the protocols
 _fusion: FusionProvider = fZ2
@@ -192,10 +191,10 @@ def test_capabilities():
 
 
 def test_gauge_is_a_module_string_not_a_field():
-    assert isinstance(FZ2_GAUGE, str)
-    assert "koszul" in FZ2_GAUGE
-    assert "twist" in FZ2_GAUGE
-    assert "FZ2_GAUGE" not in {f.name for f in dataclasses.fields(fZ2)}
+    assert isinstance(_FZ2_GAUGE, str)
+    assert "koszul" in _FZ2_GAUGE
+    assert "twist" in _FZ2_GAUGE
+    assert "gauge" not in {f.name for f in dataclasses.fields(fZ2)}
 
 
 # --- koszul_sign -------------------------------------------------------------------

@@ -22,13 +22,14 @@ and absorbs the parity endomorphism into the right-evaluation map, which is
 exactly why the Frobenius-Schur phase stays ``+1`` while the twist carries the
 sign. Nothing in TeNeT-py consumes the twist yet — ``norm`` is qdim-weighted and
 every qdim is ``1``, so it is unaffected.
-Simplification: ``trace`` and ``adjoint`` (#31), and any closed fermion loop, are the
-operations that will need it; add a ``Twist`` capability then, not before.
 
 Source for every constant asserted above, TensorKitSectors ``src/fermions.jl`` at
 commit ``bd1bf8296876103870d6158c0918987256396880``:
 https://github.com/QuantumKitHub/TensorKitSectors.jl/blob/bd1bf8296876103870d6158c0918987256396880/src/fermions.jl
 """
+
+# Simplification: ``trace`` and ``adjoint`` (#31), and any closed fermion loop, are the
+# operations that will need the twist; add a ``Twist`` capability then, not before.
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -41,11 +42,16 @@ if TYPE_CHECKING:
     from tenet.fusion_tree import FusionTree
     from tenet.structure import FusionBlockKey
 
-__all__ = ["FZ2_GAUGE", "FZ2Provider", "FZ2Sector", "fZ2", "koszul_sign"]
+__all__ = ["FZ2Provider", "FZ2Sector", "fZ2", "koszul_sign"]
 
-FZ2_GAUGE = "f=1;r=fermionic;fs=+1;twist=(-1)^p;perm=koszul"
-"""Gauge fingerprint (TensorKitSectors ``FermionParity`` conventions); belongs in
-plan-cache keys."""
+_FZ2_GAUGE = "f=1;r=fermionic;fs=+1;twist=(-1)^p;perm=koszul"
+"""Internal gauge fingerprint (TensorKitSectors ``FermionParity`` conventions).
+
+Keys: ``f``/``r``/``fs`` — F-symbols, R-symbols and Frobenius-Schur signs; ``twist`` —
+the ``(-1)^parity`` twist; ``perm`` — the permutation coefficient (the Koszul sign).
+Written into a saved file's header by ``tenet.save`` and compared on ``tenet.load``,
+which refuses a file recorded under a different convention.
+"""
 
 
 @dataclass(frozen=True, slots=True, order=True)

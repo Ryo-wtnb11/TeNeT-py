@@ -32,9 +32,9 @@ from tenet.leg import Leg, Side
 from tenet.space import GradedSpace
 from tenet.structure import TensorStructure
 from tenet.symmetry.base import FusionProvider, Sector, TrivialProvider, TrivialSector
-from tenet.symmetry.fz2 import FZ2_GAUGE, FZ2Provider, FZ2Sector
+from tenet.symmetry.fz2 import _FZ2_GAUGE, FZ2Provider, FZ2Sector
 from tenet.symmetry.product import ProductProvider, ProductSector
-from tenet.symmetry.su2 import SU2_GAUGE, SU2Provider, SU2Sector
+from tenet.symmetry.su2 import _SU2_GAUGE, SU2Provider, SU2Sector
 from tenet.symmetry.u1 import U1Provider, U1Sector
 from tenet.symmetry.z2 import Z2Provider, Z2Sector
 
@@ -74,7 +74,7 @@ _KINDS: dict[type, str] = {
     Z2Provider: "Z2",
     ProductProvider: "Product",
 }
-_GAUGES: dict[str, str] = {"SU2": SU2_GAUGE, "fZ2": FZ2_GAUGE}
+_GAUGES: dict[str, str] = {"SU2": _SU2_GAUGE, "fZ2": _FZ2_GAUGE}
 
 
 # --- header encoding ---------------------------------------------------------

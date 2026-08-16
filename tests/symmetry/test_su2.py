@@ -11,7 +11,7 @@ import pytest
 
 from tenet.symmetry import SU2, ClebschGordan, FusionProvider, QuantumDimension, SU2Sector
 from tenet.symmetry._su2_coeff import value, w6j
-from tenet.symmetry.su2 import SU2_GAUGE, SU2Provider
+from tenet.symmetry.su2 import _SU2_GAUGE, SU2Provider
 
 # static conformance: fails type checking if SU2Provider drifts from the protocols
 _fusion: FusionProvider = SU2
@@ -196,6 +196,6 @@ def test_provider_is_hashable_and_array_free():
 
 
 def test_gauge_fingerprint_is_pinned():
-    assert SU2_GAUGE == (
+    assert _SU2_GAUGE == (
         "3j=condon-shortley;cg=condon-shortley;f=tks-su2irrep;r=tks-su2irrep;fs=tks-su2irrep"
     )

@@ -40,9 +40,6 @@ Conventions:
   ``absorb`` enum is needed. The raw singular values are
   ``{c: ar.do("diagonal", m) for c, m in tenet.to_matrices(S).items()}``.
   ``S`` is real even when ``U`` and ``Vh`` are complex.
-  Simplification: ``S`` stores a dense ``m_c × m_c`` block per sector where a vector
-  would do; add a diagonal storage type when a bond dimension makes that memory
-  actually hurt, i.e. never before truncation exists.
 * Reconstruction is exact against ``repartition(t, left, right)``, not against
   ``t``: the factors' public axis order is ``(*left, bond)`` and ``(bond,
   *right)``, and no axis order could remember that ``t`` interleaved its sides.
@@ -54,6 +51,9 @@ No ``svd``/``qr`` registration in ``array/dispatch.py``: that list is closed and
 ``ar.do("svd", ...)`` must keep raising (invariant 11). No NumPy, no
 ``to_dense`` and no provider branching in this module.
 """
+
+# Simplification: ``S`` stores a dense ``m_c × m_c`` block per sector where a vector would
+# do; add a diagonal storage type when a bond dimension makes that memory actually hurt.
 
 from collections.abc import Sequence
 from dataclasses import replace
@@ -313,11 +313,11 @@ def polar(
     singular. Same fact as ``svd``'s zero-rank sectors — structure is metadata,
     rank is data.
 
-    Simplification: ``PolarViaSVD``, MatrixAlgebraKit's own default, because ``autoray``
-    has no uniform ``linalg.polar`` and the alternative is a Newton-Schulz
-    iteration, i.e. a convergence tolerance and a second numerical framework. Swap
-    a backend ``polar`` into the sector loop below if one ever becomes uniform.
     """
+    # Simplification: ``PolarViaSVD``, MatrixAlgebraKit's own default, because ``autoray``
+    # has no uniform ``linalg.polar`` and the alternative is a Newton-Schulz iteration,
+    # i.e. a convergence tolerance and a second numerical framework. Swap a backend
+    # ``polar`` into the sector loop below if one ever becomes uniform.
     if side not in ("left", "right"):
         raise ValueError(f"polar: side must be 'left' or 'right', got {side!r}")
     m, _, mats = _lower(t, axes)
@@ -437,10 +437,6 @@ def left_null(t: "SymmetricTensor", axes: Axes = None) -> "SymmetricTensor":
     would make the output structure depend on block values, which is ``_lower``'s
     standing refusal ("min(rows_c, cols_c) is metadata, never the numerical rank")
     applied to the complement.
-    Simplification: shape-null only. A numerical sibling taking a rank tolerance arrives
-    as a **separate, non-traceable** function raising ``StructureChangingError``
-    under a trace — ``svd``/``svd_truncated``'s split, reused — when a caller
-    turns up with an opinion about the discarded directions.
 
     Complete QR, not a full SVD, and the reason is measured: JAX refuses to
     differentiate a full SVD (``_svd_jvp_rule``'s "not implemented for full
@@ -451,6 +447,10 @@ def left_null(t: "SymmetricTensor", axes: Axes = None) -> "SymmetricTensor":
     Raises ``ValueError`` if no coupled sector has ``rows_c > cols_c``: the
     complement is empty, and the message names every sector's ``(rows, cols)``.
     """
+    # Simplification: shape-null only. A numerical sibling taking a rank tolerance arrives
+    # as a separate, non-traceable function raising ``StructureChangingError`` under a
+    # trace — ``svd``/``svd_truncated``'s split, reused — when a caller turns up with an
+    # opinion about the discarded directions.
     m, _, mats = _lower(t, axes)
     layout = map_layout(m.structure)
     keep = _complement(layout, "left_null")  # structural; before any block is factorized
@@ -532,12 +532,12 @@ def expm(t: "SymmetricTensor", axes: Axes = None, *, alpha: Any = 1.0) -> "Symme
     norm comparison is a data-dependent branch and could not run inside a trace
     (invariant 9) — and the caller's escape is the one physics already uses,
     ``exp(alpha H) = exp(alpha H / n)**n``.
-    Simplification: no norm guard; add one only outside the traced region, in the caller.
 
     On the NumPy backend the exponential is SciPy's, and SciPy is *not* a dependency
     of this library; without it the call raises an ``ImportError`` naming
     ``pip install scipy``.
     """
+    # Simplification: no norm guard; add one only outside the traced region, in the caller.
     m, _, mats = _lower(t, axes)
     check_square(m, "expm")
     try:
