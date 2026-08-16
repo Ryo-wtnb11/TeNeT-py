@@ -1,8 +1,9 @@
 # TeNeT-py
 
 [![tests](https://github.com/Ryo-wtnb11/TeNeT-py/actions/workflows/ci.yml/badge.svg)](https://github.com/Ryo-wtnb11/TeNeT-py/actions/workflows/ci.yml)
-[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![python](https://img.shields.io/badge/python-%E2%89%A53.12-blue.svg)](pyproject.toml)
+[![docs](https://img.shields.io/badge/docs-online-blue.svg)](https://ryo-wtnb11.github.io/TeNeT-py/)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/LICENSE)
+[![python](https://img.shields.io/badge/python-%E2%89%A53.12-blue.svg)](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/pyproject.toml)
 
 **Non-Abelian symmetric tensors with ndarray-style Python APIs and backend-native numerical execution.**
 
@@ -16,7 +17,7 @@ under `jax.jit` and `jax.grad` without leaving the symmetry structure behind.
 
 The categorical model underneath — why a tensor is a morphism, why `side` and `dual` stay
 independent, why fusion is a primitive and `reshape` is not — is written out in
-[`docs/design.md`](docs/design.md).
+[`docs/design.md`](https://ryo-wtnb11.github.io/TeNeT-py/design/).
 
 > **Status:** early design and implementation. The API is not stable.
 
@@ -91,9 +92,9 @@ Each example is executed by the integration suite and checked against a named or
 
 | Example | What it does | Oracle |
 | --- | --- | --- |
-| [`examples/dmrg.py`](examples/dmrg.py) | finite two-site DMRG, U(1) Heisenberg chain | exact diagonalization |
-| [`examples/ctmrg.py`](examples/ctmrg.py) | differentiable CTMRG, then a U(1)/SU(2) iPEPS gradient | Onsager's closed-form free energy |
-| [`examples/vmc_mps.py`](examples/vmc_mps.py) | symmetric MPS → pytree → `jax.grad` → SGD step | variational energy decrease |
+| [`examples/dmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/dmrg.py) | finite two-site DMRG, U(1) Heisenberg chain | exact diagonalization |
+| [`examples/ctmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/ctmrg.py) | differentiable CTMRG, then a U(1)/SU(2) iPEPS gradient | Onsager's closed-form free energy |
+| [`examples/vmc_mps.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/vmc_mps.py) | symmetric MPS → pytree → `jax.grad` → SGD step | variational energy decrease |
 
 ## Related projects
 
@@ -108,10 +109,10 @@ Each example is executed by the integration suite and checked against a named or
 
 ## Docs
 
-- [`docs/design.md`](docs/design.md) — the design document: invariants, the categorical
+- [`docs/design.md`](https://ryo-wtnb11.github.io/TeNeT-py/design/) — the design document: invariants, the categorical
   model, and the milestone plan.
-- [`REPOSITORY_RULES.md`](REPOSITORY_RULES.md) — process rules for contributing.
+- [`REPOSITORY_RULES.md`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/REPOSITORY_RULES.md) — process rules for contributing.
 
 ## License
 
-Apache License 2.0 — see [`LICENSE`](LICENSE).
+Apache License 2.0 — see [`LICENSE`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/LICENSE).

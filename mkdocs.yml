@@ -1,0 +1,80 @@
+site_name: TeNeT-py
+site_description: Non-Abelian symmetric tensors with ndarray-style Python APIs and backend-native numerical execution
+site_url: https://ryo-wtnb11.github.io/TeNeT-py/
+repo_url: https://github.com/Ryo-wtnb11/TeNeT-py
+repo_name: Ryo-wtnb11/TeNeT-py
+edit_uri: ""
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Design: design.md
+  - Tutorials:
+      - DMRG: tutorials/dmrg.md
+      - CTMRG: tutorials/ctmrg.md
+      - VMC: tutorials/vmc.md
+  - API:
+      - tenet: api/tenet.md
+      - tenet.linalg: api/linalg.md
+      - tenet.network: api/network.md
+      - tenet.symmetry: api/symmetry.md
+      - tenet.ad: api/ad.md
+      - tenet.pytree: api/pytree.md
+      - tenet.serialize: api/serialize.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - toc:
+      permalink: true
+  # docs/design.md is byte-identical to the design document and writes its 29 math
+  # blocks as GitHub's ```math fences. The custom fence routes them to arithmatex so
+  # the file never has to be edited for this site (#118).
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: math
+          class: arithmatex
+          format: !!python/object/apply:pymdownx.arithmatex.arithmatex_fenced_format
+            kwds:
+              mode: generic
+              tag: div
+  - pymdownx.snippets:
+      base_path: [!relative $config_dir]
+      check_paths: true
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            show_source: false
+            show_root_heading: true
+            heading_level: 2
+            members_order: source
+            docstring_style: sphinx
+            filters: ["!^_"]
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js

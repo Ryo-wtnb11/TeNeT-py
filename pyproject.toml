@@ -47,6 +47,12 @@ dev = [
     # transitively via JAX and quimb — so the NumPy-backend expm tests run in CI.
     "scipy>=1.11",
 ]
+# Docs only. Not a runtime or dev dependency: nothing in src/ or tests/ imports these,
+# and the site is built by one CI step (#118). pymdownx arrives with mkdocs-material.
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.27",
+]
 
 [build-system]
 requires = ["hatchling"]
