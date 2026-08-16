@@ -153,9 +153,16 @@ def bend(t: "SymmetricTensor", axis: int) -> "SymmetricTensor":
     plan = bend_plan(t.structure, axis)
     perm = (*(i for i in range(t.ndim) if i != axis), axis)
 
+    # one transpose per *distinct source*, not per term (#123): the permutation is
+    # per-plan and only the coefficient is per-term, so every term sharing a source used
+    # to recompute a byte-identical array. #74's batched alternative -- stack a shape
+    # bucket, transpose once, slice back out -- was prototyped and measured slower on
+    # every axis (see #123); this is the lever that was actually in the loop.
+    moved = {src: ar.do("transpose", t.blocks[src], perm) for src in {s for s, _, _ in plan.terms}}
+
     blocks: dict[int, Any] = {}
     for src, dst, coeff in plan.terms:
-        contrib = ar.do("transpose", t.blocks[src], perm)
+        contrib = moved[src]
         if coeff != 1:
             # keep a real coefficient real, so a real tensor stays real
             contrib = contrib * (coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)
@@ -310,9 +317,20 @@ def repartition(
 
     plan = repartition_plan(t.structure, outputs, inputs)
 
+    # one transpose per *distinct source*, not per term (#123): ``plan.perm`` is per-plan
+    # and only the coefficient is per-term, so every term sharing a source used to
+    # recompute a byte-identical array -- 2.87 terms per source at SU(2) chi=6 against
+    # exactly 1.00 at U(1), the multi-term expansion being what a non-Abelian provider's
+    # coefficients produce and an Abelian one never does. #74's batched alternative
+    # (stack a shape bucket, transpose once, slice back out) was prototyped and measured
+    # slower on every axis -- see #123 for the table and the refusal.
+    moved = {
+        src: ar.do("transpose", t.blocks[src], plan.perm) for src in {s for s, _, _ in plan.terms}
+    }
+
     blocks: dict[int, Any] = {}
     for src, dst, coeff in plan.terms:
-        contrib = ar.do("transpose", t.blocks[src], plan.perm)
+        contrib = moved[src]
         if coeff != 1:
             # keep a real coefficient real, so a real tensor stays real
             contrib = contrib * (coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)

@@ -52,6 +52,9 @@ The iPEPS half is the rest, and since #107 the old diagnosis in this paragraph i
    bra (froSTspin ``ctm_contract.py``:42,53, YASTN ``_env_contractions.py``:221-224). So
    the 841-block intermediate that every earlier version of this paragraph was about is
    not slow any more, it is *absent*, and #105's 4 808 ``repartition_plan`` terms with it.
+   **#105's 841:1 same-shape bucket multiplicity goes with them** (#123): it was measured
+   on that intermediate, and on the shipped formulation the multiplicity is 10:1 mean /
+   30:1 max. Every projection built on 841:1 is about a code path that no longer exists.
 2. **The peak is now rank 6 / 51 blocks** at SU(2) chi=6, against rank 10 / 841 --
    froSTspin's ``2*a*d*chi**2*D**4`` instead of ``d**2 D**8``. Per enlarged corner: 4 852 ->
    1 839 ``ar.do`` calls and 95 -> 52 distinct program keys at SU(2); for the open corner
@@ -69,11 +72,22 @@ The iPEPS half is the rest, and since #107 the old diagnosis in this paragraph i
    ``test_ipeps_energy_is_real[su2]`` 36.8 s -> 27.0 s, because the number of distinct
    ``(primitive, aval, params)`` programs falls with the number of distinct block shapes.
    The U(1) cold case does not move at all (22.8 s -> 22.8 s): U(1) has no multiplets, so
-   there was no fusion blow-up to remove, and its warm regression is not bought back. #105
-   measured the floor itself -- ~2 640 compiles at ~9 ms is ~60 s -- and roughly 47 s of
-   this module is still exactly that. #74's block bucketing is its fix; nothing in
-   ``examples/`` substitutes for it.
-4. **#102's 30 s is still not reached and #74 is the only thing that reaches it.** A
+   there was no fusion blow-up to remove, and its warm regression is not bought back.
+   **The floor is 2 002 one-off compiles at ~9.7 ms, ~19.4 s** (#123, re-measured on the
+   shipped formulation), not #105's ~2 640 / ~24.7 s, and it is a function of how many
+   distinct block *shapes* the workload has. **Block bucketing is not its fix and #74's
+   option 1 is refused, measured** (#123): stacking a shape bucket costs ``N+1`` XLA
+   primitives and the unstack ``N``, so it can never beat the ``N`` transposes it
+   replaces, and stacking *invents* one aval per ``(shape, bucket size)`` -- so it raises
+   the compile count it was meant to lower, 2 002 -> 3 800, with eager warm SU(2)
+   5.43 -> 7.49 s and jit steady 0.73 -> 5.78 ms. What is left for this floor is
+   ``jax.jit`` (13.99 s once, 0.55 ms steady at SU(2)) or nothing. What #123 *did* take
+   out of the executor is duplicated work, not compiles: one ``transpose`` per distinct
+   source block instead of one per plan term, worth 22 991 -> 14 651 ``ar.do`` calls and
+   5.43 s -> 4.18 s warm at SU(2) (2.87 terms per source), and nothing at U(1) (1.00).
+4. **#102's 30 s is still not reached, and since #123 nothing in an executor loop
+   reaches it** -- #74's remaining answer is option 4 (amortization, i.e. ``jax.jit``),
+   not option 1. A
    contraction order changes how many primitives run and how many distinct *shapes* they
    see; it cannot make a distinct shape stop implying a distinct program. **The budget is
    100 s** (95.8-98.1 s measured over two runs, plus load headroom), from 110 s: the whole

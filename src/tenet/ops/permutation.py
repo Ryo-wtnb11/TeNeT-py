@@ -164,9 +164,18 @@ def transpose(t: "SymmetricTensor", axes: Sequence[int] | None = None) -> "Symme
     axes = tuple(reversed(range(t.ndim))) if axes is None else _validated_axes(t.ndim, tuple(axes))
     plan = permutation_plan(t.structure, axes)
 
+    # one transpose per *distinct source*, not per term (#123): ``plan.axes`` is per-plan
+    # and only the coefficient is per-term, so every term sharing a source used to
+    # recompute a byte-identical array. #74's batched alternative -- stack a shape bucket,
+    # transpose once, slice back out -- was prototyped and measured slower on every axis
+    # (see #123 for the table and the refusal).
+    moved = {
+        src: ar.do("transpose", t.blocks[src], plan.axes) for src in {s for s, _, _ in plan.terms}
+    }
+
     blocks: dict[int, Any] = {}
     for src, dst, coeff in plan.terms:
-        contrib = ar.do("transpose", t.blocks[src], plan.axes)
+        contrib = moved[src]
         if coeff != 1:
             # keep a real coefficient real, so a real tensor stays real
             contrib = contrib * (coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)
