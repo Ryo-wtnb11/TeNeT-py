@@ -319,7 +319,8 @@ def test_compress_at_a_large_chi_is_a_gauge_transformation():
     """No-op: nothing is discarded and the amplitudes are the same state."""
     psi = u1_mps(8, seed=11).canonize_()
     before = np.asarray(psi.to_dense())
-    assert psi.compress_(chi=64) < 1e-14
+    # sqrt of an O(eps) Pythagoras residual; linux BLAS measured 1.5e-8.
+    assert psi.compress_(chi=64) < 1e-7
     assert np.abs(np.asarray(psi.to_dense()) - before).max() < 1e-12
     assert psi.norm() == pytest.approx(1.0, abs=1e-12)
     assert psi.center == len(psi) - 1
@@ -334,7 +335,7 @@ def test_compress_is_idempotent_at_the_same_chi():
     psi = u1_mps(8, seed=11)
     psi.compress_(chi=4)
     before = np.asarray(psi.to_dense())
-    assert psi.compress_(chi=4) < 1e-14
+    assert psi.compress_(chi=4) < 1e-7  # same sqrt(eps) floor
     assert np.abs(np.asarray(psi.to_dense()) - before).max() < 1e-12
 
 
