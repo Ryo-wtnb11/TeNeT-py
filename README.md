@@ -27,12 +27,19 @@ independent, why fusion is a primitive and `reshape` is not — is written out i
 uv add tenet-py         # or: pip install tenet-py
 ```
 
-The core install needs only `numpy`, `autoray` and `opt-einsum`. Two optional extras:
+The core install needs only `numpy`, `autoray` and `opt-einsum`. Three optional extras:
 
 ```sh
 uv add "tenet-py[jax]"      # jax>=0.10 — first release with the wide-matrix qr JVP
 uv add "tenet-py[torch]"    # torch>=2.0 — eager only; tenet.ad stays JAX-only
+uv add "tenet-py[sun]"      # racah-py — required for SU(N); see below
 ```
+
+`tenet.symmetry.sun` (SU(N), SU(3) first) needs `racah-py`, and raises an
+`ImportError` naming the extra without it. That refusal is categorical, not a
+fallback: SU(N) coefficients *are* the gauge, so a pure-Python second
+implementation would be a second source of truth. Everything else — SU(2), U(1),
+Z2, fermion parity and their products — needs nothing extra.
 
 ## Quickstart
 

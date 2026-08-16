@@ -13,7 +13,7 @@ imported and a JAX- or torch-backed tensor saves fine. ``load`` always returns
 NumPy blocks; ``load(path).to_backend("jax")`` is the documented restore, because
 a device placement is not a property of a tensor.
 
-The SU(2) and fZ2 gauge fingerprints are written and **verified** on load. Block
+The SU(2), SU(N) and fZ2 gauge fingerprints are written and **verified** on load. Block
 coefficients are only meaningful against the CG / F / R conventions that produced
 them, and a file outlives the process in which provider identity pins those
 conventions; loading gauge-mismatched coefficients would be silently wrong in a
@@ -76,6 +76,20 @@ _KINDS: dict[type, str] = {
 }
 _GAUGES: dict[str, str] = {"SU2": _SU2_GAUGE, "fZ2": _FZ2_GAUGE}
 
+# SU(N) is registered only when the optional racah backend is installed: importing
+# ``tenet.symmetry.sun`` without it raises by design, and ``import tenet`` must not.
+# An SU(N) file therefore fails to load with "unknown provider kind 'SUN'" on a build
+# that could not have produced it anyway.
+try:
+    from tenet.symmetry.sun import _SUN_GAUGE, SUNProvider, SUNSector
+except ImportError:  # pragma: no cover - exercised by tests/symmetry/test_sun.py
+    pass
+else:
+    _PROVIDERS["SUN"] = SUNProvider
+    _SECTORS["SUN"] = SUNSector
+    _KINDS[SUNProvider] = "SUN"
+    _GAUGES["SUN"] = _SUN_GAUGE
+
 
 # --- header encoding ---------------------------------------------------------
 
@@ -94,7 +108,10 @@ def _encode_provider(provider: FusionProvider) -> dict[str, Any]:
     kind = _kind(provider)
     if kind == "Product":
         return {"kind": kind, "factors": [_encode_provider(f) for f in provider.factors]}
-    return {"kind": kind, "name": provider.name}
+    # Every dataclass field, not just ``name``: SUNProvider also carries ``n``, and a
+    # provider reconstructed without it would be a different symmetry.
+    fields = {f.name: getattr(provider, f.name) for f in dataclasses.fields(provider)}
+    return {"kind": kind, **fields}
 
 
 def _decode_provider(d: Any) -> FusionProvider:
@@ -103,7 +120,7 @@ def _decode_provider(d: Any) -> FusionProvider:
         return ProductProvider(tuple(_decode_provider(f) for f in d["factors"]))
     if kind not in _PROVIDERS:
         raise KeyError(f"unknown provider kind {kind!r}; known kinds are {sorted(_KINDS.values())}")
-    return _PROVIDERS[kind](name=d["name"])
+    return _PROVIDERS[kind](**{k: v for k, v in d.items() if k != "kind"})
 
 
 def _encode_sector(a: Sector) -> list[Any]:
@@ -203,7 +220,7 @@ def load(path: str | os.PathLike) -> "SymmetricTensor":
     """Read a tensor written by :func:`save`. NumPy blocks; structure exactly equal.
 
     Refuses a future ``format`` version, an unknown provider, a member set that is
-    not exactly the header plus ``b0..b{n-1}``, and — for SU(2) and fZ2 — a
+    not exactly the header plus ``b0..b{n-1}``, and — for SU(2), SU(N) and fZ2 — a
     ``gauge`` string that is not the running one. Block count and per-block shape
     are validated by ``SymmetricTensor.__post_init__``, unmodified.
     """

@@ -17,6 +17,13 @@ jax = [
     # sector and lq on a tall one raise NotImplementedError (#80).
     "jax>=0.10",
 ]
+# SU(N) coefficients (F/R/CG with outer multiplicity) come from the racah Rust crate
+# through its PyO3 wheel. There is deliberately no pure-Python fallback: a second
+# implementation would be a second gauge. `tenet.symmetry.sun` raises an ImportError
+# naming this extra, and nothing else in tenet imports it (#127).
+sun = [
+    "racah-py",
+]
 torch = [
     # Eager only: `tenet.ad` stays JAX-only, and `torch.compile` / `torch.func`
     # are out of scope (#95). See tests/backends/test_torch.py.
@@ -40,6 +47,10 @@ dev = [
     "jax>=0.10",  # wide-matrix qr JVP; see the [jax] extra (#80)
     "pytest>=8.0",
     "quimb>=1.11",
+    # The [sun] extra, installed from source until racah-py is on PyPI. Same reason
+    # scipy sits here: without it the SU(N) provider tests would never run in CI.
+    # GitHub runners have a rust toolchain; the wheel builds once and is cached.
+    "racah-py @ git+https://github.com/Ryo-wtnb11/racah#subdirectory=racah-py",
     "ruff>=0.8",
     # NOT a core dependency: autoray's NumPy `linalg.expm` is `scipy.linalg.expm`, so
     # `tenet.linalg.expm` on a NumPy tensor needs it and raises an ImportError naming
