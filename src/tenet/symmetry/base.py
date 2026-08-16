@@ -18,6 +18,7 @@ __all__ = [
     "ClebschGordan",
     "DualBasis",
     "FusionProvider",
+    "MultiplicityRecoupling",
     "PermutationCoefficients",
     "QuantumDimension",
     "RecouplingData",
@@ -114,9 +115,10 @@ class PermutationCoefficients(Protocol):
 
         ``perm[j]`` is the *old* uncoupled position that becomes position ``j``
         (the same convention as ``transpose``'s ``axes``). Expansion is over
-        canonical left-associated trees. Scalar coefficients are a
-        multiplicity-free assumption: a provider with ``n_symbol > 1`` must raise
-        rather than truncate a matrix-valued coefficient (Milestone 4).
+        canonical left-associated trees. The coefficient stays **scalar** even
+        under ``n_symbol > 1``, because the multiplicity label lives inside the
+        tree: a matrix-valued F is still one number per ``(tree, tree')`` pair,
+        it just makes the expansion longer.
         """
         ...
 
@@ -174,7 +176,8 @@ class RecouplingData(Protocol):
 
     All four are **scalar**-valued, which is a multiplicity-free assumption: a
     provider with ``n_symbol > 1`` must raise rather than truncate a matrix-valued
-    symbol. Generic tree-braiding and tree-bending helpers dispatch on this
+    symbol, and supply :class:`MultiplicityRecoupling` beside this protocol
+    instead. Generic tree-braiding and tree-bending helpers dispatch on this
     protocol and know nothing about any particular symmetry.
     """
 
@@ -192,6 +195,37 @@ class RecouplingData(Protocol):
 
     def frobenius_schur(self, a: Sector) -> complex:
         """``chi_a``, the Frobenius-Schur phase of the ``V_a -> V_a^*`` isomorphism."""
+        ...
+
+
+@runtime_checkable
+class MultiplicityRecoupling(Protocol):
+    """Array-valued F and R for providers with ``N^c_ab > 1``.
+
+    A capability *beside* :class:`RecouplingData`, not a widening of it: the four
+    scalar symbols stay exactly as they are for every multiplicity-free provider,
+    and :func:`_artin_braid` / :func:`bend_braided` take the array path only when
+    the provider also implements this protocol. ``frobenius_schur`` and ``qdim``
+    are unchanged — they are keyed on a single sector, so multiplicity never
+    reaches them.
+    """
+
+    def f_matrix(
+        self, a: Sector, b: Sector, c: Sector, d: Sector, e: Sector, f: Sector
+    ) -> np.ndarray:
+        """``[F^{abc}_d]_{e,f}``, shape ``(N^e_ab, N^d_ec, N^f_bc, N^d_af)``.
+
+        The four axes are the four vertex labels of ``((ab)c)_d`` and
+        ``(a(bc))_d``, in that order.
+        """
+        ...
+
+    def r_matrix(self, a: Sector, b: Sector, c: Sector) -> np.ndarray:
+        """``R^{ab}_c``, shape ``(N^c_ab, N^c_ba)``."""
+        ...
+
+    def b_matrix(self, a: Sector, b: Sector, c: Sector) -> np.ndarray:
+        """``B^{ab}_c``, shape ``(N^c_ab, N^a_{c,dual(b)})``."""
         ...
 
 
@@ -302,30 +336,88 @@ def _artin_braid(
         coeff(e -> e') = sum_d F^{abc}_f[e, d] · R^{bc}_d · conj(F^{acb}_f[e', d])
 
     which is a genuine expansion over the admissible ``e' in fusion(a, c)``.
-    Every other spine entry, and every multiplicity label, is unchanged.
+    Every other spine entry is unchanged.
+
+    A provider that also implements :class:`MultiplicityRecoupling` takes the
+    array-valued path: the two vertex labels the move touches (``mu_{i-1}`` on
+    ``a x b -> e`` and ``mu_i`` on ``e x c -> f``) are expanded over too, since an
+    F-move mixes ``(e, mu)`` with ``(f, mu')``. Every *other* multiplicity label
+    is unchanged. Providers without it keep the scalar path exactly, and a
+    multiplicity-free provider's ``n_symbol > 1`` never arises.
     """
     from tenet.fusion_tree import FusionTree
 
     u = tree.uncoupled
     spine = tree.lines()
     new_u = (*u[:i], u[i + 1], u[i], *u[i + 2 :])
+    matrices = provider if isinstance(provider, MultiplicityRecoupling) else None
     if i == 0:
-        swapped = FusionTree(new_u, tree.inner, tree.multiplicities, tree.coupled)
-        return ((swapped, provider.r_symbol(u[0], u[1], spine[1])),)
+        if matrices is None:
+            swapped = FusionTree(new_u, tree.inner, tree.multiplicities, tree.coupled)
+            return ((swapped, provider.r_symbol(u[0], u[1], spine[1])),)
+        row = matrices.r_matrix(u[0], u[1], spine[1])[tree.multiplicities[0]]
+        return tuple(
+            (
+                FusionTree(new_u, tree.inner, (mu, *tree.multiplicities[1:]), tree.coupled),
+                complex(row[mu]),
+            )
+            for mu in range(len(row))
+        )
 
     a, b, c, e, f = spine[i - 1], u[i], u[i + 1], spine[i], spine[i + 1]
     out = []
     for new_e in provider.fusion(a, c):
         if not provider.n_symbol(new_e, b, f):
             continue
-        coeff = sum(
-            provider.f_symbol(a, b, c, f, e, d)
-            * provider.r_symbol(b, c, d)
-            * provider.f_symbol(a, c, b, f, new_e, d).conjugate()
-            for d in provider.fusion(b, c)
-        )
         inner = (*tree.inner[: i - 1], new_e, *tree.inner[i:])
-        out.append((FusionTree(new_u, inner, tree.multiplicities, tree.coupled), coeff))
+        if matrices is None:
+            coeff = sum(
+                provider.f_symbol(a, b, c, f, e, d)
+                * provider.r_symbol(b, c, d)
+                * provider.f_symbol(a, c, b, f, new_e, d).conjugate()
+                for d in provider.fusion(b, c)
+            )
+            out.append((FusionTree(new_u, inner, tree.multiplicities, tree.coupled), coeff))
+            continue
+        # Simplification: the double sum is spelled with plain loops, not einsum, so this
+        # helper stays array-free (pinned by ``test_braid_helpers_touch_no_arrays``).
+        # A vertex multiplicity is a handful of channels; if some future group makes
+        # it large, the upgrade path is one einsum here, not a redesign.
+        n_prev, n_cur = provider.n_symbol(a, c, new_e), provider.n_symbol(new_e, b, f)
+        block = [[0j] * n_cur for _ in range(n_prev)]
+        for d in provider.fusion(b, c):
+            n_bcd, n_adf = provider.n_symbol(b, c, d), provider.n_symbol(a, d, f)
+            if not (n_bcd and n_adf):
+                continue
+            lhs = matrices.f_matrix(a, b, c, f, e, d)[
+                tree.multiplicities[i - 1], tree.multiplicities[i]
+            ]
+            rmat = matrices.r_matrix(b, c, d)
+            rhs = matrices.f_matrix(a, c, b, f, new_e, d)
+            for mu_prev in range(n_prev):
+                for mu_cur in range(n_cur):
+                    block[mu_prev][mu_cur] += sum(
+                        lhs[nu1, nu2]
+                        * rmat[nu1, nu1p]
+                        * rhs[mu_prev, mu_cur, nu1p, nu2].conjugate()
+                        for nu1 in range(n_bcd)
+                        for nu1p in range(rmat.shape[1])
+                        for nu2 in range(n_adf)
+                    )
+        for mu_prev in range(n_prev):
+            for mu_cur in range(n_cur):
+                labels = (
+                    *tree.multiplicities[: i - 1],
+                    mu_prev,
+                    mu_cur,
+                    *tree.multiplicities[i + 1 :],
+                )
+                out.append(
+                    (
+                        FusionTree(new_u, inner, labels, tree.coupled),
+                        complex(block[mu_prev][mu_cur]),
+                    )
+                )
     return tuple(out)
 
 
@@ -402,7 +494,11 @@ def bend_braided(
     so it appears once across a round trip, never twice and never zero times.
 
     Single-term because the provider is multiplicity-free: one key in, one key
-    out. ``n_symbol > 1`` needs matrix-valued coefficients and is refused.
+    out. ``n_symbol > 1`` needs matrix-valued coefficients, which a provider
+    supplies by also implementing :class:`MultiplicityRecoupling`; then the
+    destination's new vertex label is expanded over ``B``'s second axis instead
+    of being pinned to ``0``, and the result is genuinely multi-term. Without
+    that capability the existing :class:`CapabilityError` still fires.
     """
     from tenet.fusion_tree import FusionTree
     from tenet.structure import FusionBlockKey
@@ -417,25 +513,36 @@ def bend_braided(
 
     b, c = src.uncoupled[-1], src.coupled
     a = src.lines()[-2] if src.rank >= 2 else provider.unit
-    if provider.n_symbol(a, b, c) > 1:
+    matrices = provider if isinstance(provider, MultiplicityRecoupling) else None
+    if matrices is None and provider.n_symbol(a, b, c) > 1:
         raise CapabilityError(
             f"{provider.name}: N^{c!r}_{{{a!r},{b!r}}} > 1; bending a vertex with "
             "multiplicity needs matrix-valued B-symbols, which are not supported"
         )
 
     new_src = FusionTree(src.uncoupled[:-1], src.inner[:-1], src.multiplicities[:-1], a)
-    new_dst = FusionTree(
-        (*dst.uncoupled, provider.dual(b)),
-        dst.lines()[1:],
-        (*dst.multiplicities, 0) if dst.rank else (),
-        a,
-    )
-    new_key = FusionBlockKey(new_src, new_dst) if right else FusionBlockKey(new_dst, new_src)
-
-    coeff = sqrt(provider.qdim(c) / provider.qdim(a)) * provider.b_symbol(a, b, c)
+    scale = sqrt(provider.qdim(c) / provider.qdim(a))
     if dual:
-        coeff *= provider.frobenius_schur(provider.dual(b)).conjugate()
-    return ((new_key, coeff if right else coeff.conjugate()),)
+        scale *= provider.frobenius_schur(provider.dual(b)).conjugate()
+
+    def keyed(nu: int, coeff: complex) -> tuple["FusionBlockKey", complex]:
+        new_dst = FusionTree(
+            (*dst.uncoupled, provider.dual(b)),
+            dst.lines()[1:],
+            (*dst.multiplicities, nu) if dst.rank else (),
+            a,
+        )
+        key_ = FusionBlockKey(new_src, new_dst) if right else FusionBlockKey(new_dst, new_src)
+        return (key_, coeff if right else coeff.conjugate())
+
+    if matrices is None:
+        return (keyed(0, scale * provider.b_symbol(a, b, c)),)
+
+    # The destination gains the vertex ``c x dual(b) -> a``, whose label is B's
+    # second axis; the source's last vertex label ``mu`` selects B's row. A
+    # rank-0 destination gains no vertex, so that axis is length 1 there.
+    row = matrices.b_matrix(a, b, c)[src.multiplicities[-1] if src.rank >= 2 else 0]
+    return tuple(keyed(nu, scale * complex(row[nu])) for nu in range(len(row)))
 
 
 def _unique_tree(

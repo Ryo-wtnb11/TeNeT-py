@@ -87,11 +87,11 @@ class ProductSector(Sector):
 def mu_encode(ns: tuple[int, ...], mus: tuple[int, ...]) -> int:
     """Mixed radix, first factor most significant: ``sum_i mu_i * prod_{j>i} n_j``.
 
-    Simplification: every product of multiplicity-free factors is multiplicity-free, so
-    no shipped provider ever reaches ``n > 1`` here. It is implemented anyway
-    (three lines; omitting it would mean rewriting ``project``/``assemble`` later)
-    and its only coverage is the ``n_symbol == 2`` stub in
-    ``tests/symmetry/test_product.py``.
+    Every product of multiplicity-free factors is multiplicity-free, but a factor
+    with ``n > 1`` reaches this, and the mixed radix is what keeps the product's
+    ``mu`` a single integer. Covered by the ``n_symbol == 2`` stub in
+    ``tests/symmetry/test_product.py`` and by the real SU(3) x U(1) product in
+    ``tests/symmetry/test_su3_multiplicity.py``.
     """
     mu = 0
     for n, m in zip(ns, mus, strict=True):
