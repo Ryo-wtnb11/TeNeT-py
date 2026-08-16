@@ -21,8 +21,8 @@ the example: it imports ``examples/ctmrg.py`` and runs it, so the example cannot
 only code of its own is the second Onsager form and the tolerances.
 
 **Since #114 the environment machinery is ``tenet.network``** -- ``Absorb``, both absorbers
-(under their model-free names ``single_layer``/``double_layer``), ``move``, ``converge``
-and ``unrolled`` -- so this module resolves those names there and the example's own names
+(under their model-free names ``single_layer``/``double_layer``), ``move``, ``ctmrg``
+and ``ctmrg_unrolled`` -- so this module resolves those names there and the example's own names
 are the physics: the bulk tensor, the C4v ansatz constraint and the observables. Nothing
 else changed: every number below is bit-identical to the pre-promotion run.
 
@@ -85,7 +85,7 @@ The iPEPS half is the rest, and since #107 the old diagnosis in this paragraph i
    SU(2) parametrization -- the only alternative -- would delete the reason the iPEPS half
    exists, and ``jax.jit`` stays rejected (#105: compiling the SU(2) gradient costs more
    than running the three eager ones this module needs, and it would hide the point that
-   ``converge`` sits outside the trace and ``unrolled`` inside it).
+   ``ctmrg`` sits outside the trace and ``ctmrg_unrolled`` inside it).
 """
 
 import math
@@ -131,7 +131,7 @@ def converged(beta: float, chi: int = CHI, tol: float = 1e-10, max_sweeps: int =
     key = (beta, chi, tol, max_sweeps)
     if key not in _ENVS:
         bulk = ctmrg.ising_bulk(beta)
-        _ENVS[key] = tenet.network.converge(
+        _ENVS[key] = tenet.network.ctmrg(
             *tenet.network.single_layer_ctm(bulk), chi=chi, tol=tol, max_sweeps=max_sweeps
         )
     return _ENVS[key]
@@ -170,7 +170,7 @@ def ipeps_env(provider: str):
     if provider not in _ENVS:
         a, h = ctmrg.build_ipeps(provider), ctmrg.build_h(provider)
         chi = ctmrg.CHI_IPEPS[provider]
-        env = tenet.network.converge(*tenet.network.double_layer_ctm(ctmrg.c4v(a)), chi=chi)
+        env = tenet.network.ctmrg(*tenet.network.double_layer_ctm(ctmrg.c4v(a)), chi=chi)
         _ENVS[provider] = (a, h, env[0])
     return _ENVS[provider]
 
@@ -283,7 +283,7 @@ def test_k_dependence_is_measured_not_assumed():
     assert max(abs(g / converged[8] - 1) for g in converged.values()) < 1e-11
 
     beta = 0.25
-    loose = tenet.network.converge(
+    loose = tenet.network.ctmrg(
         *tenet.network.single_layer_ctm(ctmrg.ising_bulk(beta)), chi=CHI, tol=1e-6
     )[0]
     gradients = {k: float(jax.grad(ctmrg.beta_free_energy)(beta, loose, k)) for k in (1, 2, 4, 8)}
@@ -306,7 +306,7 @@ def test_unrolled_traces_once_and_the_frozen_bond_is_static():
         count += 1  # a Python side effect: trace time only
         # the absorber is built inside, from the traced bulk: it is two closures, so the
         # gradient w.r.t. `bulk` still flows -- the closure is captured under the trace
-        new_c, _ = tenet.network.unrolled(c, e, tenet.network.single_layer(bulk), bond, k=k)
+        new_c, _ = tenet.network.ctmrg_unrolled(c, e, tenet.network.single_layer(bulk), bond, k=k)
         dagger = tenet.adjoint(new_c)
         # the four-corner ring of `log_kappa`; `norm(new_c)` would be the constant 1,
         # since every move renormalizes, and a constant has nothing to differentiate
@@ -321,9 +321,10 @@ def test_unrolled_traces_once_and_the_frozen_bond_is_static():
         for x, y in zip(a.blocks, b.blocks, strict=True)
     )
 
-    smaller = tenet.network.converge(
+    smaller_env, _ = tenet.network.ctmrg(
         *tenet.network.single_layer_ctm(ctmrg.ising_bulk(beta)), chi=8
-    )[0].bond
+    )
+    smaller = smaller_env.bond
     assert smaller != bond
     grad(c, e, ctmrg.ising_bulk(beta), bond, K)
     assert count == 1  # the same frozen bond does not retrace ...
@@ -335,7 +336,7 @@ def test_svd_truncated_is_refused_under_jit():
     """The boundary in this example is structural, not a convention.
 
     Two refusals, one per reason. ``move(chi=...)`` decides a bond space from the singular
-    *values*, which is ``tenet.StructureChangingError`` by construction (#64). ``converge``
+    *values*, which is ``tenet.StructureChangingError`` by construction (#64). ``ctmrg``
     additionally *reads* the corner spectrum to decide when to stop, so it cannot be traced
     even before it gets there -- a data-dependent loop exit is not a tracing edge case, it
     is the thing the outside/inside split exists to keep outside.
@@ -344,7 +345,7 @@ def test_svd_truncated_is_refused_under_jit():
     with pytest.raises(tenet.StructureChangingError, match="tenet.linalg.svd"):
         jax.jit(partial(tenet.network.move, chi=4), static_argnums=(2,))(c, e, absorb)
     with pytest.raises(jax.errors.ConcretizationTypeError):
-        jax.jit(partial(tenet.network.converge, chi=4, max_sweeps=1), static_argnums=(0,))(
+        jax.jit(partial(tenet.network.ctmrg, chi=4, max_sweeps=1), static_argnums=(0,))(
             absorb, c, e
         )
 
@@ -670,7 +671,7 @@ def test_structures_survive_the_traced_region(provider):
     before = (a.structure, c.structure, edge.structure)
     ipeps_grad(provider)  # the traced region has run by now
     absorb = tenet.network.double_layer(*tenet.network.layers(ctmrg.c4v(a)))
-    out_c, out_e = tenet.network.unrolled(c, edge, absorb, bond, k=K_IPEPS)
+    out_c, out_e = tenet.network.ctmrg_unrolled(c, edge, absorb, bond, k=K_IPEPS)
     assert all(
         x is y for x, y in zip((a.structure, c.structure, edge.structure), before, strict=True)
     )

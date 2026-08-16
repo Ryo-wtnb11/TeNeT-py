@@ -12,13 +12,13 @@ so it is written where it holds:
 * ``mps.py``, ``env.py``, ``dmrg.py`` -- **outside** ``jit``/``grad`` by construction, and
   they make no differentiability claim. ``tenet.linalg.svd_truncated`` re-decides a bond
   :class:`~tenet.GradedSpace` at every bond of every sweep, :func:`lanczos`'s happy
-  breakdown tests a norm against ``tol``, and :func:`dmrg`'s loop exits on a measured
+  breakdown tests a norm against ``tol``, and :func:`dmrg_`'s loop exits on a measured
   energy change;
 * ``common.py`` -- **trace-neutral**, and used on both sides: :func:`scalar` runs inside a
   differentiated region in ``examples/ctmrg.py``, :func:`spectrum` only ever outside one;
-* ``ctmrg.py`` -- **both**, stated per function in its own docstrings. :func:`converge`
+* ``ctmrg.py`` -- **both**, stated per function in its own docstrings. :func:`ctmrg`
   reads singular values and a corner spectrum, so it raises under any trace;
-  :func:`unrolled` and ``move(bond=B)`` are shape-static and differentiable; and
+  :func:`ctmrg_unrolled` and ``move(bond=B)`` are shape-static and differentiable; and
   :func:`move` is the boundary itself, ``chi=`` outside and ``bond=`` inside. The frozen
   :class:`~tenet.GradedSpace` is the **only** object that crosses between them, and it
   crosses as a jit cache key, never as a jit argument.
@@ -28,10 +28,10 @@ structure-changing operations live outside compile boundaries and the library ne
 the distinction; this package is where data-dependent control flow is *allowed to live*,
 and ``ctmrg.py`` is where the two sides meet and are named.
 
-Contents. M11a: :class:`MPS`, :class:`MPO`, :class:`Env`, :func:`lanczos`, :func:`sweep`,
-:func:`dmrg`. M11b: :class:`CTMEnv`, :class:`Absorb`, :func:`single_layer`,
+Contents. M11a: :class:`MPS`, :class:`MPO`, :class:`Env`, :func:`lanczos`, :func:`sweep_`,
+:func:`dmrg_`. M11b: :class:`CTMEnv`, :class:`Absorb`, :func:`single_layer`,
 :func:`layers`, :func:`double_layer`, :func:`single_layer_ctm`, :func:`double_layer_ctm`,
-:func:`init_env`, :func:`move`, :func:`converge`, :func:`unrolled`, :func:`renormalized`
+:func:`init_env`, :func:`move`, :func:`ctmrg`, :func:`ctmrg_unrolled`, :func:`normalized`
 and :func:`ring`. Shared: the two scalar exits :func:`scalar` and :func:`inner`, the bond
 spectrum :func:`spectrum` and the :func:`ones` seed. Promoted verbatim from
 ``examples/dmrg.py`` (#110) and ``examples/ctmrg.py`` (#102/#104/#105/#107) under the rule
@@ -49,19 +49,19 @@ from tenet.network.common import inner, ones, scalar, spectrum
 from tenet.network.ctmrg import (
     Absorb,
     CTMEnv,
-    converge,
+    ctmrg,
+    ctmrg_unrolled,
     double_layer,
     double_layer_ctm,
     init_env,
     layers,
     move,
-    renormalized,
+    normalized,
     ring,
     single_layer,
     single_layer_ctm,
-    unrolled,
 )
-from tenet.network.dmrg import DMRG_out, dmrg, lanczos, sweep
+from tenet.network.dmrg import DMRG_out, dmrg_, lanczos, sweep_
 from tenet.network.env import Env
 from tenet.network.mps import MPO, MPS
 
@@ -72,8 +72,9 @@ __all__ = [
     "CTMEnv",
     "DMRG_out",
     "Env",
-    "converge",
-    "dmrg",
+    "ctmrg",
+    "ctmrg_unrolled",
+    "dmrg_",
     "double_layer",
     "double_layer_ctm",
     "init_env",
@@ -81,13 +82,12 @@ __all__ = [
     "lanczos",
     "layers",
     "move",
+    "normalized",
     "ones",
-    "renormalized",
     "ring",
     "scalar",
     "single_layer",
     "single_layer_ctm",
     "spectrum",
-    "sweep",
-    "unrolled",
+    "sweep_",
 ]

@@ -52,8 +52,8 @@ __version__ = "0.1.0"
 # Last: dispatch.py imports from tenet.ops, and registers this package with autoray as a
 # side effect of `import tenet`. `network` (the M11a driver layer) is imported alongside
 # it, for the same reason -- it imports tenet.ops -- so that `tenet.network` resolves
-# after `import tenet`. It is deliberately **not** flattened into this namespace: `dmrg`
-# is not a tensor operation and `tenet.dmrg` would read like one.
+# after `import tenet`. It is deliberately **not** flattened into this namespace: `dmrg_`
+# is not a tensor operation and `tenet.dmrg_` would read like one.
 from tenet import (
     array,  # noqa: E402, F401
     network,  # noqa: E402, F401

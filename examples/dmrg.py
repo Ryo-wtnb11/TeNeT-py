@@ -7,8 +7,8 @@ Run it standalone::
 **What is left here, and what moved (#112).** The machinery this file used to carry --
 the MPS container and its canonical form, the MPO builder, the directed-bond environment
 cache with its invalidation, the Krylov step, the two-site sweep and the convergence loop
--- is now :mod:`tenet.network` (``MPS``, ``MPO``, ``Env``, ``lanczos``, ``sweep``,
-``dmrg``), because every one of those is identical for every finite-MPS algorithm anyone
+-- is now :mod:`tenet.network` (``MPS``, ``MPO``, ``Env``, ``lanczos``, ``sweep_``,
+``dmrg_``), because every one of those is identical for every finite-MPS algorithm anyone
 will write here. What stays is **physics**: the 5x5 Heisenberg ``W`` and its channel
 constants, the ``2 S^z in {-1, +1}`` grading, the reachable-charge bond spaces, and the
 thermodynamic limit ``main()`` reports against. The line is one sentence long: *the
@@ -44,7 +44,7 @@ What it demonstrates (no ``scipy``, no ``quimb``, no ``jax``):
 **Why there is no ``jit`` and no ``grad`` here, and why that is a decision.** DMRG is a
 fixed-point solver whose control flow is data-dependent at every level: the truncation
 re-decides the bond space each sweep (``tenet.StructureChangingError`` under a trace, by
-design), ``lanczos``'s happy breakdown tests a norm against ``tol``, and ``dmrg``'s loop
+design), ``lanczos``'s happy breakdown tests a norm against ``tol``, and ``dmrg_``'s loop
 exits on a measured energy change. Every one of those is precisely what tenet refuses to
 trace, and correctly. So this module runs on the eager NumPy backend and makes no
 differentiability claim of any kind -- and neither does ``tenet.network``, which is
@@ -195,7 +195,7 @@ def bond_spaces(n_sites: int) -> list[GradedSpace]:
 def dmrg(n_sites: int, chi: int = 64, *, seed: int = 0, **kwargs) -> network.DMRG_out:
     """Seed a random U(1) MPS in the ``S^z_tot = 0`` sector and hand it to the driver."""
     psi = network.MPS.random(PHYS, bond_spaces(n_sites), seed=seed)
-    return network.dmrg(psi, mpo(n_sites), chi=chi, **kwargs)
+    return network.dmrg_(psi, mpo(n_sites), chi=chi, **kwargs)
 
 
 def main(n_sites: int = 12, chi: int = 64, big_sites: int = 32, big_chi: int = 32):

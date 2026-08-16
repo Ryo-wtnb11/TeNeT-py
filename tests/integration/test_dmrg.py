@@ -211,7 +211,7 @@ def test_swept_environments_match_a_rebuild_from_scratch():
     psi = network.MPS.random(dmrg.PHYS, dmrg.bond_spaces(n_sites), seed=1).canonize_()
     w = dmrg.mpo(n_sites)
     env = network.Env(psi, w).setup_()
-    network.sweep(psi, w, env, {}, chi=16, cutoff=1e-14)
+    network.sweep_(psi, w, env, {}, chi=16, cutoff=1e-14)
 
     rebuilt = network.Env(psi, w).setup_().F
     assert set(env.F) == set(rebuilt) | {(-1, 0)}

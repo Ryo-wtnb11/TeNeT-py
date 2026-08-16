@@ -9,7 +9,7 @@ import dmrg as example  # noqa: E402  (see conftest.py)
 import pytest
 
 import tenet
-from tenet.network import MPS, Env, dmrg, sweep
+from tenet.network import MPS, Env, dmrg_, sweep_
 
 
 def state(n_sites: int = 6, seed: int = 1) -> MPS:
@@ -32,7 +32,7 @@ def test_swept_environments_match_a_rebuild_from_scratch():
     """
     psi, h = state(6, seed=2), example.mpo(6)
     env = Env(psi, h).setup_()
-    sweep(psi, h, env, {}, chi=16, cutoff=1e-14)
+    sweep_(psi, h, env, {}, chi=16, cutoff=1e-14)
 
     rebuilt = Env(psi, h).setup_().F
     assert set(env.F) == set(rebuilt) | {(-1, 0)}
@@ -76,5 +76,5 @@ def test_measure_reproduces_the_dmrg_energy():
     N=12 against the ED oracle.
     """
     psi, h = MPS.random(example.PHYS, example.bond_spaces(6), seed=0), example.mpo(6)
-    out = dmrg(psi, h, chi=16)
+    out = dmrg_(psi, h, chi=16)
     assert Env(out.psi, h).measure() == pytest.approx(out.energy, abs=1e-12)
