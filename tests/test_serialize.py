@@ -18,9 +18,7 @@ import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.serialize import FORMAT_VERSION
 from tenet.symmetry import (
-    FZ2_GAUGE,
     SU2,
-    SU2_GAUGE,
     U1,
     FZ2Sector,
     ProductProvider,
@@ -32,6 +30,8 @@ from tenet.symmetry import (
     U1Sector,
     fZ2,
 )
+from tenet.symmetry.fz2 import _FZ2_GAUGE
+from tenet.symmetry.su2 import _SU2_GAUGE
 
 UU = ProductProvider((U1, U1))
 NESTED = ProductProvider((UU, SU2))
@@ -205,11 +205,11 @@ def test_header_records_a_gauge_per_kind_that_has_one(tmp_path):
     tenet.save(tensor("nested"), tmp_path / "t.npz")
     # (U(1) x U(1)) x SU(2): only SU(2) has a gauge fingerprint, and it is recorded
     # even though it sits inside a nested product.
-    assert header_of(tmp_path / "t.npz")["gauges"] == {"SU2": SU2_GAUGE}
+    assert header_of(tmp_path / "t.npz")["gauges"] == {"SU2": _SU2_GAUGE}
     tenet.save(tensor("u1"), tmp_path / "u.npz")
     assert header_of(tmp_path / "u.npz")["gauges"] == {}
     tenet.save(tensor("fz2"), tmp_path / "f.npz")
-    assert header_of(tmp_path / "f.npz")["gauges"] == {"fZ2": FZ2_GAUGE}
+    assert header_of(tmp_path / "f.npz")["gauges"] == {"fZ2": _FZ2_GAUGE}
 
 
 # --- refusals -------------------------------------------------------------------
@@ -217,7 +217,7 @@ def test_header_records_a_gauge_per_kind_that_has_one(tmp_path):
 
 @pytest.mark.parametrize(
     ("name", "kind", "gauge"),
-    [("su2", "SU2", SU2_GAUGE), ("fz2", "fZ2", FZ2_GAUGE)],
+    [("su2", "SU2", _SU2_GAUGE), ("fz2", "fZ2", _FZ2_GAUGE)],
 )
 def test_mutated_gauge_is_refused(name, kind, gauge, tmp_path):
     """A file written under a different coefficient convention is not readable.

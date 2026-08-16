@@ -48,15 +48,12 @@ Three things a caller must know:
   ``x = sigma_j - sigma_i`` -- so the PRX value ``1e-12`` silently assumes an
   ``O(1)``-normalized spectrum, which holds in their CTMRG only because it renormalizes
   every step. Our tensors carry no such guarantee, hence the knob.
-  Simplification: absolute ``eps``; scale it by ``sigma_max**2`` if a caller ever hits a badly
-  scaled tensor, and add a criterion at that point.
 
 Everything else is deliberately untouched. ``qr``/``lq`` have no ``1/(sigma_i -
 sigma_j)`` anywhere -- their only inversion is a triangular solve, and their instability
 is rank deficiency of ``R``, a different problem -- and ``polar`` inherits this fix for
 free because it calls ``ar.do("linalg.svd")``. No custom JVP: forward mode has no caller
 here, since ``jax.grad``, VMC and CTMRG are all reverse mode.
-Simplification: add ``custom_jvp`` when something asks for ``jacfwd``.
 
 Usage::
 
@@ -71,6 +68,10 @@ Usage::
 
     g = jax.grad(objective)(t)
 """
+
+# Simplification: ``eps`` is an absolute number; scale it by ``sigma_max**2`` if a caller
+# ever hits a badly scaled tensor, and add a criterion at that point.
+# Simplification: no ``custom_jvp``; add one when something asks for ``jacfwd``.
 
 try:
     import jax

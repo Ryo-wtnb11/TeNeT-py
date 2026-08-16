@@ -45,19 +45,23 @@ is named and not started: YASTN's ``EnvCTM`` (a ``Peps`` subclass with eight ten
 site and four ``update_`` moves), and froSTspin's four ``contract_*`` wrappers over one
 ``contract_enlarged_corner``.
 
-Four ceilings come with the code, unchanged from the example that had them.
-Simplification: **truncated backprop through K unrolled moves, never the implicit fixed point**
-(PRX 9, 031041 Sec. III C) -- the implicit route is a second numerical framework inside a
-VJP, with its own tolerance and data-dependent exit, which cannot warn under a trace.
-Simplification: **no gradient checkpointing** -- at K=4 and chi=16 the tape fits, and
-``jax.checkpoint`` on :func:`move` is the one-line addition when it does not.
-Simplification: **no pre-QR before the projector SVD** -- YASTN takes an intermediate QR
-(``use_qr=True``) for stability; ``tenet.linalg.qr`` exists and the composition is three
-lines, and at chi <= 16 in float64 nothing has lost digits yet.
-Simplification: **``svd``, not ``eigh``, for the projector**, even though C4v CTMRG classically
-diagonalizes a Hermitian corner: #77 left ``eigh(t, bond=)`` out of scope, so the
-fixed-bond differentiable route exists only for ``svd``. tensorgrad takes the same route.
+The gradient here is a **truncated backprop through K unrolled moves**, not the implicit
+fixed point, and the projector comes from ``svd`` rather than ``eigh``.
 """
+
+# Four ceilings come with the code, unchanged from the example that had them.
+# Simplification: truncated backprop through K unrolled moves, never the implicit fixed
+# point (PRX 9, 031041 Sec. III C) -- the implicit route is a second numerical framework
+# inside a VJP, with its own tolerance and data-dependent exit, which cannot warn under a
+# trace.
+# Simplification: no gradient checkpointing -- at K=4 and chi=16 the tape fits, and
+# ``jax.checkpoint`` on ``move`` is the one-line addition when it does not.
+# Simplification: no pre-QR before the projector SVD -- YASTN takes an intermediate QR
+# (``use_qr=True``) for stability; ``tenet.linalg.qr`` exists and the composition is three
+# lines, and at chi <= 16 in float64 nothing has lost digits yet.
+# Simplification: ``svd``, not ``eigh``, for the projector, even though C4v CTMRG
+# classically diagonalizes a Hermitian corner: #77 left ``eigh(t, bond=)`` out of scope, so
+# the fixed-bond differentiable route exists only for ``svd``. tensorgrad does the same.
 
 from collections.abc import Callable
 from typing import NamedTuple
@@ -253,12 +257,11 @@ def init_env(site: SymmetricTensor, *bonds: Leg) -> tuple[SymmetricTensor, Symme
     ``beta = 0.4``. On a one-dimensional *unit-sector* environment space the only allowed
     block is the unit one, so under a grading the seed is right by construction rather
     than by luck.
-
-    Simplification: a 1-dimensional seed, not YASTN's ``init='dl'`` partial trace and not
-    ``tenet.random_isometry``. The isometry seed is what a ``chi > D**2`` start needs,
-    where growing from one dimension takes an extra sweep or two to fill the space;
-    ``tenet.isometry``/``random_isometry`` slot straight in at that point.
     """
+    # Simplification: a 1-dimensional seed, not YASTN's ``init='dl'`` partial trace and not
+    # ``tenet.random_isometry``. The isometry seed is what a ``chi > D**2`` start needs,
+    # where growing from one dimension takes an extra sweep or two to fill the space;
+    # ``tenet.isometry``/``random_isometry`` slot straight in at that point.
     unit = GradedSpace.new(site.provider, {site.provider.unit: 1})
     c = tenet.identity((Leg(unit, OUT),), dtype=site.dtype, like=site.backend)
     return c, ones((Leg(unit, IN), Leg(unit, OUT), *bonds)).to_backend(site.backend)
@@ -325,13 +328,15 @@ def move(
     ``ndim // 2`` rather than a branch, because a bilinear form's two index groups are
     always its two halves: rank 4 for a single layer, rank 6 for a double one.
 
-    Simplification: one isometry, ``u``, for a *bilinear* enlarged corner whose ``u`` and ``v``
-    coincide only when it is positive. A single-layer Ising corner is, which is why that
-    model reproduces Onsager to float64; a double-layer corner with indefinite spectrum
-    gets a consistent contraction whose corner and edge differ by a diagonal of signs.
-    Fixing it wants ``eigh(t, bond=)`` -- #77's explicit non-goal -- or four directional
-    moves.
+    **Precondition:** a single isometry ``u`` projects both index groups, which is exact
+    only for a *positive* enlarged corner. A single-layer Ising corner is positive, which is
+    why that model reproduces Onsager to float64; a double-layer corner with an indefinite
+    spectrum still gets a self-consistent contraction, but its corner and edge then differ
+    by a diagonal of signs.
     """
+    # Simplification: one isometry for a bilinear corner whose ``u`` and ``v`` coincide only
+    # when it is positive. Fixing the indefinite case wants ``eigh(t, bond=)`` -- #77's
+    # explicit non-goal -- or four directional moves.
     big_c = absorb.corner(c, e)
     n = big_c.ndim // 2  # (0..n-1 | n..2n-1): 2 for a single layer, 3 for a double one
     axes = (tuple(range(n)), tuple(range(n, 2 * n)))

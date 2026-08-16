@@ -131,12 +131,11 @@ def conj(t: "SymmetricTensor") -> "SymmetricTensor":
 
     Blockwise conjugation equals dense-basis conjugation exactly because every
     provider here has real Clebsch-Gordan coefficients (all-ones for Trivial and
-    U(1), Condon-Shortley for SU(2), recorded in ``SU2_GAUGE``).
-
-    Simplification: a provider with complex CG would need a capability gate here — one
-    ``requires(...)`` line once such a provider exists. No marker protocol with
-    three implementations and no counterexample.
+    U(1), Condon-Shortley for SU(2)).
     """
+    # Simplification: a provider with complex CG would need a capability gate here — one
+    # ``requires(...)`` line once such a provider exists. No marker protocol with
+    # three implementations and no counterexample.
     from tenet.tensor import SymmetricTensor
 
     return SymmetricTensor(t.structure, tuple(ar.do("conj", b) for b in t.blocks))

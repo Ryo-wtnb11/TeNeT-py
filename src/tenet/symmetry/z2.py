@@ -28,11 +28,11 @@ The bosonic Z2 whose data this reproduces is TensorKitSectors' ``Z2Irrep``, whic
 sits next to ``FermionParity`` there for exactly the reason two files sit next to
 each other here: same fusion rules, different ``BraidingStyle``.
 https://github.com/QuantumKitHub/TensorKitSectors.jl
-
-Simplification: mod-2 is hardcoded. ``Z_N`` for ``N > 2`` is a real generalization
-(non-self-dual sectors, ``dual(a) = N - a``); the upgrade path is a separate
-``ZNProvider`` with an ``n`` field, not a flag on this one.
 """
+
+# Simplification: mod-2 is hardcoded. ``Z_N`` for ``N > 2`` is a real generalization
+# (non-self-dual sectors, ``dual(a) = N - a``); the upgrade path is a separate
+# ``ZNProvider`` with an ``n`` field, not a flag on this one.
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING

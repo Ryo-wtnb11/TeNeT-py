@@ -199,11 +199,11 @@ class SymmetricTensor:
         Goes through the ordinary constructor, so block count and per-block shape
         are validated by ``__post_init__``.
 
-        Simplification: quimb's ``inject_variables`` may expect this to mutate in place.
-        quimb is not a dependency, so this is not guessed at here — the frozen
-        structure is what the JAX story rests on. If M8 finds quimb needs it, a
-        thin mutable adapter belongs there, not in the core type.
         """
+        # Simplification: quimb's ``inject_variables`` may expect this to mutate in place.
+        # quimb is not a dependency, so this is not guessed at here — the frozen structure
+        # is what the JAX story rests on. If M8 finds quimb needs it, a thin mutable
+        # adapter belongs there, not in the core type.
         return SymmetricTensor(self.structure, tuple(params))
 
     def copy(self) -> "SymmetricTensor":

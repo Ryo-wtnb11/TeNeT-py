@@ -219,14 +219,15 @@ class ContractionPlan:
     small pure-Python derivation that decides *which* sub-plans run, plus
     :attr:`new_structure`, the output legs known without contracting anything.
 
-    Simplification: no ``src/tenet/planning/`` package (docs/design.md's proposed tree). Today
-    it would hold re-exports of plans that already live next to their ops
-    (``PermutationPlan``/``ops.permutation``, ``BendPlan``/``ops.repartition``,
-    ``FusionPlan``/``ops.fusion``, ``AdjointPlan``/``ops.map``,
-    ``MapLayout``/``map_view``) — churn against exhaustively tested modules for
-    zero behaviour change. Create it when plans are shared *across* operations:
-    M8's path-level planning, or M9's shape bucketing.
     """
+
+    # Simplification: no ``src/tenet/planning/`` package (docs/design.md's proposed tree).
+    # Today it would hold re-exports of plans that already live next to their ops
+    # (``PermutationPlan``/``ops.permutation``, ``BendPlan``/``ops.repartition``,
+    # ``FusionPlan``/``ops.fusion``, ``AdjointPlan``/``ops.map``,
+    # ``MapLayout``/``map_view``) — churn against exhaustively tested modules for
+    # zero behaviour change. Create it when plans are shared *across* operations:
+    # M8's path-level planning, or M9's shape bucketing.
 
     a_outputs: tuple[int, ...]
     a_inputs: tuple[int, ...]
@@ -571,19 +572,19 @@ def _contract_path(
     legs unchanged (:func:`contraction_plan`'s contract), so no new categorical
     work happens between steps either.
 
-    Simplification: for a *braided* provider (a fermionic parity one, or a product
-    containing it) the answer is path-independent only for steps adjacent in
-    the caller's order — which is every step of a chain, and every step of any
-    path ``opt_einsum`` returns without an outer product. A step that reaches
-    across an intervening operand, as one can in a network with a loop, drags the
-    contracted wire past that operand's legs, and the Koszul sign of *that*
-    crossing is not expressible in the pairwise API this loop is built from
-    (a dense fold of the same network is ambiguous in exactly the same way).
-    The ceiling is a fermionic loop network whose best path is not adjacent; the
-    upgrade path is a sign correction computed from the skipped operands'
-    parities, which is M9's categorical path planning and needs new mathematics
-    rather than a scheduler.
+    **Precondition for a braided provider** (fermion parity, or a product containing
+    it): the answer is path-independent only for steps adjacent in the caller's
+    order — which is every step of a chain, and every step of any path
+    ``opt_einsum`` returns without an outer product. A step that reaches across an
+    intervening operand, as one can in a network with a loop, drags the contracted
+    wire past that operand's legs, and the Koszul sign of *that* crossing is not
+    expressible in the pairwise API this loop is built from (a dense fold of the
+    same network is ambiguous in exactly the same way).
     """
+    # Simplification: the ceiling above is a fermionic loop network whose best path is
+    # not adjacent; the upgrade path is a sign correction computed from the skipped
+    # operands' parities, which is M9's categorical path planning and needs new
+    # mathematics rather than a scheduler.
     import opt_einsum as oe
 
     path, _ = oe.contract_path(

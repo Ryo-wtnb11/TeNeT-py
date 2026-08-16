@@ -208,11 +208,11 @@ def isometry(
     Containment is required **per leg**, which is stricter than the fused,
     sector-wise ``domain ≾ codomain`` TensorKit imposes: a target where no single
     leg contains its partner but the fusion does is refused here.
-    Simplification: per-leg containment. The fused case is a coupled-sector ``eye`` and
-    about four lines, and it lands when a caller can say *which* basis
-    correspondence they meant — making that choice silently, inside a function
-    called ``isometry``, is what gets found six months later as a gauge bug.
     """
+    # Simplification: per-leg containment. The fused case is a coupled-sector ``eye`` and
+    # about four lines, and it lands when a caller can say *which* basis correspondence
+    # they meant — making that choice silently, inside a function called ``isometry``, is
+    # what gets found six months later as a gauge bug.
     domain = tuple(domain)
     return embed(identity(domain, dtype=dtype), _mirrored(codomain, domain).legs)
 
@@ -320,10 +320,10 @@ def adjoint(t: "SymmetricTensor") -> "SymmetricTensor":
     Deliberately no ``requires(...)``: this needs ``conj`` on the backend and the
     identity of the trees, nothing a provider could fail to supply.
 
-    Simplification: a provider with complex Clebsch-Gordan coefficients would need the
-    same capability gate ``ops.basic.conj`` already flags — one line, once such a
-    provider exists. Not a second speculative protocol.
     """
+    # Simplification: a provider with complex Clebsch-Gordan coefficients would need the
+    # same capability gate ``ops.basic.conj`` already flags — one line, once such a
+    # provider exists. Not a second speculative protocol.
     from tenet.tensor import SymmetricTensor
 
     plan = adjoint_plan(t.structure)
