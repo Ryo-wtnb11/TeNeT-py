@@ -12,7 +12,7 @@ uv run --extra jax python examples/ctmrg.py
 ## Two physical problems, one CTMRG core
 
 The core is the library's: `tenet.network.ctmrg` owns `Absorb`,
-`single_layer`/`double_layer`, `move`, `converge` and `unrolled`, with the
+`single_layer`/`double_layer`, `move`, `ctmrg` and `ctmrg_unrolled`, with the
 `svd_truncated`-outside / `svd(bond=)`-inside pairing, the leg conventions and the four
 environment ceilings (truncated backprop, no checkpointing, no pre-QR, `svd` rather than
 `eigh`) documented on it.
@@ -65,5 +65,5 @@ SU(2) provider is instead run through the same iPEPS path via a `provider` param
 
 ## Reference
 
-- [`tenet.network`](../api/network.md) — `converge`, `unrolled`, `double_layer`, `move`
+- [`tenet.network`](../api/network.md) — `ctmrg`, `ctmrg_unrolled`, `double_layer`, `move`
 - [`tenet.ad`](../api/ad.md) — the broadened SVD rule the gradient goes through

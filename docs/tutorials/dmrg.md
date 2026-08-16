@@ -14,7 +14,7 @@ uv run python examples/dmrg.py
 
 `tenet.network` owns the MPS container and its canonical form, the MPO builder, the
 directed-bond environment cache with its invalidation, the Krylov step, the two-site
-sweep and the convergence loop — `MPS`, `MPO`, `Env`, `lanczos`, `sweep`, `dmrg`. Every
+sweep and the convergence loop — `MPS`, `MPO`, `Env`, `lanczos`, `sweep_`, `dmrg_`. Every
 one of those is identical for every finite-MPS algorithm.
 
 The example owns the **physics**: the 5×5 Heisenberg `W` and its channel constants, the
@@ -48,7 +48,7 @@ Nothing outside the core install — no `scipy`, no `quimb`, no `jax`.
 
 DMRG is a fixed-point solver whose control flow is data-dependent at every level: the
 truncation re-decides the bond space each sweep (a `StructureChangingError` under a trace,
-by design), `lanczos`'s happy breakdown tests a norm against `tol`, and `dmrg`'s loop
+by design), `lanczos`'s happy breakdown tests a norm against `tol`, and `dmrg_`'s loop
 exits on a measured energy change. Every one of those is precisely what tenet refuses to
 trace, and correctly. So this example runs on the eager NumPy backend and makes no
 differentiability claim — and neither does `tenet.network`, which is outside `jit`/`grad`
@@ -72,5 +72,5 @@ through its sweeps; DMRG needs only the outside half because it does not.
 
 ## Reference
 
-- [`tenet.network`](../api/network.md) — `MPS`, `MPO`, `Env`, `lanczos`, `sweep`, `dmrg`
+- [`tenet.network`](../api/network.md) — `MPS`, `MPO`, `Env`, `lanczos`, `sweep_`, `dmrg_`
 - [`tenet.linalg`](../api/linalg.md) — `svd_truncated`

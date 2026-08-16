@@ -6,7 +6,7 @@ Run it standalone::
 
 Two physical problems, **one** CTMRG core -- and since #114 that core is the library's.
 :mod:`tenet.network.ctmrg` owns ``Absorb``, ``single_layer``/``double_layer``, ``move``,
-``converge`` and ``unrolled``, with the ``svd_truncated``-outside / ``svd(bond=)``-inside
+``ctmrg`` and ``ctmrg_unrolled``, with the ``svd_truncated``-outside / ``svd(bond=)``-inside
 pairing (#77), the leg conventions and the four environment ceilings (truncated backprop,
 no checkpointing, no pre-QR, ``svd`` rather than ``eigh``) now in its docstrings. What
 stayed here is what the library must **not** decide: which bulk tensor
@@ -55,7 +55,8 @@ import autoray as ar
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.network import (
-    converge,
+    ctmrg,
+    ctmrg_unrolled,
     double_layer,
     double_layer_ctm,
     layers,
@@ -63,7 +64,6 @@ from tenet.network import (
     scalar,
     single_layer,
     single_layer_ctm,
-    unrolled,
 )
 from tenet.symmetry import SU2, U1, Z2, SU2Sector, U1Sector, Z2Sector
 
@@ -170,12 +170,12 @@ def log_kappa(beta, env, k: int = 4):
     telescoping: four corners cover an ``L x L`` patch, adding four edges and one bulk
     tensor covers ``(L+1) x (L+1)``, and adding only the left and right edges covers
     ``L x (L+1)``. Every leg closes except one bond, which ``scalar`` traces. ``env`` is
-    the ``CTMEnv`` from ``converge``: the truncated backprop's *initial condition*, which
+    the ``CTMEnv`` from ``ctmrg``: the truncated backprop's *initial condition*, which
     carries no gradient, while the ``k`` moves inside do.
     """
     c0, e0, bond = env
     bulk = ising_bulk(beta)
-    c, e = unrolled(c0, e0, single_layer(bulk), bond, k=k)
+    c, e = ctmrg_unrolled(c0, e0, single_layer(bulk), bond, k=k)
     cc, ca, ec, ea = ring(c, e)
     z_c = scalar(tenet.einsum("ab,ac,dc,eb->de", cc, ca, cc, ca))
     z_h = scalar(tenet.einsum("ab,ac,dcf,ed,eg,ghf->hb", cc, ca, ea, cc, ca, ec, optimize=PATH))
@@ -276,7 +276,7 @@ def energy(a: SymmetricTensor, h: SymmetricTensor, env, k: int = 4):
     """
     c0, e0, bond = env
     ket, bra = layers(c4v(a))
-    r = ring(*unrolled(c0, e0, double_layer(ket, bra), bond, k=k))
+    r = ring(*ctmrg_unrolled(c0, e0, double_layer(ket, bra), bond, k=k))
     left, right = _halves(r, ket, bra, "Ww", "Xx")
     numerator = scalar(tenet.einsum("WwbckhrR,XxchrR,WXwx->kb", left, right, h, optimize=PATH))
     left, right = _halves(r, ket, bra)
@@ -302,7 +302,7 @@ def main(chi_ising: int = 16, chi_ipeps: dict | None = None, k: int = 4, steps: 
     tenet.ad.install()
 
     for beta in (0.3, 0.4, 0.5):
-        env = converge(*single_layer_ctm(ising_bulk(beta)), chi=chi_ising)[0]
+        env = ctmrg(*single_layer_ctm(ising_bulk(beta)), chi=chi_ising)[0]
         bf = float(beta_free_energy(beta, env, k=k))
         grad = float(jax.grad(beta_free_energy)(beta, env, k))
         print(
@@ -312,7 +312,7 @@ def main(chi_ising: int = 16, chi_ipeps: dict | None = None, k: int = 4, steps: 
 
     for provider in ("u1", "su2"):
         a, h = build_ipeps(provider), build_h(provider)
-        env = converge(*double_layer_ctm(c4v(a)), chi=(chi_ipeps or CHI_IPEPS)[provider])[0]
+        env = ctmrg(*double_layer_ctm(c4v(a)), chi=(chi_ipeps or CHI_IPEPS)[provider])[0]
         trace = []
         for _ in range(steps):
             a, value = step(a, h, env, lr=0.01, k=k)

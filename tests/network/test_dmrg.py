@@ -10,7 +10,7 @@ import pytest
 
 import tenet
 from tenet import GradedSpace
-from tenet.network import MPS, Env, dmrg, lanczos, sweep
+from tenet.network import MPS, Env, dmrg_, lanczos, sweep_
 from tenet.symmetry import U1, U1Sector
 
 
@@ -54,7 +54,7 @@ def test_lanczos_leaves_its_output_normalized():
 def test_one_sweep_lowers_the_energy_monotonically_at_n6():
     """N=6, chi=8: three sweeps, each energy at or below the last. It is variational."""
     psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
-    out = dmrg(psi, example.mpo(6), chi=8, max_sweeps=3)
+    out = dmrg_(psi, example.mpo(6), chi=8, max_sweeps=3)
     energies = [e for e, *_ in out.history]
     assert len(energies) == out.sweeps
     for previous, current in zip(energies, energies[1:], strict=False):
@@ -69,11 +69,11 @@ def test_sweep_reports_the_discarded_weight_it_actually_discarded():
     h = example.mpo(6)
     env = Env(psi, h).setup_()
     for _ in range(3):  # let the bond grow past chi=2 before judging the truncation
-        _, tight = sweep(psi, h, env, schmidt, chi=2, cutoff=1e-14)
+        _, tight = sweep_(psi, h, env, schmidt, chi=2, cutoff=1e-14)
     assert tight > 0.0
 
     loose_psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
-    out = dmrg(loose_psi, h, chi=64)
+    out = dmrg_(loose_psi, h, chi=64)
     assert out.max_discarded_weight < 1e-12
 
 
@@ -84,6 +84,6 @@ def test_the_schmidt_criterion_is_what_stops_the_loop():
     though its energy stopped moving long before.
     """
     psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
-    out = dmrg(psi, example.mpo(6), chi=8, schmidt_tol=0.0, max_sweeps=4)
+    out = dmrg_(psi, example.mpo(6), chi=8, schmidt_tol=0.0, max_sweeps=4)
     assert out.sweeps == 4
     assert out.denergy < 1e-12  # the energy criterion alone would have exited earlier

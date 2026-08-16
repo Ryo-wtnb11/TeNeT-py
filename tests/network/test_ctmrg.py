@@ -3,7 +3,7 @@
 Two halves, deliberately split by what they need. The **structural** half -- the
 :class:`~tenet.network.Absorb` contract for both absorbers, :func:`~tenet.network.move`'s
 ``ndim // 2`` partition, :func:`~tenet.network.init_env`'s leg pattern,
-:func:`~tenet.network.converge` reaching ``tol``, :func:`~tenet.network.ring`'s adjoint
+:func:`~tenet.network.ctmrg` reaching ``tol``, :func:`~tenet.network.ring`'s adjoint
 pairing -- needs **no JAX at all**, because the package imports none (hygiene forbids it),
 and it runs on Z2, U(1) and SU(2). The **trace** half sits below a module-level
 ``pytest.importorskip("jax")``, per ``tests/backends/test_ad.py``:29-30, and pins the
@@ -16,7 +16,7 @@ converges in tens of milliseconds per sweep and the two jit tests compile one sm
 each. Anything slower than that is an integration test in the wrong directory.
 """
 
-import ctmrg  # the example: the Boltzmann tensor and the C4v ansatz constraint
+import ctmrg as example  # the example: the Boltzmann tensor and the C4v ansatz constraint
 import pytest
 
 import tenet
@@ -24,7 +24,8 @@ from tenet import IN, OUT, Leg, SymmetricTensor
 from tenet.network import (
     Absorb,
     CTMEnv,
-    converge,
+    ctmrg,
+    ctmrg_unrolled,
     double_layer,
     double_layer_ctm,
     init_env,
@@ -33,7 +34,6 @@ from tenet.network import (
     ring,
     single_layer,
     single_layer_ctm,
-    unrolled,
 )
 
 BETA = 0.4
@@ -43,12 +43,12 @@ CHI = 4
 def ipeps(provider: str = "u1", seed: int = 1) -> SymmetricTensor:
     """A C4v-symmetric single-site iPEPS on the example's spaces, on the numpy backend.
 
-    ``ctmrg.build_ipeps`` hops to ``jax``; the structural half of this module must run
+    ``example.build_ipeps`` hops to ``jax``; the structural half of this module must run
     without it, so only the *spaces* are borrowed.
     """
-    phys, virt = ctmrg.SPACES[provider]
+    phys, virt = example.SPACES[provider]
     legs = (Leg(phys, OUT), Leg(virt, OUT), Leg(virt, OUT), Leg(virt, IN), Leg(virt, IN))
-    return ctmrg.c4v(SymmetricTensor.random(legs, seed=seed))
+    return example.c4v(SymmetricTensor.random(legs, seed=seed))
 
 
 # --- structural: no JAX anywhere below this line until the importorskip -------------
@@ -57,7 +57,7 @@ def ipeps(provider: str = "u1", seed: int = 1) -> SymmetricTensor:
 def test_single_layer_meets_the_absorb_contract():
     """``corner`` is rank ``2n`` and ``edge`` keeps ``e``'s rank -- the two documented
     callable contracts, on the model-free single-layer absorber."""
-    absorb, c, e = single_layer_ctm(ctmrg.ising_bulk(BETA))
+    absorb, c, e = single_layer_ctm(example.ising_bulk(BETA))
     assert isinstance(absorb, Absorb)
     big_c = absorb.corner(c, e)
     assert big_c.ndim == 4  # rank 2n with n = 2
@@ -97,7 +97,7 @@ def test_the_su2_double_layer_absorbs_and_moves():
 
 def test_init_env_leg_pattern_for_one_and_for_two_bonds():
     """The corner is a rank-2 map on the unit sector; the edge carries the bulk bonds."""
-    bulk = ctmrg.ising_bulk(BETA)
+    bulk = example.ising_bulk(BETA)
     virt = bulk.legs[0].space
     c, e = init_env(bulk, Leg(virt, IN))
     assert (c.ndim, e.ndim) == (2, 3)
@@ -117,7 +117,7 @@ def test_init_env_reads_no_reduced_block_and_keeps_the_dtype():
     The hygiene test forbids ``.blocks`` in the package; the seed is bit-identical either
     way, and that is what this asserts rather than states.
     """
-    bulk = ctmrg.ising_bulk(BETA)
+    bulk = example.ising_bulk(BETA)
     c, e = init_env(bulk, Leg(bulk.legs[0].space, IN))
     assert c.dtype == bulk.dtype and e.dtype == bulk.dtype
     assert c.backend == bulk.backend
@@ -139,20 +139,20 @@ def test_ring_is_the_four_adjoint_paired_tensors(provider):
 
 
 def test_converge_reaches_tol_and_freezes_the_projector_bond():
-    env, history = converge(*single_layer_ctm(ctmrg.ising_bulk(BETA)), chi=CHI, tol=1e-10)
+    env, history = ctmrg(*single_layer_ctm(example.ising_bulk(BETA)), chi=CHI, tol=1e-10)
     assert isinstance(env, CTMEnv)
     assert history[-1] < 1e-10
     assert len(history) < 100  # it stopped on the tolerance, not on max_sweeps
 
     # the frozen bond *is* the projector's space: one more move on it changes no structure
-    again = move(env.c, env.e, single_layer(ctmrg.ising_bulk(BETA)), bond=env.bond)
+    again = move(env.c, env.e, single_layer(example.ising_bulk(BETA)), bond=env.bond)
     assert again.bond == env.bond
     assert again.c.structure == env.c.structure and again.e.structure == env.e.structure
 
 
 def test_converge_stops_at_max_sweeps_when_the_tolerance_is_unreachable():
-    _env, history = converge(
-        *single_layer_ctm(ctmrg.ising_bulk(BETA)), chi=CHI, tol=0.0, max_sweeps=3
+    _env, history = ctmrg(
+        *single_layer_ctm(example.ising_bulk(BETA)), chi=CHI, tol=0.0, max_sweeps=3
     )
     assert len(history) == 3
 
@@ -177,9 +177,9 @@ def test_move_on_a_frozen_bond_traces_once_and_retraces_on_a_different_one():
     """The #77 pairing, at unit scope: ``bond=B`` is shape-static, and ``B`` is the key."""
     from functools import partial
 
-    absorb, c, e = single_layer_ctm(ctmrg.ising_bulk(BETA))
-    env, _ = converge(absorb, c, e, chi=CHI)
-    smaller, _ = converge(*single_layer_ctm(ctmrg.ising_bulk(BETA)), chi=2)
+    absorb, c, e = single_layer_ctm(example.ising_bulk(BETA))
+    env, _ = ctmrg(absorb, c, e, chi=CHI)
+    smaller, _ = ctmrg(*single_layer_ctm(example.ising_bulk(BETA)), chi=2)
     assert smaller.bond != env.bond
 
     count = 0
@@ -191,13 +191,13 @@ def test_move_on_a_frozen_bond_traces_once_and_retraces_on_a_different_one():
         # the absorber is built *inside*, from the traced bulk, so the closure captures a
         # traced value -- the behaviour a Protocol would neither help nor hinder and a
         # stateful class would tempt someone to break
-        return unrolled(c, env.e, single_layer(bulk), bond, k=k)[0]
+        return ctmrg_unrolled(c, env.e, single_layer(bulk), bond, k=k)[0]
 
-    out = one(env.c, ctmrg.ising_bulk(BETA), env.bond, 1)
+    out = one(env.c, example.ising_bulk(BETA), env.bond, 1)
     assert out.structure == env.c.structure
-    one(env.c, ctmrg.ising_bulk(BETA + 0.01), env.bond, 1)
+    one(env.c, example.ising_bulk(BETA + 0.01), env.bond, 1)
     assert count == 1  # different block values, same frozen bond: one trace
-    one(env.c, ctmrg.ising_bulk(BETA), smaller.bond, 1)
+    one(env.c, example.ising_bulk(BETA), smaller.bond, 1)
     assert count == 2  # a different GradedSpace is a different cache key
 
 
@@ -205,7 +205,7 @@ def test_move_with_chi_is_refused_under_jit():
     """``chi=`` decides a structure from singular *values*: that is not traceable (#64)."""
     from functools import partial
 
-    absorb, c, e = single_layer_ctm(ctmrg.ising_bulk(BETA))
+    absorb, c, e = single_layer_ctm(example.ising_bulk(BETA))
     with pytest.raises(tenet.StructureChangingError, match="tenet.linalg.svd"):
         jax.jit(partial(move, chi=CHI), static_argnums=(2,))(c, e, absorb)
 
@@ -215,6 +215,6 @@ def test_converge_is_refused_under_jit_before_it_reaches_an_svd():
     the outside/inside split exists to keep outside, and it raises earlier than the SVD."""
     from functools import partial
 
-    absorb, c, e = single_layer_ctm(ctmrg.ising_bulk(BETA))
+    absorb, c, e = single_layer_ctm(example.ising_bulk(BETA))
     with pytest.raises(jax.errors.ConcretizationTypeError):
-        jax.jit(partial(converge, chi=CHI, max_sweeps=1), static_argnums=(0,))(absorb, c, e)
+        jax.jit(partial(ctmrg, chi=CHI, max_sweeps=1), static_argnums=(0,))(absorb, c, e)

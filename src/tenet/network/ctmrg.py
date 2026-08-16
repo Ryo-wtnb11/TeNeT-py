@@ -6,9 +6,9 @@ the observables -- and this module keeps the environment machinery.
 
 **This is the first module in ``src/tenet/`` that lives on both sides of a trace**, so
 every public function below opens by saying which. The pairing is #77's:
-:func:`converge` runs ``svd_truncated`` **outside** ``jax.grad`` (it decides a bond
+:func:`ctmrg` runs ``svd_truncated`` **outside** ``jax.grad`` (it decides a bond
 :class:`~tenet.GradedSpace` from singular *values*, so it raises
-``tenet.StructureChangingError`` under any trace), and :func:`unrolled` runs
+``tenet.StructureChangingError`` under any trace), and :func:`ctmrg_unrolled` runs
 ``svd(bond=)`` **inside** it at exactly that frozen bond -- shape-static, one trace,
 differentiable. The ``GradedSpace`` is the only thing that crosses the boundary, and it
 is metadata: frozen, hashable, array-free, a legitimate jit *cache key* and never a jit
@@ -69,17 +69,17 @@ from tenet.network.common import ones, spectrum
 __all__ = [
     "Absorb",
     "CTMEnv",
-    "converge",
+    "ctmrg",
+    "ctmrg_unrolled",
     "double_layer",
     "double_layer_ctm",
     "init_env",
     "layers",
     "move",
-    "renormalized",
+    "normalized",
     "ring",
     "single_layer",
     "single_layer_ctm",
-    "unrolled",
 ]
 
 
@@ -89,7 +89,7 @@ class CTMEnv(NamedTuple):
     This is the *outside* container, and it unpacks positionally, so
     ``c, e, bond = move(...)`` reads exactly as it did before the type existed.
 
-    :func:`unrolled` deliberately does **not** take one. A ``NamedTuple`` is a registered
+    :func:`ctmrg_unrolled` deliberately does **not** take one. A ``NamedTuple`` is a registered
     pytree, so handing this object to ``jax.jit`` would try to flatten ``bond`` -- a
     :class:`~tenet.GradedSpace` -- into a leaf. ``bond`` is metadata: frozen, hashable,
     array-free, a jit *cache key* (``static_argnums``) and never a jit *argument*. The
@@ -129,8 +129,11 @@ class Absorb(NamedTuple):
     edge: Callable[[SymmetricTensor, SymmetricTensor], SymmetricTensor]
 
 
-def renormalized(t: SymmetricTensor) -> SymmetricTensor:
+def normalized(t: SymmetricTensor) -> SymmetricTensor:
     """**Inside** ``jax.jit(jax.grad(...))``. ``t / ||t||``, after every move.
+
+    This is a division by ``tenet.norm``, not the renormalization -- the projector
+    truncation :func:`move` performs -- that the R in CTMRG names.
 
     Not cosmetic: ``tenet.ad``'s Lorentzian ``epsilon`` is in units of sigma squared and
     the PRX default ``1e-12`` assumes an ``O(1)``-normalized spectrum. A CTMRG that does
@@ -264,7 +267,7 @@ def init_env(site: SymmetricTensor, *bonds: Leg) -> tuple[SymmetricTensor, Symme
 def single_layer_ctm(bulk: SymmetricTensor) -> tuple[Absorb, SymmetricTensor, SymmetricTensor]:
     """**Outside** ``jit``/``grad``. ``(absorber, c, e)`` for a rank-4 bulk tensor.
 
-    One virtual bond per edge, so ``converge(*single_layer_ctm(bulk), chi=16)`` is the
+    One virtual bond per edge, so ``ctmrg(*single_layer_ctm(bulk), chi=16)`` is the
     whole call.
     """
     return single_layer(bulk), *init_env(bulk, Leg(bulk.legs[0].space, IN))
@@ -336,7 +339,7 @@ def move(
         p, s, _ = tenet.linalg.svd_truncated(big_c, axes, max_bond=chi)
     else:
         p, s, _ = tenet.linalg.svd(big_c, axes, bond=bond)
-    return CTMEnv(renormalized(s), renormalized(absorb.edge(e, p)), p.legs[-1].space)
+    return CTMEnv(normalized(s), normalized(absorb.edge(e, p)), p.legs[-1].space)
 
 
 def _spectrum_change(old: list[float], new: list[float]) -> float:
@@ -348,7 +351,7 @@ def _spectrum_change(old: list[float], new: list[float]) -> float:
     return max(abs(a - b) for a, b in zip(old, new, strict=True))
 
 
-def converge(
+def ctmrg(
     absorb: Absorb,
     c: SymmetricTensor,
     e: SymmetricTensor,
@@ -364,7 +367,7 @@ def converge(
     ever reaches an SVD.
 
     Takes the ``(absorber, c, e)`` triple :func:`single_layer_ctm` /
-    :func:`double_layer_ctm` return, so ``converge(*single_layer_ctm(bulk), chi=16)`` is
+    :func:`double_layer_ctm` return, so ``ctmrg(*single_layer_ctm(bulk), chi=16)`` is
     the whole call.
 
     Returns ``(env, history)``: a :class:`CTMEnv` whose ``bond`` is the frozen environment
@@ -383,7 +386,7 @@ def converge(
     return CTMEnv(c, e, bond), history
 
 
-def unrolled(
+def ctmrg_unrolled(
     c: SymmetricTensor,
     e: SymmetricTensor,
     absorb: Absorb,

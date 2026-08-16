@@ -1,8 +1,8 @@
 """The driver: a Krylov step, a two-site sweep, and the loop that repeats it.
 
 Promoted from ``examples/dmrg.py`` (#110) with no arithmetic change: ``lanczos``
-:393-437, ``sweep`` :443-484, ``_schmidt_change`` :487-503, ``DMRG_out`` :506-520 and
-``dmrg`` :524-557. Function-shaped drivers, YASTN's decomposition (``_dmrg.py``:42-128),
+:393-437, ``sweep_`` :443-484, ``_schmidt_change`` :487-503, ``DMRG_out`` :506-520 and
+``dmrg_`` :524-557. Function-shaped drivers, YASTN's decomposition (``_dmrg.py``:42-128),
 not TenPy's ``Sweep``/``EffectiveH`` hierarchy -- M11a ships **one** sweep, and a base
 class with one subclass is the interface-with-one-implementation the repo's own rules
 forbid.
@@ -26,7 +26,7 @@ from tenet.network.common import inner, spectrum
 from tenet.network.env import Env
 from tenet.network.mps import MPO, MPS
 
-__all__ = ["DMRG_out", "dmrg", "lanczos", "sweep"]
+__all__ = ["DMRG_out", "dmrg_", "lanczos", "sweep_"]
 
 
 def lanczos(
@@ -80,7 +80,7 @@ def lanczos(
     return float(values[0]), out / tenet.norm(out)
 
 
-def sweep(
+def sweep_(
     psi: MPS,
     h: MPO,
     env: Env,
@@ -171,7 +171,7 @@ class DMRG_out(NamedTuple):
     psi: MPS
 
 
-def dmrg(
+def dmrg_(
     psi: MPS,
     h: MPO,
     *,
@@ -202,7 +202,7 @@ def dmrg(
     out: Any = None
     for it in range(1, max_sweeps + 1):
         old_energy, old_schmidt = energy, dict(schmidt)
-        energy, max_dw = sweep(psi, h, env, schmidt, chi=chi, cutoff=cutoff, ncv=ncv)
+        energy, max_dw = sweep_(psi, h, env, schmidt, chi=chi, cutoff=cutoff, ncv=ncv)
         denergy = abs(old_energy - energy)
         d_schmidt = _schmidt_change(old_schmidt, schmidt)
         history.append((energy, denergy, d_schmidt, max_dw))
