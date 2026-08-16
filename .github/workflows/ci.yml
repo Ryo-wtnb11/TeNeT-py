@@ -23,3 +23,7 @@ jobs:
       # redden the primary suite. CPU wheels; see [tool.uv.sources] (#95).
       - run: uv sync --extra torch
       - run: uv run pytest tests/backends/test_torch.py
+      # Same reasoning: one appended step, not a job. --strict turns every unresolved
+      # nav entry and internal link into a failure, which is the whole check (#118).
+      # A broken docs build reddens CI; the deploy lives in docs.yml and cannot.
+      - run: uv run --group docs mkdocs build --strict
