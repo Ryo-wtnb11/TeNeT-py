@@ -63,7 +63,7 @@ the MPO bond to ``+2`` and an ``S^+`` sends it to ``-2``. That is what
 
 Deliberate simplifications, each with its ceiling:
 
-ponytail: **two-site DMRG only; single-site plus subspace expansion is deferred, and
+Simplification: **two-site DMRG only; single-site plus subspace expansion is deferred, and
 ``tenet.linalg.left_null`` (#88) therefore gets no demo here.** Two-site is what makes
 ``svd_truncated`` the bond-deciding step, which is the tenet feature this example exists
 to exercise, and it grows a bond by a factor of ``d`` per site with no extra concept.
@@ -73,7 +73,7 @@ needs ``left_null``, a mixing factor ``alpha``, its own schedule and a second ``
 contraction chain. Named upgrade path, and a good one: ``left_null`` is the only #88
 export with no end-to-end user.
 
-ponytail: **hand-written pairwise contraction orders, not ``optimize=`` on a five-operand
+Simplification: **hand-written pairwise contraction orders, not ``optimize=`` on a five-operand
 einsum** -- now in ``tenet.network.env``, unchanged. Same reason as ``ctmrg._halves``:
 ``opt_einsum`` costs a graded network from *physical* leg sizes, and a U(1) MPS bond whose
 sectors are unevenly filled is exactly where that estimate is wrong. The orders are
@@ -81,7 +81,7 @@ YASTN's own (``yastn/tn/mps/_env.py``:496-518), which its ``_dmrg.py``:102-108 d
 as ``O(D^3 M d + D^2 M^2 d^2)`` per matvec -- optimal for *one* matvec, which is all a
 Krylov step ever wants.
 
-ponytail: **the MPO is written out, not generated.** YASTN builds MPOs from ``Hterm``
+Simplification: **the MPO is written out, not generated.** YASTN builds MPOs from ``Hterm``
 NamedTuples through ``generate_mpo`` and a series of compressing SVDs
 (``_generate_mpo.py``:30-51, :73-112). That is the right API for a library that must accept
 arbitrary Hamiltonians; it is 300 lines and the wrong thing for a file whose Hamiltonian is
@@ -180,7 +180,7 @@ def bond_spaces(n_sites: int) -> list[GradedSpace]:
     reason the library takes bond *spaces* and not a chi: which charges are reachable is
     physics, and it is the only thing about this chain the container cannot know.
 
-    ponytail: degeneracy 1 per sector, not a full-rank seed. Two-site DMRG multiplies a
+    Simplification: degeneracy 1 per sector, not a full-rank seed. Two-site DMRG multiplies a
     bond by ``d = 2`` per sweep, so a chi=64 bond is three sweeps away and the first
     sweeps are correspondingly cheap. A larger seed is one ``min(..., cap)`` here if a
     workload ever wants the bond full on sweep one.

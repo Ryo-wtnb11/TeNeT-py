@@ -43,7 +43,7 @@ unit cell (out of scope) or dropping the symmetry (which deletes the reason this
 exists). So it follows ``examples/vmc_mps.py``: random symmetric ``h``, no comparison
 against ``-0.669437(5)``, said out loud right here.
 
-ponytail: **``tenet.cast`` (#92) is mentioned and not used.** Building an SU(2) ansatz and
+Simplification: **``tenet.cast`` (#92) is mentioned and not used.** Building an SU(2) ansatz and
 casting it to U(1) is a third concept in a file that already has two models; the SU(2)
 provider is instead run through the *same* iPEPS path via a ``provider`` parameter.
 """
@@ -68,13 +68,13 @@ from tenet.symmetry import SU2, U1, Z2, SU2Sector, U1Sector, Z2Sector
 
 BETA_C = 0.4406867935097714  # ln(1 + sqrt(2)) / 2
 
-# ``opt_einsum``'s greedy path, for the ring contractions only. ponytail: greedy, not
+# ``opt_einsum``'s greedy path, for the ring contractions only. Simplification: greedy, not
 # "auto" -- at ten-plus operands "auto"'s dynamic-programming *search* costs an order of
 # magnitude more than the contraction it plans (4.5 s against 0.4 s for the two-site
 # energy). Upgrade path: an explicit path, or cotengra.
 PATH = "greedy"
 
-# Environment dimension for the iPEPS half, per provider. ponytail: not one number.
+# Environment dimension for the iPEPS half, per provider. Simplification: not one number.
 # ``max_bond`` bounds the *dense* bond, which for SU(2) is ``sum_c (2j+1) m_c``: a budget
 # of 4 stops in the middle of the second multiplet -- the split Francuz-Schuch-Vanhecke's
 # Appendix C warns about, and slower to converge and to differentiate than the 6 that
@@ -115,7 +115,7 @@ def ising_bulk(beta):
     raise under a trace. The check is *moved*, not lost: an untraced test runs the same
     array through ``from_dense`` at the **default** relative ``atol``.
 
-    ponytail: dense-then-gather at setup on a 16-element array, ceiling ``prod dim_i``.
+    Simplification: dense-then-gather at setup on a 16-element array, ceiling ``prod dim_i``.
     """
     c, s = ar.do("sqrt", ar.do("cosh", beta)), ar.do("sqrt", ar.do("sinh", beta))
     w = ar.do("stack", (ar.do("stack", (c, s)), ar.do("stack", (c, -s))))
@@ -136,7 +136,7 @@ def c4v(a: SymmetricTensor) -> SymmetricTensor:
     transpose ``(0, 2, 1, 4, 3)``: no bend, no bending coefficient, and linear, so it
     differentiates for free.
 
-    ponytail: **one C4v move, not four directional ones** -- symmetrizing the *ansatz*
+    Simplification: **one C4v move, not four directional ones** -- symmetrizing the *ansatz*
     instead. A general single-site iPEPS needs the four-move environment, which is the same
     upgrade the multi-site unit cell needs, and what buys the rotated Heisenberg energy.
     """
@@ -238,7 +238,7 @@ def _halves(r, ket, bra, phys1: str = "", phys2: str = ""):
     a corner (environment, ket, bra), so the peak is rank 7 -- rank 8 with the physical legs
     open, froSTspin ``rdm.py``:30-69, ``a*d*chi**2*D**4`` -- and no double layer is formed.
 
-    ponytail: two hand-written halves instead of one twelve-operand equation. The
+    Simplification: two hand-written halves instead of one twelve-operand equation. The
     contraction is identical; what changes is that the intermediates are rank 5 and rank 3
     by construction rather than by whatever path ``opt_einsum`` picks from *physical* leg
     sizes -- which for an unevenly filled graded tensor it picks badly and unpredictably:
@@ -269,7 +269,7 @@ def energy(a: SymmetricTensor, h: SymmetricTensor, env, k: int = 4):
     denominator. One bond stays open for ``tenet.full_trace``. With :func:`_halves` this is a
     reduced-density-matrix API at one geometry, which is why it stayed out of the library.
 
-    ponytail: ``h`` closes two open physical legs (froSTspin ``contract_open_corner``)
+    Simplification: ``h`` closes two open physical legs (froSTspin ``contract_open_corner``)
     rather than being inserted into the ket (YASTN's ``DoublePepsTensor(op=...)``), whose
     route is cheaper only for a *one-site* operator: ``h`` is two-site here, so inserting it
     means an SVD of ``h``, a new bond space and a truncation decision -- a third

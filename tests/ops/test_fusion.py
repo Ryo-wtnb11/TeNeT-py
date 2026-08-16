@@ -45,7 +45,7 @@ ALL_LEGS = {"su2": SU2_LEGS, "u1": U1_LEGS, "trivial": TRIV_LEGS}
 
 def use_jax():
     jax = pytest.importorskip("jax")
-    # ponytail: global x64 so float64 survives the move and the 1e-12 tolerances
+    # Simplification: global x64 so float64 survives the move and the 1e-12 tolerances
     # in these tests mean something. Drop it if a test ever needs f32 semantics.
     jax.config.update("jax_enable_x64", True)
     return jax

@@ -219,7 +219,7 @@ class ContractionPlan:
     small pure-Python derivation that decides *which* sub-plans run, plus
     :attr:`new_structure`, the output legs known without contracting anything.
 
-    ponytail: no ``src/tenet/planning/`` package (docs/design.md's proposed tree). Today
+    Simplification: no ``src/tenet/planning/`` package (docs/design.md's proposed tree). Today
     it would hold re-exports of plans that already live next to their ops
     (``PermutationPlan``/``ops.permutation``, ``BendPlan``/``ops.repartition``,
     ``FusionPlan``/``ops.fusion``, ``AdjointPlan``/``ops.map``,
@@ -238,7 +238,7 @@ class ContractionPlan:
     new_structure: TensorStructure
 
 
-# ponytail: unbounded `cache`, matching every other plan cache (see structure.py's
+# Simplification: unbounded `cache`, matching every other plan cache (see structure.py's
 # note). The ceiling is a workload that generates genuinely new structures per call
 # — data-dependent truncation inside a loop, which docs/design.md already places outside
 # JIT; the upgrade path is `lru_cache(maxsize=...)`.
@@ -279,7 +279,7 @@ def contraction_plan(a: TensorStructure, b: TensorStructure, axes: Axes) -> Cont
     if not fa and not fb:
         raise ValueError(
             "tensordot: this contraction leaves no free leg, and TensorStructure needs at "
-            "least one leg (a rank-0 SymmetricTensor does not exist; see its ponytail note "
+            "least one leg (a rank-0 SymmetricTensor does not exist; see the simplification note "
             "on an explicit provider field). Returning a bare backend scalar would make the "
             "return type depend on the arguments — tenet.norm is the precedent for scalars "
             "leaving the tensor world explicitly"
@@ -457,7 +457,7 @@ def _parse(equation: str, operands: tuple["SymmetricTensor", ...]) -> tuple[list
                     "tensor: it is not equivariant unless the two legs' bases are identified, "
                     "which is extra data the tensor does not carry (invariant 11)"
                 )
-            # ponytail: refused, not lowered. `trace(t, (i, j))` would serve "ii->" in
+            # Simplification: refused, not lowered. `trace(t, (i, j))` would serve "ii->" in
             # one line; add it when a caller actually writes the equation that way.
             raise ValueError(
                 f"einsum: label {label!r} is repeated inside term {term!r}, i.e. a trace over "
@@ -551,7 +551,7 @@ def einsum(
     return transpose(tensordot(*operands, axes), tuple(free.index(label) for label in out))
 
 
-# ponytail: no path cache. Path finding for a ten-tensor network is microseconds
+# Simplification: no path cache. Path finding for a ten-tensor network is microseconds
 # against block work measured in milliseconds, and the key would have to include
 # `optimize`, which may be a stateful, deliberately non-deterministic optimizer.
 # The ceiling is a hot loop over a large network re-planned every call; the upgrade
@@ -571,7 +571,7 @@ def _contract_path(
     legs unchanged (:func:`contraction_plan`'s contract), so no new categorical
     work happens between steps either.
 
-    ponytail: for a *braided* provider (a fermionic parity one, or a product
+    Simplification: for a *braided* provider (a fermionic parity one, or a product
     containing it) the answer is path-independent only for steps adjacent in
     the caller's order — which is every step of a chain, and every step of any
     path ``opt_einsum`` returns without an outer product. A step that reaches

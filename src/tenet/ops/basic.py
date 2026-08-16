@@ -133,7 +133,7 @@ def conj(t: "SymmetricTensor") -> "SymmetricTensor":
     provider here has real Clebsch-Gordan coefficients (all-ones for Trivial and
     U(1), Condon-Shortley for SU(2), recorded in ``SU2_GAUGE``).
 
-    ponytail: a provider with complex CG would need a capability gate here — one
+    Simplification: a provider with complex CG would need a capability gate here — one
     ``requires(...)`` line once such a provider exists. No marker protocol with
     three implementations and no counterexample.
     """

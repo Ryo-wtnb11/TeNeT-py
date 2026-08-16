@@ -513,12 +513,12 @@ def test_no_plan_object_no_cache_and_the_decision_is_recorded():
     assert not any(n.lower().endswith("plan") for n in vars(module))
     source = pathlib.Path(module.__file__).read_text()
     assert "functools" not in source and "@cache" not in source
-    assert "ponytail: no plan object and no cache" in source
+    assert "Simplification: no plan object and no cache" in source
     # #90 discharged the "no restrict" note; #91 added its two.
-    assert "ponytail: no `restrict`" not in source
-    assert "ponytail: `_check_containment` is shared" in source
-    assert "ponytail: `axes` as a set" in source
-    assert "ponytail: pairwise only" in source
+    assert "Simplification: no `restrict`" not in source
+    assert "Simplification: `_check_containment` is shared" in source
+    assert "Simplification: `axes` as a set" in source
+    assert "Simplification: pairwise only" in source
 
 
 # ==================================================================================

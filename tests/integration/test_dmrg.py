@@ -54,7 +54,7 @@ import dmrg  # noqa: E402
 E_OBC_12 = -5.142090632840532
 E_OBC_20 = -8.682473334398956
 
-# ponytail: a plain dict of completed runs, as ``test_ctmrg._ENVS`` is. A DMRG run is the
+# Simplification: a plain dict of completed runs, as ``test_ctmrg._ENVS`` is. A DMRG run is the
 # expensive thing in this module and nothing here mutates one.
 _RUNS: dict = {}
 

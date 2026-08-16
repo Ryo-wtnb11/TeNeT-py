@@ -125,7 +125,7 @@ def test_cache_returns_one_object_for_equal_but_independent_structures():
 
 def test_no_planning_package_exists_and_the_decision_is_recorded():
     assert not (pathlib.Path(tenet.__file__).parent / "planning").exists()
-    assert "ponytail: no ``src/tenet/planning/`` package" in ContractionPlan.__doc__
+    assert "Simplification: no ``src/tenet/planning/`` package" in ContractionPlan.__doc__
 
 
 # --- new_structure is predicted, not observed ---------------------------------------

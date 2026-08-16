@@ -270,7 +270,7 @@ def permute_braided_tree(
     No tolerance-based pruning: a structurally forbidden term is already exactly
     ``0.0`` through ``f_symbol``, and the surviving float residues from the ``sum
     over d`` cost plan size, never correctness.
-    ponytail: the ceiling is term-list size for high-rank, high-spin trees; the
+    Simplification: the ceiling is term-list size for high-rank, high-spin trees; the
     upgrade path is exact sqrt-rational accumulation, not a tolerance.
     """
     terms: dict[FusionTree, complex] = {tree: 1.0}

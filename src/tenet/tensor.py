@@ -80,7 +80,7 @@ class SymmetricTensor:
         """Standard-normal blocks from ``np.random.default_rng(seed)``, reproducible."""
         structure = TensorStructure(tuple(legs))
         rng = np.random.default_rng(seed)
-        # ponytail: real draws cast to dtype; give complex dtypes a real+imag draw
+        # Simplification: real draws cast to dtype; give complex dtypes a real+imag draw
         # if a test ever needs genuinely complex random data.
         return cls(
             structure,
@@ -199,7 +199,7 @@ class SymmetricTensor:
         Goes through the ordinary constructor, so block count and per-block shape
         are validated by ``__post_init__``.
 
-        ponytail: quimb's ``inject_variables`` may expect this to mutate in place.
+        Simplification: quimb's ``inject_variables`` may expect this to mutate in place.
         quimb is not a dependency, so this is not guessed at here — the frozen
         structure is what the JAX story rests on. If M8 finds quimb needs it, a
         thin mutable adapter belongs there, not in the core type.

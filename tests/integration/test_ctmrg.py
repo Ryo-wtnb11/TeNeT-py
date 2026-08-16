@@ -135,7 +135,7 @@ K_IPEPS = 2
 TOL_ORDERED, SWEEPS_ORDERED = 1e-14, 200
 
 # Converging an environment is the expensive part and nothing here mutates one, so each is
-# built once per module. ponytail: a plain dict, not a fixture per beta -- the key is a
+# built once per module. Simplification: a plain dict, not a fixture per beta -- the key is a
 # tuple of floats and ints and the values are immutable.
 _ENVS: dict = {}
 
@@ -454,7 +454,7 @@ def test_zero_magnetization_is_structural_not_numerical(beta):
     naming an offending sector tuple, and *that refusal is the statement*: exact and
     structural, where the ungraded run could only offer a small float.
 
-    ponytail: measuring a genuine ``<s>`` (rather than proving it zero) wants a dummy leg
+    Simplification: measuring a genuine ``<s>`` (rather than proving it zero) wants a dummy leg
     in the odd sector; nothing here needs one.
     """
     c, s = math.sqrt(math.cosh(beta)), math.sqrt(math.sinh(beta))

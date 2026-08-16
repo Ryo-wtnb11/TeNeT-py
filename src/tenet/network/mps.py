@@ -145,7 +145,7 @@ class MPS:
         Setup only: a two-site sweep leaves the state canonical by construction on the
         side it came from, which is precisely what an ``int`` centre records.
 
-        ponytail: only ``to=0`` (fully right-canonical) is implemented, because that is
+        Simplification: only ``to=0`` (fully right-canonical) is implemented, because that is
         the one form the sweep's setup wants. Ceiling: a general ``to`` is the same loop
         run from both ends, and YASTN's ``canonize_(to='last')`` (``_mps_obc.py``:390) is
         the spelling to copy the day a caller needs it.
@@ -306,7 +306,7 @@ def _as_site(t: SymmetricTensor) -> SymmetricTensor:
 #
 # Module-level, not methods and not a ``network/measure.py``: a measurement is not
 # container state, and a new module for ~30 lines buys a second entry in
-# ``tests/network/test_hygiene.py``'s module list and nothing else. ponytail: the day
+# ``tests/network/test_hygiene.py``'s module list and nothing else. Simplification: the day
 # ``correlation``, ``sample`` or ``rdm`` land, ``network/measure.py`` is the module and
 # YASTN's ``_measure.py`` the design -- ``measure_1site`` (:76) has a ~40-line body and
 # ``measure_2site`` (:130) a ~75-line one, which is the argument for not starting it now.

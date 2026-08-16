@@ -840,7 +840,7 @@ def test_round_trip_and_norm_and_conj(factory, p):
     assert back.structure == t.structure
     for a, b in zip(back.blocks, t.blocks, strict=True):
         np.testing.assert_array_equal(a, b)
-    # ponytail: approx, not ==: the qdim-weighted sum runs over the blocks in a
+    # Simplification: approx, not ==: the qdim-weighted sum runs over the blocks in a
     # different order after a permutation, so the last ulp is not reproducible.
     assert tenet.norm(t.transpose(p)) == pytest.approx(tenet.norm(t), abs=1e-12)
     assert t.transpose(p).conj() == t.conj().transpose(p)

@@ -46,15 +46,15 @@ site and four ``update_`` moves), and froSTspin's four ``contract_*`` wrappers o
 ``contract_enlarged_corner``.
 
 Four ceilings come with the code, unchanged from the example that had them.
-ponytail: **truncated backprop through K unrolled moves, never the implicit fixed point**
+Simplification: **truncated backprop through K unrolled moves, never the implicit fixed point**
 (PRX 9, 031041 Sec. III C) -- the implicit route is a second numerical framework inside a
 VJP, with its own tolerance and data-dependent exit, which cannot warn under a trace.
-ponytail: **no gradient checkpointing** -- at K=4 and chi=16 the tape fits, and
+Simplification: **no gradient checkpointing** -- at K=4 and chi=16 the tape fits, and
 ``jax.checkpoint`` on :func:`move` is the one-line addition when it does not.
-ponytail: **no pre-QR before the projector SVD** -- YASTN takes an intermediate QR
+Simplification: **no pre-QR before the projector SVD** -- YASTN takes an intermediate QR
 (``use_qr=True``) for stability; ``tenet.linalg.qr`` exists and the composition is three
 lines, and at chi <= 16 in float64 nothing has lost digits yet.
-ponytail: **``svd``, not ``eigh``, for the projector**, even though C4v CTMRG classically
+Simplification: **``svd``, not ``eigh``, for the projector**, even though C4v CTMRG classically
 diagonalizes a Hermitian corner: #77 left ``eigh(t, bond=)`` out of scope, so the
 fixed-bond differentiable route exists only for ``svd``. tensorgrad takes the same route.
 """
@@ -254,7 +254,7 @@ def init_env(site: SymmetricTensor, *bonds: Leg) -> tuple[SymmetricTensor, Symme
     block is the unit one, so under a grading the seed is right by construction rather
     than by luck.
 
-    ponytail: a 1-dimensional seed, not YASTN's ``init='dl'`` partial trace and not
+    Simplification: a 1-dimensional seed, not YASTN's ``init='dl'`` partial trace and not
     ``tenet.random_isometry``. The isometry seed is what a ``chi > D**2`` start needs,
     where growing from one dimension takes an extra sweep or two to fill the space;
     ``tenet.isometry``/``random_isometry`` slot straight in at that point.
@@ -325,7 +325,7 @@ def move(
     ``ndim // 2`` rather than a branch, because a bilinear form's two index groups are
     always its two halves: rank 4 for a single layer, rank 6 for a double one.
 
-    ponytail: one isometry, ``u``, for a *bilinear* enlarged corner whose ``u`` and ``v``
+    Simplification: one isometry, ``u``, for a *bilinear* enlarged corner whose ``u`` and ``v``
     coincide only when it is positive. A single-layer Ising corner is, which is why that
     model reproduces Onsager to float64; a double-layer corner with indefinite spectrum
     gets a consistent contraction whose corner and edge differ by a diagonal of signs.
