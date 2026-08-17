@@ -42,7 +42,14 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 
 from tenet.structure import FusionBlockKey, TensorStructure
-from tenet.symmetry.base import CapabilityError, PermutationCoefficients, requires
+from tenet.symmetry.base import (
+    BraidingData,
+    CapabilityError,
+    PermutationCoefficients,
+    requires,
+    supports,
+)
+from tenet.symmetry.coherence import symmetric_braiding
 
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
@@ -97,8 +104,23 @@ def _side_perm(
     return tuple(position[axes[i]] for i in new_side_axes)
 
 
-def _refuse(provider: Any, axes: tuple[int, ...], offenders: str) -> None:
-    """Turn the bare capability failure into a message a user can act on."""
+def _refuse(provider: Any, axes: tuple[int, ...], offenders: str, sectors: tuple[Any, ...]) -> None:
+    """Turn the bare capability failure into a message a user can act on.
+
+    The chirality check comes first: a provider that *has* R-symbols but whose
+    braiding is not symmetric must be refused with the real reason (``axes``
+    underdetermine the braid) rather than with a missing-method message —
+    whether or not it also defines ``permute_tree``.
+    """
+    if supports(provider, BraidingData) and not symmetric_braiding(provider, sectors):
+        raise CapabilityError(
+            f"transpose: axes {axes} reorders legs within a side ({offenders}), which is a "
+            f"braid, and provider {provider.name}'s braiding is chiral (R is not its own "
+            "inverse), so axes alone cannot say which line crosses over which. This needs "
+            "an explicit braid(t, i, over=...) API with leg levels, which tenet does not "
+            "provide. Permutations that only change the OUT/IN interleaving, leaving each "
+            "side's internal order intact, work today for every provider."
+        )
     try:
         requires(provider, PermutationCoefficients)
     except CapabilityError as exc:
@@ -138,7 +160,10 @@ def permutation_plan(structure: TensorStructure, axes: tuple[int, ...]) -> Permu
         )
         if perm != tuple(range(len(perm)))
     )
-    _refuse(provider, axes, offenders)
+    # the sector sample for the symmetric-braiding property: every sector a braid
+    # here can touch appears on some leg (fusion channels are probed by the check)
+    sectors = tuple(sorted({a for leg in structure.legs for a, _ in leg.space.sectors}))
+    _refuse(provider, axes, offenders, sectors)
 
     built: list[tuple[int, int, complex]] = []
     for src, key in enumerate(structure.block_order):
@@ -180,7 +205,10 @@ def transpose(t: "SymmetricTensor", axes: Sequence[int] | None = None) -> "Symme
     CapabilityError
         If ``axes`` reorders legs *within* a side — a braid — and the
         provider does not implement
-        [PermutationCoefficients][tenet.symmetry.PermutationCoefficients].
+        [PermutationCoefficients][tenet.symmetry.PermutationCoefficients],
+        or its [BraidingData][tenet.symmetry.BraidingData] is chiral
+        (``R != R**-1``), in which case ``axes`` alone underdetermine the
+        braid and an explicit ``braid(t, i, over=...)`` API would be needed.
         Permutations that only change the OUT/IN interleaving work for every
         provider.
 

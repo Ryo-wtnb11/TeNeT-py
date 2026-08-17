@@ -29,10 +29,9 @@ commit ``bd1bf8296876103870d6158c0918987256396880``:
 https://github.com/QuantumKitHub/TensorKitSectors.jl/blob/bd1bf8296876103870d6158c0918987256396880/src/fermions.jl
 """
 
-# Simplification: the twist enters only as the ``chi * theta`` product inside
-# ``flip_phase`` (#142). ``trace`` and ``adjoint`` (#31), and any closed fermion loop,
-# are the operations that will need the *bare* twist; split a ``Twist`` capability
-# out of ``flip_phase`` then, not before.
+# The split #142 deferred happened in M24a (#158): ``frobenius_schur`` (+1) and the
+# bare ``twist`` ((-1)^parity) are now separate capabilities, and their product is
+# bit-identical to ``flip_phase``, which survives as the bundled alias until M24b.
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -171,6 +170,16 @@ class FZ2Provider:
     def z_matrix(self, a: FZ2Sector) -> np.ndarray:
         """``Z = [[1]]``, read-only: ``V_a`` is one-dimensional and ``FS == +1``."""
         return _Z
+
+    def frobenius_schur(self, a: FZ2Sector) -> float:
+        """``chi_a = +1`` for both sectors: TensorKit keeps a regular trace and the
+        parity sign lives entirely in :meth:`twist` — see the module docstring."""
+        return 1.0
+
+    def twist(self, a: FZ2Sector) -> float:
+        """``theta_a = (-1)^parity``: the fermionic twist, the sign a closed odd
+        loop pays."""
+        return -1.0 if a.parity else 1.0
 
     def flip_phase(self, a: FZ2Sector) -> float:
         """``chi_a * theta_a = (-1)^parity``: FS is ``+1``, so the whole factor is

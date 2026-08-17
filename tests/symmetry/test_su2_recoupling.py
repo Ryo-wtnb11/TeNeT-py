@@ -13,6 +13,13 @@ import pytest
 
 from tenet.symmetry import SU2, U1, RecouplingData, SU2Provider, SU2Sector, Trivial
 from tenet.symmetry._su2_coeff import b_symbol, f_symbol, frobenius_schur, r_symbol, triangle
+from tenet.symmetry.coherence import (
+    validate_hexagon,
+    validate_pentagon,
+    validate_snake,
+    validate_spherical,
+    validate_unitary,
+)
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
@@ -90,56 +97,58 @@ def _fuse(a: int, b: int) -> range:
     return range(abs(a - b), a + b + 1, 2)
 
 
-def _inner_lines(a: int, b: int, c: int, d: int) -> tuple[list[int], list[int]]:
-    e = [x for x in _fuse(a, b) if triangle(x, c, d)]
-    f = [x for x in _fuse(b, c) if triangle(a, x, d)]
-    return e, f
-
-
 def test_f_symbol_matrices_are_unitary() -> None:
-    checked = 0
-    for a, b, c, d in product(range(7), repeat=4):
-        es, fs = _inner_lines(a, b, c, d)
-        if not es:
-            assert not fs
-            continue
-        assert len(es) == len(fs)
-        m = np.array([[f_symbol(a, b, c, d, e, f) for f in fs] for e in es])
-        eye = np.eye(len(es))
-        assert np.allclose(m @ m.conj().T, eye, atol=1e-13)
-        assert np.allclose(m.conj().T @ m, eye, atol=1e-13)
-        checked += 1
+    """Promoted to :func:`tenet.symmetry.coherence.validate_unitary` (M24a); the
+    validator raises on the first non-unitary F-matrix or non-unimodular R, and
+    returns the number of F-matrices checked over the same ``range(7)`` budget
+    the inline loop used."""
+    checked = validate_unitary(SU2, tuple(SU2Sector(x) for x in range(7)), atol=1e-13)
     assert checked > 100
 
 
 def test_pentagon_identity() -> None:
     """``[F^{fcd}_e]_{g,l} [F^{abl}_e]_{f,k} = sum_h [F^{abc}_g]_{f,h} [F^{ahd}_e]_{g,k}
     [F^{bcd}_k]_{h,l}`` — an arithmetic cross-check on the phase/dimension folding,
-    not a gauge check (pentagon holds in every valid gauge).
+    not a gauge check (pentagon holds in every valid gauge). Promoted to
+    :func:`tenet.symmetry.coherence.validate_pentagon` (M24a) over the same
+    ``range(5)`` budget the inline loop used.
     """
-    checked = multiterm = 0
-    for a, b, c, d in product(range(5), repeat=4):
-        for f in _fuse(a, b):
-            for g in _fuse(f, c):
-                for ell in _fuse(c, d):
-                    for e in _fuse(g, d):
-                        if not triangle(f, ell, e):
-                            continue
-                        for k in _fuse(b, ell):
-                            if not triangle(a, k, e):
-                                continue
-                            lhs = f_symbol(f, c, d, e, g, ell) * f_symbol(a, b, ell, e, f, k)
-                            terms = [
-                                f_symbol(a, b, c, g, f, h)
-                                * f_symbol(a, h, d, e, g, k)
-                                * f_symbol(b, c, d, k, h, ell)
-                                for h in _fuse(b, c)
-                            ]
-                            assert abs(lhs - sum(terms)) < 1e-12, (a, b, c, d, e, f, g, k, ell)
-                            checked += 1
-                            multiterm += sum(t != 0.0 for t in terms) > 1
+    checked = validate_pentagon(SU2, tuple(SU2Sector(x) for x in range(5)), atol=1e-12)
     assert checked > 1000
-    assert multiterm > 0, "pentagon was only exercised on one-term sums"
+
+    # the multi-term guard the inline loop carried: at least one pentagon sum is a
+    # genuine expansion over h, so the validator was not only fed one-term sums
+    def multiterm_exists() -> bool:
+        for a, b, c, d in product(range(3), repeat=4):
+            for f in _fuse(a, b):
+                for g in _fuse(f, c):
+                    for ell in _fuse(c, d):
+                        for e in (x for x in _fuse(g, d) if triangle(f, ell, x)):
+                            for k in (x for x in _fuse(b, ell) if triangle(a, x, e)):
+                                terms = [
+                                    f_symbol(a, b, c, g, f, h)
+                                    * f_symbol(a, h, d, e, g, k)
+                                    * f_symbol(b, c, d, k, h, ell)
+                                    for h in _fuse(b, c)
+                                ]
+                                if sum(t != 0.0 for t in terms) > 1:
+                                    return True
+        return False
+
+    assert multiterm_exists(), "pentagon was only exercised on one-term sums"
+
+
+def test_hexagon_identity() -> None:
+    """The R-move hexagon, promoted to ``validate_hexagon`` (M24a): SU(2)'s
+    symmetric R is consistent with its associator."""
+    assert validate_hexagon(SU2, tuple(SU2Sector(x) for x in range(5))) > 100
+
+
+def test_snake_and_spherical() -> None:
+    """``B`` from ``F`` and ``qdim(a) == qdim(dual(a))``, via the M24a validators."""
+    sectors = tuple(SU2Sector(x) for x in range(7))
+    assert validate_snake(SU2, sectors) > 50
+    assert validate_spherical(SU2, sectors) == 7
 
 
 # --- the vertex-normalization oracle ----------------------------------------

@@ -173,6 +173,11 @@ class SUNProvider:
         """``chi_a = sign([F^{a dual(a) a}_a]_{1,1})``, the TensorKit definition."""
         return _sun_coeff.frobenius_schur(self._d(a))
 
+    def twist(self, a: SUNSector) -> int:
+        """``theta_a = 1``: SU(N) braiding is symmetric, so the twist is trivial."""
+        self._d(a)
+        return 1
+
     def flip_phase(self, a: SUNSector) -> int:
         """``chi_a * theta_a = chi_a``: SU(N) braiding is symmetric, so the twist is 1."""
         return self.frobenius_schur(a)

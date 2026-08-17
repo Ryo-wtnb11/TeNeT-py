@@ -50,12 +50,14 @@ import numpy as np
 
 from tenet.symmetry.base import (
     CapabilityError,
-    ClebschGordan,
+    ClebschGordanData,
     FlipPhase,
+    FSIndicatorData,
     FusionProvider,
     PermutationCoefficients,
-    QuantumDimension,
+    QuantumDimensionData,
     Sector,
+    TwistData,
     requires,
 )
 
@@ -164,7 +166,7 @@ class ProductProvider:
     # --- forwarded capabilities: present iff EVERY factor has them -------------
 
     def qdim(self, a: Sector) -> float:
-        self._require_all(QuantumDimension)
+        self._require_all(QuantumDimensionData)
         return math.prod(f.qdim(x) for f, x in self._zip(a))
 
     def flip_phase(self, a: Sector) -> complex:
@@ -172,8 +174,18 @@ class ProductProvider:
         self._require_all(FlipPhase)
         return math.prod(f.flip_phase(x) for f, x in self._zip(a))
 
+    def frobenius_schur(self, a: Sector) -> complex:
+        """``chi`` of a Deligne product factorizes, like every other phase."""
+        self._require_all(FSIndicatorData)
+        return math.prod(f.frobenius_schur(x) for f, x in self._zip(a))
+
+    def twist(self, a: Sector) -> complex:
+        """``theta`` of a Deligne product factorizes, like every other phase."""
+        self._require_all(TwistData)
+        return math.prod(f.twist(x) for f, x in self._zip(a))
+
     def irrep_dim(self, a: Sector) -> int:
-        self._require_all(ClebschGordan, _CGC_HINT)
+        self._require_all(ClebschGordanData, _CGC_HINT)
         return math.prod(f.irrep_dim(x) for f, x in self._zip(a))
 
     def cgc(self, a: Sector, b: Sector, c: Sector) -> np.ndarray:
@@ -181,7 +193,7 @@ class ProductProvider:
         product of the factors' ``cgc``s flattened in C order — which is exactly
         the mixed radix of :func:`mu_encode`. Raises ``ValueError`` (from the
         factor) on a fusion-forbidden triple."""
-        self._require_all(ClebschGordan, _CGC_HINT)
+        self._require_all(ClebschGordanData, _CGC_HINT)
         out = None
         for f, x, y, z in self._zip(a, b, c):
             g = f.cgc(x, y, z)

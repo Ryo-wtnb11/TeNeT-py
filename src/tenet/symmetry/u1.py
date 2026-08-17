@@ -86,6 +86,14 @@ class U1Provider:
         """``Z = [[1]]``, read-only: ``V_q`` is one-dimensional and the FS phase is 1."""
         return _Z
 
+    def frobenius_schur(self, a: U1Sector) -> float:
+        """``chi_a = 1``: every U(1) irrep is one-dimensional with a real pairing."""
+        return 1.0
+
+    def twist(self, a: U1Sector) -> float:
+        """``theta_a = 1``: bosonic Abelian, trivial twist."""
+        return 1.0
+
     def flip_phase(self, a: U1Sector) -> float:
         """``chi_a * theta_a = 1``: bosonic Abelian, FS phase 1 and trivial twist."""
         return 1.0

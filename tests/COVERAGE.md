@@ -20,7 +20,15 @@ The canonical list is the suite's only all-eight parametrization,
 
 `SU3` is the vendored fixture provider (`tests/symmetry/_su3_fixture.py`,
 sectors truncated at `27`, `N^8_{88} = 2`, no registry name); `SUNProvider(3)`
-is the racah-backed one. `racah-py` and JAX sit in the default dev group
+is the racah-backed one. Since M24a (#158) there is a ninth, smoke-level
+column: the Fibonacci fixture (`tests/symmetry/_fibonacci_fixture.py`, no
+registry name, deliberately no `cgc`/`irrep_dim`/`z_matrix` and a chiral
+braiding), exercised only in `tests/symmetry/test_fibonacci.py` — build, bend,
+`full_trace`, the coherence validators of `tenet.symmetry.coherence`
+(pentagon/hexagon/snake/spherical/non-degeneracy, which SU(2) also runs in
+`test_su2_recoupling.py`), and the two named refusals (`transpose` on a chiral
+braid, `to_dense` without `ClebschGordanData`). It joins no row below by
+design; the capability lattice, not this fixture, is what those rows cover. `racah-py` and JAX sit in the default dev group
 (`pyproject.toml`), torch has its own CI step — **no cell below is unreachable
 in CI**; every empty cell is a decision, not a constraint.
 
@@ -38,7 +46,7 @@ in CI**; every empty cell is a decision, not a constraint.
 | 8 | `flip` (#142) | capability on all 8; numerically `{u1, fz2, su2, su3}` (+ Z2/product spaces) | `tests/symmetry/test_flip_phase.py:34`; `tests/ops/test_flip.py` |
 | 9 | `embed` / `restrict` / `direct_sum` / `isometry` | `{trivial, u1, su2, fz2, product}` | `tests/ops/test_embed.py:57`; `tests/ops/test_isometry.py:45-61` |
 | 10 | `cast` | bounded by `SymmetryCast`: targets `{SU2, Trivial, fZ2, U1×U1}`; U1-as-source is the refusal | `tests/ops/test_cast.py:97`, `:386-408` |
-| 11 | `save` / `load` | `{trivial, u1, su2, fz2, product, nested}` + Z2 + SU(N) | `tests/test_serialize.py:36-56`; `tests/symmetry/test_z2.py:390-419`; `tests/symmetry/test_sun.py:451-501` |
+| 11 | `save` / `load` | `{trivial, u1, z2, su2, fz2, product, nested}` + SU(N) — all seven registered providers round-trip | `tests/test_serialize.py:36-57`; `tests/symmetry/test_z2.py:390-419`; `tests/symmetry/test_sun.py:451-501` |
 | 12 | network MPS/MPO/Env/dmrg/ctmrg | `{u1, su2, z2, su3, fz2}` (fermionic MPO/DMRG since #147; ctmrg stays bosonic) | `tests/network/test_mps.py:24-32`; `tests/network/test_mpo.py`; `tests/network/test_hubbard.py`; `tests/network/test_heff2.py:110-125`; `tests/network/test_ctmrg.py` |
 | 13 | map view | `{su2, u1, trivial}` + jax | `tests/ops/test_map.py:143-166`, `:347-364` |
 

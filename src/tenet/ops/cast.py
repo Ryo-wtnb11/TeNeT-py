@@ -34,7 +34,7 @@ from tenet.ops.dense import from_dense, to_dense
 from tenet.space import GradedSpace
 from tenet.symmetry.base import (
     CapabilityError,
-    ClebschGordan,
+    ClebschGordanData,
     FusionProvider,
     Sector,
     SymmetryCast,
@@ -56,10 +56,10 @@ def cast(
     ----------
     t : SymmetricTensor
         The tensor to restrict. Its provider must implement
-        [SymmetryCast][tenet.symmetry.SymmetryCast] (and ``ClebschGordan``, plus
+        [SymmetryCast][tenet.symmetry.SymmetryCast] (and ``ClebschGordanData``, plus
         ``DualBasis`` for a ``dual`` leg, through ``to_dense``).
     target : FusionProvider
-        The smaller symmetry to restrict to. Must implement ``ClebschGordan``
+        The smaller symmetry to restrict to. Must implement ``ClebschGordanData``
         and have one-dimensional irreps (i.e. be abelian).
     atol : float or None, optional
         Forwarded to ``from_dense``'s symmetry check; ``None`` (the default)
@@ -77,7 +77,7 @@ def cast(
     ------
     CapabilityError
         If ``t``'s provider does not implement ``SymmetryCast``, if ``target``
-        does not implement ``ClebschGordan``, or if a target sector has
+        does not implement ``ClebschGordanData``, or if a target sector has
         ``irrep_dim > 1`` — one target label per dense basis vector is only
         well-defined when the target's irreps are one-dimensional.
     ValueError
@@ -108,7 +108,7 @@ def cast(
     than its source, so there is no inverse cast in this direction.
     """
     requires(t.structure.provider, SymmetryCast)
-    requires(target, ClebschGordan)
+    requires(target, ClebschGordanData)
     legs, takes = zip(*(_cast_leg(leg, target) for leg in t.legs), strict=True)
     dense = to_dense(t)
     for axis, take in enumerate(takes):
@@ -133,7 +133,7 @@ def _cast_leg(leg: Leg, target: FusionProvider) -> tuple[Leg, list[int]]:
     p = leg.provider
     labels: list[Sector] = []
     for a, m in leg.space.sectors:
-        # SymmetryCast/ClebschGordan are checked by requires() in cast()
+        # SymmetryCast/ClebschGordanData are checked by requires() in cast()
         # before any leg is cast; a raise-based check does not narrow
         charges = p.branch(target, a)  # ty: ignore[unresolved-attribute]
         for q in charges:

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from math import prod
 from typing import TYPE_CHECKING
 
-from tenet.symmetry.base import ClebschGordan, FusionProvider, Sector, _HashMemo, requires
+from tenet.symmetry.base import ClebschGordanData, FusionProvider, Sector, _HashMemo, requires
 
 if TYPE_CHECKING:
     from tenet.leg import Leg
@@ -120,18 +120,18 @@ class GradedSpace(_HashMemo):
 
     @property
     def dim(self) -> int:
-        """``Σ m_a d_a``: the full dense dimension. Requires ``ClebschGordan``."""
-        requires(self.provider, ClebschGordan)
+        """``Σ m_a d_a``: the full dense dimension. Requires ``ClebschGordanData``."""
+        requires(self.provider, ClebschGordanData)
         # requires() above; raise-based check does not narrow
         return sum(m * self.provider.irrep_dim(a) for a, m in self.sectors)  # ty: ignore[unresolved-attribute]
 
     def sector_offset(self, a: Sector) -> int:
-        """Start of ``a``'s slab in the dense layout. Requires ``ClebschGordan``.
+        """Start of ``a``'s slab in the dense layout. Requires ``ClebschGordanData``.
 
         Sectors are laid out in canonical order, each contributing a contiguous
         slab of ``m_a * d_a``; the within-slab index is ``alpha * d_a + m``.
         """
-        requires(self.provider, ClebschGordan)
+        requires(self.provider, ClebschGordanData)
         offset = 0
         for b, m in self.sectors:
             if b == a:
@@ -163,7 +163,7 @@ class ProductSpace:
 
     @property
     def dim(self) -> int:
-        """``Π leg.space.dim`` — the full dense dimension. Requires ``ClebschGordan``."""
+        """``Π leg.space.dim`` — the full dense dimension. Requires ``ClebschGordanData``."""
         return prod(leg.space.dim for leg in self.legs)
 
     @property

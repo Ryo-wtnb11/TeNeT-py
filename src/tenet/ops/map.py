@@ -475,12 +475,15 @@ def adjoint(t: "SymmetricTensor") -> "SymmetricTensor":
     because reduced axes travel with their own legs (invariant 7).
 
     Deliberately no ``requires(...)``: this needs ``conj`` on the backend and the
-    identity of the trees, nothing a provider could fail to supply.
+    identity of the trees, nothing a provider could fail to supply. The dagger
+    structure this leans on is named by
+    [DaggerData][tenet.symmetry.DaggerData], today a marker every provider
+    satisfies.
 
     """
     # Simplification: a provider with complex Clebsch-Gordan coefficients would need the
-    # same capability gate ``ops.basic.conj`` already flags — one line, once such a
-    # provider exists. Not a second speculative protocol.
+    # same capability gate ``ops.basic.conj`` already flags — one ``requires(provider,
+    # DaggerData)`` line, once DaggerData grows content. Not a second speculative protocol.
     from tenet.tensor import SymmetricTensor
 
     plan = adjoint_plan(t.structure)

@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
-from tenet.symmetry.base import QuantumDimension, requires
+from tenet.symmetry.base import QuantumDimensionData, requires
 
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
@@ -298,8 +298,9 @@ def conj(t: "SymmetricTensor") -> "SymmetricTensor":
     U(1), Condon-Shortley for SU(2)).
     """
     # Simplification: a provider with complex CG would need a capability gate here — one
-    # ``requires(...)`` line once such a provider exists. No marker protocol with
-    # three implementations and no counterexample.
+    # ``requires(provider, DaggerData)`` line once DaggerData grows content (M24a made it
+    # the named marker for exactly this gap; it stays contentless until a counterexample
+    # provider exists).
     from tenet.tensor import SymmetricTensor
 
     return SymmetricTensor(t.structure, tuple(ar.do("conj", b) for b in t.blocks))
@@ -324,7 +325,7 @@ def norm(t: "SymmetricTensor") -> Any:
     ------
     CapabilityError
         If ``t``'s provider does not implement
-        [QuantumDimension][tenet.symmetry.QuantumDimension].
+        [QuantumDimensionData][tenet.symmetry.QuantumDimensionData].
 
     Examples
     --------
@@ -344,14 +345,14 @@ def norm(t: "SymmetricTensor") -> Any:
     (that identity is an acceptance test). Dropping the
     weight is wrong for any non-Abelian provider.
 
-    Uses ``qdim`` (capability ``QuantumDimension``), not ``irrep_dim``, so it is
+    Uses ``qdim`` (capability ``QuantumDimensionData``), not ``irrep_dim``, so it is
     defined even for providers with no dense expansion at all.
 
     Returns the backend's own scalar, so the whole function is traceable and
     differentiable (Milestone 6).
     """
     provider = t.provider
-    requires(provider, QuantumDimension)
+    requires(provider, QuantumDimensionData)
     if not t.blocks:
         return 0.0
     total = sum(

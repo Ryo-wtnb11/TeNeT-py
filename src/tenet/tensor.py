@@ -129,7 +129,7 @@ class SymmetricTensor:
     def shape(self) -> tuple[int, ...]:
         """Full **physical** dimension per public axis: ``Σ_a m_a d_a``.
 
-        Equal to ``self.to_dense().shape``. Requires ``ClebschGordan`` (via
+        Equal to ``self.to_dense().shape``. Requires ``ClebschGordanData`` (via
         ``GradedSpace.dim``) and raises ``CapabilityError`` without it — a
         provider with non-integer quantum dimensions has no physical shape, and
         silently returning :attr:`reduced_shape` would violate invariant 11.
@@ -421,7 +421,7 @@ class SymmetricTensor:
     def to_dense(self) -> Array:
         """``T = Σ_τ A^(τ) ⊗ C^(τ)`` expanded into a dense array of ``self``'s backend.
 
-        Explicit by design (invariant 9). Requires ``ClebschGordan``; a leg with
+        Explicit by design (invariant 9). Requires ``ClebschGordanData``; a leg with
         ``dual=True`` additionally requires ``DualBasis``. See
         :func:`tenet.ops.dense.to_dense` — traceable and differentiable as of #82.
         """
