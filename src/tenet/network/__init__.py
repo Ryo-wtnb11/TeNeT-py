@@ -4,6 +4,23 @@ The dependency edge is one-way: ``network`` imports ``ops``/``tensor``, never th
 reverse. Nothing under ``src/tenet`` outside this package may import it, exactly as
 ``ops`` imports ``tensor`` and not back (``src/tenet/ops/__init__.py``:1-5).
 
+**The composition rule** (#160), stated once here and referenced from ``mps.py`` and
+``env.py``: every two-operand ``tenet.einsum`` in this package is a **composition** --
+operand 1 supplies the ``IN`` end of *every* shared wire and operand 2 the ``OUT`` end.
+For three-plus operands the same rule applies pairwise in caller order, which
+``_contract_path`` guarantees (``ops/contraction.py``:596-603). The rule exists because
+the two ends of a wire are not interchangeable for a fermionic provider -- the cap
+``V*(x)V -> 1`` is not the cap ``V(x)V* -> 1`` -- so the operand order of every einsum
+that can contract an odd wire is load-bearing, and a per-call choice is exactly what
+produced #147's ``(-1)^(j-i)`` (the cap-direction Koszul sign, gate 1). A wire that
+genuinely turns around in the intended planar diagram is **bent explicitly** with
+``tenet.repartition`` before the einsum (``env.py::_composed``), never left to the
+einsum's implicit cap. ``tests/network/test_hygiene.py`` pins the rule at every call
+site reached by a smoke over the MPS/MPO/DMRG modules, with zero exemptions;
+``ctmrg.py`` is outside the smoke -- a 2D network has loops, where operand order is
+necessary but not sufficient (``ops/contraction.py``:575-587) and no fermionic PEPS
+caller exists.
+
 **Which side of a trace a module lives on is a per-module statement, not a package-level
 one.** Until M11b it was package-level ("entirely outside ``jit``/``grad``"); with
 ``ctmrg.py`` that sentence is no longer true of the package and is still true of the rest,

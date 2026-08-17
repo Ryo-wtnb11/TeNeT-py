@@ -157,3 +157,125 @@ def test_the_allowed_metadata_reads_stay_on_the_named_list():
             elif isinstance(node.value, ast.Name) and node.value.id in bound:
                 seen.add(node.attr)
     assert seen <= allowed, sorted(seen - allowed)
+
+
+def test_every_two_operand_einsum_is_a_composition(monkeypatch):
+    """The composition rule (#160), pinned: operand 1 supplies IN on every shared wire.
+
+    ``network/__init__.py`` states the rule once; this test is what makes it a
+    convention rather than a one-time cleanup. ``tenet.einsum`` is wrapped for one
+    smoke over the MPS/MPO/DMRG modules -- ``from_terms`` at both cutoffs with a term
+    list that populates every Jordan channel (a non-adjacent term over a spectator, a
+    single-site term, an operator-carrying string, a k-site split), ``to_dense``,
+    ``dmrg_`` sweeps on both ``heff2`` paths, ``Env.measure``, ``MPS.norm``, the two
+    expectation values, ``compress_`` -- and every two-operand call must have operand
+    1 supplying the IN end of every shared wire. Zero exemptions: a wire that bends is
+    bent explicitly with ``tenet.repartition`` *before* the einsum
+    (``env.py::_composed``), so what reaches ``tenet.einsum`` is always a composition.
+
+    The coverage claim is asserted, not assumed: every ``tenet.einsum`` call site the
+    AST finds in ``mps.py``, ``env.py`` and ``dmrg.py`` must be reached by the smoke
+    (``_composed`` call sites route through the one einsum inside the helper, which is
+    itself on the list). ``ctmrg.py`` is deliberately outside: a 2D network has loops,
+    where operand order is necessary but not sufficient (``ops/contraction.py``
+    :575-587), and no fermionic PEPS caller exists.
+    """
+    import traceback
+
+    import numpy as np
+
+    import tenet
+    from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    from tenet.network import MPO, MPS, Env, dmrg_, expectation_1site, expectation_2site, local_op
+    from tenet.symmetry import U1, U1Sector
+
+    reached, violations = set(), []
+    real = tenet.einsum
+
+    def wrapped(equation, *operands, **kwargs):
+        if len(operands) == 2:
+            stack = traceback.extract_stack()
+            frame = stack[-2]
+            where = f"{pathlib.Path(frame.filename).name}:{frame.lineno}"
+            if pathlib.Path(frame.filename).parent == PACKAGE:
+                reached.add((pathlib.Path(frame.filename).name, frame.lineno))
+                if frame.name == "_composed":  # credit the site that stated the bend
+                    caller = stack[-3]
+                    if pathlib.Path(caller.filename).parent == PACKAGE:
+                        reached.add((pathlib.Path(caller.filename).name, caller.lineno))
+                terms = equation.split("->")[0].split(",")
+                for label in terms[0]:
+                    if label not in terms[1]:
+                        continue
+                    end1 = operands[0].legs[terms[0].index(label)].side
+                    end2 = operands[1].legs[terms[1].index(label)].side
+                    if not (end1 is IN and end2 is not IN):
+                        violations.append(
+                            f"{where}: {equation}: wire {label!r} has operand 1 "
+                            f"supplying {end1} and operand 2 supplying {end2}"
+                        )
+        return real(equation, *operands, **kwargs)
+
+    monkeypatch.setattr(tenet, "einsum", wrapped)
+
+    phys = GradedSpace.new(U1, {U1Sector(1): 1, U1Sector(-1): 1})
+    sp = np.array([[0.0, 1.0], [0.0, 0.0]])
+    sz = np.diag([0.5, -0.5])
+    op_sp = local_op(sp, phys=phys, charge=U1Sector(2))
+    op_sm = local_op(sp.T, phys=phys, charge=U1Sector(-2))
+    op_sz = local_op(sz, phys=phys, charge=U1Sector(0))
+    zz = local_op(np.kron(sz, sz), phys=phys)
+    n = 4
+    terms = []
+    for m in range(n - 1):
+        terms += [
+            (0.5, [(op_sp, m), (op_sm, m + 1)]),
+            (0.5, [(op_sm, m), (op_sp, m + 1)]),
+            (1.0, [(op_sz, m), (op_sz, m + 1)]),
+        ]
+    terms += [
+        (0.25, [(zz, (0, 2))]),  # a k-site split whose derived bond runs over a spectator
+        (0.1, [(op_sz, 2)]),  # a single-site term: the d channel
+        (0.3, [(op_sp, 0), (op_sz, 1), (op_sz, 2), (op_sm, 3)]),  # operator-carrying string
+        (0.2, [(op_sp, 0), (op_sm, 3)]),  # open-group spectators: the AA-remainder chains
+    ]
+    unit = GradedSpace.new(U1, {U1Sector(0): 1})
+    bonds = [unit]
+    for i in range(1, n):
+        qs = (-1, 1) if i % 2 else (-2, 0, 2)
+        bonds.append(GradedSpace.new(U1, {U1Sector(q): 2 for q in qs}))
+    bonds.append(unit)
+    for cutoff in (None, 1e-13):
+        h = MPO.from_terms(n, terms, cutoff=cutoff)
+        h.to_dense()
+        psi = MPS.random(phys, bonds, seed=3)
+        psi.norm()
+        psi.to_dense()
+        sz2 = SymmetricTensor.from_dense(sz, (Leg(phys, OUT), Leg(phys, IN)))
+        zz4 = SymmetricTensor.from_dense(
+            np.reshape(np.kron(sz, sz), (2, 2, 2, 2)),
+            (Leg(phys, OUT), Leg(phys, OUT), Leg(phys, IN), Leg(phys, IN)),
+        )
+        expectation_1site(psi, sz2, 1)
+        expectation_2site(psi, zz4, 1)
+        Env(psi.copy(), h).measure()
+        dmrg_(psi, h, chi=8, cutoff=1e-12, max_sweeps=2)
+    psi.compress_(chi=4)
+
+    assert not violations, "\n".join(violations)
+
+    wanted = set()
+    for path in (PACKAGE / "mps.py", PACKAGE / "env.py", PACKAGE / "dmrg.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, ast.Call):
+                continue
+            direct = (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "einsum"
+                and len(node.args) == 3
+            )
+            bent = isinstance(node.func, ast.Name) and node.func.id == "_composed"
+            if direct or bent:
+                wanted.add((path.name, node.lineno))
+    missing = sorted(wanted - reached)
+    assert not missing, f"the smoke never reached these einsum call sites: {missing}"
