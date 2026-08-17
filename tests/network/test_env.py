@@ -11,7 +11,7 @@ import pytest
 
 import tenet
 from tenet import GradedSpace
-from tenet.network import MPO, MPS, Env, dmrg_, sweep_
+from tenet.network import MPO, MPS, Env, dmrg_, local_op, sweep_
 from tenet.symmetry import FZ2Sector, fZ2
 
 from . import test_mpo as mpo_test  # the fermionic oracle kit, shared (#160)
@@ -85,13 +85,15 @@ def test_measure_reproduces_the_dmrg_energy():
     assert Env(out.psi, h).measure() == pytest.approx(out.energy, abs=1e-12)
 
 
-def _fermionic_chain(n_sites, monkeypatch, *, cutoff):
-    """The N-site spinless hopping chain on fZ2 legs, refusal bypassed (#147 gate rules)."""
+def _fermionic_chain(n_sites, *, cutoff, interaction=0.0):
+    """The N-site spinless chain on fZ2 legs: hopping, plus optional ``n_m n_{m+1}``."""
     op_cd, op_c = mpo_test._fermionic_ops()
     terms = []
     for m in range(n_sites - 1):
         terms += [(1.0, [(op_cd, m), (op_c, m + 1)]), (1.0, [(op_cd, m + 1), (op_c, m)])]
-    mpo_test._bypass_refusal(monkeypatch)
+        if interaction:
+            op_n = local_op(np.diag([0.0, 1.0]), phys=mpo_test.FZ2_PHYS, charge=FZ2Sector(0))
+            terms += [(interaction, [(op_n, m), (op_n, m + 1)])]
     return MPO.from_terms(n_sites, terms, cutoff=cutoff)
 
 
@@ -101,7 +103,7 @@ def _fermionic_state(n_sites, seed):
     return MPS.random(mpo_test.FZ2_PHYS, [unit] + [both] * (n_sites - 1) + [unit], seed=seed)
 
 
-def test_fermionic_measure_agrees_with_the_dense_expectation(monkeypatch):
+def test_fermionic_measure_agrees_with_the_dense_expectation():
     """``Env.measure`` against dense ``<psi|H|psi>`` on a fixed random fZ2 MPS, to 1e-12.
 
     The check that catches an environment sign the variational energy would hide: a
@@ -113,7 +115,7 @@ def test_fermionic_measure_agrees_with_the_dense_expectation(monkeypatch):
     psi = _fermionic_state(4, seed=7)
     vec = np.reshape(psi.to_dense(), -1)
     for cutoff in (None, 1e-13):
-        h = _fermionic_chain(4, monkeypatch, cutoff=cutoff)
+        h = _fermionic_chain(4, cutoff=cutoff)
         dense = np.asarray(h.to_dense())
         want = float(vec.conj() @ dense @ vec)
         assert Env(psi.copy(), h).measure() == pytest.approx(want, abs=1e-12)

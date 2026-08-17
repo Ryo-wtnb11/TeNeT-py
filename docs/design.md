@@ -2908,10 +2908,13 @@ The split:
   `MPOGraph` (`networks/mpo.py`:2142) is the named upgrade path, and the first thing it
   buys is exponentially-decaying couplings at one virtual state apiece.
   Two refusals, each with a message rather than a silent wrong answer. **Fermionic
-  terms**: Jordan-Wigner needs a swap gate between an odd MPO bond and a physical line,
-  which is a line crossing rather than a leg permutation, so tenet's Koszul machinery does
-  not supply it; `Env`/`sweep_` have never contracted an odd-parity MPO bond, so the
-  result would be silently wrong rather than refused. **Non-Abelian terms**: a *list* of
+  terms**: refused here on the premise that Jordan-Wigner needs a swap gate between an
+  odd MPO bond and a physical line. That premise was later *refuted* and the refusal
+  lifted (M21/#147, after M23/#160): the Koszul braiding **is** the string — an odd FSM
+  bond crossing a spectator's physical lines writes the `Z` with no swap gate and no
+  explicit JW operator anywhere in the API — and the actual gap was the cap-direction
+  convention, one Koszul sign per odd bond paid by operand order, fixed by M23's
+  network-wide composition rule. **Non-Abelian terms**: a *list* of
   operators does not determine a non-Abelian term — three tensor operators fuse through
   several channels and the DSL has no slot for a coupling tree.
 
@@ -2991,6 +2994,10 @@ The split:
   mixes the states and leaves zero identity edges on every model measured.
 
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
+Fermionic swap gates stay not planned for a stronger reason than before: fermionic
+DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
+and the gap M13's refusal guarded against was the cap-direction convention M23/#160
+fixed, not a missing gate.
 
 ---
 

@@ -18,7 +18,8 @@ reading ``t.provider`` and the provider's ``qdim``, ``unit``, ``fusion``, ``dual
 ``sqrt(qdim)`` for its Schmidt weights, ``ctmrg.py`` needs ``provider.unit`` for the
 trivial sector, ``mps.py`` accumulates charges with ``fusion`` (#133), derives
 ``MPS.product``'s bonds backwards with ``fusion`` and ``dual`` (M14), and probes the
-braiding with ``permute_tree`` for the fermionic refusal (M13b). That is
+braiding with ``permute_tree`` for spectator classification and the fermionic
+term dressing (M13b's refusal probe, repurposed by #160/#147). That is
 *symmetry-generic metadata*: ``provider.qdim(c)`` is fine, ``isinstance(provider,
 SU2Provider)`` is not, and the second is what the branch test below forbids. Since M14
 the metadata test also catches reads through a local binding (``sym = space.provider``),

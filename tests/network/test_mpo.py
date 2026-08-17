@@ -314,26 +314,31 @@ def test_from_terms_refuses_a_non_abelian_operator():
         MPO.from_terms(3, [(1.0, [(op, 0), (op, 1)])])
 
 
-def test_from_terms_refuses_fermionic_braiding():
-    """fZ2 legs are refused, not silently accepted, and the message names the gap.
+def test_from_terms_builds_fermionic_terms_with_no_jordan_wigner_operator_in_the_api():
+    """fZ2 terms build like any other graded terms -- the M13b refusal is lifted (#147).
 
-    Jordan-Wigner needs a swap gate between an odd MPO bond and a physical line -- a line
-    crossing, not a permutation of one tensor's legs, so tenet's Koszul machinery does not
-    supply it for free. ``Env``/``sweep_`` have never contracted an odd-parity MPO bond and
-    contain no swap gate, so a fermionic MPO built here would be silently wrong rather than
-    refused, which is worse than not shipping it.
-
-    **The one experiment that decides the follow-up**, recorded so it need not be
-    rediscovered: build ``c+_0 c_1`` on fZ2 legs, take ``MPO.to_dense()`` and compare
-    against the dense Jordan-Wigner oracle. One test file, no ``src/`` change; if it
-    passes, the fermionic scope is exactly the swap-gate question and nothing else.
+    The refusal that stood here predicted the deciding experiment its lift required:
+    build ``c+_0 c_1`` on fZ2 legs and compare ``MPO.to_dense()`` against the dense
+    Jordan-Wigner oracle. #147 ran it (gate 1: the adjacent pair failed as ``-1x``, the
+    spectator was exact -- so the braiding *is* the string and no swap gate exists
+    anywhere), #160 fixed the actual gap (cap direction: every network einsum is now a
+    composition, operand 1 supplies IN), and the oracle tests below are the positive
+    statement. No explicit JW operator enters the API; the sign is the Koszul braiding.
     """
-    phys = GradedSpace.new(fZ2, {FZ2Sector(0): 1, FZ2Sector(1): 1})
-    charge = GradedSpace.new(fZ2, {FZ2Sector(1): 1})
-    legs = (Leg(phys, OUT), Leg(phys, IN), Leg(charge, OUT))
-    op = SymmetricTensor.random(legs, seed=0)
-    with pytest.raises(ValueError, match="fermionic braiding"):
-        MPO.from_terms(3, [(1.0, [(op, 0), (op, 1)])])
+    op_cd, op_c = _fermionic_ops()
+    h = MPO.from_terms(3, [(1.0, [(op_cd, 0), (op_c, 1)]), (1.0, [(op_cd, 1), (op_c, 0)])])
+    assert np.abs(np.asarray(h.to_dense()) - _jw_hop(3, 0, 1)).max() < 1e-13
+
+
+def test_a_bare_fermionic_creation_operator_is_still_refused():
+    """A charged term cannot close: both MPO boundaries are the trivial ``D=1`` leg.
+
+    The lift widened nothing -- an odd-total-parity term (a bare ``c+``) is refused by
+    the unit-sector closure check with its existing message, on fZ2 as anywhere else.
+    """
+    op_cd, _ = _fermionic_ops()
+    with pytest.raises(ValueError, match="sum to the unit sector"):
+        MPO.from_terms(3, [(1.0, [(op_cd, 0)])])
 
 
 FZ2_PHYS = GradedSpace.new(fZ2, {FZ2Sector(0): 1, FZ2Sector(1): 1})
@@ -357,28 +362,20 @@ def _jw_hop(n_sites, i, j):
     )
 
 
-def _bypass_refusal(monkeypatch):
-    """#147's gate discipline: bypass only the refusal, never the classification."""
-    from tenet.network import mps as _mps  # noqa: PLC0415
-
-    monkeypatch.setattr(_mps, "_refuse_fermionic", lambda space: None)
-
-
 def _fermionic_ops():
     op_cd = local_op(_A.T, phys=FZ2_PHYS, charge=FZ2Sector(1))
     op_c = local_op(_A, phys=FZ2_PHYS, charge=FZ2Sector(1))
     return op_cd, op_c
 
 
-def _fermionic_hop_mpo(n_sites, i, j, monkeypatch, *, cutoff=None):
-    """``c+_i c_j + h.c.`` through the rank-3 charge-leg route, refusal bypassed."""
-    _bypass_refusal(monkeypatch)
+def _fermionic_hop_mpo(n_sites, i, j, *, cutoff=None):
+    """``c+_i c_j + h.c.`` through the rank-3 charge-leg route."""
     op_cd, op_c = _fermionic_ops()
     terms = [(1.0, [(op_cd, i), (op_c, j)]), (1.0, [(op_cd, j), (op_c, i)])]
     return MPO.from_terms(n_sites, terms, cutoff=cutoff)
 
 
-def test_an_adjacent_fermionic_hop_matches_the_jordan_wigner_oracle(monkeypatch):
+def test_an_adjacent_fermionic_hop_matches_the_jordan_wigner_oracle():
     """``c+_0 c_1 + h.c.`` on fZ2 legs against the dense JW oracle, element-wise.
 
     #147's gate-1 deciding experiment, which failed as ``-1x`` the oracle and stopped
@@ -388,11 +385,11 @@ def test_an_adjacent_fermionic_hop_matches_the_jordan_wigner_oracle(monkeypatch)
     pinned by ``test_hygiene.py`` -- is what makes this pass now; the site tensors were
     always exact and needed no change.
     """
-    h = _fermionic_hop_mpo(2, 0, 1, monkeypatch)
+    h = _fermionic_hop_mpo(2, 0, 1)
     assert np.abs(np.asarray(h.to_dense()) - _jw_hop(2, 0, 1)).max() < 1e-13
 
 
-def test_a_spectator_site_carries_the_jordan_wigner_string(monkeypatch):
+def test_a_spectator_site_carries_the_jordan_wigner_string():
     """``c+_0 c_2 + h.c.`` at N=3: ``_identity_w`` moves an odd bond past a physical line.
 
     This was #147's candidate failure -- a naive inversion count over the spectator's two
@@ -402,11 +399,11 @@ def test_a_spectator_site_carries_the_jordan_wigner_string(monkeypatch):
     adjacent case above failed then: the two odd-bond contractions paid the cap-direction
     sign twice and ``(-1)**2`` cancelled; the ``Z`` on the spectator is genuine either way.
     """
-    h = _fermionic_hop_mpo(3, 0, 2, monkeypatch)
+    h = _fermionic_hop_mpo(3, 0, 2)
     assert np.abs(np.asarray(h.to_dense()) - _jw_hop(3, 0, 2)).max() < 1e-13
 
 
-def test_every_fermionic_hop_placement_matches_the_jordan_wigner_oracle(monkeypatch):
+def test_every_fermionic_hop_placement_matches_the_jordan_wigner_oracle():
     """The systematic sweep behind #147's ``(-1)^(j-i)`` table, all gone to ``+1``.
 
     Every ``c+_i c_j + h.c.`` placement and distance up to N=5, both term-list orders,
@@ -414,29 +411,56 @@ def test_every_fermionic_hop_placement_matches_the_jordan_wigner_oracle(monkeypa
     set gate 1 measured as ``(-1)^(j-i)`` times the oracle -- plus the two-pair
     four-fermion term ``c+_0 c_1 c+_2 c_3``, whose two odd runs made it ``+1`` even
     then. Element-wise against dense ``kron`` with the explicit ``Z`` string.
+
+    A term's operator list is an **ordered product** (gate 4's spinful oracle is what
+    forces the convention -- at ``d=2`` half of it is invisible): the annihilate-first
+    spelling ``c_i c+_j`` is ``-c+_j c_i`` for ``i != j``, so the backward direction
+    builds *minus* the hop, which is the anticommutator made visible.
     """
-    _bypass_refusal(monkeypatch)
     op_cd, op_c = _fermionic_ops()
     for n_sites in range(2, 6):
         for i in range(n_sites):
             for j in range(i + 1, n_sites):
-                oracle = _jw_hop(n_sites, i, j)
                 forward = [(1.0, [(op_cd, i), (op_c, j)]), (1.0, [(op_cd, j), (op_c, i)])]
                 backward = [(1.0, [(op_c, i), (op_cd, j)]), (1.0, [(op_c, j), (op_cd, i)])]
-                for direction, terms in ((0, forward), (1, backward)):
+                for sign, terms in ((1.0, forward), (-1.0, backward)):
+                    oracle = sign * _jw_hop(n_sites, i, j)
                     for order in (terms, terms[::-1]):
                         for cutoff in (None, 1e-13):
                             h = MPO.from_terms(n_sites, order, cutoff=cutoff)
                             got = np.asarray(h.to_dense())
                             assert np.abs(got - oracle).max() < 1e-12, (
-                                f"c+_{i} c_{j} at N={n_sites}, direction {direction}, "
-                                f"cutoff={cutoff}"
+                                f"c+_{i} c_{j} at N={n_sites}, sign {sign}, cutoff={cutoff}"
                             )
     two_pair = [(1.0, [(op_cd, 0), (op_c, 1), (op_cd, 2), (op_c, 3)])]
     oracle = _jw_c(4, 0, True) @ _jw_c(4, 1, False) @ _jw_c(4, 2, True) @ _jw_c(4, 3, False)
     for cutoff in (None, 1e-13):
         h = MPO.from_terms(4, two_pair, cutoff=cutoff)
         assert np.abs(np.asarray(h.to_dense()) - oracle).max() < 1e-12
+
+
+def test_the_two_fermionic_local_op_routes_agree():
+    """Gate 2 (#147): the rank-3 charge-leg chain and the invariant k-site form agree.
+
+    The k-site route hands ``from_terms`` the whole dense hop block -- ``_jw_hop`` of
+    the spanned window, internal ``Z`` string included, because that block *is* the
+    dense restriction of the chain operator -- and ``_split`` peels it, deriving the
+    odd bond from its SVD. If the two routes disagreed, one of them would be wrong.
+    """
+    op_cd, op_c = _fermionic_ops()
+    for n_sites, i, j in ((2, 0, 1), (3, 0, 2)):
+        rank3 = MPO.from_terms(
+            n_sites, [(1.0, [(op_cd, i), (op_c, j)]), (1.0, [(op_cd, j), (op_c, i)])]
+        )
+        block = local_op(_jw_hop(j - i + 1, 0, j - i), phys=FZ2_PHYS)
+        ksite = MPO.from_terms(n_sites, [(1.0, [(block, tuple(range(i, j + 1)))])])
+        assert np.abs(np.asarray(rank3.to_dense()) - np.asarray(ksite.to_dense())).max() < 1e-13
+    chain3 = [(1.0, [(op_cd, m), (op_c, m + 1)]) for m in range(3)]
+    chain3 += [(1.0, [(op_cd, m + 1), (op_c, m)]) for m in range(3)]
+    rank3 = MPO.from_terms(4, chain3)
+    hop = local_op(_jw_hop(2, 0, 1), phys=FZ2_PHYS)
+    ksite = MPO.from_terms(4, [(1.0, [(hop, (m, m + 1))]) for m in range(3)])
+    assert np.abs(np.asarray(rank3.to_dense()) - np.asarray(ksite.to_dense())).max() < 1e-13
 
 
 def test_from_terms_refuses_a_charged_term():

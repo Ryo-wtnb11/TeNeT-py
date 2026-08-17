@@ -133,6 +133,29 @@ def test_prepared_agrees_with_dense_on_the_su2_heisenberg_chain():
     assert _sweep_worst(8, h, su2_phys, [tri] + [mid] * 7 + [tri]) < 1e-12
 
 
+def test_prepared_agrees_with_dense_on_a_fermionic_chain():
+    """Gate 3 (#147): the two ``heff2`` paths agree at every gauged bond on fZ2.
+
+    N=5 with a non-adjacent hop so the block table carries an odd spectator state
+    through ``a_real_op`` (the rank-4 channel #160's classification routes it to),
+    plus an onsite density term for the D block.
+    """
+    from tenet.symmetry import FZ2Sector, fZ2  # noqa: PLC0415
+
+    phys = GradedSpace.new(fZ2, {FZ2Sector(0): 1, FZ2Sector(1): 1})
+    a = np.array([[0.0, 1.0], [0.0, 0.0]])
+    op_cd = local_op(a.T, phys=phys, charge=FZ2Sector(1))
+    op_c = local_op(a, phys=phys, charge=FZ2Sector(1))
+    op_n = local_op(np.diag([0.0, 1.0]), phys=phys, charge=FZ2Sector(0))
+    terms = [(0.8, [(op_n, 2)])]
+    for i, j in [(m, m + 1) for m in range(4)] + [(1, 3)]:
+        terms += [(1.0, [(op_cd, i), (op_c, j)]), (1.0, [(op_cd, j), (op_c, i)])]
+    h = MPO.from_terms(5, terms, cutoff=None)
+    unit = GradedSpace.new(fZ2, {FZ2Sector(0): 1})
+    both = GradedSpace.new(fZ2, {FZ2Sector(0): 2, FZ2Sector(1): 2})
+    assert _sweep_worst(5, h, phys, [unit] + [both] * 4 + [unit]) < 1e-12
+
+
 def test_dmrg_reaches_the_n12_reference_on_both_paths():
     """The whole pipeline, both routes, to the tolerance ``test_dmrg.py`` already uses."""
     h = MPO.from_terms(12, _pair_terms([(i, i + 1) for i in range(11)]), cutoff=None)
