@@ -21,7 +21,7 @@ import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
 from tenet.ops import fusion
 from tenet.ops.fusion import FusionLayout, FusionPlan, FusionStep, fuse_spaces, fusion_plan
-from tenet.symmetry import SU2, U1, SU2Sector, Trivial, TrivialSector, U1Sector
+from tenet.symmetry import SU2, U1, FZ2Sector, SU2Sector, Trivial, TrivialSector, U1Sector, fZ2
 
 ZERO, HALF, ONE = SU2Sector(0), SU2Sector(1), SU2Sector(2)
 A = GradedSpace.new(SU2, {HALF: 2, ONE: 1})
@@ -40,7 +40,13 @@ T3 = GradedSpace.new(Trivial, {TrivialSector(): 3})
 T2 = GradedSpace.new(Trivial, {TrivialSector(): 2})
 TRIV_LEGS = (Leg(T3, OUT), Leg(T2, OUT), Leg(T3, IN))
 
-ALL_LEGS = {"su2": SU2_LEGS, "u1": U1_LEGS, "trivial": TRIV_LEGS}
+# fZ2 joined by #146 (the a3 hole): a Koszul sign wrong in the fusion layout would
+# survive the fuse/unfuse round trip and only die against the dense oracle below.
+FE = GradedSpace.new(fZ2, {FZ2Sector(0): 2, FZ2Sector(1): 2})
+FO = GradedSpace.new(fZ2, {FZ2Sector(0): 1, FZ2Sector(1): 3})
+FZ2_LEGS = (Leg(FE, OUT), Leg(FO, OUT), Leg(FE, IN))
+
+ALL_LEGS = {"su2": SU2_LEGS, "u1": U1_LEGS, "trivial": TRIV_LEGS, "fz2": FZ2_LEGS}
 
 
 def use_jax():
@@ -241,6 +247,21 @@ def test_u1_dense_permutation_oracle_and_that_reshape_fails_it():
     plain = dense.reshape(dense.shape[0] * dense.shape[1], dense.shape[2])
     assert plain.shape == got.shape
     assert not np.allclose(plain, got), "fused dense is not a reshape even for U(1)"
+
+
+def test_fz2_dense_isometry_oracle_and_that_reshape_fails_it():
+    """The existing oracle on fZ2 (#146): the provider whose signs a round trip cannot see."""
+    t = SymmetricTensor.random(FZ2_LEGS, seed=29)
+    m = isometry(t.legs[0], t.legs[1])
+    # all-ones CGC: like U(1), the map is a genuine permutation
+    assert set(np.unique(m)) <= {0.0, 1.0}
+    got = t.fuse((0, 1)).to_dense()
+    np.testing.assert_allclose(got, oracle(t, (0, 1)), atol=1e-12)
+
+    dense = t.to_dense()
+    plain = dense.reshape(dense.shape[0] * dense.shape[1], dense.shape[2])
+    assert plain.shape == got.shape
+    assert not np.allclose(plain, got), "fused dense is not a reshape for fZ2 either"
 
 
 def test_trivial_fuse_is_exactly_a_plain_reshape():

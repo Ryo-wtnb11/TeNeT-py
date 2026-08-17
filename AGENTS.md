@@ -73,6 +73,13 @@ tests/           pytest tests, mirroring src/tenet/ structure
   hide wrong assumptions (external sectors ≠ complete fusion basis).
 - Where feasible, validate numerical operations against explicit dense
   expansion in tests.
+- A PR that adds a symmetry provider or a public operation updates
+  `tests/COVERAGE.md` in the same diff: a provider names its column and the
+  cells it fills; an operation names its row and the providers and modes it
+  runs under. Any cell left empty carries one of the four classifications —
+  genuine gap (with a follow-up), structurally redundant (with the argument),
+  out of contract (with the refusal test), or blocked (with what blocks it) —
+  in one line.
 - Structural/categorical types are immutable (frozen dataclasses or similar).
 - Backend abstraction is `autoray` only; keep it thin, don't build a second
   numerical framework. Framework-specific optimization (`jit`, `grad`,
