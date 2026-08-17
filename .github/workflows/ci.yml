@@ -26,7 +26,8 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest
-      # Appended to the same job, not a matrix axis: the suite is ~60s and the
+      # Appended to the same job, not a matrix axis: the suite is ~275s (measured
+      # 273.76s locally at #146; CI is slower still) and the
       # torch-relevant subset is a few dozen tests, so running everything twice
       # buys nothing. The step above is unchanged, so a torch failure can never
       # redden the primary suite. CPU wheels; see [tool.uv.sources] (#95).

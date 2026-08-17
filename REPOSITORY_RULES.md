@@ -67,6 +67,13 @@ Process rules for `TeNeT-py`. Design rules live in `docs/design.md`
 - No network access, no GPU requirements in CI tests. Backend-specific tests
   (JAX/PyTorch) are skipped automatically when the backend is not installed;
   CI installs CPU JAX so those tests do run there.
+- A PR that adds a symmetry provider or a public operation updates
+  `tests/COVERAGE.md` in the same diff: a provider names its column and the
+  cells it fills; an operation names its row and the providers and modes it
+  runs under. Any cell left empty carries one of the four classifications —
+  genuine gap (with a follow-up), structurally redundant (with the argument),
+  out of contract (with the refusal test), or blocked (with what blocks it) —
+  in one line.
 
 ## CI
 

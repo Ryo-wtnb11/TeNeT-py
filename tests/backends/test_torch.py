@@ -29,6 +29,7 @@ from tenet.ops.dense import to_dense
 from tenet.symmetry import (
     SU2,
     U1,
+    CapabilityError,
     FZ2Sector,
     ProductProvider,
     ProductSector,
@@ -245,6 +246,23 @@ def test_transpose(name):
 
 
 @pytest.mark.parametrize("name", PROVIDERS)
+def test_flip(name):
+    """#142's duality flip on torch blocks — the a1 hole of #146.
+
+    A single flip of a non-dual leg is a pure relabel (no phase), so the double
+    flip is asserted too: it multiplies each block by ``chi * theta`` — ``-1`` on
+    an SU(2) half-integer or odd-fermion line — which is the arithmetic worth
+    seeing on a torch block. One scalar per block, tenet's own: ``same``.
+    """
+    t = tt(LEGS[name], seed=42)
+    r = t.to_backend("numpy")
+    got = tenet.flip(t, 0)
+    assert is_torch(got)
+    same(got, tenet.flip(r, 0))
+    same(tenet.flip(got, 0), tenet.flip(tenet.flip(r, 0), 0))
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
 def test_repartition_fuse_unfuse_adjoint(name):
     t = tt(LEGS[name], seed=8)
     r = t.to_backend("numpy")
@@ -390,6 +408,33 @@ def test_trace_stays_on_torch(name, axes):
     got = tenet.trace(t, axes)
     assert is_torch(got)
     close(got, tenet.trace(t.to_backend("numpy"), axes))  # a matmul: see `close`
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
+def test_full_trace_and_inner(name):
+    """The scalar exits of #126 on torch blocks — the a2 hole of #146.
+
+    ``full_trace`` needs a square map, which ``LEGS``' interleaved fixtures are
+    not, so each provider gets leg 0 against its IN partner. Both scalars are
+    backend sums (a ``trace``, a contraction), hence ``approx`` and not
+    ``array_equal`` — the same reasoning as ``close``.
+    """
+    legs = (LEGS[name][0], Leg(LEGS[name][0].space, IN))
+    t = tt(legs, seed=43)
+    ft = tenet.full_trace(t)
+    assert isinstance(ft, torch.Tensor)
+    assert float(ft) == pytest.approx(float(tenet.full_trace(t.to_backend("numpy"))), rel=1e-14)
+    a, b = tt(legs, seed=44), tt(legs, seed=45)
+    if name == "product":
+        # `inner` bends every leg past the first through `adjoint`, and a product
+        # provider forwards no BendingCoefficients (#40) — the refusal is the cell.
+        with pytest.raises(CapabilityError):
+            tenet.inner(a, b)
+        return
+    got = tenet.inner(a, b)
+    assert isinstance(got, torch.Tensor)
+    want = tenet.inner(a.to_backend("numpy"), b.to_backend("numpy"))
+    assert float(got) == pytest.approx(float(want), rel=1e-14)
 
 
 def test_identity_still_defaults_to_numpy():
