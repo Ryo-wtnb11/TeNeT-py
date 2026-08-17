@@ -90,7 +90,9 @@ print(g.legs == a.legs)
 - **Multi-backend.** The same code runs on NumPy, JAX or PyTorch blocks through
   [`autoray`](https://github.com/jcmgray/autoray) (torch eager-only).
 - **Algorithms included.** `tenet.network` ships DMRG and CTMRG — MPS/MPO,
-  environments, sweeps — specified by fully worked examples.
+  environments, sweeps — specified by fully worked examples. A Hamiltonian can be written
+  out as a `W` matrix (`MPO.from_w`) or listed as terms (`MPO.from_terms`), and the term
+  route *derives* the graded MPO bond spaces instead of asking you to declare them.
 
 ## Examples
 

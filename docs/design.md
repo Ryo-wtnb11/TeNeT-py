@@ -2885,8 +2885,39 @@ The split:
   `MPO.from_w` rebuilds the whole Hamiltonian from one dense `W` in milliseconds and a
   checkpoint of a regenerable object is a second source of truth.
 
-Not planned: TDVP, iDMRG, excited states, fermionic swap gates, PEPS containers, and a
-term-list MPO generator.
+- **M13** — shipped: `MPO.from_terms`, the term-list MPO generator M11a and M11c both
+  refused. The refusal was reversed on a direct request, not on new in-repo evidence, so
+  the scope carries its own discipline: one new module-level name (`local_op`, a dense
+  `(d, d)` operator as rank 3 on `(phys OUT, phys IN, charge OUT)` — the charge has to
+  live on a leg, because `S^+` is symmetry-forbidden as a rank-2 tensor), two new methods
+  (`MPO.from_terms` and `MPO.to_dense`, the oracle exit two tests were hand-rolling) and
+  one private partition normalizer. No new module, no new dependency, no operator
+  registry: the matrices stay in `examples/dmrg.py` because *the library takes bond
+  spaces; the example computes which spaces are reachable*.
+  Construction is assembly by `direct_sum` and compression by `svd_truncated`, not
+  tenpy's `MPOGraph` finite-state machine. The FSM is better on bond dimension and is
+  exact, and it still loses on the one axis that decides it here: it produces bond
+  *labels*, and turning labels into a `GradedSpace` is tenpy's `_calc_legcharges`, over a
+  hundred lines of charge bookkeeping that the SVD route gets for free and gets
+  **derived** — `svd_truncated` returns a bond space whose degeneracy at `c` is the number
+  of kept singular values and which omits `c` entirely when that number is zero. The
+  measured result is that `from_terms` recovers `examples/dmrg.py`'s hand-written
+  `MPO_BOND` sector for sector, `{0: 3, +2: 1, -2: 1}`, with nothing written down.
+  `MPOGraph` (`networks/mpo.py`:2142) is the named upgrade path, and the first thing it
+  buys is exponentially-decaying couplings at one virtual state apiece.
+  Two refusals, each with a message rather than a silent wrong answer. **Fermionic
+  terms**: Jordan-Wigner needs a swap gate between an odd MPO bond and a physical line,
+  which is a line crossing rather than a leg permutation, so tenet's Koszul machinery does
+  not supply it; `Env`/`sweep_` have never contracted an odd-parity MPO bond, so the
+  result would be silently wrong rather than refused. **Non-Abelian terms**: a *list* of
+  operators does not determine a non-Abelian term — three tensor operators fuse through
+  several channels and the DSL has no slot for a coupling tree. The 2-site SU(2) case is
+  tractable and is the named follow-up, with `fused_leg` as the mechanism.
+  `MPO.save`/`load` was promised for "the day a term-list builder lands" and is reversed
+  with its reason instead: M11c's argument was regenerability, and a term list makes an
+  MPO *more* regenerable, not less.
+
+Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 
 ---
 

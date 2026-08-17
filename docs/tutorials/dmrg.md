@@ -44,6 +44,26 @@ Nothing outside the core install — no `scipy`, no `quimb`, no `jax`.
   `tenet.norm` and an inner product. No `scipy.sparse.linalg`, no dense reshaping of the
   local problem.
 
+## The same Hamiltonian, listed as terms
+
+`MPO.from_terms` takes `(coefficient, [(operator, site), …])` tuples, with identities
+implied on every untouched site. Each operator is rank 3 — `local_op` puts the charge it
+emits on a third `D=1` leg, which is what makes `S⁺` expressible at all — and the MPO bond
+spaces are then *derived*: each term is a bond-1 MPO, `direct_sum` stacks them, and one
+`svd_truncated` sweep collapses the result to the operator Schmidt rank.
+
+```python
+sp = network.local_op(sp_dense, phys=PHYS, charge=U1Sector(-2))
+sm = network.local_op(sm_dense, phys=PHYS, charge=U1Sector(2))
+terms = [(0.5, [(sp, i), (sm, i + 1)]) for i in range(n_sites - 1)] + ...
+h = network.MPO.from_terms(n_sites, terms)
+```
+
+The two routes agree as operators, and `from_terms` recovers the hand-written `MPO_BOND`
+sector for sector — `{0: 3, +2: 1, −2: 1}` — with no grading written down anywhere. The
+example keeps `from_w` as its primary route because the 5×5 `W` and its channel table are
+what teach what an MPO *is*.
+
 ## Why there is no `jit` and no `grad` here
 
 DMRG is a fixed-point solver whose control flow is data-dependent at every level: the

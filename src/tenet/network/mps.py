@@ -15,9 +15,12 @@ import string
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+import numpy as np
+
 import tenet
-from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet import IN, OUT, FusionTree, GradedSpace, Leg, SymmetricTensor
 from tenet.network.common import spectrum
+from tenet.symmetry import Sector
 
 __all__ = [
     "MPO",
@@ -25,6 +28,7 @@ __all__ = [
     "MPS_FORMAT_VERSION",
     "expectation_1site",
     "expectation_2site",
+    "local_op",
     "spectrum",
 ]
 
@@ -371,6 +375,133 @@ def expectation_2site(psi: MPS, o: SymmetricTensor, n: int) -> float:
 # --- the Hamiltonian ----------------------------------------------------------------
 
 
+def local_op(dense: Any, *, phys: GradedSpace, charge: Sector) -> SymmetricTensor:
+    """A ``(d, d)`` dense operator as rank 3 on ``(phys OUT, phys IN, charge OUT)``.
+
+    The third leg is why this exists. ``S^+`` raises ``2 S^z`` by 2, so as a rank-2 tensor
+    it is symmetry-forbidden and ``from_dense`` refuses it, correctly; the charge has to
+    live on a leg. Invariance reads ``q(p_out) + q(charge) = q(p_in)``, so ``charge`` is
+    literally the MPO bond the operator emits. Built at ``from_dense``'s **default**
+    relative ``atol``, so a ``charge`` that does not match the array *raises*.
+
+    The matrices themselves are physics and stay in the caller; turning one into a
+    charge-carrying tensor is the step the caller cannot get right by hand.
+    """
+    d = phys.dim
+    shape = tuple(np.shape(dense))
+    if shape != (d, d):
+        raise ValueError(f"local_op: expected a ({d}, {d}) array on this phys, got {shape}")
+    emitted = Leg(GradedSpace.new(phys.provider, {charge: 1}), OUT)
+    return SymmetricTensor.from_dense(
+        np.reshape(dense, (d, d, 1)), (Leg(phys, OUT), Leg(phys, IN), emitted)
+    )
+
+
+def _as_w(t: SymmetricTensor) -> SymmetricTensor:
+    """Put a rank-4 tensor on the MPO partition ``(wl IN, p OUT, p IN, wr OUT)``.
+
+    :meth:`MPS.__setitem__`'s job for sites, as a function: ``svd_truncated`` lowers its
+    input to a map, so its factors come back bent and one ``repartition`` puts them back.
+    Deliberately **not** ``MPO.__setitem__`` -- one internal compression sweep is not a
+    reason to grow the class a mutation API with a single caller.
+    """
+    if t.ndim != 4:
+        raise ValueError(f"an MPO site tensor is rank 4, got rank {t.ndim}")
+    # ``repartition``'s result order is ``(*outputs, *inputs)``, so the transpose puts the
+    # public axes back into MPO order; for an already-correct tensor the pair is a no-op.
+    return tenet.transpose(tenet.repartition(t, (1, 3), (0, 2)), (2, 0, 3, 1))
+
+
+def _braids_with_signs(space: GradedSpace) -> bool:
+    """Whether exchanging two lines of ``space`` can carry a minus sign (super-vector spaces).
+
+    Asked of the braiding rather than of the provider's identity -- a category is fermionic
+    exactly when some sector braids past itself with coefficient ``-1``, which is
+    symmetry-generic recoupling metadata and not a provider branch. Called only after the
+    Abelian check below, because SU(2)'s ``(-1)^(j_a + j_b - j_c)`` wears the same minus.
+    """
+    sym = space.provider
+    for a, _ in space.sectors:
+        tree = FusionTree((a, a), (), (0,), sym.fusion(a, a)[0])
+        if sym.permute_tree(tree, (1, 0))[0][1].real < 0:
+            return True
+    return False
+
+
+def _check_op(op: SymmetricTensor, phys: GradedSpace | None) -> GradedSpace:
+    """Validate one term operator and return the physical space it declares."""
+    if op.ndim != 3:
+        raise ValueError(
+            f"a term operator is rank 3 on (phys OUT, phys IN, charge OUT), got rank "
+            f"{op.ndim}; build it with tenet.network.local_op, which adds the charge leg"
+        )
+    got, emitted = op.legs[0].space, op.legs[2].space
+    if phys is not None and got != phys:
+        raise ValueError(f"term operators disagree about the physical space: {phys} vs {got}")
+    if emitted.reduced_dim != 1:
+        raise ValueError(
+            f"a term operator's charge leg carries one sector at degeneracy 1, got "
+            f"{emitted}; it names the MPO bond the operator emits, so it cannot be wider"
+        )
+    # ``space.dim`` is ``Σ m_a irrep_dim(a)`` and ``reduced_dim`` is ``Σ m_a``, so the two
+    # differ exactly when some irrep is more than one-dimensional. Symmetry-generic
+    # metadata off the space, of the kind ``network/__init__.py`` names -- no provider read.
+    if got.dim != got.reduced_dim or emitted.dim != emitted.reduced_dim:
+        raise ValueError(
+            "from_terms is Abelian-only: this operator's charge leg has irrep_dim > 1, and "
+            "a list of non-Abelian operators does not determine a term -- three of them "
+            "fuse through several channels and the DSL has no slot for a coupling tree. "
+            "The 2-site case is the named follow-up (tenet.ops.fusion.fused_leg)"
+        )
+    if _braids_with_signs(got) or _braids_with_signs(emitted):
+        raise ValueError(
+            "from_terms refuses fermionic braiding: the Jordan-Wigner string needs a swap "
+            "gate between an odd MPO bond and a physical line, which tenet does not have "
+            "(docs/design.md:2888 lists fermionic swap gates as not planned). Env and "
+            "sweep_ would contract the result silently and wrongly rather than refuse it"
+        )
+    return got
+
+
+def _term_string(n_sites: int, coeff: float, ops, phys: GradedSpace) -> list[SymmetricTensor]:
+    """One term as a bond-1 MPO: identities on the untouched sites, charge accumulated.
+
+    The running MPO bond at each cut carries exactly the sum of the charges emitted to its
+    left, which is the whole of ``q(p_out) + q(wr) = q(wl) + q(p_in)`` for a ``D=1`` bond.
+    """
+    placed: dict[int, SymmetricTensor] = {}
+    for op, site in ops:
+        if site not in range(n_sites):
+            raise ValueError(f"term site index {site} is outside range({n_sites})")
+        if site in placed:
+            raise ValueError(f"two operators of one term sit on site {site}; multiply them first")
+        placed[site] = op
+    sym, d = phys.provider, phys.dim
+    running, out = sym.unit, []
+    for n in range(n_sites):
+        left = GradedSpace.new(sym, {running: 1})
+        op = placed.get(n)
+        if op is None:
+            mat = np.eye(d)
+        else:
+            mat = np.asarray(op.to_dense())[:, :, 0]
+            running = sym.fusion(running, op.legs[2].space.sectors[0][0])[0]
+        legs = (
+            Leg(left, IN),
+            Leg(phys, OUT),
+            Leg(phys, IN),
+            Leg(GradedSpace.new(sym, {running: 1}), OUT),
+        )
+        block = np.reshape(coeff * mat if n == 0 else mat, (1, d, d, 1))
+        out.append(_as_w(SymmetricTensor.from_dense(block, legs)))
+    if running != sym.unit:
+        raise ValueError(
+            f"a term's operator charges must sum to the unit sector, got {running}; both "
+            "MPO boundaries are the trivial D=1 leg, so a charged term has nowhere to end"
+        )
+    return out
+
+
 class MPO:
     """A finite MPO: one rank-4 ``SymmetricTensor`` per site, ``(wl IN, p OUT, p IN, wr OUT)``.
 
@@ -422,11 +553,10 @@ class MPO:
         projecting -- and that refusal is the proof the grading is right in a way a
         passing ``allclose`` is not.
 
-        This is the only builder. A term-list front end (YASTN's ``Hterm`` /
-        ``generate_mpo``, ``_generate_mpo.py``:73-298, a 186-line body with fermionic sign
-        canonicalization and its own compressing SVD sweep) is refused, not deferred: it
-        is the right API for a library accepting arbitrary Hamiltonians from users it has
-        never met, and it becomes a real issue the day a second Hamiltonian appears.
+        The builder that shows what an MPO *is*, and the one a reader needs before they
+        can debug one. :meth:`from_terms` is the other route (#133 reversed this
+        docstring's refusal of it, on a direct request rather than on new evidence); it is
+        not a replacement, and neither is deprecated or aliased to the other.
         """
 
         def make(array: Any, left: GradedSpace, right: GradedSpace) -> SymmetricTensor:
@@ -437,3 +567,79 @@ class MPO:
         bulk = make(w, bond, bond)
         last = make(w[:, :, :, end : end + 1], bond, boundary)
         return cls([first, *[bulk] * (n_sites - 2), last])
+
+    @classmethod
+    def from_terms(cls, n_sites: int, terms: Iterable, *, cutoff: float = 1e-13) -> "MPO":
+        """A term list ``[(coeff, [(op, site), ...]), ...]`` as a compressed graded MPO.
+
+        Each ``op`` is rank 3 from :func:`local_op`; a term is a coefficient and a list of
+        ``(operator, site)`` pairs, with identities implied on every untouched site. Every
+        term is *already* a bond-1 MPO, so the sum is one :func:`tenet.direct_sum` per site
+        over the MPO-bond axes -- shared at the two ends, so the chain sums rather than
+        block-diagonalizing -- and :func:`tenet.linalg.svd_truncated` then compresses the
+        M-wide bond to the operator Schmidt rank.
+
+        **The MPO bond spaces are derived, never declared.** Charges enter once, as
+        :func:`local_op`'s ``charge``; from there the bond is arithmetic on legs and
+        ``svd_truncated`` decides the sector-by-sector degeneracies, omitting a sector
+        entirely when nothing is kept there. There is no place left to write a wrong
+        grading down.
+
+        **There is no** ``phys=`` **argument**: the operators carry the physical space and
+        a second source of truth could disagree with them, which would surface as a
+        structure error instead of a message about ``phys``. Uniform physical space only,
+        and every term's charges must sum to the unit sector.
+
+        Fermionic and non-Abelian terms are refused with a message rather than accepted;
+        ``cutoff`` is a keyword so a test can tighten or loosen the compression. Outside
+        ``jit``/``grad`` like the rest of this module, because ``svd_truncated`` re-decides
+        a :class:`~tenet.GradedSpace`.
+        """
+        phys = None
+        strings = []
+        for coeff, ops in terms:
+            ops = list(ops)
+            for op, _ in ops:
+                phys = _check_op(op, phys)
+            strings.append((coeff, ops))
+        if phys is None:
+            raise ValueError("from_terms: no terms; the physical space is read off an operator")
+        sites = _term_string(n_sites, *strings[0], phys)
+        for coeff, ops in strings[1:]:
+            other = _term_string(n_sites, coeff, ops, phys)
+            for n in range(n_sites):
+                # The end bonds stay shared and D=1: summed there, the chain would become a
+                # direct sum of scalars instead of a sum of terms.
+                axes = ([0] if n else []) + ([3] if n < n_sites - 1 else [])
+                sites[n] = (
+                    tenet.direct_sum(sites[n], other[n], axes) if axes else sites[n] + other[n]
+                )
+        # Right to left first, exactly as ``MPS.compress_`` canonizes before it truncates:
+        # a forward sweep alone measures the rank of the *left* part against the raw
+        # M-wide channel bond, which overshoots wherever the redundancy is only visible
+        # from the right. After this pass the forward rank is the operator Schmidt rank.
+        for n in range(n_sites - 1, 0, -1):
+            u, s, vh = tenet.linalg.svd_truncated(sites[n], ((0,), (1, 2, 3)), cutoff=cutoff)
+            sites[n] = _as_w(vh)
+            carry = tenet.einsum("xy,yz->xz", u, s)
+            sites[n - 1] = _as_w(tenet.einsum("apqx,xy->apqy", sites[n - 1], carry))
+        for n in range(n_sites - 1):
+            u, s, vh = tenet.linalg.svd_truncated(sites[n], ((0, 1, 2), (3,)), cutoff=cutoff)
+            sites[n] = _as_w(u)
+            carry = tenet.einsum("xy,yz->xz", s, vh)
+            sites[n + 1] = _as_w(tenet.einsum("xy,ypqr->xpqr", carry, sites[n + 1]))
+        return cls(sites)
+
+    def to_dense(self) -> Any:
+        """The full ``d**N x d**N`` operator, ``D=1`` boundaries dropped.
+
+        :meth:`MPS.to_dense`'s twin, with its warning: exponential in ``N``, an oracle exit
+        for tests, and nothing an algorithm calls.
+        """
+        out = self[0]
+        for n in range(1, len(self)):
+            body = string.ascii_uppercase[: 2 * n]
+            out = tenet.einsum(f"a{body}x,xpqr->a{body}pqr", out, self[n])
+        n_sites, d = len(self), self[0].legs[1].space.dim
+        order = list(range(0, 2 * n_sites, 2)) + list(range(1, 2 * n_sites, 2))
+        return out.to_dense()[0, ..., 0].transpose(order).reshape(d**n_sites, d**n_sites)

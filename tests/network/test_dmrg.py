@@ -87,3 +87,20 @@ def test_the_schmidt_criterion_is_what_stops_the_loop():
     out = dmrg_(psi, example.mpo(6), chi=8, schmidt_tol=0.0, max_sweeps=4)
     assert out.sweeps == 4
     assert out.denergy < 1e-12  # the energy criterion alone would have exited earlier
+
+
+def test_both_mpo_builders_give_the_same_ground_state_energy_at_n6():
+    """N=6, chi=16 against ``mpo_from_terms(6)`` reproduces the ``mpo(6)`` run to 1e-10.
+
+    The end-to-end half of #133: a *derived* MPO bond space is not merely the right
+    dimension, it carries the right operator all the way through ``Env``, ``lanczos`` and
+    ``sweep_``. Both runs are also checked against the exact open-boundary ground state,
+    so agreeing on a wrong number is not an available way to pass.
+    """
+    energies = []
+    for h in (example.mpo(6), example.mpo_from_terms(6)):
+        psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+        energies.append(dmrg_(psi, h, chi=16).energy)
+    assert abs(energies[0] - energies[1]) < 1e-10
+    exact = np.linalg.eigvalsh(np.asarray(example.mpo(6).to_dense()))[0]
+    assert abs(energies[0] - exact) < 1e-10

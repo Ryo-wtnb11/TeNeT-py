@@ -81,11 +81,15 @@ YASTN's own (``yastn/tn/mps/_env.py``:496-518), which its ``_dmrg.py``:102-108 d
 as ``O(D^3 M d + D^2 M^2 d^2)`` per matvec -- optimal for *one* matvec, which is all a
 Krylov step ever wants.
 
-Simplification: **the MPO is written out, not generated.** YASTN builds MPOs from ``Hterm``
-NamedTuples through ``generate_mpo`` and a series of compressing SVDs
-(``_generate_mpo.py``:30-51, :73-112). That is the right API for a library that must accept
-arbitrary Hamiltonians; it is 300 lines and the wrong thing for a file whose Hamiltonian is
-one line of physics. ``tenet.network.MPO.from_w`` takes the array.
+**Two routes to the same MPO, and which one this file teaches (#133).** ``mpo()`` writes the
+5x5 ``W`` out and hands it to ``tenet.network.MPO.from_w`` on the hand-graded
+:data:`MPO_BOND`; ``mpo_from_terms()`` lists the Hamiltonian's terms and hands them to
+``MPO.from_terms``, which derives the same bond spaces from the operators' own charges.
+``from_w`` stays **primary** because the ``W`` matrix and its channel table are what teach
+what an MPO *is*, and a reader who has only ever seen a term list cannot debug one. The
+payoff of keeping both is a cross-check no single route can produce: a hand-derived grading
+and a derived one must agree as operators, and ``tests/network/test_mpo.py`` asserts they
+do -- including that ``from_terms`` recovers :data:`MPO_BOND` sector for sector.
 """
 
 import numpy as np
@@ -168,6 +172,25 @@ def mpo(n_sites: int, bond: GradedSpace = MPO_BOND) -> network.MPO:
         start=_START,
         end=_END,
     )
+
+
+def mpo_from_terms(n_sites: int) -> network.MPO:
+    """The same Heisenberg MPO as :func:`mpo`, listed as terms instead of written as ``W``.
+
+    The charges are the only symmetry input, one per operator, and the MPO bond spaces
+    fall out of the compressing SVD sweep -- :data:`MPO_BOND` is never mentioned.
+    """
+    _, sz, sp, sm = _spin_half()
+    op = {
+        q: network.local_op(o, phys=PHYS, charge=U1Sector(q))
+        for q, o in ((0, sz), (-2, sp), (2, sm))
+    }
+    terms = []
+    for i in range(n_sites - 1):
+        terms.append((1.0, [(op[0], i), (op[0], i + 1)]))
+        terms.append((0.5, [(op[-2], i), (op[2], i + 1)]))
+        terms.append((0.5, [(op[2], i), (op[-2], i + 1)]))
+    return network.MPO.from_terms(n_sites, terms)
 
 
 def bond_spaces(n_sites: int) -> list[GradedSpace]:
