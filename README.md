@@ -126,9 +126,22 @@ oracle; the SU(2) coefficient conventions themselves are pinned by vendored fixt
 
 ## Citation
 
-If you use TeNeT-py in your research, please cite it. Citation metadata lives in
+If you use TeNeT-py in your research, please cite it:
+
+```bibtex
+@software{tenet-py,
+  author  = {Watanabe, Ryo},
+  title   = {{TeNeT-py}: non-Abelian symmetric tensor networks in pure Python},
+  url     = {https://github.com/Ryo-wtnb11/TeNeT-py},
+  license = {Apache-2.0},
+  year    = {2026}
+}
+```
+
+The same metadata lives in
 [`CITATION.cff`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/CITATION.cff) —
-GitHub's "Cite this repository" button renders it as BibTeX or APA.
+GitHub's "Cite this repository" button renders it as BibTeX or APA. A DOI will be
+added once a release is archived on Zenodo.
 
 ## License
 
