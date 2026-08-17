@@ -32,6 +32,9 @@ jobs:
       # with `uvx ty@<version> check`.
       - run: uvx ty check src/tenet
       - run: uv run pytest
+      # The docstring examples (#167). A separate step, not part of the suite:
+      # testpaths stays ["tests"], so the 290 s budget keeps meaning what it means.
+      - run: uv run pytest --doctest-modules src/tenet
       # Appended to the same job, not a matrix axis: the suite is ~275s (measured
       # 273.76s locally at #146; CI is slower still) and the
       # torch-relevant subset is a few dozen tests, so running everything twice

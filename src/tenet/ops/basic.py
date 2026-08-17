@@ -10,7 +10,7 @@ Two rules the rest of Milestone 2 leans on:
 * mismatched structures fail loudly — addition never widens a graded space
   (invariant 11; a ``pad_to``/``union`` helper can arrive later as an explicit
   call);
-* :func:`norm` carries the quantum-dimension weight, which is what makes it
+* [norm][tenet.norm] carries the quantum-dimension weight, which is what makes it
   agree with ``‖to_dense()‖_F``.
 
 There is deliberately no NumPy call anywhere in this module: arithmetic must
@@ -79,7 +79,39 @@ def _scalar(s: Any, t: "SymmetricTensor", op: str) -> Any:
 
 
 def add(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
-    """``a + b``. Requires *identical* structures; near-misses are errors."""
+    """``a + b``. Requires *identical* structures; near-misses are errors.
+
+    Parameters
+    ----------
+    a : SymmetricTensor
+        The left operand.
+    b : SymmetricTensor
+        The right operand. Its structure must equal ``a``'s exactly — same
+        provider, same legs (``space``, ``side``, ``dual``) in the same order.
+
+    Returns
+    -------
+    SymmetricTensor
+        The blockwise sum, on the operands' shared structure.
+
+    Raises
+    ------
+    ValueError
+        If the structures differ — different providers, different ``ndim``, or a
+        differing leg; the message names the first differing axis and both legs.
+        Addition never widens a graded space (invariant 11).
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> b = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=1)
+    >>> bool(tenet.allclose(tenet.add(a, b), a + b))
+    True
+    """
     from tenet.tensor import SymmetricTensor
 
     _check_same_structure(a, b, "add")
@@ -89,7 +121,35 @@ def add(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
 
 
 def subtract(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
-    """``a - b``. Same structure rule as :func:`add`."""
+    """``a - b``. Same structure rule as [add][tenet.add].
+
+    Parameters
+    ----------
+    a : SymmetricTensor
+        The left operand.
+    b : SymmetricTensor
+        The right operand; its structure must equal ``a``'s exactly.
+
+    Returns
+    -------
+    SymmetricTensor
+        The blockwise difference, on the operands' shared structure.
+
+    Raises
+    ------
+    ValueError
+        If the structures differ, exactly as [add][tenet.add] refuses.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> round(float(tenet.norm(tenet.subtract(a, a))), 6)
+    0.0
+    """
     from tenet.tensor import SymmetricTensor
 
     _check_same_structure(a, b, "subtract")
@@ -99,7 +159,39 @@ def subtract(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
 
 
 def multiply(t: "SymmetricTensor", s: Any) -> "SymmetricTensor":
-    """``s * t`` for a scalar ``s`` — the only defined multiplication here."""
+    """``s * t`` for a scalar ``s`` — the only defined multiplication here.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to scale.
+    s : scalar
+        A Python number or a 0-d backend array. Never a ``SymmetricTensor``:
+        elementwise products of two tensors are not a defined categorical
+        operation.
+
+    Returns
+    -------
+    SymmetricTensor
+        ``t`` with every block multiplied by ``s``, on ``t``'s structure.
+
+    Raises
+    ------
+    TypeError
+        If ``s`` is a ``SymmetricTensor`` (use [tensordot][tenet.tensordot] for a
+        contraction, or ``a @ b`` for morphism composition), or if ``s`` is
+        neither a number nor a 0-d array.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> bool(tenet.allclose(tenet.multiply(a, 2.0), a + a))
+    True
+    """
     from tenet.tensor import SymmetricTensor
 
     s = _scalar(s, t, "multiply")
@@ -107,7 +199,36 @@ def multiply(t: "SymmetricTensor", s: Any) -> "SymmetricTensor":
 
 
 def divide(t: "SymmetricTensor", s: Any) -> "SymmetricTensor":
-    """``t / s`` for a scalar ``s``."""
+    """``t / s`` for a scalar ``s``.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to scale.
+    s : scalar
+        A Python number or a 0-d backend array; the same scalar rule as
+        [multiply][tenet.multiply].
+
+    Returns
+    -------
+    SymmetricTensor
+        ``t`` with every block divided by ``s``, on ``t``'s structure.
+
+    Raises
+    ------
+    TypeError
+        If ``s`` is a ``SymmetricTensor``, or neither a number nor a 0-d array.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> bool(tenet.allclose(tenet.divide(a, 2.0), 0.5 * a))
+    True
+    """
     from tenet.tensor import SymmetricTensor
 
     s = _scalar(s, t, "divide")
@@ -115,7 +236,28 @@ def divide(t: "SymmetricTensor", s: Any) -> "SymmetricTensor":
 
 
 def negative(t: "SymmetricTensor") -> "SymmetricTensor":
-    """``-t``."""
+    """``-t``.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to negate.
+
+    Returns
+    -------
+    SymmetricTensor
+        ``t`` with every block negated, on ``t``'s structure.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> round(float(tenet.norm(tenet.negative(a) + a)), 6)
+    0.0
+    """
     from tenet.tensor import SymmetricTensor
 
     return SymmetricTensor(t.structure, tuple(-b for b in t.blocks))
@@ -124,6 +266,28 @@ def negative(t: "SymmetricTensor") -> "SymmetricTensor":
 def conj(t: "SymmetricTensor") -> "SymmetricTensor":
     """Complex-conjugate the reduced blocks; ``legs`` are left completely alone.
 
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to conjugate.
+
+    Returns
+    -------
+    SymmetricTensor
+        ``t`` with every block conjugated, on ``t``'s unchanged structure.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)  # real blocks
+    >>> bool(tenet.allclose(tenet.conj(a), a))
+    True
+
+    Notes
+    -----
     No ``dual`` flip, no side change: conjugation, duality and the categorical
     adjoint are three different things (invariant 2). In particular ``t.conj()``
     is **not** what you contract ``t`` against to obtain ``‖t‖²`` — that pairing
@@ -144,6 +308,36 @@ def conj(t: "SymmetricTensor") -> "SymmetricTensor":
 def norm(t: "SymmetricTensor") -> Any:
     """``sqrt(Σ_τ qdim(c_τ) · ‖A_τ‖²)`` — the fusion-tree Frobenius norm.
 
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor whose norm is taken.
+
+    Returns
+    -------
+    scalar
+        The backend's own scalar (a float64 scalar on NumPy, a traceable 0-d
+        array on JAX), never a Python ``float``. Callers needing one say
+        ``float(tenet.norm(t))``.
+
+    Raises
+    ------
+    CapabilityError
+        If ``t``'s provider does not implement
+        [QuantumDimension][tenet.symmetry.QuantumDimension].
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> round(float(tenet.norm(a)), 6)
+    0.182373
+
+    Notes
+    -----
     The quantum-dimension weight is the point: each key contributes ``‖A_τ‖²``
     once per coupled basis state and there are ``qdim(c)`` of them, so this
     equals the dense Frobenius norm of ``t.to_dense()`` while never densifying
@@ -175,7 +369,37 @@ def norm(t: "SymmetricTensor") -> Any:
 def allclose(
     a: "SymmetricTensor", b: "SymmetricTensor", *, rtol: float = 1e-5, atol: float = 1e-8
 ) -> bool:
-    """Tolerant comparison. Different structures give ``False``, never an error."""
+    """Tolerant comparison. Different structures give ``False``, never an error.
+
+    Parameters
+    ----------
+    a : SymmetricTensor
+        The left operand.
+    b : SymmetricTensor
+        The right operand; a structure mismatch is ``False``, not an error.
+    rtol : float, optional
+        Relative tolerance, forwarded to the backend's ``allclose``.
+        Default ``1e-5``.
+    atol : float, optional
+        Absolute tolerance, forwarded likewise. Default ``1e-8``.
+
+    Returns
+    -------
+    bool
+        ``True`` iff the structures are equal and every pair of blocks is
+        close under ``(rtol, atol)``.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> b = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=1)
+    >>> tenet.allclose(a, a), tenet.allclose(a, b)
+    (True, False)
+    """
     if a.structure != b.structure:
         return False
     return all(

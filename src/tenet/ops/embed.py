@@ -149,12 +149,47 @@ def _pad(x: Any, pad_width: tuple[tuple[int, int], ...]) -> Any:
 def embed(t: "SymmetricTensor", legs: Sequence["Leg"]) -> "SymmetricTensor":
     """``t`` re-expressed on larger legs: same data, leading slots, zeros elsewhere.
 
-    ``legs[i]`` must match ``t.legs[i]`` in provider, ``side`` and ``dual``, and its
-    space must **contain** ``t.legs[i].space``: every sector ``a`` of the source
-    appears in the target with ``degeneracy(a) >= source.degeneracy(a)``. New
-    sectors are allowed and arrive as zero blocks. ``name`` is taken from ``legs``
-    and never compared.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to grow.
+    legs : sequence of Leg
+        The target legs, one per axis. ``legs[i]`` must match ``t.legs[i]`` in
+        provider, ``side`` and ``dual``, and its space must **contain**
+        ``t.legs[i].space``: every sector ``a`` of the source appears in the
+        target with ``degeneracy(a) >= source.degeneracy(a)``. New sectors are
+        allowed and arrive as zero blocks. ``name`` is taken from ``legs`` and
+        never compared.
 
+    Returns
+    -------
+    SymmetricTensor
+        ``t`` on the target legs; source degeneracy ``alpha`` lands at target
+        ``alpha`` (a prefix in the degeneracy index), everything else is zero.
+
+    Raises
+    ------
+    ValueError
+        If ``legs`` is not an inclusion: a different leg count, a provider,
+        ``side`` or ``dual`` mismatch on some axis, or a source sector whose
+        target degeneracy is smaller (embedding never truncates).
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> W = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> e = tenet.embed(a, (Leg(W, OUT), Leg(V, IN)))
+    >>> e.shape
+    (3, 2)
+    >>> bool(tenet.allclose(tenet.restrict(e, a.legs), a))
+    True
+
+    Notes
+    -----
     Since ``_block_order`` enumerates ``product(*(leg.sectors ...))`` and
     ``fusion_trees`` is a pure function of the sector tuple, containment makes the
     source's keys a *subset* of the target's — which is the fact the loop below
@@ -185,12 +220,54 @@ def restrict(
 ) -> "SymmetricTensor":
     """``t`` re-expressed on smaller legs: the leading degeneracy slots, nothing else.
 
-    The exact mirror of :func:`embed`: ``legs[i]`` must match ``t.legs[i]`` in
-    provider, ``side`` and ``dual``, and its space must be **contained in**
-    ``t.legs[i].space`` — every sector ``a`` of the target appears in the source
-    with ``degeneracy(a) >= target.degeneracy(a)``. Sectors absent from ``legs``
-    are dropped entirely. ``name`` is taken from ``legs`` and never compared.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to cut down.
+    legs : sequence of Leg
+        The target legs, one per axis — the exact mirror of
+        [embed][tenet.SymmetricTensor.embed]'s: ``legs[i]`` must match ``t.legs[i]`` in
+        provider, ``side`` and ``dual``, and its space must be **contained in**
+        ``t.legs[i].space`` — every sector ``a`` of the target appears in the
+        source with ``degeneracy(a) >= target.degeneracy(a)``. Sectors absent
+        from ``legs`` are dropped entirely. ``name`` is taken from ``legs``
+        and never compared.
+    atol : float or None, optional
+        The largest discarded residual accepted. ``None`` (the default) means
+        ``sqrt(eps(dtype)) * ‖t‖``; ``atol=math.inf`` projects without
+        checking, which is the form that goes inside ``jit``.
 
+    Returns
+    -------
+    SymmetricTensor
+        ``t`` on the target legs — the leading degeneracy slots of every kept
+        sector, the same prefix convention ``embed`` uses.
+
+    Raises
+    ------
+    ValueError
+        If ``legs`` is not a contained sub-structure (mirror of ``embed``'s
+        refusal), or if the discarded residual exceeds ``atol`` — restriction
+        refuses to throw away data, naming the worst offending block.
+    CapabilityError
+        If the provider does not implement
+        [QuantumDimension][tenet.symmetry.QuantumDimension], which the
+        residual check needs (``atol=math.inf`` skips it).
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> W = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> e = tenet.embed(a, (Leg(W, OUT), Leg(V, IN)))
+    >>> bool(tenet.allclose(tenet.restrict(e, a.legs), a))
+    True
+
+    Notes
+    -----
     Placement is the same **prefix in the degeneracy index** ``embed`` uses, so
     the two agree about which slots are the "old" ones, and so does a subsequent
     ``svd(..., bond=B)`` (#77).
@@ -208,7 +285,8 @@ def restrict(
     the caller chose, so ``restrict`` is shape-static and traceable and sits with
     ``embed`` and ``svd(..., bond=)`` on the traceable side of #64's
     ``StructureChangingError``. A target decided *from the block values* ("drop
-    whatever falls below 1e-8") is :func:`tenet.linalg.svd_truncated`'s job.
+    whatever falls below 1e-8") is
+    [tenet.linalg.svd_truncated][tenet.ops.linalg.svd_truncated]'s job.
     """
     from tenet.tensor import SymmetricTensor
 
@@ -338,14 +416,50 @@ def direct_sum(
 ) -> "SymmetricTensor":
     """``t ⊕ u`` along ``axes``: sector-wise degeneracy sums, ``t`` leading.
 
-    Every axis **not** in ``axes`` must agree exactly between the operands in
-    ``space``, ``side`` and ``dual`` (``name`` is user bookkeeping and is taken
-    from ``t``). Every axis **in** ``axes`` must agree in provider, ``side`` and
-    ``dual``; its spaces may differ freely, and the result's space has
-    ``m_a = t.degeneracy(a) + u.degeneracy(a)`` for every sector of either.
-    A ``dual`` mismatch is refused, never coerced — :func:`tenet.flip` is the
-    way to normalise the operands' dual conventions before summing.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The first summand; it takes the leading degeneracy slots.
+    u : SymmetricTensor
+        The second summand, in the trailing slots. Must be on ``t``'s backend.
+    axes : int or sequence of int
+        The axes to sum along (negative indices allowed here). Every axis
+        **not** in ``axes`` must agree exactly between the operands in
+        ``space``, ``side`` and ``dual``; every axis **in** ``axes`` must
+        agree in provider, ``side`` and ``dual``, and its spaces may differ
+        freely. ``name`` is user bookkeeping and is taken from ``t``.
 
+    Returns
+    -------
+    SymmetricTensor
+        The direct sum: on each summed axis the result's space has
+        ``m_a = t.degeneracy(a) + u.degeneracy(a)`` for every sector of
+        either. The dtype is promoted once, up front, across both operands.
+
+    Raises
+    ------
+    ValueError
+        If the operands' leg counts differ; if ``axes`` is empty (with nothing
+        to sum this would be [add][tenet.add]), out of range, or repeated; if
+        an axis mismatches in provider, ``side`` or ``dual`` (a ``dual``
+        mismatch is refused, never coerced — [tenet.flip][] is the way to
+        normalise the operands' dual conventions before summing); if an
+        unsummed axis's spaces differ; or if the operands live on different
+        backends (``.to_backend(...)`` is the explicit spelling).
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> b = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=1)
+    >>> tenet.direct_sum(a, b, axes=1).shape
+    (2, 4)
+
+    Notes
+    -----
     Placement is ``t`` in the **leading** degeneracy slots and ``u`` in the
     trailing ones, on every summed axis — the same prefix convention ``embed``
     and ``svd(..., bond=)`` use, and the same order as TensorKit's ``catdomain``.

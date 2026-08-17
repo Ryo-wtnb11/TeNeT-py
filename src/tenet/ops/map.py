@@ -13,7 +13,7 @@ only sizes would let a charge-reversed U(1) partner through and silently produce
 a non-equivariant result. Order cannot be waived either — matching "up to a
 reordering" would need a within-side transpose, which is a braid (#21).
 
-:func:`adjoint` is the dagger, and it is one of four operations that are easy to
+[adjoint][tenet.adjoint] is the dagger, and it is one of four operations that are easy to
 confuse and are deliberately kept apart (invariant 2, docs/design.md "Conjugation,
 duality, and adjoint are distinct"):
 
@@ -34,7 +34,8 @@ their own legs (invariant 7) and the public axis order is untouched: the whole
 transpose is absorbed into the key swap ``(ot, it) → (it, ot)``.
 
 No ``to_dense`` here and no provider branching. NumPy appears as
-:func:`identity`'s default dtype and as :func:`random_isometry`'s draw — a
+[identity][tenet.identity]'s default dtype and as
+[random_isometry][tenet.random_isometry]'s draw — a
 constructor runs at setup time, outside any trace, and ``to_backend`` is the
 documented route onto a device (#9's convention, unchanged).
 """
@@ -103,9 +104,42 @@ def _check_composable(a: "SymmetricTensor", b: "SymmetricTensor") -> None:
 def compose(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
     """``a ∘ b``: ``b``'s codomain is consumed by ``a``'s domain. Spelled ``a @ b``.
 
-    The result's public axis order is ``a``'s OUT legs followed by ``b``'s IN legs,
-    each in its own public order.
+    Parameters
+    ----------
+    a : SymmetricTensor
+        The outer morphism; its domain consumes ``b``'s codomain.
+    b : SymmetricTensor
+        The inner morphism. Its codomain must carry the same ``(space, dual)``
+        sequence, in the same order, as ``a``'s domain — ``side`` is not
+        compared and ``name`` is ignored; dimensions alone are never enough.
 
+    Returns
+    -------
+    SymmetricTensor
+        The composition; its public axis order is ``a``'s OUT legs followed by
+        ``b``'s IN legs, each in its own public order.
+
+    Raises
+    ------
+    ValueError
+        If ``a``'s domain and ``b``'s codomain differ in length, or at any
+        position in ``(space, dual)`` — the message names the offending axis
+        on *both* tensors. Composition never reorders legs within a side; use
+        [tenet.transpose][] for that, or [repartition][tenet.SymmetricTensor.repartition] if a
+        leg has to change side.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> bool(tenet.allclose(tenet.identity(a.codomain) @ a, a))
+    True
+
+    Notes
+    -----
     For a long chain at a *fixed* partition in eager NumPy, the matrix form can
     be kept between steps by hand (measured ~1.1x asymptotically; a persisted
     layout in the library was evaluated and rejected — zero cache-hit rate in
@@ -142,6 +176,37 @@ def identity(
 ) -> "SymmetricTensor":
     """``id`` on ``ProductSpace(legs)``: the legs mirrored as ``(OUT..., IN...)``.
 
+    Parameters
+    ----------
+    legs : sequence of Leg
+        The legs to build the identity on. ``space``, ``dual`` and ``name``
+        are kept and only ``side`` is set, so that
+        ``identity(t.codomain) @ t == t``.
+    dtype : dtype-like, optional
+        The blocks' dtype. Default ``np.float64``.
+    like : str or array, optional
+        Anything ``ar.do`` accepts — a backend name or a reference array.
+        Default ``"numpy"``.
+
+    Returns
+    -------
+    SymmetricTensor
+        The identity morphism, legs ``(*legs OUT, *legs IN)``, one ``eye``
+        block per coupled sector.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> i = tenet.identity((Leg(V, OUT),))
+    >>> i.shape, bool(tenet.allclose(i @ a, a))
+    ((2, 2), True)
+
+    Notes
+    -----
     ``space``, ``dual`` and ``name`` are kept and only ``side`` is set, so that
     ``identity(t.codomain) @ t == t``. Dualizing the mirror would build a cup, a
     different morphism (#32).
@@ -190,14 +255,45 @@ def isometry(
 ) -> "SymmetricTensor":
     """The inclusion ``domain -> codomain``: ``W† W = id(domain)``, ``(W W†)² = W W†``.
 
-    ``codomain[i]`` must contain ``domain[i]`` sector-wise — same provider, same
-    ``dual``, every sector of the domain present in the codomain with a degeneracy
-    at least as large. ``side`` is *set*, not compared, exactly as
-    :func:`identity` does, and the result's legs are ``(*codomain OUT, *domain
-    IN)``.
+    Parameters
+    ----------
+    codomain : sequence of Leg
+        The larger side. ``codomain[i]`` must contain ``domain[i]``
+        sector-wise — same provider, same ``dual``, every sector of the
+        domain present in the codomain with a degeneracy at least as large.
+    domain : sequence of Leg
+        The smaller side being included. ``side`` is *set*, not compared,
+        exactly as [identity][tenet.identity] does.
+    dtype : dtype-like, optional
+        The blocks' dtype. Default ``np.float64``.
 
-    The whole body, and every refusal, is :func:`~tenet.embed` of
-    :func:`identity`: the blocks come from the identity morphism and the placement
+    Returns
+    -------
+    SymmetricTensor
+        The inclusion isometry, legs ``(*codomain OUT, *domain IN)``.
+
+    Raises
+    ------
+    ValueError
+        [embed][tenet.SymmetricTensor.embed]'s refusals: a leg count, provider or ``dual``
+        mismatch, or a domain sector missing from its codomain partner (or
+        present with a smaller degeneracy).
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> W = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> w = tenet.isometry((Leg(W, OUT),), (Leg(V, IN),))
+    >>> bool(tenet.allclose(tenet.adjoint(w) @ w, tenet.identity((Leg(V, IN),))))
+    True
+
+    Notes
+    -----
+    The whole body, and every refusal, is [embed][tenet.SymmetricTensor.embed] of
+    [identity][tenet.identity]: the blocks come from the identity morphism and the placement
     — each degeneracy slot into the *same* slot of the larger leg — is ``embed``'s
     prefix convention, the one ``svd(..., bond=)`` and ``restrict`` already share.
     A per-coupled-sector rectangular ``eye`` would also produce an isometry, and it
@@ -226,12 +322,49 @@ def random_isometry(
 ) -> "SymmetricTensor":
     """A Haar-random isometry: ``W† W = id(domain)``, independent per coupled sector.
 
+    Parameters
+    ----------
+    codomain : sequence of Leg
+        The larger side. Requires ``rows_c >= cols_c`` in every coupled
+        sector — the *fused* containment condition, read structurally off
+        ``MapLayout``, which is weaker than [isometry][tenet.isometry]'s
+        per-leg one.
+    domain : sequence of Leg
+        The side the isometry is an isometry *of*: ``W† W = id(domain)``.
+    seed : int or None, optional
+        Seed for ``np.random.default_rng``. ``None`` (the default) is
+        non-reproducible.
+    dtype : dtype-like, optional
+        The blocks' dtype; a complex dtype gets a genuinely complex (Ginibre)
+        draw. Default ``np.float64``.
+
+    Returns
+    -------
+    SymmetricTensor
+        A Haar-random isometry, legs ``(*codomain OUT, *domain IN)``.
+
+    Raises
+    ------
+    ValueError
+        If some coupled sector has ``rows_c < cols_c``, so no isometry exists
+        there — named with the sector and both dimensions, raised before any
+        draw.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> W = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> w = tenet.random_isometry((Leg(W, OUT),), (Leg(V, IN),), seed=0)
+    >>> bool(tenet.allclose(tenet.adjoint(w) @ w, tenet.identity((Leg(V, IN),))))
+    True
+
+    Notes
+    -----
     Per coupled sector ``c``, a ``(rows_c, cols_c)`` Gaussian draw, a QR, and the
-    sign fix that makes the result Haar-distributed. Requires ``rows_c >= cols_c``
-    in every coupled sector — the *fused* containment condition, read structurally
-    off :class:`~tenet.map_view.MapLayout`, which is weaker than
-    :func:`isometry`'s per-leg one; a sector that fails it is a ``ValueError``
-    naming the sector and both dimensions, raised before any draw.
+    sign fix that makes the result Haar-distributed.
 
     **"Haar per coupled sector" is the product of per-sector Haar measures, not
     Haar on the dense space.** A symmetric isometry lives in a product of unitary
@@ -312,6 +445,30 @@ def adjoint_plan(structure: TensorStructure) -> AdjointPlan:
 def adjoint(t: "SymmetricTensor") -> "SymmetricTensor":
     """``T†``: the Euclidean-adjoint morphism in ``Hom(codomain, domain)``.
 
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The morphism to dagger.
+
+    Returns
+    -------
+    SymmetricTensor
+        ``T†``: every leg keeps its ``space``, ``dual`` and ``name`` and flips
+        its ``side``; the public axis order is unchanged.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> d = tenet.adjoint(a)
+    >>> d.legs[0].side, bool(tenet.allclose(tenet.adjoint(d), a))
+    (<Side.IN: 'in'>, True)
+
+    Notes
+    -----
     Every leg keeps its ``space``, ``dual`` and ``name`` and flips its ``side``;
     the public axis order is unchanged; the block for key ``(ot, it)`` becomes the
     conjugate of the block for key ``(it, ot)`` — no axis permutation is needed,

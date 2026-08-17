@@ -19,7 +19,7 @@ for the same reason.
 
 Two design decisions carry the module:
 
-* **Contractibility is ``same space`` + opposite :func:`outward_dual`**, and it
+* **Contractibility is ``same space`` + opposite ``outward_dual``**, and it
   is phrased that way because it is *bend-invariant*: a bend flips ``side`` and
   ``dual`` together, so ``dual xor (side is IN)`` flips twice and is unchanged.
   A rule phrased on ``(side, dual)`` would have to be restated after every bend
@@ -39,8 +39,8 @@ both operands, *including free legs*, which is the non-obvious half.
 user error; if it does, this module's rewriting is wrong.
 
 ``einsum`` sits on top and owns no mathematics at all: it parses the equation
-into label→axis maps, hands the shared labels to :func:`tensordot` as one axis
-pair, and hands the requested output order to :func:`~tenet.transpose`. The
+into label→axis maps, hands the shared labels to [tensordot][tenet.tensordot] as one axis
+pair, and hands the requested output order to [transpose][tenet.transpose]. The
 parser is hand-rolled — ``opt_einsum`` parses ellipsis, unicode labels, the
 interleaved format and shape-driven broadcasting, none of which is meaningful
 for symmetric tensors. ``opt_einsum`` enters one level up instead (M8, #67), at
@@ -217,7 +217,7 @@ class ContractionPlan:
     structure. Caching them a second time here would duplicate the same
     coefficients with a second chance to go stale. What this object owns is the
     small pure-Python derivation that decides *which* sub-plans run, plus
-    :attr:`new_structure`, the output legs known without contracting anything.
+    ``new_structure``, the output legs known without contracting anything.
 
     """
 
@@ -250,7 +250,7 @@ def contraction_plan(a: TensorStructure, b: TensorStructure, axes: Axes) -> Cont
     Raises here, before any block is touched and before one sub-plan is built:
     invalid axes, mismatched providers, non-contractible pairs, a contraction
     leaving no free leg, and a missing ``BendingCoefficients`` for a leg that
-    must cross. ``axes`` accepts everything :func:`tensordot` accepts; it is
+    must cross. ``axes`` accepts everything [tensordot][tenet.tensordot] accepts; it is
     normalized to plain ``int`` tuples before anything else, so the integer form
     and NumPy integer scalars land on the same cache entry.
     """
@@ -308,17 +308,60 @@ def contraction_plan(a: TensorStructure, b: TensorStructure, axes: Axes) -> Cont
 def tensordot(a: "SymmetricTensor", b: "SymmetricTensor", axes: Axes) -> "SymmetricTensor":
     """Contract ``axes[0]`` of ``a`` against ``axes[1]`` of ``b``, pairwise in order.
 
-    ``axes`` is ``((i, ...), (j, ...))`` or NumPy's integer form (``axes=2`` means
-    the last two axes of ``a`` against the first two of ``b``). Negative indices
-    are refused, as in :func:`~tenet.transpose` and :func:`~tenet.repartition`.
+    Parameters
+    ----------
+    a : SymmetricTensor
+        The left operand; its free legs lead in the output.
+    b : SymmetricTensor
+        The right operand; must share ``a``'s provider.
+    axes : tuple of two axis sequences, or int
+        ``((i, ...), (j, ...))`` pairs axis ``i`` of ``a`` with axis ``j`` of
+        ``b``, in order; NumPy's integer form ``axes=n`` contracts the last
+        ``n`` axes of ``a`` against the first ``n`` of ``b``. Negative indices
+        are refused, as in [transpose][tenet.transpose] and
+        [repartition][tenet.SymmetricTensor.repartition]. ``axes=((), ())`` is the outer
+        product.
 
-    Output public axis order is ``a``'s free axes (in ``a``'s order) followed by
-    ``b``'s free axes (in ``b``'s order), matching ``np.tensordot``; every free
-    leg is returned **unchanged** — same ``space``, ``side``, ``dual`` and
-    ``name``. ``axes=((), ())`` is the outer product and falls out of the
+    Returns
+    -------
+    SymmetricTensor
+        The contraction. Public axis order is ``a``'s free axes (in ``a``'s
+        order) followed by ``b``'s free axes (in ``b``'s order), matching
+        ``np.tensordot``; every free leg is returned **unchanged** — same
+        ``space``, ``side``, ``dual`` and ``name``.
+
+    Raises
+    ------
+    ValueError
+        If ``axes`` is malformed (negative, repeated, out of range, or
+        mismatched pair lengths); if the operands' providers differ; if a
+        paired pair of legs is not contractible (same space plus opposite
+        ``dual xor (side is IN)`` — dimensions are never compared); or if the
+        contraction would leave no free leg (a scalar leaves the tensor world
+        through [norm][tenet.norm], [inner][tenet.inner] or
+        [full_trace][tenet.full_trace] instead).
+    CapabilityError
+        If the axis pattern moves a leg between domain and codomain (a line
+        bend) and the provider does not implement ``BendingCoefficients``.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> b = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=1)
+    >>> c = tenet.tensordot(a, b, axes=((1,), (0,)))
+    >>> c.legs == (a.legs[0], b.legs[1])
+    True
+
+    Notes
+    -----
+    ``axes=((), ())`` is the outer product and falls out of the
     lowering rather than being special-cased.
 
-    All refusals, and all axis bookkeeping, live in :func:`contraction_plan`;
+    All refusals, and all axis bookkeeping, live in ``contraction_plan``;
     what is left here is the execution of four already-tested operations.
     """
     # normalize first so the integer form and NumPy integer scalars share one entry
@@ -335,8 +378,44 @@ def tensordot(a: "SymmetricTensor", b: "SymmetricTensor", axes: Axes) -> "Symmet
 def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
     """Contract axis ``i`` of ``t`` against axis ``j`` of ``t``, through the identity.
 
-    ``axes=(i, j)``; the two legs must be :func:`contractible`, which the
-    delegated :func:`tensordot` call checks. The identity's OUT leg meets
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to close one pair of legs on. Must keep at least one free
+        leg afterwards.
+    axes : sequence of two ints
+        ``(i, j)``, the two public axes to contract against each other. The
+        two legs must be contractible (same space, opposite outward dual).
+
+    Returns
+    -------
+    SymmetricTensor
+        ``t`` with the pair closed; the free legs keep their order and are
+        returned unchanged, as in [tensordot][tenet.tensordot].
+
+    Raises
+    ------
+    ValueError
+        From the delegated [tensordot][tenet.tensordot] call: a non-contractible
+        pair, out-of-range axes, or a trace that would leave no free leg.
+    CapabilityError
+        If closing a same-side pair needs a bend and the provider does not
+        implement ``BendingCoefficients``.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> W = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(W, OUT), Leg(W, IN)), seed=0)
+    >>> tenet.trace(t, (1, 2)).ndim
+    1
+
+    Notes
+    -----
+    The identity's OUT leg meets
     whichever of the two carries the dual object it needs, so a same-side pair
     (which needs a bend) and an OUT/IN pair are the same code path — TensorKit
     keeps a separate ``trace_permute!`` as a *performance* special case, not as
@@ -360,24 +439,55 @@ def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
 def full_trace(t: "SymmetricTensor") -> Any:
     """``Σ_c qdim(c) · tr(M_c)`` — the categorical trace of an endomorphism, a scalar.
 
+    Parameters
+    ----------
+    t : SymmetricTensor
+        A square map: its codomain and domain must carry the same
+        ``(space, dual)`` sequence, in order.
+
+    Returns
+    -------
+    scalar
+        The backend's own scalar — no ``float()``, which would make the
+        function unusable under ``jit``/``grad``/``vmap``; callers needing a
+        Python float say ``float(tenet.full_trace(t))``.
+
+    Raises
+    ------
+    CapabilityError
+        If ``t``'s provider does not implement
+        [QuantumDimension][tenet.symmetry.QuantumDimension].
+    ValueError
+        If the map is not square space-wise (``check_square``'s refusal).
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> int(tenet.full_trace(tenet.identity((Leg(V, OUT),))))
+    2
+
+    Notes
+    -----
     **Open diagrams are tensors; closed diagrams exit to backend scalars, explicitly
-    and by name.** :func:`tensordot`, :func:`einsum` and :func:`trace` never return a
+    and by name.** [tensordot][tenet.tensordot], [einsum][tenet.einsum] and
+    [trace][tenet.trace] never return a
     scalar — a contraction that closes a network is a ``ValueError``, and a
     ``SymmetricTensor`` still has no rank 0. Leaving the tensor world is a separate,
-    named call — :func:`~tenet.norm`, ``full_trace``, :func:`inner` — which returns the
+    named call — [norm][tenet.norm], ``full_trace``, [inner][tenet.inner] — which returns the
     backend's own scalar and is therefore traceable and differentiable.
 
     The pair closed is the **map view**: codomain against domain, in order, the same
     view ``eigh``, ``expm``, ``svd`` and ``to_matrices`` act through. Any rank with a
     square map, so a rank-4 ``(V OUT, W OUT | V IN, W IN)`` gives ``np.einsum("abab->")``
-    and not an axis-adjacent pairing; :func:`trace` remains the way to close one *chosen*
+    and not an axis-adjacent pairing; [trace][tenet.trace] remains the way to close one *chosen*
     pair and to keep a tensor.
 
-    The ``qdim`` weight is the same one :func:`~tenet.norm` carries, and it is what makes
+    The ``qdim`` weight is the same one [norm][tenet.norm] carries, and it is what makes
     ``full_trace(t) == np.trace(t.to_dense())`` hold for a rank-2 map; dropping it is
-    wrong for any non-Abelian provider. Returns the backend's own scalar — no ``float()``,
-    which would make the function unusable under ``jit``/``grad``/``vmap``; callers
-    needing a Python float say ``float(tenet.full_trace(t))``.
+    wrong for any non-Abelian provider.
     """
     requires(t.provider, QuantumDimension)
     check_square(t, "full_trace")
@@ -389,16 +499,51 @@ def full_trace(t: "SymmetricTensor") -> Any:
 
 
 def inner(a: "SymmetricTensor", b: "SymmetricTensor") -> Any:
-    """``<a|b>``: contract every axis but the first, then :func:`full_trace` the rest.
+    """``<a|b>``: contract every axis but the first, then [full_trace][tenet.full_trace] the rest.
 
-    Sesquilinear in ``a``, and :func:`~tenet.norm`'s sibling — ``inner(a, a)`` is
+    Parameters
+    ----------
+    a : SymmetricTensor
+        The bra side; the pairing is sesquilinear (conjugate-linear) in ``a``.
+    b : SymmetricTensor
+        The ket side; must have the same structure as ``a``.
+
+    Returns
+    -------
+    scalar
+        The backend's own scalar ``<a|b>``, traceable and differentiable;
+        ``inner(a, a)`` equals ``norm(a)**2``.
+
+    Raises
+    ------
+    ValueError
+        From the underlying [einsum][tenet.einsum]/[full_trace][tenet.full_trace]
+        chain when the structures do not match, or at rank 27 and above.
+    CapabilityError
+        If the provider does not implement
+        [QuantumDimension][tenet.symmetry.QuantumDimension] (through
+        [full_trace][tenet.full_trace]).
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> round(float(tenet.inner(a, a) - tenet.norm(a) ** 2), 6)
+    0.0
+
+    Notes
+    -----
+    Sesquilinear in ``a``, and [norm][tenet.norm]'s sibling — ``inner(a, a)`` is
     ``norm(a)**2``. Works at any rank, which is what lets
-    :func:`~tenet.network.lanczos` be a plain vector-space algorithm: the adjoint flips
+    [lanczos][tenet.network.lanczos] be a plain vector-space algorithm: the adjoint flips
     every leg, so axis 0 of ``adjoint(a)`` is IN and axis 0 of ``b`` is OUT, and the
-    leftover rank-2 map is exactly what :func:`full_trace` closes.
+    leftover rank-2 map is exactly what [full_trace][tenet.full_trace] closes.
 
     The ``string.ascii_lowercase`` labelling caps this at rank 26, above which
-    :func:`einsum`'s own parser raises with a clear message. A rank-27 tensor has other
+    [einsum][tenet.einsum]'s own parser raises with a clear message. A rank-27 tensor has other
     problems.
     """
     rest = string.ascii_lowercase[1 : a.ndim]
@@ -513,15 +658,67 @@ def einsum(
 ) -> "SymmetricTensor":
     """``tenet.einsum("abc,cde,ef->abdf", A, B, C)`` — any number of operands.
 
-    Labels are single letters. ``->`` may be omitted, in which case the output is
-    every label occurring exactly once, sorted (the NumPy rule). Repeated labels
+    Parameters
+    ----------
+    equation : str
+        The label equation, one comma-separated term per operand. Labels are
+        single ASCII letters, one per axis; a label occurs at most twice in
+        the whole equation (a wire has two ends). ``->`` may be omitted, in
+        which case the output is every label occurring exactly once, sorted
+        (the NumPy rule).
+    *operands : SymmetricTensor
+        One or more tensors, in the equation's term order.
+    optimize : str, path, or opt_einsum.paths.PathOptimizer, optional
+        Consulted only with three or more operands, where it is handed to
+        ``opt_einsum.contract_path`` unchanged; cotengra's optimizers are such
+        objects and work here without ``cotengra`` being imported. Default
+        ``"auto"``.
+
+    Returns
+    -------
+    SymmetricTensor
+        The contraction, its public axes in the output labels' order; free
+        legs come back exactly as they went in.
+
+    Raises
+    ------
+    ValueError
+        The parser's refusals, each naming what to write instead: no
+        operands; ellipsis (symmetric tensors do not broadcast); a non-ASCII
+        or non-letter label; a term/operand count or length mismatch; a label
+        occurring more than twice; a label repeated *within* one operand — a
+        diagonal (not equivariant, invariant 11) or a single-operand trace
+        (use [trace][tenet.trace]); a repeated output label; an output label
+        appearing in no input; or an input label missing from the output,
+        which would sum an axis away (not equivariant, invariant 11). Also
+        [tensordot][tenet.tensordot]'s refusals for each pairwise step, e.g. a
+        shared label whose two legs are not contractible.
+    CapabilityError
+        If a pairwise step needs a bend the provider cannot supply, as in
+        [tensordot][tenet.tensordot].
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> b = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=1)
+    >>> c = tenet.einsum("ab,bc->ac", a, b)
+    >>> bool(tenet.allclose(c, tenet.tensordot(a, b, axes=((1,), (0,)))))
+    True
+
+    Notes
+    -----
+    Repeated labels
     within one operand (a trace or a diagonal) and ellipsis are refused; see the
     message on each.
 
     With one or two operands this is the pairwise lowering and ``optimize`` is
     not consulted (``opt_einsum`` is not even imported). With three or more the
     pairwise order is chosen by ``opt_einsum.contract_path`` from the operands'
-    physical :attr:`~tenet.SymmetricTensor.shape`\\ s, and ``optimize`` is handed
+    physical [shape][tenet.SymmetricTensor.shape]\\ s, and ``optimize`` is handed
     to it unchanged: a strategy name, an explicit path, or any
     ``opt_einsum.paths.PathOptimizer`` — cotengra's optimizers are such objects
     and work here without ``cotengra`` being imported. Every step of the path is
@@ -575,7 +772,7 @@ def _contract_path(
     in the whole equation, so the labels shared by any two chosen terms appear
     nowhere else and are *always* fully contracted — no hyper-indices, no batch
     labels, no partial contractions. An intermediate's free legs are the input
-    legs unchanged (:func:`contraction_plan`'s contract), so no new categorical
+    legs unchanged (``contraction_plan``'s contract), so no new categorical
     work happens between steps either.
 
     **Precondition for a braided provider** (fermion parity, or a product containing

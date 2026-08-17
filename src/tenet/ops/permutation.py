@@ -1,4 +1,4 @@
-"""Axis permutation — ``T.transpose(*axes)`` / :func:`tenet.transpose` — Milestone 2.
+"""Axis permutation — ``T.transpose(*axes)`` / [tenet.transpose][] — Milestone 2.
 
 Public axis order enters the categorical data through exactly two channels: which
 leg is which, and the *relative order within each side* (a ``FusionBlockKey``'s
@@ -13,7 +13,7 @@ for *every* provider, SU(2) included — this is invariant 3 in action.
 
 **case B — some side permutation is non-trivial.** That is a braid. It needs the
 provider to state its own coefficients through
-:class:`~tenet.symmetry.base.PermutationCoefficients`; every provider shipped here
+[PermutationCoefficients][tenet.symmetry.PermutationCoefficients]; every provider shipped here
 does, and one that does not is refused loudly. A "just permute the block axes"
 fast path would return a numerically plausible tensor that is silently the wrong
 element of the fusion basis, and only a dense round-trip would catch it. A
@@ -116,7 +116,7 @@ def _refuse(provider: Any, axes: tuple[int, ...], offenders: str) -> None:
 def permutation_plan(structure: TensorStructure, axes: tuple[int, ...]) -> PermutationPlan:
     """Plan ``axes`` on ``structure``. Cached: repeat calls return the same object.
 
-    ``axes`` must already be a validated permutation (:func:`transpose` does that);
+    ``axes`` must already be a validated permutation ([transpose][tenet.transpose] does that);
     the cache is keyed on the frozen structure and the tuple, nothing else.
     """
     new_structure = TensorStructure(tuple(structure.legs[i] for i in axes))
@@ -157,9 +157,43 @@ def permutation_plan(structure: TensorStructure, axes: tuple[int, ...]) -> Permu
 def transpose(t: "SymmetricTensor", axes: Sequence[int] | None = None) -> "SymmetricTensor":
     """The same abstract tensor with public axes reordered as ``axes``.
 
-    ``axes[i]`` is the OLD axis that becomes new axis ``i`` (NumPy convention);
-    ``axes=None`` reverses them. ``side``, ``dual`` and ``name`` travel with each
-    leg and no leg ever changes side.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor whose public axes are reordered.
+    axes : sequence of int or None, optional
+        ``axes[i]`` is the OLD axis that becomes new axis ``i`` (NumPy
+        convention); a permutation of ``range(t.ndim)``, negative indices
+        refused. ``None`` (the default) reverses the axes.
+
+    Returns
+    -------
+    SymmetricTensor
+        The transposed tensor; ``side``, ``dual`` and ``name`` travel with
+        each leg and no leg ever changes side.
+
+    Raises
+    ------
+    ValueError
+        If ``axes`` is not a permutation of ``range(t.ndim)`` — a non-integer,
+        a wrong length, an out-of-range axis or a repeat, each named.
+    CapabilityError
+        If ``axes`` reorders legs *within* a side — a braid — and the
+        provider does not implement
+        [PermutationCoefficients][tenet.symmetry.PermutationCoefficients].
+        Permutations that only change the OUT/IN interleaving work for every
+        provider.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> W = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(W, OUT), Leg(W, IN)), seed=0)
+    >>> tenet.transpose(t, (2, 0, 1)).legs == (t.legs[2], t.legs[0], t.legs[1])
+    True
     """
     from tenet.tensor import SymmetricTensor
 

@@ -14,7 +14,7 @@ permutation, so reversing the magnetic order and negating the weight cancel.
 That convention is pinned by a refusal in the tests, not by this comment.
 
 Which target sectors a provider's dense basis vectors carry is a provider fact,
-asked through the :class:`~tenet.symmetry.base.SymmetryCast` capability — never
+asked through the [SymmetryCast][tenet.symmetry.SymmetryCast] capability — never
 an ``isinstance`` branch here (invariant 5).
 """
 
@@ -52,12 +52,54 @@ def cast(
 ) -> "SymmetricTensor":
     """Restrict ``t`` to the smaller symmetry ``target``, in the dense basis.
 
-    Requires :class:`~tenet.symmetry.base.SymmetryCast` on ``t``'s provider (and
-    ``ClebschGordan``, plus ``DualBasis`` for a ``dual`` leg, through
-    :func:`~tenet.ops.dense.to_dense`). ``side``, ``dual`` and ``name`` are
-    carried through per leg unchanged; only ``space`` changes.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to restrict. Its provider must implement
+        [SymmetryCast][tenet.symmetry.SymmetryCast] (and ``ClebschGordan``, plus
+        ``DualBasis`` for a ``dual`` leg, through ``to_dense``).
+    target : FusionProvider
+        The smaller symmetry to restrict to. Must implement ``ClebschGordan``
+        and have one-dimensional irreps (i.e. be abelian).
+    atol : float or None, optional
+        Forwarded to ``from_dense``'s symmetry check; ``None`` (the default)
+        uses ``from_dense``'s own relative tolerance, and ``atol=math.inf``
+        skips the check entirely.
 
-    ``atol`` is forwarded to :func:`~tenet.ops.dense.from_dense`, whose default
+    Returns
+    -------
+    SymmetricTensor
+        The same physical object as a ``target``-symmetric tensor; ``side``,
+        ``dual`` and ``name`` are carried through per leg unchanged, only
+        ``space`` changes.
+
+    Raises
+    ------
+    CapabilityError
+        If ``t``'s provider does not implement ``SymmetryCast``, if ``target``
+        does not implement ``ClebschGordan``, or if a target sector has
+        ``irrep_dim > 1`` — one target label per dense basis vector is only
+        well-defined when the target's irreps are one-dimensional.
+    ValueError
+        From ``from_dense``'s symmetry check, if the densified array is not
+        ``target``-symmetric within ``atol``.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import SU2, SU2Sector, U1
+    >>> V = GradedSpace.new(SU2, {SU2Sector(0): 1, SU2Sector(1): 1})
+    >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> u = tenet.cast(t, U1)  # each SU(2) irrep j splits into weights 2Sz
+    >>> u.legs[0].space.sectors
+    ((U1Sector(charge=-1), 1), (U1Sector(charge=0), 1), (U1Sector(charge=1), 1))
+    >>> u.shape == t.shape
+    True
+
+    Notes
+    -----
+    ``atol`` is forwarded to ``from_dense``, whose default
     symmetry check is the free correctness oracle here — a wrong branching or a
     wrong sort produces an array that is not ``target``-symmetric and is refused.
     ``atol=math.inf`` skips it, which is what makes ``cast`` traceable.

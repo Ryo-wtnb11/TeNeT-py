@@ -12,7 +12,7 @@ That measurement is why nothing here is registered in ``array/dispatch.py``:
 ``ar.do("sqrt", t)`` must keep raising, because autoray's ``"sqrt"`` means the
 dense elementwise one and this is not it.
 
-As in :mod:`tenet.ops.basic`, there is no NumPy call anywhere in this module.
+As in ``tenet.ops.basic``, there is no NumPy call anywhere in this module.
 """
 
 from collections.abc import Callable
@@ -31,14 +31,39 @@ Array = Any
 def apply_blocks(t: "SymmetricTensor", fn: Callable[[Array], Array]) -> "SymmetricTensor":
     """``fn`` applied to each reduced block. **Coefficient space, not dense space.**
 
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor whose reduced blocks ``fn`` maps over.
+    fn : callable
+        An **elementwise and shape-preserving** function of one backend array.
+        It is not checked (a shape change is caught by
+        ``SymmetricTensor.__post_init__``, a value-dependent one is the caller's
+        problem), and it is not required that ``fn(0) == 0``.
+
+    Returns
+    -------
+    SymmetricTensor
+        ``fn`` of every block, on ``t``'s unchanged structure.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> tenet.allclose(tenet.apply_blocks(a, lambda blk: 2 * blk), a + a)
+    True
+
+    Notes
+    -----
     Structure is untouched, so this is linear-algebra-free, backend-generic,
     traceable and differentiable: it is exactly ``t.set_params(map(fn,
     t.get_params()))``, which is quimb's ``Tensor.apply_to_arrays`` over the same
     parameter protocol.
 
-    ``fn`` must be **elementwise and shape-preserving**. It is not checked (a
-    shape change is caught by ``SymmetricTensor.__post_init__``, a value-dependent
-    one is the caller's problem), and it is not required that ``fn(0) == 0``: the
+    ``fn`` not being required to satisfy ``fn(0) == 0`` is a structural fact: the
     blocks hold only allowed fusion channels, so *any* ``fn`` returns a valid
     symmetric tensor and every symmetry-forbidden dense entry stays exactly zero.
 
@@ -57,11 +82,34 @@ def apply_blocks(t: "SymmetricTensor", fn: Callable[[Array], Array]) -> "Symmetr
 def sqrt(t: "SymmetricTensor") -> "SymmetricTensor":
     """Blockwise ``sqrt``. The ``svd`` splitter: ``u @ sqrt(s)``, ``sqrt(s) @ vh``.
 
-    Blockwise, i.e. on the coefficients — see :func:`apply_blocks` for the
-    blockwise/dense caveat, which for SU(2) is 44% of the array's own scale and
-    completely silent.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor whose blocks are square-rooted, entry by entry.
 
-    For the ``S`` returned by :func:`tenet.linalg.svd` this *is* the matrix square
+    Returns
+    -------
+    SymmetricTensor
+        The elementwise square root of every block, on ``t``'s structure.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> q = tenet.apply_blocks(a, abs)  # non-negative blocks
+    >>> tenet.allclose(tenet.sqrt(tenet.power(q, 2)), q)
+    True
+
+    Notes
+    -----
+    Blockwise, i.e. on the coefficients — see [apply_blocks][tenet.apply_blocks]
+    for the blockwise/dense caveat, which for SU(2) is 44% of the array's own
+    scale and completely silent.
+
+    For the ``S`` returned by [tenet.linalg.svd][tenet.ops.linalg.svd] this *is* the matrix square
     root, because ``svd`` builds ``S``'s blocks with ``ar.do("diag", ...)`` and a
     diagonal matrix's elementwise and matrix square roots coincide. That is a fact
     about ``S``, not about ``sqrt``: for a non-diagonal ``t``, ``sqrt(t) @ sqrt(t)
@@ -77,8 +125,32 @@ def sqrt(t: "SymmetricTensor") -> "SymmetricTensor":
 def power(t: "SymmetricTensor", p: Any) -> "SymmetricTensor":
     """Blockwise ``t ** p``. ``p`` is a scalar exponent, never a tensor.
 
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor whose blocks are raised to ``p``, entry by entry.
+    p : scalar
+        The exponent — a Python number or 0-d backend array, never a tensor.
+
+    Returns
+    -------
+    SymmetricTensor
+        Every block raised to ``p``, on ``t``'s structure.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> tenet.allclose(tenet.power(a, 2), tenet.apply_blocks(a, lambda b: b * b))
+    True
+
+    Notes
+    -----
     Same coefficient-space semantics and the same backend-owned branch cuts and
-    ``nan``s as :func:`sqrt`; ``p = -0.5`` is the inverse-√S of canonical-form and
-    gauge-fixing loops.
+    ``nan``s as [sqrt][tenet.sqrt]; ``p = -0.5`` is the inverse-√S of
+    canonical-form and gauge-fixing loops.
     """
     return apply_blocks(t, lambda b: ar.do("power", b, p))
