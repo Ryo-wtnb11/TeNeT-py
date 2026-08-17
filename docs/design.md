@@ -2911,8 +2911,30 @@ The split:
   not supply it; `Env`/`sweep_` have never contracted an odd-parity MPO bond, so the
   result would be silently wrong rather than refused. **Non-Abelian terms**: a *list* of
   operators does not determine a non-Abelian term — three tensor operators fuse through
-  several channels and the DSL has no slot for a coupling tree. The 2-site SU(2) case is
-  tractable and is the named follow-up, with `fused_leg` as the mechanism.
+  several channels and the DSL has no slot for a coupling tree.
+
+- **M13b** — shipped: non-Abelian `MPO.from_terms`, and the first SU(2) DMRG run. M13's
+  non-Abelian refusal was not overturned, it was *routed around*: the premise that goes is
+  the *list of operators*. A term is now one symmetry-**invariant** *k*-site operator —
+  `local_op(dense, phys=...)` with no `charge`, rank `2k` on `(phys OUT)*k, (phys IN)*k`,
+  the layout `np.kron` already has — placed on a tuple of sites, and `svd_truncated` peels
+  it into `k` MPO tensors (MPSKit's `decompose_localmpo`). **The coupling tree was never
+  needed because it lives inside the operator's own blocks**, and the aux bond is not
+  fused from declared charges at all: it comes out of the SVD, sector by sector, empty
+  sectors omitted. So there is no `mu` slot, at any *k*, for any symmetry — a multiplicity
+  arrives as an ordinary `GradedSpace` degeneracy in a derived bond, which an SU(3) two-
+  site term confirms (adjoint ⊗ adjoint splits on a bond carrying `8` at degeneracy 2).
+  `fused_leg` is recorded as *not* the mechanism. The refusal above still fires for a
+  declared chain of charges, because that ambiguity argument is still true; its message
+  now names the *k*-site spelling instead of a follow-up. `from_dense`'s default `atol`
+  does the rest of the work: an array that is not invariant is refused, so under SU(2) the
+  DSL is *incapable* of expressing a symmetry-breaking term. Measured: SU(2) Heisenberg
+  against the dense `kron` oracle at N=4 and 6, a bulk MPO bond of `{0: 2, 2: 1}` (3
+  blocks, dense 5, against U(1)'s 5 blocks and dense 5), and DMRG at N=6 and N=12 hitting
+  the U(1) energies to 1e-10 with 12 multiplets where U(1) needs 32 states. Nothing in
+  `Env`, `heff2`, `lanczos` or `sweep_` changed. **`MPO.cast` is still refused**: `cast`
+  reorders the dense basis per leg, so a per-site comparison fails on a correct
+  implementation, and `MPO([cast(w, U1) for w in h])` is all a test ever wanted.
   `MPO.save`/`load` was promised for "the day a term-list builder lands" and is reversed
   with its reason instead: M11c's argument was regenerability, and a term list makes an
   MPO *more* regenerable, not less.

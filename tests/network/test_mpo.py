@@ -1,9 +1,13 @@
 """``tenet.network.MPO``: the leg structure, the refusal, and the operator it builds."""
 
+import pathlib
+import sys
+
 import dmrg as example  # noqa: E402  (see conftest.py)
 import numpy as np
 import pytest
 
+import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.network import MPO, local_op
 from tenet.symmetry import SU2, U1, FZ2Sector, SU2Sector, U1Sector, fZ2
@@ -295,6 +299,12 @@ def test_from_terms_refuses_a_non_abelian_operator():
     case is tractable and is the named follow-up; ``tenet.ops.fusion.fused_leg`` is the
     mechanism and "``fuse_spaces`` returned more than one sector" is the ambiguity to
     detect.
+
+    #135 did **not** overturn that argument, it routed around the premise: a declared
+    chain of charges is still ambiguous and this refusal still fires for it, and the route
+    that works is next to it -- hand the whole term over as one invariant *k*-site
+    operator (``local_op(dense, phys=...)`` with no ``charge``) on a tuple of sites, where
+    the coupling lives in the operator's own blocks and the bond comes out of an SVD.
     """
     phys = GradedSpace.new(SU2, {SU2Sector(1): 1})
     charge = GradedSpace.new(SU2, {SU2Sector(2): 1})
@@ -338,3 +348,203 @@ def test_mpo_to_dense_is_the_oracle_exit_both_builders_share():
     dense = np.asarray(example.mpo(3).to_dense())
     assert dense.shape == (8, 8)
     assert np.abs(dense - dense.T).max() < 1e-12  # the Heisenberg chain is real symmetric
+
+
+# --- M13b: the invariant k-site form, on SU(2) and SU(3) legs ------------------------
+
+SU2_PHYS = GradedSpace.new(SU2, {SU2Sector(1): 1})
+
+
+def _ss_dense():
+    """``S.S`` for two spin-1/2s as a ``(2, 2, 2, 2)`` array indexed ``(o0, o1, i0, i1)``.
+
+    ``np.kron(a, b)`` reshaped to ``(d,)*4`` already carries that layout, which is why the
+    ``kron`` oracle this file has used since #110 is now also the *input* format. The
+    example's ascending basis and SU(2)'s descending one give the same ``S.S``: the flip
+    is a rotation, under which ``S^z -> -S^z`` and ``S^+ <-> S^-``, and both terms of
+    ``S.S`` are even in that.
+    """
+    _, sz, sp, sm = example._spin_half()
+    return np.kron(sz, sz) + (np.kron(sp, sm) + np.kron(sm, sp)) / 2
+
+
+def su2_heisenberg(n_sites, **kwargs):
+    """The whole SU(2) Hamiltonian: one invariant operator and a list comprehension."""
+    ss = local_op(_ss_dense(), phys=SU2_PHYS)
+    terms = [(1.0, [(ss, (i, i + 1))]) for i in range(n_sites - 1)]
+    return MPO.from_terms(n_sites, terms, **kwargs)
+
+
+def _heisenberg_kron(n_sites):
+    eye, sz, sp, sm = example._spin_half()
+
+    def at(op, site):
+        out = np.array([[1.0]])
+        for k in range(n_sites):
+            out = np.kron(out, op if k == site else eye)
+        return out
+
+    return sum(
+        at(sz, i) @ at(sz, i + 1) + 0.5 * (at(sp, i) @ at(sm, i + 1) + at(sm, i) @ at(sp, i + 1))
+        for i in range(n_sites - 1)
+    )
+
+
+def test_local_op_cannot_express_a_symmetry_breaking_term_on_su2_legs():
+    """``Sz (x) Sz`` alone raises; ``S.S`` builds. The consequence is the point.
+
+    A term is a scalar under the symmetry, so ``from_dense`` at its default ``atol``
+    (``ops/dense.py``:301) refuses any array that is not invariant -- which makes the DSL
+    *incapable* of expressing a symmetry-breaking term on non-Abelian legs. That is #133's
+    "a wrong grading is unreachable" promoted from the bond to the physics, and it is a
+    sharper refusal than the ``irrep_dim > 1`` check it replaces for this path.
+    """
+    _, sz, _, _ = example._spin_half()
+    with pytest.raises(ValueError, match="not symmetric"):
+        local_op(np.kron(sz, sz), phys=SU2_PHYS)
+    ss = local_op(_ss_dense(), phys=SU2_PHYS)
+    assert ss.ndim == 4
+    assert tuple(leg.side for leg in ss.legs) == (OUT, OUT, IN, IN)
+
+
+def test_local_op_without_a_charge_round_trips_on_abelian_legs():
+    """The k-site form is verified on U(1) too, where ``Sz (x) Sz`` *is* invariant.
+
+    ``(d**k, d**k)`` and ``(d,)*2k`` are the same input; ``k`` is inferred from ``d``.
+    """
+    _, sz, _, _ = example._spin_half()
+    want = np.reshape(np.kron(sz, sz), (2,) * 4)
+    flat = local_op(np.kron(sz, sz), phys=example.PHYS)
+    nested = local_op(want, phys=example.PHYS)
+    assert flat.structure == nested.structure
+    assert np.abs(np.asarray(flat.to_dense()) - want).max() < 1e-14
+
+
+def test_local_op_refuses_a_shape_no_integer_k_follows_from():
+    with pytest.raises(ValueError, match=r"got \(2, 3\), from which no integer k follows"):
+        local_op(np.zeros((2, 3)), phys=SU2_PHYS)
+
+
+def test_from_terms_refuses_a_site_tuple_of_the_wrong_length():
+    ss = local_op(_ss_dense(), phys=SU2_PHYS)
+    with pytest.raises(ValueError, match="spans 2 site"):
+        MPO.from_terms(4, [(1.0, [(ss, 0)])])
+
+
+def test_from_terms_refuses_an_mpo_site_tensor_as_a_term_operator():
+    """The check that catches a user handing in a ``W``: rank 4, but not (OUT, OUT, IN, IN)."""
+    w = su2_heisenberg(4)[1]
+    with pytest.raises(ValueError, match="is not a term operator"):
+        MPO.from_terms(4, [(1.0, [(w, (0, 1))])])
+
+
+@pytest.mark.parametrize("n_sites", [4, 6])
+def test_the_su2_heisenberg_mpo_is_the_heisenberg_hamiltonian(n_sites):
+    """The criterion #110 said could not be got right by hand -- and nothing was.
+
+    Same ``np.kron`` oracle as the U(1) case, because ``to_dense`` erases the symmetry.
+    The recoupling in the ``W`` was never written down: it came out of ``svd_truncated``.
+    """
+    h = su2_heisenberg(n_sites)
+    assert len(h) == n_sites
+    for w in h:
+        assert w.ndim == 4
+        assert tuple(leg.side for leg in w.legs) == (IN, OUT, IN, OUT)
+        assert w.legs[1].space == SU2_PHYS and w.legs[2].space == SU2_PHYS
+    assert h[0].legs[0].space.dim == 1 and h[-1].legs[3].space.dim == 1
+    assert np.abs(np.asarray(h.to_dense()) - _heisenberg_kron(n_sites)).max() < 1e-12
+
+
+def test_the_su2_bond_spaces_are_derived_and_are_the_predicted_ones():
+    """Asserted as ``GradedSpace`` equality, not as a dimension. #135's three predictions.
+
+    One ``S.S`` splits on a single adjoint multiplet, and the compressed bulk bond is
+    ``{0: 2, 2: 1}`` -- **3 blocks**, ``reduced_dim`` 3, ``dim`` 5 -- against U(1)'s
+    ``MPO_BOND`` at 5 blocks and ``dim`` 5. The block count is MPSKit's finite Jordan form
+    ``(1 C D; . A B; . . 1)`` with no on-site ``D``: unit (+) adjoint (+) unit. The MPO's
+    *dense* bond is 5 either way; the multiplet compression is on the MPS side, and
+    ``tests/network/test_dmrg.py`` is where that is measured.
+    """
+    ss = local_op(_ss_dense(), phys=SU2_PHYS)
+    one_term = MPO.from_terms(2, [(1.0, [(ss, (0, 1))])])
+    assert one_term[0].legs[3].space == GradedSpace.new(SU2, {SU2Sector(2): 1})
+
+    bulk = GradedSpace.new(SU2, {SU2Sector(0): 2, SU2Sector(2): 1})
+    assert (bulk.reduced_dim, bulk.dim) == (3, 5)
+    for n_sites in (6, 12):
+        h = su2_heisenberg(n_sites)
+        assert all(h[n].legs[0].space == bulk for n in range(2, n_sites - 1))
+
+
+def test_the_su2_default_cutoff_is_lossless():
+    tight = np.asarray(su2_heisenberg(6, cutoff=0.0).to_dense())
+    assert np.abs(tight - np.asarray(su2_heisenberg(6).to_dense())).max() < 1e-12
+
+
+def test_a_non_adjacent_su2_term_carries_its_graded_bond_through_the_spectators():
+    """``S.S`` on sites ``(0, 3)``: the adjoint bond runs through the identities between.
+
+    The spectator sites are ``identity(aux) (x) identity(phys)`` and ``aux`` is graded
+    here, which the old ``np.eye`` spectator could not have been.
+    """
+    ss = local_op(_ss_dense(), phys=SU2_PHYS)
+    h = MPO.from_terms(4, [(1.0, [(ss, (0, 3))])])
+    eye, sz, sp, sm = example._spin_half()
+
+    def at(op, site):
+        out = np.array([[1.0]])
+        for k in range(4):
+            out = np.kron(out, op if k == site else eye)
+        return out
+
+    oracle = at(sz, 0) @ at(sz, 3) + 0.5 * (at(sp, 0) @ at(sm, 3) + at(sm, 0) @ at(sp, 3))
+    assert np.abs(np.asarray(h.to_dense()) - oracle).max() < 1e-12
+
+
+def test_casting_the_su2_sites_to_u1_gives_the_same_operator():
+    """``branch``'s basis ordering against ``from_dense``'s, at MPO scale.
+
+    **#135 predicted this as a per-tensor identity and that prediction was wrong**:
+    :func:`tenet.cast` *reorders the dense basis* by construction (``ops/cast.py``:69-77
+    gathers each axis into the target's sector order), so ``cast(w, U1).to_dense()``
+    differs from ``w.to_dense()`` by a per-leg permutation even when everything is right.
+    Contracting the whole chain is the honest form of the same check: the bond gathers
+    cancel between neighbours, the physical one is the spin flip that leaves ``H``
+    invariant, and what is left is exactly the statement that ``branch``'s basis order and
+    ``from_dense``'s agree.
+
+    Still not a cross-builder comparison: an MPO bond is fixed only up to a gauge and the
+    sector order inside it is ``GradedSpace``'s, so comparing ``cast(SU2_W, U1)`` against
+    the hand-graded ``W`` of ``examples/dmrg.py`` per site would fail on a *correct*
+    implementation -- which is why ``MPO.cast`` does not exist. ``MPO`` over a list
+    comprehension is all the container-level cast anyone needed.
+    """
+    h = su2_heisenberg(6)
+    cast = MPO([tenet.cast(w, U1) for w in h])
+    assert cast[3].legs[1].space == example.PHYS
+    assert np.abs(np.asarray(cast.to_dense()) - _heisenberg_kron(6)).max() < 1e-12
+
+
+def test_an_su3_two_site_term_derives_a_bond_with_multiplicity_two():
+    """The SU(3) probe #135 handed to the implementation: it passes, so nothing is refused.
+
+    The swap operator on two adjoint (``8``) sites is invariant, and its split bond comes
+    back carrying ``8`` at **degeneracy 2** -- the ``N^8_88 = 2`` multiplicity arriving as
+    an ordinary ``GradedSpace`` degeneracy out of ``svd_truncated``, with no ``mu`` slot
+    anywhere in the DSL. That is the issue's central design claim, tested rather than
+    asserted.
+
+    Two sites, not three: ``tests/symmetry/_su3_fixture.py`` is a *truncated* sector set
+    (eleven sectors up to ``27``), and three adjoint sites need ``27 (x) 8`` channels it
+    does not vendor -- ``from_dense`` refuses even the plain identity there. That is the
+    fixture's documented boundary, not a limit of this path.
+    """
+    sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "symmetry"))
+    from _su3_fixture import EIGHT, SU3  # noqa: PLC0415
+
+    d = SU3.irrep_dim(EIGHT)
+    swap = np.einsum("ad,bc->abcd", np.eye(d), np.eye(d))
+    op = local_op(swap, phys=GradedSpace.new(SU3, {EIGHT: 1}))
+    h = MPO.from_terms(2, [(1.0, [(op, (0, 1))])])
+    assert h[0].legs[3].space.degeneracy(EIGHT) == 2
+    assert np.abs(np.asarray(h.to_dense()) - np.reshape(swap, (d * d, d * d))).max() < 1e-12

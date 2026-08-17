@@ -40,6 +40,11 @@ the two measurements :func:`expectation_1site` and :func:`expectation_2site`, an
 :class:`CTMRG_out` -- :func:`ctmrg`'s return, which was a bare ``(CTMEnv, history)``
 tuple. M13: :func:`local_op` and :meth:`MPO.from_terms`, the term-list MPO builder whose
 bond spaces are derived rather than declared, with :meth:`MPO.to_dense` as its oracle exit.
+M13b: no new name -- :func:`local_op` grew an optional ``charge=None`` giving the
+symmetry-**invariant** *k*-site form, and :meth:`MPO.from_terms` takes a tuple of sites
+for it and splits it with ``svd_truncated``, so it is **no longer Abelian-only**: a
+non-Abelian term is one invariant operator whose coupling lives in its own blocks, and the
+aux bond it runs through, multiplicities and all, is derived from the SVD.
 Shared: the bond spectrum :func:`spectrum` and the :func:`ones` seed -- the two
 scalar exits that sat beside them left for ``tenet.ops`` in #126, as
 :func:`tenet.full_trace` and :func:`tenet.inner`. Promoted verbatim from
