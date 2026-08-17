@@ -5,7 +5,10 @@ Promoted from ``examples/dmrg.py`` (#110) with no arithmetic change: ``boundary_
 ``heff2`` :374-390. :meth:`Env.measure` is the one genuinely new capability in M11a.
 """
 
-from typing import Any
+from collections.abc import Callable
+from typing import Any, NamedTuple
+
+import numpy as np
 
 import tenet
 from tenet import IN, OUT, Leg, SymmetricTensor
@@ -13,6 +16,309 @@ from tenet.network.common import ones
 from tenet.network.mps import MPO, MPS
 
 __all__ = ["Env"]
+
+
+class _Prepared(NamedTuple):
+    """One bond's prepared two-site operator: MPSKit's ten fields, merged for the matvec.
+
+    ``JordanMPO_AC2_Hamiltonian`` (``hamiltonian_derivatives.jl``:168-181) transcribed
+    and then merged the way its ``prepare_operator!!`` (:371-460) merges degenerate
+    cases, so the apply is few, large contractions rather than ten small ones:
+
+    * ``grt``/``gl`` -- every identity-through path (``II``, ``EE`` and the spectator
+      part of ``AA``) as *one* rank-2 channel map folded into the right environment,
+      closed by the untouched left environment; exact for any state;
+    * ``caf`` -- every ``IdL``-anchored path (``IC``, ``ID``, ``CB``, ``CA``) summed
+      into one field with the *right* environment slices folded in exactly; the left
+      closure is MPSKit's one-sided move: the ``IdL`` channel of a left environment
+      over left-orthonormal sites is the identity, so no contraction spells it;
+    * ``abf`` -- every ``IdR``-anchored path (``AB``, ``BE``, ``DE``), mirrored: left
+      environment folded exactly, right ``IdR`` channel the gauge identity;
+    * ``ra1``/``ra2``/``sr2`` with ``gl2``/``gr2`` -- the rare operator-carrying
+      open-to-open remainder of ``AA``, four factors exactly as MPSKit's own ``AA``
+      (:93): folding an environment into an open-channel block would cost
+      ``chi^2 d^2 D_w`` memory.
+
+    ``None`` fields cost nothing in :func:`_apply2` -- MPSKit's ``ismissing`` guards
+    (:485-500) -- and they are where the structural zeros go.
+    """
+
+    grt: SymmetricTensor | None
+    gl: SymmetricTensor | None
+    caf: SymmetricTensor | None
+    abf: SymmetricTensor | None
+    gl2: SymmetricTensor | None
+    gr2: SymmetricTensor | None
+    ra1: SymmetricTensor | None
+    ra2: SymmetricTensor | None
+    sr2: SymmetricTensor | None
+
+
+def _sl(gl: SymmetricTensor, emb: SymmetricTensor | None) -> SymmetricTensor | None:
+    """Slice a left environment down to one Jordan group of its MPO leg."""
+    return None if emb is None else tenet.einsum("axB,xv->avB", gl, emb)
+
+
+def _sr(emb: SymmetricTensor | None, gr: SymmetricTensor) -> SymmetricTensor | None:
+    """Slice a right environment down to one Jordan group of its MPO leg."""
+    return None if emb is None else tenet.einsum("wy,rys->rws", emb, gr)
+
+
+def _drop(t: SymmetricTensor, i: int) -> SymmetricTensor:
+    """Contract away a ``D=1`` unit leg with a ones cap -- MPSKit's ``removeunit``."""
+    leg = t.legs[i]
+    cap = SymmetricTensor.from_dense(
+        np.ones(1), (Leg(leg.space, OUT if leg.side == IN else IN, leg.dual),)
+    )
+    labels = "abcdefgh"[: t.ndim]
+    return tenet.einsum(f"{labels},{labels[i]}->{labels[:i] + labels[i + 1 :]}", t, cap)
+
+
+#: The ten MPSKit field names, in ``hamiltonian_derivatives.jl``:168-181 order. Presence
+#: is recorded per bond next to the (merged) prepared operator, so the sparsity that
+#: survived instantiation stays countable after the merge.
+_FIELDS = ("II", "IC", "ID", "CB", "CA", "AB", "AA", "BE", "DE", "EE")
+
+
+def _present(t1, t2) -> tuple[str, ...]:
+    """Which of the ten fields this bond populates, read off the two block tables."""
+    paths = {
+        "II": t1.idl_l is not None and t1.idl_r is not None and t2.idl_r is not None,
+        "IC": t1.idl_l is not None and t2.c_op is not None,
+        "ID": t1.idl_l is not None and t2.d_op is not None,
+        "CB": t1.c_op is not None and t2.b_op is not None,
+        "CA": t1.c_op is not None and t2.a_op is not None,
+        "AB": t1.a_op is not None and t2.b_op is not None,
+        "AA": t1.a_op is not None and t2.a_op is not None,
+        "BE": t1.b_op is not None and t2.idr_r is not None,
+        "DE": t1.d_op is not None and t2.idr_r is not None,
+        "EE": t1.idr_l is not None and t1.idr_r is not None and t2.idr_r is not None,
+    }
+    return tuple(name for name in _FIELDS if paths[name])
+
+
+class _Cores(NamedTuple):
+    """The environment-independent half of one bond's preparation, built once ever.
+
+    Everything here is a function of the two sites' block tables alone -- MPSKit's
+    merged cores with the group embeddings already folded back onto the full bonds --
+    so ``Env`` computes it on the bond's first visit and every later
+    :func:`_build2` is three environment folds.
+    """
+
+    thru: SymmetricTensor | None  # composed identity channels, bond_n -> bond_{n+2}
+    caf: SymmetricTensor | None  # [P, p, Q, q, y_full], awaiting the right environment
+    abf: SymmetricTensor | None  # [x_full, P, p, Q, q], awaiting the left environment
+    ra1: SymmetricTensor | None
+    ra2: SymmetricTensor | None
+    sr2: SymmetricTensor | None
+    open_l: SymmetricTensor | None  # slicers for the AA-remainder chains
+    open_r: SymmetricTensor | None
+
+
+def _cores2(t1, t2, eye_p) -> _Cores:
+    """Merge the bond's Jordan blocks into MPSKit's prepared cores, environment-free.
+
+    ``hamiltonian_derivatives.jl``:272-345 in ``tenet.einsum`` -- ``CB = C1 . B2``,
+    ``AB = A1 . B2`` -- followed by its ``prepare_operator!!`` merging: the
+    one-site-identity fields are padded with ``eye_p`` into the two-site fields that
+    share their closure, every identity-through channel (corners and spectators at
+    once) is one composed rank-2 map, and each merged core's group leg is re-embedded
+    onto the full bond so that :func:`_build2` folds one whole environment per family.
+    ``None`` stands for every absent piece.
+    """
+    thru = None
+    if t1.idmap is not None and t2.idmap is not None:
+        thru = tenet.einsum("xy,yz->xz", t1.idmap, t2.idmap)
+
+    caf = None  # the dropped IdL leg is the left gauge identity
+    if t1.idl_l is not None:
+        core_e = core_2 = None  # by right target: the IdR channel against the open group
+        if t2.c_op is not None:  # IC, starting right
+            core_2 = tenet.einsum("Pp,vQqw->vPpQqw", eye_p, t2.c_op)
+        if t2.d_op is not None:  # ID, onsite right
+            core_e = tenet.einsum("Pp,vQqw->vPpQqw", eye_p, t2.d_op)
+        if t1.c_op is not None and t2.b_op is not None:  # CB
+            part = tenet.einsum("vPpm,mQqw->vPpQqw", t1.c_op, t2.b_op)
+            core_e = part if core_e is None else tenet.add(core_e, part)
+        if t1.c_op is not None and t2.a_op is not None:  # CA
+            part = tenet.einsum("vPpm,mQqw->vPpQqw", t1.c_op, t2.a_op)
+            core_2 = part if core_2 is None else tenet.add(core_2, part)
+        if core_e is not None and t2.idr_r is not None:
+            caf = tenet.einsum("PpQqw,wy->PpQqy", _drop(core_e, 0), t2.idr_r)
+        if core_2 is not None and t2.open_r is not None:
+            part = tenet.einsum("PpQqw,wy->PpQqy", _drop(core_2, 0), t2.open_r)
+            caf = part if caf is None else tenet.add(caf, part)
+
+    abf = None  # the dropped IdR leg is the right gauge identity
+    if t2.idr_r is not None:
+        core_w = None  # [w, P, p, Q, q] on the left open group
+        if t1.a_op is not None and t2.b_op is not None:  # AB
+            core_w = _drop(tenet.einsum("wPpm,mQqv->wPpQqv", t1.a_op, t2.b_op), 5)
+        if t1.b_op is not None:  # BE, ending left
+            part = tenet.einsum("Qq,wPp->wPpQq", eye_p, _drop(t1.b_op, 3))
+            core_w = part if core_w is None else tenet.add(core_w, part)
+        if core_w is not None and t1.open_l is not None:
+            abf = tenet.einsum("xw,wPpQq->xPpQq", t1.open_l, core_w)
+        if t1.d_op is not None and t1.idl_l is not None:  # DE, onsite left
+            core_v = tenet.einsum("Qq,vPp->vPpQq", eye_p, _drop(t1.d_op, 3))
+            part = tenet.einsum("xv,vPpQq->xPpQq", t1.idl_l, core_v)
+            abf = part if abf is None else tenet.add(abf, part)
+
+    # The operator-carrying open-to-open remainder of AA: A1.A2 minus spectator.spectator,
+    # split as R1.A2 plus S1.R2 so the spectator part never pays a per-edge anything.
+    ra1 = ra2 = sr2 = None
+    if t1.open_l is not None and t2.open_r is not None:
+        if t1.a_real_op is not None and t2.a_op is not None:
+            ra1, ra2 = t1.a_real_op, t2.a_op
+        if t1.spec_op is not None and t2.a_real_op is not None:
+            sr2 = tenet.einsum("wu,uQqy->wQqy", t1.spec_op, t2.a_real_op)
+
+    return _Cores(thru, caf, abf, ra1, ra2, sr2, t1.open_l, t2.open_r)
+
+
+def _build2(cores: _Cores, gl: SymmetricTensor, gr: SymmetricTensor) -> _Prepared:
+    """Fold the two environments into the bond's static cores, once per Krylov solve.
+
+    MPSKit's ``AC2_hamiltonian`` moment: everything block-sized was merged ahead of time
+    by :func:`_cores2`, so this is one whole-environment contraction per populated
+    family -- paid once and used for all of ``lanczos``'s matvecs at the bond.
+    """
+    grt = None
+    if cores.thru is not None:
+        grt = tenet.einsum("xz,rzs->rxs", cores.thru, gr)
+    caf = None
+    if cores.caf is not None:
+        caf = tenet.einsum("PpQqy,rys->PpQqrs", cores.caf, gr)
+    abf = None
+    if cores.abf is not None:
+        abf = tenet.einsum("axB,xPpQq->aPpQqB", gl, cores.abf)
+    gl2 = gr2 = None
+    if cores.ra1 is not None or cores.sr2 is not None:
+        gl2 = _sl(gl, cores.open_l)
+        gr2 = _sr(cores.open_r, gr)
+    return _Prepared(
+        grt,
+        gl if grt is not None else None,
+        caf,
+        abf,
+        gl2,
+        gr2,
+        cores.ra1,
+        cores.ra2,
+        cores.sr2,
+    )
+
+
+def _apply2(p: _Prepared, aa: SymmetricTensor) -> SymmetricTensor:
+    """The prepared two-site matvec: MPSKit :485-500 after merging, in tenet legs.
+
+    A pure function of ``(prepared operator, aa)`` with fixed contraction structure --
+    every branch is decided by which fields are ``None``, which is part of the structure
+    key -- so it is traceable and is what :meth:`Env.heff2` hands to ``compile=``. Four
+    contractions for a string-built Hamiltonian -- the identity-through pair plus one
+    one-sided field per anchor -- against the dense path's four over the full
+    ``D_w``-wide ``W`` pair, and only the first pair still carries an MPO-bond leg.
+
+    The one-sided ``caf``/``abf`` terms use the two-site sweep's mixed-canonical gauge,
+    exactly as MPSKit's matvec does: sites left of the bond left-orthonormal, sites
+    right of it right-orthonormal, so the ``IdL``/``IdR`` environment channels are
+    identities nobody contracts. :func:`~tenet.network.sweep_` maintains that gauge at
+    every bond it visits; :meth:`Env.heff2`'s docstring states the precondition.
+    """
+    y = None
+
+    def acc(t: SymmetricTensor) -> None:
+        nonlocal y
+        y = t if y is None else tenet.add(y, t)
+
+    if p.grt is not None:  # II + EE + spectator AA: identity through both sites, exact
+        t = tenet.einsum("apqr,rxs->apqxs", aa, p.grt)
+        acc(tenet.einsum("apqxs,axB->Bpqs", t, p.gl))
+    if p.caf is not None:  # IC + ID + CB + CA: the IdL channel left of the bond is gauge-1
+        acc(tenet.einsum("apqr,PpQqrs->aPQs", aa, p.caf))
+    if p.abf is not None:  # AB + BE + DE: the IdR channel right of the bond is gauge-1
+        acc(tenet.einsum("apqr,aPpQqB->BPQr", aa, p.abf))
+    if p.ra1 is not None:  # AA remainder, left factor real
+        t = tenet.einsum("apqr,rws->apqws", aa, p.gr2)
+        t = tenet.einsum("apqws,mQqw->apQms", t, p.ra2)
+        t = tenet.einsum("apQms,wPpm->aPQws", t, p.ra1)
+        acc(tenet.einsum("aPQws,awB->BPQs", t, p.gl2))
+    if p.sr2 is not None:  # AA remainder, spectator left then real right
+        t = tenet.einsum("apqr,rws->apqws", aa, p.gr2)
+        t = tenet.einsum("apqws,mQqw->apQms", t, p.sr2)
+        acc(tenet.einsum("apQms,amB->BpQs", t, p.gl2))
+    return y
+
+
+def _fold_last(t, f, a, bra) -> SymmetricTensor:
+    """One prepared left-to-right environment step, exact for any state.
+
+    The half-transferred ``F . A`` is shared by every path; the identity channels --
+    corners and spectators at once -- then ride ``idmap`` with no ``W`` contraction at
+    all, and only the operator-carrying blocks (``c``/``d`` from ``IdL``, ``b`` and the
+    real part of ``a`` from the open group) pay a block-sized ``W`` step each.
+    """
+    t1 = tenet.einsum("axB,apr->xBpr", f, a)
+    out = None
+    if t.idmap is not None:
+        comp = tenet.einsum("xBpr,Bps->rxs", t1, bra)
+        out = tenet.einsum("rxs,xm->rms", comp, t.idmap)
+
+    def flow(src, w, emb):
+        s = tenet.einsum("vBpr,vPpw->BrPw", src, w)
+        s = tenet.einsum("BrPw,BPs->rws", s, bra)
+        return tenet.einsum("rws,wm->rms", s, emb)
+
+    if t.idl_l is not None and (t.c_op is not None or t.d_op is not None):
+        ti = tenet.einsum("xBpr,xv->vBpr", t1, t.idl_l)
+        if t.c_op is not None:
+            part = flow(ti, t.c_op, t.open_r)
+            out = part if out is None else tenet.add(out, part)
+        if t.d_op is not None:
+            part = flow(ti, t.d_op, t.idr_r)
+            out = part if out is None else tenet.add(out, part)
+    if t.open_l is not None and (t.b_op is not None or t.a_real_op is not None):
+        to = tenet.einsum("xBpr,xv->vBpr", t1, t.open_l)
+        if t.b_op is not None:
+            part = flow(to, t.b_op, t.idr_r)
+            out = part if out is None else tenet.add(out, part)
+        if t.a_real_op is not None:
+            part = flow(to, t.a_real_op, t.open_r)
+            out = part if out is None else tenet.add(out, part)
+    return out
+
+
+def _fold_first(t, f, a, bra) -> SymmetricTensor:
+    """One prepared right-to-left environment step -- :func:`_fold_last` mirrored."""
+    t1 = tenet.einsum("apr,rys->apys", a, f)
+    out = None
+    if t.idmap is not None:
+        comp = tenet.einsum("apys,Bps->ayB", t1, bra)
+        out = tenet.einsum("xy,ayB->axB", t.idmap, comp)
+
+    def flow(src, w, emb):
+        s = tenet.einsum("apws,vPpw->avPs", src, w)
+        s = tenet.einsum("avPs,BPs->avB", s, bra)
+        return tenet.einsum("xv,avB->axB", emb, s)
+
+    if t.idr_r is not None and (t.b_op is not None or t.d_op is not None):
+        te = tenet.einsum("apys,wy->apws", t1, t.idr_r)
+        if t.d_op is not None:
+            part = flow(te, t.d_op, t.idl_l)
+            out = part if out is None else tenet.add(out, part)
+        if t.b_op is not None:
+            part = flow(te, t.b_op, t.open_l)
+            out = part if out is None else tenet.add(out, part)
+    if t.open_r is not None and (t.c_op is not None or t.a_real_op is not None):
+        to = tenet.einsum("apys,wy->apws", t1, t.open_r)
+        if t.c_op is not None:
+            part = flow(to, t.c_op, t.idl_l)
+            out = part if out is None else tenet.add(out, part)
+        if t.a_real_op is not None:
+            part = flow(to, t.a_real_op, t.open_l)
+            out = part if out is None else tenet.add(out, part)
+    return out
 
 
 class Env:
@@ -41,9 +347,17 @@ class Env:
 
     F: dict[tuple[int, int], SymmetricTensor]
 
-    def __init__(self, psi: MPS, h: MPO) -> None:
+    def __init__(self, psi: MPS, h: MPO, *, compile: Callable | None = None) -> None:
         self.psi = psi
         self.h = h
+        # ``compile=`` wraps the prepared matvec once per structure key -- ``jax.jit`` at
+        # the application level (``examples/bench_dmrg.py``); this layer names no
+        # accelerator and ``None`` runs the plain Python function.
+        self.compile = compile
+        self._prepared: dict[int, tuple] = {}  # bond -> (GL, GR, _Prepared, fields), one each
+        self._cores: dict[int, _Cores] = {}  # bond -> environment-free merged blocks
+        self._compiled: dict[int, tuple] = {}  # bond -> (leg key, _Prepared, callable)
+        self._eye_p: SymmetricTensor | None = None  # the physical identity, for field padding
         n = len(psi)
         bond_l, bond_r = psi[0].legs[0].space, psi[n - 1].legs[2].space
         mpo_l, mpo_r = h[0].legs[0].space, h[n - 1].legs[3].space
@@ -69,15 +383,26 @@ class Env:
         """Write one directed-bond entry from its neighbour -- YASTN ``_env.py``:152-168.
 
         ``to='last'`` writes ``F[(n, n+1)]`` from ``F[(n-1, n)]``; ``to='first'`` writes
-        ``F[(n, n-1)]`` from ``F[(n+1, n)]``. Three pairwise ``tenet.einsum`` calls each:
-        environment first, then the ket, then the MPO, then the bra.
+        ``F[(n, n-1)]`` from ``F[(n+1, n)]``. Dense path: three pairwise ``tenet.einsum``
+        calls each -- environment first, then the ket, then the MPO, then the bra. With a
+        Jordan block table present the step goes edge-aware instead
+        (:func:`_fold_last` / :func:`_fold_first`): the identity channels ride ``idmap``
+        with no ``W`` contraction, only the operator-carrying blocks pay one, and unlike
+        :meth:`heff2` this path is **exact for any state** -- no gauge assumption.
         """
         a, bra = self.psi[n], tenet.adjoint(self.psi[n])
+        blocks = self.h.jordan(n)
         if to == "last":
+            if blocks is not None:
+                self.F[n, n + 1] = _fold_last(blocks, self.F[n - 1, n], a, bra)
+                return
             t = tenet.einsum("axB,apr->xBpr", self.F[n - 1, n], a)
             t = tenet.einsum("xBpr,xPpm->BrPm", t, self.h[n])
             self.F[n, n + 1] = tenet.einsum("BrPm,BPs->rms", t, bra)
         else:
+            if blocks is not None:
+                self.F[n, n - 1] = _fold_first(blocks, self.F[n + 1, n], a, bra)
+                return
             t = tenet.einsum("apr,rys->apys", a, self.F[n + 1, n])
             t = tenet.einsum("apys,xPpy->axPs", t, self.h[n])
             self.F[n, n - 1] = tenet.einsum("axPs,BPs->axB", t, bra)
@@ -89,22 +414,70 @@ class Env:
             self.F.pop((n, n + 1), None)
 
     def heff2(self, n: int, aa: SymmetricTensor) -> SymmetricTensor:
-        """``H_eff`` on the two-site tensor at bond ``(n, n+1)``. Four pairwise contractions.
+        """``H_eff`` on the two-site tensor at bond ``(n, n+1)``. Two paths, one output.
 
-        Right environment, then ``W2``, then ``W1``, then the left environment: YASTN's
-        ``Env_mps_mpo_mps.Heff2`` order (``_env.py``:496-518) with ``precompute=False``,
-        which ``_dmrg.py``:102-108 documents as ``O(D^3 M d + D^2 M^2 d^2)`` -- optimal
-        for a single matvec, which is all a Krylov step ever wants.
+        **Prepared path**, taken when ``self.h`` carries a Jordan block table -- which
+        requires ``MPO.from_terms(..., cutoff=None)``, the precondition, because a
+        compressed or ``from_w`` MPO has no edge structure left to prepare. The two
+        environments are folded into the site blocks **once per bond** (:func:`_build2`,
+        MPSKit's ``AC2_hamiltonian``) and cached against the environment tensors'
+        identity, so one ``lanczos`` solve at ``ncv=3`` pays the fold once and applies
+        :func:`_apply2` three times; absent fields are ``None`` and are skipped, which is
+        where the structural zeros go. Like MPSKit's matvec, the ``IdL``/``IdR``-anchored
+        terms are one-sided: they use the sweep's **mixed-canonical gauge** -- sites left
+        of the bond left-orthonormal, sites right of it right-orthonormal, which
+        :func:`~tenet.network.sweep_` maintains at every bond -- as the second
+        precondition; environments built from a differently-gauged state belong to the
+        dense path. The apply itself is compiled through ``compile=`` once per structure
+        key -- the tuple of ``aa``'s legs plus the prepared operator's identity -- and
+        the cache holds one entry per bond, replaced when the key moves.
 
-        In and out on ``(left bond OUT, p OUT, q OUT, right bond IN)``: the *bra* legs of
-        the two environments become the output's bonds while the *ket* legs close against
-        the input's, which is why the result has ``aa``'s structure exactly and
-        :func:`~tenet.network.lanczos` can add the two.
+        **Dense path**, for every MPO without a table: right environment, then ``W2``,
+        then ``W1``, then the left environment -- YASTN's ``Env_mps_mpo_mps.Heff2`` order
+        (``_env.py``:496-518) with ``precompute=False``, which ``_dmrg.py``:102-108
+        documents as ``O(D^3 M d + D^2 M^2 d^2)``.
+
+        The two paths agree as operators but sum their terms in a different order, so
+        they agree to solver precision, never bitwise. In and out on ``(left bond OUT, p
+        OUT, q OUT, right bond IN)``: the *bra* legs of the two environments become the
+        output's bonds while the *ket* legs close against the input's, which is why the
+        result has ``aa``'s structure exactly and :func:`~tenet.network.lanczos` can add
+        the two.
         """
+        if self.h.jordan(n) is not None:
+            p = self._prepare2(n)
+            key = tuple(aa.legs)
+            hit = self._compiled.get(n)
+            if hit is None or hit[0] != key or hit[1] is not p:
+                fn = _apply2 if self.compile is None else self.compile(_apply2)
+                hit = (key, p, fn)
+                self._compiled[n] = hit
+            return hit[2](p, aa)
         t = tenet.einsum("apqr,rys->apqys", aa, self.F[n + 2, n + 1])
         t = tenet.einsum("apqys,mQqy->apQms", t, self.h[n + 1])
         t = tenet.einsum("apQms,xPpm->aPQxs", t, self.h[n])
         return tenet.einsum("aPQxs,axB->BPQs", t, self.F[n - 1, n])
+
+    def _prepare2(self, n: int) -> _Prepared:
+        """The bond's prepared operator, rebuilt only when either environment moved.
+
+        Cached one per bond against the ``F`` entries *by identity*: environments are
+        frozen tensors replaced on every :meth:`update_`, so holding the two used to
+        build is both the invalidation test and the guarantee a stale operator can
+        never be served -- the discipline :attr:`F` itself uses, one level up.
+        """
+        fl, fr = self.F[n - 1, n], self.F[n + 2, n + 1]
+        hit = self._prepared.get(n)
+        if hit is not None and hit[0] is fl and hit[1] is fr:
+            return hit[2]
+        t1, t2 = self.h.jordan(n), self.h.jordan(n + 1)
+        if n not in self._cores:  # environment-free, so never invalidated
+            if self._eye_p is None:
+                self._eye_p = tenet.identity((self.psi[0].legs[1],))
+            self._cores[n] = _cores2(t1, t2, self._eye_p)
+        p = _build2(self._cores[n], fl, fr)
+        self._prepared[n] = (fl, fr, p, _present(t1, t2))
+        return p
 
     def measure(self) -> float:
         """``<psi|H|psi>`` without the eigensolver, on a private left-to-right pass.
