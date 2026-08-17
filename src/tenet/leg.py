@@ -77,11 +77,16 @@ class Leg(_HashMemo):
     def dualized(self) -> "Leg":
         """New leg with ``dual`` flipped — a relabelling of ``V ↔ V*`` only.
 
-        It does **not** move the leg between domain and codomain, and in general
-        it does change the tensor's numerical content (the Z-isomorphism and its
-        Frobenius-Schur sign, available since #37), which is why no tensor-level
-        shortcut for it exists: only ``repartition`` flips ``dual``, and it flips
-        ``side`` at the same time, paying the bending coefficient for it (#38).
+        ``tenet.flip`` is the sanctioned numerical route for changing a leg's
+        ``dual`` flag: it also relabels the space through ``provider.dual`` and
+        pays the Z-isomorphism's scalar per fusion tree. ``repartition`` is the
+        route that changes ``side`` together with ``dual``, paying the bending
+        coefficient (#38). ``dualized()`` itself is metadata-only, and it is
+        **not** the metadata half of ``flip``: toggling the flag alone changes
+        which sector the leg contributes to a fusion tree (``fused_sector`` goes
+        from ``a`` to ``dual(a)``), so the block set genuinely changes and no
+        scalar can express the difference — never use ``dualized()`` to build a
+        flip.
         """
         return replace(self, dual=not self.dual)
 

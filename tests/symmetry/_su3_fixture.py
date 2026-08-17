@@ -197,6 +197,10 @@ class SU3FixtureProvider:
         v = self.f_matrix(a, self.dual(a), a, a, self.unit, self.unit)[0, 0, 0, 0]
         return 1 if v > 0 else -1
 
+    def flip_phase(self, a: SU3Sector) -> int:
+        """``chi_a * theta_a = chi_a``: SU(3) braiding is symmetric, so the twist is 1."""
+        return self.frobenius_schur(a)
+
     # --- the capabilities under test -------------------------------------
 
     def permute_tree(

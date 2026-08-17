@@ -130,3 +130,44 @@ def test_no_ndarray_reachable():
             assert not isinstance(item, np.ndarray)
             for sub in item if isinstance(item, tuple) else ():
                 assert not isinstance(sub, np.ndarray)
+
+
+# --- direct_sum (#142) ----------------------------------------------------------
+
+
+def test_direct_sum_disjoint_sectors():
+    from tenet.symmetry import U1
+
+    v = GradedSpace.new(U1, {U1Sector(0): 2})
+    w = GradedSpace.new(U1, {U1Sector(1): 3})
+    assert v.direct_sum(w) == GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 3})
+
+
+def test_direct_sum_overlapping_sectors():
+    from tenet.symmetry import U1
+
+    v = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    w = GradedSpace.new(U1, {U1Sector(1): 3, U1Sector(-1): 4})
+    expected = GradedSpace.new(U1, {U1Sector(-1): 4, U1Sector(0): 2, U1Sector(1): 4})
+    assert v.direct_sum(w) == expected
+    assert w.direct_sum(v) == expected  # commutative at the label level
+
+
+def test_direct_sum_subspace_operand():
+    v = GradedSpace.new(SU2, {HALF: 4, ONE: 3})
+    w = GradedSpace.new(SU2, {HALF: 1})
+    assert v.direct_sum(w) == GradedSpace.new(SU2, {HALF: 5, ONE: 3})
+
+
+def test_direct_sum_with_itself_doubles_degeneracies():
+    v = GradedSpace.new(SU2, {HALF: 4, ONE: 3})
+    assert v.direct_sum(v) == GradedSpace.new(SU2, {HALF: 8, ONE: 6})
+
+
+def test_direct_sum_refuses_a_mismatched_provider():
+    from tenet.symmetry import U1
+
+    v = GradedSpace.new(U1, {U1Sector(0): 2})
+    w = GradedSpace.new(Trivial, {TrivialSector(): 2})
+    with pytest.raises(TypeError, match="never casts between symmetries"):
+        v.direct_sum(w)
