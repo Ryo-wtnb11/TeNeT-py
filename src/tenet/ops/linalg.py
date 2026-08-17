@@ -4,8 +4,8 @@ Milestone 7. Every function here is the same lowering with a different backend
 call and a different set of output legs; ``_lower`` is shared verbatim.
 
 The lowering is the one docs/design.md "Linear algebra" draws, and every arrow of it is
-already built: :func:`~tenet.ops.repartition.repartition` puts the requested
-``left`` into the codomain and ``right`` into the domain, :func:`to_matrices`
+already built: [repartition][tenet.SymmetricTensor.repartition] puts the requested
+``left`` into the codomain and ``right`` into the domain, ``to_matrices``
 hands back one dense ``B_c`` per coupled sector, and the backend factorizes each
 ``B_c`` on its own. Clebsch-Gordan orthonormality has already collapsed the
 coupled index into ``B_c`` (``ops.map`` module docstring), so a decomposition
@@ -15,7 +15,7 @@ inherited whole through ``repartition`` and raised before any block moves.
 
 The only genuinely new object is the **bond space**: a fresh ``GradedSpace``
 whose degeneracy at ``c`` is ``min(*layout.shape(c))``, read straight off
-:class:`~tenet.map_view.MapLayout`. It is static metadata, so both functions are
+``MapLayout``. It is static metadata, so both functions are
 shape-static and traceable.
 
 Fixed-structure only (docs/design.md "Structure-changing differentiation", invariant
@@ -36,7 +36,7 @@ Conventions:
   ``layout.sectors``. It is also the only choice ``compose`` accepts, since
   ``_check_composable`` compares ``(space, dual, order)`` and ignores ``side``.
 * ``S`` is a diagonal operator ``SymmetricTensor`` on the bond space, not a dict
-  of vectors, so ``U @ S @ Vh`` is a plain :func:`tenet.compose` chain and no
+  of vectors, so ``U @ S @ Vh`` is a plain [compose][tenet.compose] chain and no
   ``absorb`` enum is needed. The raw singular values are
   ``{c: ar.do("diagonal", m) for c, m in tenet.to_matrices(S).items()}``.
   ``S`` is real even when ``U`` and ``Vh`` are complex.
@@ -143,10 +143,57 @@ def svd(
 ) -> tuple["SymmetricTensor", "SymmetricTensor", "SymmetricTensor"]:
     """``T = U ∘ S ∘ Vh`` (``bond=None``) or ``T ≈ U ∘ S ∘ Vh`` on a **pre-decided** bond.
 
-    ``axes=(left, right)`` names public axes in ``t``'s own numbering; ``left``
-    becomes the codomain and ``right`` the domain. ``axes=None`` uses the current
-    partition and is what ``t.as_map().svd()`` calls.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to factorize.
+    axes : tuple of two axis sequences, or None, optional
+        ``(left, right)`` names public axes in ``t``'s own numbering; ``left``
+        becomes the codomain and ``right`` the domain. ``None`` (the default)
+        uses the current partition and is what ``t.as_map().svd()`` calls.
+    bond : GradedSpace or None, optional
+        ``None`` (the default) is the *compact* SVD: exact, on the
+        ``min(rows_c, cols_c)`` bond, no truncation. ``bond=B`` projects the
+        same factorization onto ``B``, which must be a **subspace** of the
+        untruncated bond; ``B`` is typically taken from a prior
+        [svd_truncated][tenet.ops.linalg.svd_truncated] run.
 
+    Returns
+    -------
+    U : SymmetricTensor
+        Legs ``(*left legs, bond IN)``.
+    S : SymmetricTensor
+        Legs ``(bond OUT, bond IN)``, diagonal, real even for complex input.
+    Vh : SymmetricTensor
+        Legs ``(bond OUT, *right legs)``.
+
+    Raises
+    ------
+    ValueError
+        If ``bond`` asks for more singular values in some sector than the
+        untruncated bond degeneracy there (``min(rows_c, cols_c)``, possibly
+        zero) — a missing or short sector is never padded with zeros. Also
+        [repartition][tenet.SymmetricTensor.repartition]'s axis refusals through the lowering.
+    CapabilityError
+        Inherited whole from the lowering's [transpose][tenet.transpose] and
+        [bend][tenet.bend] when the requested partition needs a braid or bend
+        the provider cannot supply.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> u, s, vh = tenet.linalg.svd(a)
+    >>> bool(tenet.allclose(u @ s @ vh, a))
+    True
+    >>> s.legs[0].space.sectors
+    ((U1Sector(charge=0), 1), (U1Sector(charge=1), 1))
+
+    Notes
+    -----
     ``bond=None`` is the *compact* SVD: exact, on the ``min(rows_c, cols_c)`` bond,
     no truncation. **``bond=B`` is the same factorization projected onto ``B``, and
     then the reconstruction is no longer exact** — ``U @ S @ Vh`` is the best
@@ -163,8 +210,8 @@ def svd(
     Nothing is ever silently zero-padded.
 
     ``bond=`` does *not* make this function structure-changing, which is why it is a
-    keyword here while truncation is a separate :func:`svd_truncated`: a
-    :class:`~tenet.space.GradedSpace` is frozen, hashable, array-free metadata that
+    keyword here while truncation is a separate [svd_truncated][tenet.ops.linalg.svd_truncated]: a
+    [GradedSpace][tenet.GradedSpace] is frozen, hashable, array-free metadata that
     the **caller** decided, so ``svd(t, bond=B)`` is exactly as shape-static, jittable
     and differentiable as ``svd(t)``. What #64 refused to make a keyword is the
     *decision*; what is a keyword here is the decision's *result*. The pairing::
@@ -179,10 +226,10 @@ def svd(
     **The gradient under ``bond=`` is the exact truncated backward, and it needed no
     code.** Reverse mode differentiates the per-sector prefix slice generically,
     zero-padding the cotangent, and the *matrix* SVD underneath is the compact one
-    from :mod:`tenet.ad`. That composition is not the usual approximation: because
+    from [tenet.ad][]. That composition is not the usual approximation: because
     the bond degeneracy is ``min(rows_c, cols_c)`` and never the numerical rank, the
     discarded space never leaves the factorization, and the cross block of
-    :mod:`tenet.ad`'s broadened ``F`` — rows ``i > k`` against columns ``j <= k``,
+    [tenet.ad][]'s broadened ``F`` — rows ``i > k`` against columns ``j <= k``,
     weighted by ``1/(sigma_j - sigma_i)`` — is exactly the correction
     Francuz-Schuch-Vanhecke add in Eqs. (14)-(15) of Phys. Rev. Research 7, 013237
     (2025). Measured against central differences it is flat at finite-difference
@@ -191,11 +238,9 @@ def svd(
     what the CTMRG/iPEPS literature runs on) is off by 11% at a ratio of ``0.1``, i.e.
     ``O(sigma_perp/sigma_min)``. Both numbers are pinned in
     ``tests/backends/test_ad.py``. Degeneracy is the one remaining caveat, and it is
-    :mod:`tenet.ad`'s: a multiplet *straddling* the cut makes the kept subspace
+    [tenet.ad][]'s: a multiplet *straddling* the cut makes the kept subspace
     gauge-dependent, so the gradient there is finite but meaningless.
 
-    Legs, in both modes: ``U`` is ``(*left legs, bond IN)``, ``S`` is
-    ``(bond OUT, bond IN)`` and ``Vh`` is ``(bond OUT, *right legs)``.
     """
     m, untruncated, mats = _lower(t, axes)
     keep = _keep_counts(bond, untruncated)  # structural; before any block is factorized
@@ -220,11 +265,46 @@ def svd(
 
 
 def qr(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "SymmetricTensor"]:
-    """``T = Q ∘ R``, the reduced/compact QR. Same skeleton and bond space as :func:`svd`.
+    """``T = Q ∘ R``, the reduced/compact QR — [svd][tenet.ops.linalg.svd]'s skeleton and bond.
 
-    Legs: ``Q`` is ``(*left legs, bond IN)`` and ``R`` is ``(bond OUT, *right legs)``.
-    The sign of ``R``'s diagonal is the backend's; no stabilization is applied.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to factorize.
+    axes : tuple of two axis sequences, or None, optional
+        ``(left, right)`` in ``t``'s own numbering, as in
+        [svd][tenet.ops.linalg.svd]; ``None`` (the default) uses the current
+        partition.
 
+    Returns
+    -------
+    Q : SymmetricTensor
+        Legs ``(*left legs, bond IN)``; an isometry sector by sector.
+    R : SymmetricTensor
+        Legs ``(bond OUT, *right legs)``, upper triangular per sector. The
+        sign of its diagonal is the backend's; no stabilization is applied.
+
+    Raises
+    ------
+    ValueError
+        [repartition][tenet.SymmetricTensor.repartition]'s axis refusals through the lowering.
+    CapabilityError
+        Inherited from the lowering when the partition needs a braid or bend
+        the provider cannot supply.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> q, r = tenet.linalg.qr(a)
+    >>> bool(tenet.allclose(q @ r, a))
+    True
+
+    Notes
+    -----
     Differentiability: the gradient is JAX's own, and it is the standard rule
     (Liao-Liu-Wang-Xiang Eq. (5) for the square/tall case; Roberts-Roberts
     Eqs. (9)-(10) for the wide one, which is what JAX >= 0.10 implements). It is
@@ -232,7 +312,7 @@ def qr(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sym
     that is **exactly** rank-deficient -- an exact zero on ``R``'s diagonal --
     gives ``NaN``, and that is not stabilized here: unlike ``svd``'s degeneracy,
     the QR of a rank-deficient matrix is itself non-unique, so there is no correct
-    value to broaden towards. See :mod:`tenet.ad`.
+    value to broaden towards. See [tenet.ad][].
     """
     m, bond, mats = _lower(t, axes)
     parts = {c: ar.do("linalg.qr", b) for c, b in mats.items()}
@@ -257,9 +337,51 @@ def _dagger(mat: "Array") -> "Array":
 def eigh(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "SymmetricTensor"]:
     """``T = V ∘ W ∘ V†`` for a self-adjoint ``T``. Returns ``(W, V)``.
 
-    Legs: ``W`` is ``(bond OUT, bond IN)``, diagonal and real; ``V`` is
-    ``(*left legs, bond IN)``. The map must be square *space-wise* — see
-    :func:`~tenet.map_view.check_square` — and for a square map ``_lower``'s ``min(rows, cols)``
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The map to diagonalize. It must be square *space-wise* — codomain and
+        domain carry the same ``(space, dual)`` in order — and Hermiticity of
+        the numbers is the caller's responsibility (see Notes).
+    axes : tuple of two axis sequences, or None, optional
+        ``(left, right)`` in ``t``'s own numbering, as in
+        [svd][tenet.ops.linalg.svd]; ``None`` (the default) uses the current
+        partition.
+
+    Returns
+    -------
+    W : SymmetricTensor
+        Legs ``(bond OUT, bond IN)``, diagonal, real even for complex input.
+        Eigenvalues are in the backend's order — ascending within each
+        coupled sector.
+    V : SymmetricTensor
+        Legs ``(*left legs, bond IN)``, the eigenvectors.
+
+    Raises
+    ------
+    ValueError
+        If the map is not square space-wise (``check_square``'s refusal), or
+        [repartition][tenet.SymmetricTensor.repartition]'s axis refusals through the lowering.
+    CapabilityError
+        Inherited from the lowering when the partition needs a braid or bend
+        the provider cannot supply.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> h = a @ tenet.adjoint(a)  # Hermitian by construction
+    >>> w, v = tenet.linalg.eigh(h)
+    >>> bool(tenet.allclose(v @ w @ tenet.adjoint(v), h))
+    True
+
+    Notes
+    -----
+    The map must be square *space-wise* — see
+    ``check_square`` — and for a square map ``_lower``'s ``min(rows, cols)``
     is a no-op, so the bond space is literally the fused domain.
 
     **Hermiticity of the numbers is the caller's responsibility and is deliberately
@@ -274,7 +396,7 @@ def eigh(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "S
     run once, outside the hot loop.
 
     **Eigenvalues come back in the backend's order — ascending within each coupled
-    sector** (LAPACK's), in deliberate contrast to :func:`svd`'s descending ``S``.
+    sector** (LAPACK's), in deliberate contrast to [svd][tenet.ops.linalg.svd]'s descending ``S``.
     Re-sorting would be a cosmetic permutation of ``W`` and of ``V``'s columns, and
     would still buy nothing across sectors, where no global order exists either way.
     ``W`` is real even for complex input.
@@ -298,13 +420,55 @@ def polar(
 ) -> tuple["SymmetricTensor", "SymmetricTensor"]:
     """``T = W ∘ P`` (``side="left"``) or ``T = P ∘ W`` (``side="right"``).
 
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to decompose.
+    axes : tuple of two axis sequences, or None, optional
+        ``(left, right)`` in ``t``'s own numbering, as in
+        [svd][tenet.ops.linalg.svd]; ``None`` (the default) uses the current
+        partition.
+    side : {"left", "right"}, optional
+        Which side the isometry sits on — TensorKit's convention. Default
+        ``"left"``.
+
+    Returns
+    -------
+    W : SymmetricTensor
+        The isometry, always first whichever side it sits on; it carries
+        exactly ``repartition(t, left, right)``'s structure.
+    P : SymmetricTensor
+        The positive factor: an endomorphism of the domain (``side="left"``)
+        or of the codomain (``side="right"``), its legs mirrored from that
+        side.
+
+    Raises
+    ------
+    ValueError
+        If ``side`` is neither ``"left"`` nor ``"right"``, or
+        [repartition][tenet.SymmetricTensor.repartition]'s axis refusals through the lowering.
+    CapabilityError
+        Inherited from the lowering when the partition needs a braid or bend
+        the provider cannot supply.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> w, p = tenet.linalg.polar(a)
+    >>> bool(tenet.allclose(w @ p, a))
+    True
+
+    Notes
+    -----
     Always returns ``(W, P)`` — the isometry first, whichever side it sits on. The
     name says *which side the isometry sits on*, TensorKit's convention; a tuple
     whose order depended on a keyword would be a footgun.
 
-    ``W`` carries exactly ``repartition(t, left, right)``'s structure and ``P`` is
-    an endomorphism of the domain (``side="left"``) or of the codomain
-    (``side="right"``), its legs mirrored from that side. No bond leg survives, so
+    No bond leg survives, so
     ``polar`` is the one M7 decomposition insensitive to the ``min``-rank bond
     convention — and the reason it is the gauge-fixing primitive for M8.
 
@@ -349,16 +513,52 @@ def polar(
 
 
 def lq(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "SymmetricTensor"]:
-    """``T = L ∘ Q``, the reduced LQ. Same bond space as :func:`qr`, by construction.
+    """``T = L ∘ Q``, the reduced LQ. Same bond space as [qr][tenet.ops.linalg.qr].
 
-    Legs: ``L`` is ``(*left legs, bond IN)`` and ``Q`` is ``(bond OUT, *right legs)``.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to factorize.
+    axes : tuple of two axis sequences, or None, optional
+        ``(left, right)`` in ``t``'s own numbering, as in
+        [svd][tenet.ops.linalg.svd]; ``None`` (the default) uses the current
+        partition.
+
+    Returns
+    -------
+    L : SymmetricTensor
+        Legs ``(*left legs, bond IN)``, lower triangular per sector. No
+        stabilization: the sign of its diagonal is the backend's, as in
+        [qr][tenet.ops.linalg.qr].
+    Q : SymmetricTensor
+        Legs ``(bond OUT, *right legs)``; an isometry sector by sector.
+
+    Raises
+    ------
+    ValueError
+        [repartition][tenet.SymmetricTensor.repartition]'s axis refusals through the lowering.
+    CapabilityError
+        Inherited from the lowering when the partition needs a braid or bend
+        the provider cannot supply.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> ell, q = tenet.linalg.lq(a)
+    >>> bool(tenet.allclose(ell @ q, a))
+    True
+
+    Notes
+    -----
     Per sector ``B† = q r`` gives ``B = r† q†``: two dense conjugate-transposes in
     the loop, no new backend primitive and no capability at all. The categorical
     spelling ``adjoint → qr → adjoint`` would give factors whose public axis order
     is ``(bond, *left)``, and straightening that needs ``tenet.transpose`` — i.e.
     ``PermutationCoefficients`` and the fermionic Koszul signs — for the same numbers.
-
-    No stabilization: the sign of ``L``'s diagonal is the backend's, as in :func:`qr`.
 
     Differentiability: the gradient is JAX's own, inherited through ``qr(B†)`` --
     so a ``rows > cols`` sector, the ordinary case here, hands JAX a *wide* matrix
@@ -368,7 +568,7 @@ def lq(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sym
     rank-deficient -- an exact zero on ``L``'s diagonal -- gives ``NaN``, and that
     is not stabilized here: unlike ``svd``'s degeneracy, the LQ of a rank-deficient
     matrix is itself non-unique, so there is no correct value to broaden towards.
-    See :mod:`tenet.ad`.
+    See [tenet.ad][].
     """
     m, bond, mats = _lower(t, axes)
     parts = {c: ar.do("linalg.qr", _dagger(b)) for c, b in mats.items()}
@@ -392,7 +592,7 @@ def _complement(layout: "MapLayout", caller: str) -> dict[Sector, int]:
 
     ``rows_c - cols_c`` for ``left_null`` and ``cols_c - rows_c`` for
     ``right_null``, kept only where positive. Metadata against metadata — a
-    :class:`~tenet.map_view.MapLayout` and nothing else — so the refusal is total
+    ``MapLayout`` and nothing else — so the refusal is total
     and raises identically inside and outside a trace, before any block is
     factorized. Sectors with no complement are simply absent: ``GradedSpace.new``
     refuses ``m <= 0``, so a zero-degeneracy sector cannot be carried anyway.
@@ -419,15 +619,56 @@ def _complement(layout: "MapLayout", caller: str) -> dict[Sector, int]:
 def left_null(t: "SymmetricTensor", axes: Axes = None) -> "SymmetricTensor":
     """The isometry onto the orthogonal complement of ``T``'s image: ``N† T = 0``.
 
-    Legs: ``N`` is ``(*left legs, bond IN)`` — :func:`qr`'s ``Q`` legs exactly — so
-    that ``adjoint(N) @ N == identity(bond)`` and ``adjoint(N) @ repartition(t,
-    left, right)`` is zero. "Left" and "null" compose into the wrong intuition
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The map whose cokernel is taken.
+    axes : tuple of two axis sequences, or None, optional
+        ``(left, right)`` in ``t``'s own numbering, as in
+        [svd][tenet.ops.linalg.svd]; ``None`` (the default) uses the current
+        partition.
+
+    Returns
+    -------
+    SymmetricTensor
+        ``N``, legs ``(*left legs, bond IN)`` — [qr][tenet.ops.linalg.qr]'s ``Q``
+        legs exactly — with ``adjoint(N) @ N == identity(bond)`` and
+        ``adjoint(N) @ repartition(t, left, right)`` zero. The bond degeneracy
+        is ``rows_c - cols_c`` in every coupled sector where it is positive;
+        the sector is omitted otherwise.
+
+    Raises
+    ------
+    ValueError
+        If no coupled sector has ``rows_c > cols_c`` — the complement is
+        empty, and the message names every sector's ``(rows, cols)`` and
+        points at [right_null][tenet.ops.linalg.right_null]. Also
+        [repartition][tenet.SymmetricTensor.repartition]'s axis refusals through the lowering.
+    CapabilityError
+        Inherited from the lowering when the partition needs a braid or bend
+        the provider cannot supply.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> W = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(W, OUT), Leg(V, IN)), seed=0)
+    >>> n = tenet.linalg.left_null(t)
+    >>> round(float(tenet.norm(tenet.adjoint(n) @ t)), 6)
+    0.0
+
+    Notes
+    -----
+    "Left" and "null" compose into the wrong intuition
     about half the time, so the identity rather than the word is the contract:
     this is the *cokernel*, the null space of ``T†``.
 
     The bond space is **structural**: degeneracy ``rows_c - cols_c`` in every
     coupled sector where ``rows_c > cols_c``, and the sector is **omitted** where
-    it is not. It is read off :class:`~tenet.map_view.MapLayout` — metadata
+    it is not. It is read off ``MapLayout`` — metadata
     against metadata, no block value anywhere — so this is shape-static, jittable
     and differentiable, the same argument ``svd(..., bond=)`` and ``embed`` make.
 
@@ -443,9 +684,6 @@ def left_null(t: "SymmetricTensor", axes: Axes = None) -> "SymmetricTensor":
     matrices") for exactly the non-square shapes that have a null space, while the
     complete QR differentiates since JAX 0.10 ("and when ``full_matrices`` is
     ``True``"), which is the floor this library already declares.
-
-    Raises ``ValueError`` if no coupled sector has ``rows_c > cols_c``: the
-    complement is empty, and the message names every sector's ``(rows, cols)``.
     """
     # Simplification: shape-null only. A numerical sibling taking a rank tolerance arrives
     # as a separate, non-traceable function raising ``StructureChangingError`` under a
@@ -463,16 +701,57 @@ def left_null(t: "SymmetricTensor", axes: Axes = None) -> "SymmetricTensor":
 
 
 def right_null(t: "SymmetricTensor", axes: Axes = None) -> "SymmetricTensor":
-    """The mirror of :func:`left_null` on the domain side: ``T N† = 0``, ``N N† = id``.
+    """The mirror of [left_null][tenet.ops.linalg.left_null] on the domain: ``T N† = 0``.
 
-    Legs: ``N`` is ``(bond OUT, *right legs)`` — :func:`lq`'s ``Q`` legs — and the
-    bond degeneracy is ``cols_c - rows_c`` where positive. This is the *kernel*,
-    where :func:`left_null` is the cokernel.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The map whose kernel is taken.
+    axes : tuple of two axis sequences, or None, optional
+        ``(left, right)`` in ``t``'s own numbering, as in
+        [svd][tenet.ops.linalg.svd]; ``None`` (the default) uses the current
+        partition.
+
+    Returns
+    -------
+    SymmetricTensor
+        ``N``, legs ``(bond OUT, *right legs)`` — [lq][tenet.ops.linalg.lq]'s
+        ``Q`` legs — with ``N N† = id`` and ``T N† = 0``. The bond degeneracy
+        is ``cols_c - rows_c`` where positive; the sector is omitted
+        otherwise.
+
+    Raises
+    ------
+    ValueError
+        If no coupled sector has ``cols_c > rows_c`` — the mirror of
+        [left_null][tenet.ops.linalg.left_null]'s refusal — or
+        [repartition][tenet.SymmetricTensor.repartition]'s axis refusals through the lowering.
+    CapabilityError
+        Inherited from the lowering when the partition needs a braid or bend
+        the provider cannot supply.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> W = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN), Leg(W, IN)), seed=0)
+    >>> n = tenet.linalg.right_null(t)
+    >>> round(float(tenet.norm(t @ tenet.adjoint(n))), 6)
+    0.0
+
+    Notes
+    -----
+    This is the *kernel*,
+    where [left_null][tenet.ops.linalg.left_null] is the cokernel.
 
     Per sector ``B† = q r`` complete and ``N = (q[:, rows_c:])†``: the same two
-    dense conjugate-transposes :func:`lq` already uses, no new backend primitive
+    dense conjugate-transposes [lq][tenet.ops.linalg.lq] already uses, no new backend primitive
     and no second implementation of the factorization. Every paragraph of
-    :func:`left_null` — the structural bond, the shape-versus-numerical stance,
+    [left_null][tenet.ops.linalg.left_null] — the structural bond, the
+    shape-versus-numerical stance,
     the complete QR and the refusal — applies unchanged.
     """
     m, _, mats = _lower(t, axes)
@@ -502,18 +781,59 @@ _NO_SCIPY = (
 def expm(t: "SymmetricTensor", axes: Axes = None, *, alpha: Any = 1.0) -> "SymmetricTensor":
     """``exp(alpha * T)`` for a square map, one dense exponential per coupled sector.
 
-    ``axes=(left, right)`` names public axes in ``t``'s own numbering, as everywhere
-    in this module; ``axes=None`` uses the current partition and is what
-    ``t.as_map().expm()`` calls. The map must be square *space-wise* — the same
-    ``(space, dual)``-in-order requirement, and the same refusal, :func:`eigh` has —
-    because ``exp`` of a morphism is only defined for an endomorphism.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The endomorphism to exponentiate. The map must be square *space-wise*
+        — the same ``(space, dual)``-in-order requirement, and the same
+        refusal, [eigh][tenet.ops.linalg.eigh] has. Hermiticity is neither
+        required nor assumed.
+    axes : tuple of two axis sequences, or None, optional
+        ``(left, right)`` in ``t``'s own numbering, as everywhere in this
+        module; ``None`` (the default) uses the current partition and is what
+        ``t.as_map().expm()`` calls.
+    alpha : scalar, optional
+        A scalar multiplying ``T`` before exponentiation; it is where
+        ``-i dt`` goes: ``expm(h, alpha=-1j * dt)`` is the Trotter gate.
+        Default ``1.0``.
 
+    Returns
+    -------
+    SymmetricTensor
+        ``exp(alpha * T)``, carrying ``repartition(t, left, right)``'s
+        structure exactly — no bond leg is created and no leg changes.
+
+    Raises
+    ------
+    ValueError
+        If the map is not square space-wise (``check_square``'s refusal), or
+        [repartition][tenet.SymmetricTensor.repartition]'s axis refusals through the lowering.
+    CapabilityError
+        Inherited from the lowering when the partition needs a braid or bend
+        the provider cannot supply.
+    ImportError
+        On the NumPy backend without SciPy installed — SciPy is deliberately
+        not a dependency, and the message names ``pip install scipy``.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> e = tenet.linalg.expm(0.0 * a)  # exp(0) is the identity
+    >>> bool(tenet.allclose(e, tenet.identity(a.codomain)))
+    True
+
+    Notes
+    -----
     The result carries ``repartition(t, left, right)``'s structure exactly: no bond
     leg is created and no leg changes, so ``expm`` is the second decomposition (with
-    :func:`polar`'s ``W``) that is insensitive to the ``min``-rank bond convention.
+    [polar][tenet.ops.linalg.polar]'s ``W``) that is insensitive to the ``min``-rank
+    bond convention.
 
-    ``alpha`` is a scalar multiplying ``T`` before exponentiation, and it is where
-    ``-i dt`` goes: ``expm(h, alpha=-1j * dt)`` is the Trotter gate. A complex
+    A complex
     ``alpha`` promotes real blocks to complex by the backend's own rule, one coupled
     sector at a time, which is why it is a multiplier here rather than the caller's
     ``expm(alpha * t)``.
@@ -522,7 +842,7 @@ def expm(t: "SymmetricTensor", axes: Axes = None, *, alpha: Any = 1.0) -> "Symme
     exponential — ``V diag(exp(alpha w)) V†``, which reads one triangle and returns a
     plausible wrong answer off the Hermitian locus — this is correct for any square
     map, and its gradient carries no ``1/(w_i - w_j)``, so a degenerate spectrum is
-    finite under stock JAX and :mod:`tenet.ad` is not needed here at all.
+    finite under stock JAX and [tenet.ad][] is not needed here at all.
 
     **The ceiling is JAX's and it is silent.** ``jax.scipy.linalg.expm`` is
     scaling-and-squaring with Padé under a ``max_squarings=16`` limit enforced by
@@ -557,14 +877,54 @@ def expm(t: "SymmetricTensor", axes: Axes = None, *, alpha: Any = 1.0) -> "Symme
 def eig(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "SymmetricTensor"]:
     """``T V = V W`` for a square, not necessarily Hermitian ``T``. Returns ``(W, V)``.
 
-    Legs, and the return order, are :func:`eigh`'s exactly: ``W`` is
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The map to diagonalize; square space-wise, not necessarily Hermitian.
+    axes : tuple of two axis sequences, or None, optional
+        ``(left, right)`` in ``t``'s own numbering, as in
+        [svd][tenet.ops.linalg.svd]; ``None`` (the default) uses the current
+        partition.
+
+    Returns
+    -------
+    W : SymmetricTensor
+        Legs ``(bond OUT, bond IN)``, diagonal; complex always, even for a
+        real input, in the backend's (unsorted) order.
+    V : SymmetricTensor
+        Legs ``(*left legs, bond IN)``, the right eigenvectors; complex
+        always, and **not** an isometry for a non-normal map.
+
+    Raises
+    ------
+    ValueError
+        If the map is not square space-wise (``check_square``'s refusal), or
+        [repartition][tenet.SymmetricTensor.repartition]'s axis refusals through the lowering.
+    CapabilityError
+        Inherited from the lowering when the partition needs a braid or bend
+        the provider cannot supply.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> w, v = tenet.linalg.eig(a)
+    >>> round(float(tenet.norm(a @ v - v @ w)), 6)  # the checkable residual
+    0.0
+
+    Notes
+    -----
+    Legs, and the return order, are [eigh][tenet.ops.linalg.eigh]'s exactly: ``W`` is
     ``(bond OUT, bond IN)`` and diagonal, ``V`` is ``(*left legs, bond IN)``, and for
     a square map ``_lower``'s ``min(rows, cols)`` is a no-op so the bond space is the
     fused domain. Same ``(space, dual)``-in-order square-map refusal.
 
     **Both outputs are complex, always, even for a real input** — a real matrix has
     complex eigenvalues in conjugate pairs, so there is no real answer to return.
-    ``W`` is complex where :func:`eigh`'s is real. Without ``x64`` under JAX it is
+    ``W`` is complex where [eigh][tenet.ops.linalg.eigh]'s is real. Without ``x64`` under JAX it is
     ``complex64``, the backend's own dtype policy, as ``to_backend`` documents.
 
     **``V`` is not an isometry.** Right eigenvectors of a non-normal matrix are not
@@ -572,7 +932,7 @@ def eig(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sy
     ``V W V^-1``, which this library cannot spell because it has no ``inv``. The
     checkable statement, and the one the tests use, is the residual ``T @ V - V @ W``.
 
-    Eigenvalues come back in the backend's order, **unsorted**. :func:`eigh`'s
+    Eigenvalues come back in the backend's order, **unsorted**. [eigh][tenet.ops.linalg.eigh]'s
     argument, only stronger: complex numbers have no order at all, so "sorted" would
     have to mean "by ``|λ|`` descending", a choice — and the caller is the one who
     knows whether "dominant" means largest modulus, largest real part, or largest
@@ -584,7 +944,8 @@ def eig(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sy
     the flag turns on an eigenvector derivative under assumptions on the input that
     JAX cannot check, and a library may not make an unverifiable numerical assumption
     on every caller's behalf. Apply it to your own blocks if you want it. Use
-    :func:`eigvals` when the objective needs only the spectrum; it is differentiable.
+    [eigvals][tenet.ops.linalg.eigvals] when the objective needs only the spectrum;
+    it is differentiable.
 
     Platform, as measured rather than as upstream's stale docstring has it: CPU
     **and** NVIDIA GPU (cuSolver by default since JAX 0.8.0); TPU has no lowering.
@@ -606,11 +967,49 @@ def eig(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sy
 def eigvals(t: "SymmetricTensor", axes: Axes = None) -> "SymmetricTensor":
     """The eigenvalues of a square map, as a diagonal ``(bond OUT, bond IN)`` tensor.
 
-    **Differentiable**, unlike :func:`eig`: JAX implements the eigenvalues-only JVP
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The map whose spectrum is taken; square space-wise, not necessarily
+        Hermitian.
+    axes : tuple of two axis sequences, or None, optional
+        ``(left, right)`` in ``t``'s own numbering, as in
+        [svd][tenet.ops.linalg.svd]; ``None`` (the default) uses the current
+        partition.
+
+    Returns
+    -------
+    SymmetricTensor
+        The eigenvalues as a diagonal ``(bond OUT, bond IN)`` tensor; complex
+        always, in the backend's (unsorted) order, exactly as
+        [eig][tenet.ops.linalg.eig]'s ``W``.
+
+    Raises
+    ------
+    ValueError
+        If the map is not square space-wise (``check_square``'s refusal), or
+        [repartition][tenet.SymmetricTensor.repartition]'s axis refusals through the lowering.
+    CapabilityError
+        Inherited from the lowering when the partition needs a braid or bend
+        the provider cannot supply.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> bool(tenet.allclose(tenet.linalg.eigvals(a), tenet.linalg.eig(a)[0]))
+    True
+
+    Notes
+    -----
+    **Differentiable**, unlike [eig][tenet.ops.linalg.eig]: JAX implements the eigenvalues-only JVP
     unconditionally, and it needs no assumption a library cannot check. Jittable on
     CPU and on NVIDIA GPU — the "CPU backend" line in ``jax.numpy``'s own ``eigvals``
     docstring is stale upstream text, not behaviour. Complex always, order is the
-    backend's, exactly as :func:`eig`'s.
+    backend's, exactly as [eig][tenet.ops.linalg.eig]'s.
 
     Equal to ``eig(t)[0]`` — the same LAPACK/cuSolver driver with the eigenvector job
     switched off — and it is the values-only call that carries the gradient.
@@ -724,20 +1123,95 @@ def svd_truncated(
 ) -> tuple["SymmetricTensor", "SymmetricTensor", "SymmetricTensor"]:
     """``U, S, Vh`` on a *truncated* bond space. **NOT jittable.**
 
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to factorize and truncate.
+    axes : tuple of two axis sequences, or None, optional
+        ``(left, right)`` in ``t``'s own numbering, as in
+        [svd][tenet.ops.linalg.svd]; ``None`` (the default) uses the current
+        partition.
+    max_bond : int or None, optional
+        A bound on the **dense** bond dimension ``Sum_c qdim(c)*m_c`` — not
+        the reduced ``Sum_c m_c``; may be undershot by up to
+        ``max qdim(c) - 1`` (see Notes). ``None`` (the default) means no
+        dimension bound; passing neither ``max_bond`` nor ``cutoff`` is
+        refused, naming [svd][tenet.ops.linalg.svd].
+    cutoff : float or None, optional
+        The truncation threshold, interpreted by ``cutoff_mode``. ``None``
+        (the default) means no cutoff. ``max_bond`` and ``cutoff`` together
+        take the intersection.
+    cutoff_mode : {"abs", "rel", "sum2", "rsum2", "sum1", "rsum1"}, optional
+        Quimb's names and quimb's semantics; only the strings are accepted,
+        never quimb's integer codes. The table in Notes gives each mode's
+        keep rule. Default ``"rsum2"``.
+    renorm : bool, optional
+        ``True`` scales the kept singular values by
+        ``sqrt(norm(T)**2 / Sum_kept qdim(c) sigma^2)`` so that
+        ``tenet.norm(U @ S @ Vh) == tenet.norm(t)``. A bool, not quimb's
+        p-norm power. Default ``False``.
+
+    Returns
+    -------
+    U : SymmetricTensor
+        Legs ``(*left legs, bond IN)``, on the truncated bond.
+    S : SymmetricTensor
+        Legs ``(bond OUT, bond IN)``, diagonal; the truncated bond space —
+        the input to ``svd(t, axes, bond=...)`` — is
+        ``S.structure.legs[0].space``.
+    Vh : SymmetricTensor
+        Legs ``(bond OUT, *right legs)``, on the truncated bond.
+
+    Raises
+    ------
+    StructureChangingError
+        Under ``jax.jit``/``jax.grad``/``jax.vmap``: the output structure
+        depends on the block values, so this function cannot run inside a
+        traced region — decide the bond out here, then use
+        ``svd(..., bond=...)`` inside.
+    ValueError
+        If neither ``max_bond`` nor ``cutoff`` is given; if ``max_bond`` is
+        not positive; if ``cutoff`` is negative; if ``cutoff_mode`` is not
+        one of the six strings; if the tensor has no singular values at all;
+        or if every singular value is dropped — a bond space with no sectors
+        is never returned.
+    TypeError
+        If ``renorm`` is not a bool (it is not quimb's p-norm power).
+    CapabilityError
+        If the provider does not implement
+        [QuantumDimension][tenet.symmetry.QuantumDimension], plus the
+        lowering's refusals as in [svd][tenet.ops.linalg.svd].
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> W = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> t = SymmetricTensor.random((Leg(W, OUT), Leg(W, IN)), seed=0)
+    >>> u, s, vh = tenet.linalg.svd_truncated(t, max_bond=2)
+    >>> s.shape
+    (2, 2)
+    >>> bond = s.structure.legs[0].space  # feed this to svd(..., bond=...) inside jit
+    >>> bond.sectors
+    ((U1Sector(charge=0), 1), (U1Sector(charge=1), 1))
+
+    Notes
+    -----
     Same factor legs, same conventions and the same capability refusals as
-    :func:`svd`; the only difference is the bond :class:`~tenet.space.GradedSpace`,
+    [svd][tenet.ops.linalg.svd]; the only difference is the bond [GradedSpace][tenet.GradedSpace],
     whose degeneracy at ``c`` is the number of kept singular values there and which
     **omits ``c`` entirely** when that number is zero. That is docs/design.md Milestone 7's
     "graded bond-space reconstruction", and it is why this is a sibling of
-    :func:`svd` rather than a keyword on it: a keyword would make one function
+    [svd][tenet.ops.linalg.svd] rather than a keyword on it: a keyword would make one function
     traceable or not depending on the value of an argument, which is exactly the
     distinction docs/design.md says the library must never hide. Under ``jax.jit`` or
     ``jax.grad`` it raises
-    :class:`~tenet.symmetry.base.StructureChangingError`.
+    [StructureChangingError][tenet.symmetry.StructureChangingError].
 
     The bond space returned here is the input to ``svd(t, axes, bond=...)``, which is
     the traceable half of the pairing: decide the structure once, out here, then
-    project onto it inside ``jit``/``grad``. ``bond=`` is a keyword on :func:`svd`
+    project onto it inside ``jit``/``grad``. ``bond=`` is a keyword on [svd][tenet.ops.linalg.svd]
     because it carries the *result* of the decision, not the decision.
 
     Selection is over **one global spectrum**, always, in every mode:
@@ -747,7 +1221,7 @@ def svd_truncated(
       multiplicity;
     * the **cost** and the **weight** are ``qdim(c)``-weighted, because the reduced
       index ``i`` in sector ``c`` stands for ``qdim(c)`` dense basis states. It is
-      the same weight :func:`tenet.norm` carries. Greedy-descending under a dense
+      the same weight [tenet.norm][] carries. Greedy-descending under a dense
       budget is then optimal rather than a heuristic, so the result is the best
       approximation of its achieved dense rank (Eckart-Young, sector-blind).
 
@@ -776,7 +1250,7 @@ def svd_truncated(
 
     ``max_bond`` and ``cutoff`` together take the intersection. ``None`` means "no
     truncation" -- there are no ``-1`` sentinels, and passing neither is refused,
-    naming :func:`svd`. ``renorm=True`` scales the kept singular values by
+    naming [svd][tenet.ops.linalg.svd]. ``renorm=True`` scales the kept singular values by
     ``sqrt(norm(T)**2 / Sum_kept qdim(c) sigma^2)`` so that
     ``tenet.norm(U @ S @ Vh) == tenet.norm(t)``; it is a bool, not quimb's p-norm
     power.
@@ -784,9 +1258,6 @@ def svd_truncated(
     No ``absorb`` enum and no fourth return value: ``S`` is a tensor, so absorbing is
     a one-line ``compose``, and the truncation error is exactly
     ``tenet.norm(t)**2 - tenet.norm(U @ S @ Vh)**2`` by Pythagoras.
-
-    Raises ``ValueError`` if every singular value is dropped -- a bond space with no
-    sectors is never returned.
     """
     _validate(max_bond, cutoff, cutoff_mode, renorm)
     m, _, mats = _lower(t, axes)

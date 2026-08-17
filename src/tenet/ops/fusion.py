@@ -26,7 +26,7 @@ Conventions fixed here once and depended on downstream:
 * **The fused leg is ``dual=False``**, ``side`` is the inputs' common side, and
   ``name`` is ``None``: the tree labels are already dual-resolved, so ``c`` is
   reproduced by ``fused_sector`` identically.
-* **No fusion history is stored anywhere** (invariant 4). :func:`unfuse` takes
+* **No fusion history is stored anywhere** (invariant 4). [unfuse][tenet.unfuse] takes
   the target legs explicitly and validates them by recomputing the layout.
 
 Blocks move only through ``ar.do("transpose"/"reshape"/"concatenate")`` plus
@@ -136,7 +136,7 @@ def _drop_vertex(tree: FusionTree) -> FusionTree:
 
 
 def _add_vertex(tree: FusionTree, u_a: Sector, u_b: Sector, mu: int) -> FusionTree:
-    """Inverse of :func:`_drop_vertex`; ``tree.uncoupled[0]`` is the fused sector ``c``."""
+    """Inverse of ``_drop_vertex``; ``tree.uncoupled[0]`` is the fused sector ``c``."""
     n = tree.rank + 1
     return FusionTree(
         (u_a, u_b, *tree.uncoupled[1:]),
@@ -294,7 +294,7 @@ def _apply(step: FusionStep, blocks: tuple[Any, ...]) -> tuple[Any, ...]:
 
 
 def _unapply(step: FusionStep, blocks: tuple[Any, ...]) -> tuple[Any, ...]:
-    """Invert :func:`_apply`: slice each chunk back out and undo the merge."""
+    """Invert ``_apply``: slice each chunk back out and undo the merge."""
     identity = tuple(range(len(step.perm)))
     inverse = tuple(sorted(range(len(step.perm)), key=step.perm.__getitem__))
     out: list[Any] = [None] * sum(len(chunks) for chunks in step.targets)
@@ -317,9 +317,45 @@ def _unapply(step: FusionStep, blocks: tuple[Any, ...]) -> tuple[Any, ...]:
 def fuse(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
     """Fuse the given public axes into one leg, placed at ``min(axes)``.
 
-    The axes must share one side and, ordered by public position, be exactly the
-    first ``k`` legs of that side. Public adjacency is *not* required. A
-    single-axis ``axes`` is the identity.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor whose axes are fused.
+    axes : sequence of int
+        The public axes to fuse. They must share one side and, ordered by
+        public position, be exactly the first ``k`` legs of that side; public
+        adjacency is *not* required. A single-axis ``axes`` is the identity.
+
+    Returns
+    -------
+    SymmetricTensor
+        The fused tensor: the new leg sits at ``min(axes)`` with
+        ``dual=False``, the inputs' common ``side`` and ``name=None``; the
+        survivors keep their relative order.
+
+    Raises
+    ------
+    ValueError
+        If ``axes`` is empty, out of range, or repeated, or if the axes mix
+        sides (the result would have no well-defined side).
+    TypeError
+        If an axis is not an ``int``.
+    NotImplementedError
+        If the axes are not a prefix of their side's order; fusing a
+        non-prefix group needs an F-move, which is Milestone 4.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> f = tenet.fuse(t, (0, 1))
+    >>> f.ndim, f.shape
+    (2, (4, 2))
+    >>> bool(tenet.allclose(tenet.unfuse(f, 0, t.legs[:2]), t))
+    True
     """
     from tenet.tensor import SymmetricTensor
 
@@ -333,11 +369,47 @@ def fuse(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
 def unfuse(t: "SymmetricTensor", axis: int, legs: Sequence[Leg]) -> "SymmetricTensor":
     """Split ``axis`` back into ``legs``, inserted **consecutively** at ``axis``.
 
-    ``axis`` must be the first axis of its side and ``legs`` must reproduce
-    ``t.legs[axis]`` exactly (up to ``name``) under iterated :func:`fuse_spaces`
-    — no fusion history is stored, so the caller supplies the target legs and a
-    mismatch fails loudly rather than producing a garbage layout.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor whose fused axis is split.
+    axis : int
+        The public axis to split. Must be the first axis of its side.
+    legs : sequence of Leg
+        The legs the axis should split into. They must share the axis's side
+        and reproduce ``t.legs[axis]`` exactly (up to ``name``) under
+        iterated ``fuse_spaces`` — no fusion history is stored, so the caller
+        supplies the target legs and a mismatch fails loudly rather than
+        producing a garbage layout.
 
+    Returns
+    -------
+    SymmetricTensor
+        The split tensor, ``legs`` inserted consecutively at ``axis``.
+
+    Raises
+    ------
+    ValueError
+        If ``axis`` is out of range; if ``legs`` is empty or a leg's side
+        differs from the axis's; or if the given legs do not fuse back to
+        ``t.legs[axis]`` (a ``dual`` or space mismatch, named in the message).
+    NotImplementedError
+        If ``axis`` is not the first axis of its side; splitting a
+        non-leading leg needs an F-move, which is Milestone 4.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> f = tenet.fuse(t, (0, 1))
+    >>> bool(tenet.allclose(tenet.unfuse(f, 0, t.legs[:2]), t))
+    True
+
+    Notes
+    -----
     Because the split legs are inserted consecutively, ``fuse`` followed by
     ``unfuse`` reproduces the original tensor exactly when the fused axes were
     publicly consecutive; fusing publicly non-adjacent axes is not invertible

@@ -11,7 +11,7 @@ are fixed here:
   tree needs (a U(1) charge ``q`` arrives on the other side as ``-q``). A model
   that identified IN with ``dual`` could not express this at all — invariant 2
   doing real work. Since #142 that sentence names two separate operations:
-  :func:`flip` toggles ``dual`` alone (relabelling the space and paying the
+  [flip][tenet.flip] toggles ``dual`` alone (relabelling the space and paying the
   Z-isomorphism's scalar), while a bend is the operation that moves ``side``.
 * **Our two trees are independent, both in ascending public-axis order.**
   TensorKit reads ``Hom(b₁⊗…⊗b_{N₂}, a₁⊗…⊗a_{N₁}) ≅ Hom(1, a₁⊗…⊗a_{N₁}⊗
@@ -20,10 +20,10 @@ are fixed here:
   adopt that planar reading: the pairing of the two trees lives in
   ``FusionBlockKey``, not in a cyclic order. The consequence is that a bend
   appends to the destination tree's *end*, i.e. the moved leg takes the largest
-  public position on its new side — which is exactly what :func:`bend` enforces
-  and what :func:`repartition`'s final ``transpose`` then corrects.
+  public position on its new side — which is exactly what [bend][tenet.bend] enforces
+  and what [repartition][tenet.SymmetricTensor.repartition]'s final ``transpose`` then corrects.
 
-:func:`bend` is the only new mathematics, and it is deliberately minimal: it
+[bend][tenet.bend] is the only new mathematics, and it is deliberately minimal: it
 bends the **last leg of its own side** and nothing else. Everything else is
 reached by ``transpose`` (#21), so all reordering refusals come from that
 already-tested capability gate:
@@ -78,7 +78,7 @@ class BendPlan:
 
     ``terms`` is ``((source block index, target block index, coefficient), ...)``
     with plain Python numbers, never arrays — the same shape of plan as
-    :class:`~tenet.ops.permutation.PermutationPlan`.
+    ``PermutationPlan``.
     """
 
     new_structure: TensorStructure
@@ -112,7 +112,7 @@ def _refuse(structure: TensorStructure, axis: int) -> None:
 def bend_plan(structure: TensorStructure, axis: int) -> BendPlan:
     """Plan bending ``axis`` of ``structure``. Cached: repeat calls return one object.
 
-    ``axis`` must be the last leg of its own side; :func:`bend` validates that.
+    ``axis`` must be the last leg of its own side; [bend][tenet.bend] validates that.
     """
     _refuse(structure, axis)
     provider = structure.provider
@@ -138,10 +138,44 @@ def bend_plan(structure: TensorStructure, axis: int) -> BendPlan:
 def bend(t: "SymmetricTensor", axis: int) -> "SymmetricTensor":
     """Bend ``axis`` to the other side: ``side`` flipped, ``dual`` flipped, moved last.
 
-    ``axis`` must currently be the **last leg of its own side** (it need not be
-    the last public axis). ``space`` and ``name`` are preserved, so the block
-    shapes are a permutation of the old ones. :func:`repartition` transposes
-    first and therefore never triggers the ``ValueError``.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor whose leg is bent.
+    axis : int
+        The public axis to bend. It must currently be the **last leg of its
+        own side** (it need not be the last public axis).
+
+    Returns
+    -------
+    SymmetricTensor
+        The bent tensor: the moved leg takes the largest public position on
+        its new side, with ``side`` and ``dual`` both flipped; ``space`` and
+        ``name`` are preserved, so the block shapes are a permutation of the
+        old ones.
+
+    Raises
+    ------
+    ValueError
+        If ``axis`` is out of range, or is not the last leg of its own side
+        ([repartition][tenet.SymmetricTensor.repartition] transposes first and therefore never
+        triggers this).
+    CapabilityError
+        If the provider does not implement ``BendingCoefficients`` — the
+        coefficient is ``sqrt(dim(c)/dim(a))·B(a,b,c)`` with a
+        Frobenius-Schur phase, and faking it would give correct shapes with a
+        wrong norm.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> b = tenet.bend(a, 0)  # the OUT leg becomes a dual IN leg, moved last
+    >>> b.legs[-1].side, b.legs[-1].dual
+    (<Side.IN: 'in'>, True)
     """
     from tenet.tensor import SymmetricTensor
 
@@ -220,7 +254,7 @@ class RepartitionPlan:
     ``perm`` is the single composed axis permutation applied to every block;
     ``terms`` is ``((source block index, target block index, coefficient), ...)``
     with the whole chain's coefficients multiplied through. Same shape as
-    :class:`BendPlan` plus ``perm``, because a permutation is per-step, never
+    ``BendPlan`` plus ``perm``, because a permutation is per-step, never
     per-term.
     """
 
@@ -256,7 +290,8 @@ def repartition_plan(
 ) -> RepartitionPlan:
     """Plan the whole ``repartition``. Cached: repeat calls return one object.
 
-    Walks exactly the chain :func:`repartition` used to execute — transpose the
+    Walks exactly the chain [repartition][tenet.SymmetricTensor.repartition] used to
+    execute — transpose the
     crossing leg to the end, bend it, and one final transpose — but over
     structures instead of tensors, composing the sparse block maps and the
     permutations as it goes. ``bend``'s own permutation is the identity here (the
@@ -301,14 +336,51 @@ def repartition(
 ) -> "SymmetricTensor":
     """Public axes ``outputs`` become OUT and ``inputs`` become IN.
 
-    The result's public axis order is exactly ``(*outputs, *inputs)``, and its
-    legs are ``t``'s legs with ``side`` (and, for every axis that actually
-    crossed, ``dual``) adjusted. Axes are named in ``t``'s *original* numbering
-    throughout.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to repartition.
+    outputs : sequence of int
+        The public axes (in ``t``'s *original* numbering) that end up OUT.
+    inputs : sequence of int
+        The public axes that end up IN. Together with ``outputs`` they must
+        be a permutation of ``range(t.ndim)``; negatives are refused.
 
+    Returns
+    -------
+    SymmetricTensor
+        The repartitioned tensor: public axis order exactly
+        ``(*outputs, *inputs)``, and its legs are ``t``'s legs with ``side``
+        (and, for every axis that actually crossed, ``dual``) adjusted.
+
+    Raises
+    ------
+    ValueError
+        If ``outputs``/``inputs`` contain a non-integer, an out-of-range or
+        repeated axis, or miss an axis — together they must be a permutation
+        of ``range(t.ndim)``.
+    CapabilityError
+        If a leg must cross between domain and codomain — a line bend — and
+        the provider does not implement ``BendingCoefficients``. A
+        repartition that moves no leg across sides works for every provider.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> W = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(W, OUT), Leg(W, IN)), seed=0)
+    >>> r = tenet.repartition(t, (0,), (1, 2))  # axis 1 crosses to the domain
+    >>> r.structure.out_axes, r.structure.in_axes, r.legs[1].dual
+    ((0,), (1, 2), True)
+
+    Notes
+    -----
     Owns no mathematics of its own: it transposes each crossing leg to the end,
     bends it, and transposes once more to the requested order — the whole chain
-    composed once by :func:`repartition_plan` and executed in a single pass, so
+    composed once by ``repartition_plan`` and executed in a single pass, so
     every block is copied once instead of once per step.
     """
     from tenet.tensor import SymmetricTensor
@@ -404,15 +476,59 @@ def flip(
 ) -> "SymmetricTensor":
     """Toggle the ``dual`` flag of ``axes``, keeping the tensor the same morphism.
 
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor whose legs are flipped.
+    axes : int, leg name, or sequence of either
+        The legs to flip; ``flip(t, ())`` is ``t``. A name must be carried by
+        exactly one leg.
+    inv : bool, optional
+        ``flip`` is **not** an involution; ``inv=True`` applies the exact
+        inverse instead. Default ``False``.
+
+    Returns
+    -------
+    SymmetricTensor
+        The same morphism with each named leg's ``dual`` toggled and its
+        space relabelled through ``provider.dual``; ``side`` and ``name``
+        are unchanged, and so are the block set, order and shapes.
+
+    Raises
+    ------
+    ValueError
+        If an axis is out of range or repeated, if a leg name matches no leg,
+        or if it matches more than one (use the axis index instead).
+    CapabilityError
+        If the provider does not implement
+        [FlipPhase][tenet.symmetry.FlipPhase] — the scalar is
+        ``chi_a * theta_a`` per flipped leg per fusion tree, and faking it
+        would give correct shapes with a wrong sign.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> f = tenet.flip(a, 0)  # charge q relabelled as -q on a dual leg
+    >>> f.legs[0].dual, f.legs[0].space.sectors
+    (True, ((U1Sector(charge=-1), 1), (U1Sector(charge=0), 1)))
+    >>> bool(tenet.allclose(tenet.flip(f, 0, inv=True), a))
+    True
+
+    Notes
+    -----
     **Not** ``numpy.flip``: no axis is reversed and no element moves. Each named
     leg's ``dual`` flag is toggled and its space is relabelled through
     ``provider.dual`` (so a U(1) leg over charges ``{q}`` comes back over
     ``{-q}``), which is the ``V_a -> V_a^*`` isomorphism made explicit — the
     operation TensorKit calls ``flip``. ``side`` and ``name`` are unchanged:
-    moving a leg between domain and codomain stays :func:`repartition`'s job.
+    moving a leg between domain and codomain stays
+    [repartition][tenet.SymmetricTensor.repartition]'s job.
 
-    ``axes`` is an int, a leg name, or a sequence of either; ``flip(t, ())`` is
-    ``t``. Two contracts, both TensorKit's: flipping the two legs of a
+    Two contracts, both TensorKit's: flipping the two legs of a
     contractible pair leaves the contraction result unchanged, and ``flip`` is
     **not** an involution — flipping the same leg twice multiplies each tree by
     ``chi_a * theta_a`` once (``-1`` on an SU(2) half-integer or odd
@@ -420,8 +536,7 @@ def flip(
 
     Because the relabel and the flag toggle cancel inside ``Leg.fused_sector``,
     every fusion-tree leaf — and with it the block set, order and shapes — is
-    unchanged: the whole operation is one scalar per block. Requires
-    :class:`~tenet.symmetry.base.FlipPhase`.
+    unchanged: the whole operation is one scalar per block.
     """
     from tenet.tensor import SymmetricTensor
 
