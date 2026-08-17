@@ -548,3 +548,153 @@ def test_an_su3_two_site_term_derives_a_bond_with_multiplicity_two():
     h = MPO.from_terms(2, [(1.0, [(op, (0, 1))])])
     assert h[0].legs[3].space.degeneracy(EIGHT) == 2
     assert np.abs(np.asarray(h.to_dense()) - np.reshape(swap, (d * d, d * d))).max() < 1e-12
+
+
+# --- M15: the symbolic assembly (#138) -----------------------------------------------
+
+
+def test_the_su3_multiplicity_two_bond_stands_without_the_sweep():
+    """The SU(3) probe of the test above, under ``cutoff=None``.
+
+    The ``N^8_88 = 2`` multiplicity is carried by the state's own space — the ``Leg``
+    the operator's internal SVD derived — so skipping the compressing sweeps changes
+    nothing about it.
+    """
+    sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "symmetry"))
+    from _su3_fixture import EIGHT, SU3  # noqa: PLC0415
+
+    d = SU3.irrep_dim(EIGHT)
+    swap = np.einsum("ad,bc->abcd", np.eye(d), np.eye(d))
+    op = local_op(swap, phys=GradedSpace.new(SU3, {EIGHT: 1}))
+    h = MPO.from_terms(2, [(1.0, [(op, (0, 1))])], cutoff=None)
+    assert h[0].legs[3].space.degeneracy(EIGHT) == 2
+    assert np.abs(np.asarray(h.to_dense()) - np.reshape(swap, (d * d, d * d))).max() < 1e-12
+
+
+def _ising_terms(n_sites, r=None):
+    """The truncated ``1/r^2`` Ising sum ``Σ_{i<j, j-i<=r} (j-i)^-2 Sz_i Sz_j``."""
+    op_sz, _, _ = _ops()
+    return [
+        ((j - i) ** -2.0, [(op_sz, i), (op_sz, j)])
+        for i in range(n_sites)
+        for j in range(i + 1, n_sites)
+        if r is None or j - i <= r
+    ]
+
+
+def _widest_bond(h):
+    return max(w.legs[3].space.dim for w in h)
+
+
+def test_cutoff_none_derives_the_heisenberg_bond_with_no_svd_anywhere():
+    """The finite-state machine *is* the MPO: bulk bond ``MPO_BOND``, end bonds pruned to 4.
+
+    ``cutoff=None`` skips both compressing sweeps, so the ``{0: 3, +2: 1, -2: 1}`` bulk
+    bond and the dim-4 bonds nearest the ends are properties of the graph — reachable ∩
+    co-reachable states, each carrying its own space — not of any SVD. This is
+    ``test_from_terms_derives_the_hand_written_mpo_bond`` with the compression removed
+    from the explanation.
+    """
+    n_sites = 12
+    h = MPO.from_terms(n_sites, _heisenberg_terms(n_sites), cutoff=None)
+    bulk = [h[n].legs[0].space for n in range(2, n_sites - 1)]
+    assert all(space == example.MPO_BOND for space in bulk)
+    assert h[1].legs[0].space.dim == 4
+    assert h[0].legs[0].space == example.BOUNDARY
+    assert h[-1].legs[3].space == example.BOUNDARY
+
+
+def test_cutoff_none_and_the_default_agree_as_operators():
+    """The uncompressed FSM and the swept MPO are the same operator, at N=6.
+
+    On the Heisenberg set and on the long-range/3-site set of the ``kron`` oracle test —
+    both branches of the ``cutoff`` keyword, one Hamiltonian each way.
+    """
+    op_sz, op_sp, op_sm = _ops()
+    long_range = [(0.7, [(op_sz, i), (op_sz, i + 2)]) for i in range(4)]
+    long_range.append((-1.3, [(op_sz, 3)]))
+    long_range.append((2.5, [(op_sz, 0), (op_sz, 2), (op_sz, 5)]))
+    long_range.append((0.5, [(op_sp, 1), (op_sm, 4)]))
+    for terms in (_heisenberg_terms(6), long_range):
+        swept = np.asarray(MPO.from_terms(6, terms).to_dense())
+        exact = np.asarray(MPO.from_terms(6, terms, cutoff=None).to_dense())
+        assert np.abs(swept - exact).max() < 1e-12
+
+
+def test_finite_range_needs_no_compression():
+    """R=4 ``1/r^2`` Ising at N=32: the FSM bond equals the compressed bond, both 6.
+
+    One state per open coupling makes the pre-compression bond 6 where the old assembly
+    handed the sweep an M-wide channel bond (118 here, one per term); at finite range the
+    sweep then finds nothing left to compress. All-pairs is the counter-case: the FSM
+    bond stays combinatorial (≤ 40 against M=496) and only the SVD sees the numerical
+    low rank of the power law.
+    """
+    exact = MPO.from_terms(32, _ising_terms(32, 4), cutoff=None)
+    swept = MPO.from_terms(32, _ising_terms(32, 4))
+    assert _widest_bond(exact) == _widest_bond(swept) == 6
+    assert _widest_bond(MPO.from_terms(32, _ising_terms(32), cutoff=None)) <= 40
+
+
+def test_a_mixed_form_term_set_builds_exactly_and_matches_the_kron_oracle():
+    """Rank-3 charged, non-adjacent rank-4 invariant, and a 3-site string, in one MPO.
+
+    Built under ``cutoff=None`` and by default: the two operator forms coexist on one
+    bond because each FSM state carries its own space, whatever derived it. The k-site
+    operator's *internal* SVD still runs under ``cutoff=None`` — it decides the
+    operator's own factorization, not the assembly.
+    """
+    _, sz, _, _ = example._spin_half()
+    op_sz, op_sp, op_sm = _ops()
+    op_zz = local_op(np.kron(sz, sz), phys=example.PHYS)
+    terms = [
+        (0.5, [(op_sp, 1), (op_sm, 4)]),
+        (0.7, [(op_zz, (0, 3))]),
+        (2.5, [(op_sz, 0), (op_sz, 2), (op_sz, 5)]),
+        (-1.3, [(op_sz, 3)]),
+    ]
+    oracle = _kron_oracle(6, [t for t in terms if t[1][0][0].ndim == 3])
+    eye, *_ = example._spin_half()
+
+    def at(op, site):
+        out = np.array([[1.0]])
+        for k in range(6):
+            out = np.kron(out, op if k == site else eye)
+        return out
+
+    oracle = oracle + 0.7 * at(sz, 0) @ at(sz, 3)
+    for cutoff in ({}, {"cutoff": None}):
+        h = MPO.from_terms(6, terms, **cutoff)
+        assert np.abs(np.asarray(h.to_dense()) - oracle).max() < 1e-12
+
+
+def test_the_su2_bond_keeps_its_three_blocks_without_the_sweep():
+    """``{0: 2, 2: 1}`` — unit ⊕ adjoint ⊕ unit — is the graph's bond, not the SVD's.
+
+    The mid-split state's space is the graded, multiplicity-carrying ``Leg`` that
+    :func:`tenet.linalg.svd_truncated` derived inside the operator, embedded whole.
+    """
+    bulk = GradedSpace.new(SU2, {SU2Sector(0): 2, SU2Sector(2): 1})
+    h = su2_heisenberg(12, cutoff=None)
+    assert all(h[n].legs[0].space == bulk for n in range(2, 11))
+    assert (
+        np.abs(np.asarray(su2_heisenberg(6, cutoff=None).to_dense()) - _heisenberg_kron(6)).max()
+        < 1e-12
+    )
+
+
+def test_a_state_space_that_disagrees_with_its_bond_slot_raises_inside_from_dense():
+    """The embedding isometries are built at ``from_dense``'s default ``atol``.
+
+    A hand-built inconsistency — a state claiming sector ``-2`` placed into the slot the
+    bond keeps for ``+2`` — puts the embedding's ones into a symmetry-forbidden cell, so
+    construction *raises* instead of projecting the state away. Production code derives
+    the slots from the states, so this is the refusal that proves the derivation right.
+    """
+    from tenet.network import mps as _mps  # noqa: PLC0415
+
+    bond = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(2): 1})
+    state = GradedSpace.new(U1, {U1Sector(-2): 1})
+    starts = {U1Sector(-2): bond.sector_offset(U1Sector(2))}
+    with pytest.raises(ValueError, match="not symmetric"):
+        _mps._embedding(bond, state, starts, left=True, dual=False)
