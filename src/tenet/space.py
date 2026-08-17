@@ -67,6 +67,27 @@ class GradedSpace(_HashMemo):
             seen.add(a)
         return cls(provider, tuple(sorted(pairs, key=lambda p: p[0])))
 
+    def direct_sum(self, other: "GradedSpace") -> "GradedSpace":
+        """``self ⊕ other`` at the label level: union of sectors, degeneracies added.
+
+        This says nothing about ``dual`` — the flag lives on the ``Leg``
+        (invariant 2), not on the space, so whether two legs' conventions are
+        summable is checked where the legs are, by the tensor-level
+        :func:`tenet.direct_sum`; ``tenet.flip`` is the numerical route for
+        normalising a dual convention beforehand. TensorKit's ``⊕`` must compare
+        ``isdual`` here precisely because its flag lives on the space.
+        """
+        if other.provider != self.provider:
+            raise TypeError(
+                f"cannot direct-sum a space over provider {other.provider.name} "
+                f"with one over {self.provider.name}; a direct sum never casts "
+                "between symmetries"
+            )
+        merged = dict(self.sectors)
+        for a, m in other.sectors:
+            merged[a] = merged.get(a, 0) + m
+        return GradedSpace.new(self.provider, merged)
+
     def degeneracy(self, a: Sector) -> int:
         """``m_a``, or ``0`` if ``a`` is absent (so filtering reads as a predicate)."""
         # Simplification: linear scan; spaces hold a handful of sectors. Add a cached

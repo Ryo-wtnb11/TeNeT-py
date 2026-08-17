@@ -20,16 +20,19 @@ the condition invariant 12 demands before an ndarray spelling is allowed; no
 else here). TensorKit keeps a *regular* trace with positive quantum dimensions
 and absorbs the parity endomorphism into the right-evaluation map, which is
 exactly why the Frobenius-Schur phase stays ``+1`` while the twist carries the
-sign. Nothing in TeNeT-py consumes the twist yet — ``norm`` is qdim-weighted and
-every qdim is ``1``, so it is unaffected.
+sign. ``tenet.flip`` consumes the twist through :meth:`FZ2Provider.flip_phase`
+(``chi * theta = (-1)^parity``); ``norm`` is qdim-weighted and every qdim is
+``1``, so it remains unaffected.
 
 Source for every constant asserted above, TensorKitSectors ``src/fermions.jl`` at
 commit ``bd1bf8296876103870d6158c0918987256396880``:
 https://github.com/QuantumKitHub/TensorKitSectors.jl/blob/bd1bf8296876103870d6158c0918987256396880/src/fermions.jl
 """
 
-# Simplification: ``trace`` and ``adjoint`` (#31), and any closed fermion loop, are the
-# operations that will need the twist; add a ``Twist`` capability then, not before.
+# Simplification: the twist enters only as the ``chi * theta`` product inside
+# ``flip_phase`` (#142). ``trace`` and ``adjoint`` (#31), and any closed fermion loop,
+# are the operations that will need the *bare* twist; split a ``Twist`` capability
+# out of ``flip_phase`` then, not before.
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -156,6 +159,11 @@ class FZ2Provider:
     def z_matrix(self, a: FZ2Sector) -> np.ndarray:
         """``Z = [[1]]``, read-only: ``V_a`` is one-dimensional and ``FS == +1``."""
         return _Z
+
+    def flip_phase(self, a: FZ2Sector) -> float:
+        """``chi_a * theta_a = (-1)^parity``: FS is ``+1``, so the whole factor is
+        the twist — the sign an odd line pays for ``V_a -> V_a^*``."""
+        return -1.0 if a.parity else 1.0
 
 
 _CGC = np.ones((1, 1, 1, 1))

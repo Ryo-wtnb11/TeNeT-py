@@ -51,6 +51,7 @@ import numpy as np
 from tenet.symmetry.base import (
     CapabilityError,
     ClebschGordan,
+    FlipPhase,
     FusionProvider,
     PermutationCoefficients,
     QuantumDimension,
@@ -165,6 +166,11 @@ class ProductProvider:
     def qdim(self, a: Sector) -> float:
         self._require_all(QuantumDimension)
         return math.prod(f.qdim(x) for f, x in self._zip(a))
+
+    def flip_phase(self, a: Sector) -> complex:
+        """``chi * theta`` of a Deligne product factorizes, like every other phase."""
+        self._require_all(FlipPhase)
+        return math.prod(f.flip_phase(x) for f, x in self._zip(a))
 
     def irrep_dim(self, a: Sector) -> int:
         self._require_all(ClebschGordan, _CGC_HINT)

@@ -10,7 +10,9 @@ are fixed here:
   changes is ``Leg.fused_sector``, which now returns the dualized label the new
   tree needs (a U(1) charge ``q`` arrives on the other side as ``-q``). A model
   that identified IN with ``dual`` could not express this at all — invariant 2
-  doing real work.
+  doing real work. Since #142 that sentence names two separate operations:
+  :func:`flip` toggles ``dual`` alone (relabelling the space and paying the
+  Z-isomorphism's scalar), while a bend is the operation that moves ``side``.
 * **Our two trees are independent, both in ascending public-axis order.**
   TensorKit reads ``Hom(b₁⊗…⊗b_{N₂}, a₁⊗…⊗a_{N₁}) ≅ Hom(1, a₁⊗…⊗a_{N₁}⊗
   b*_{N₂}⊗…⊗b*₁)`` — the domain **reversed** — and therefore builds its
@@ -43,7 +45,7 @@ metadata and blocks move only through ``ar.do("transpose", ...)``.
 """
 
 import operator
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from dataclasses import dataclass, replace
 from functools import cache
 from typing import TYPE_CHECKING, Any
@@ -52,8 +54,9 @@ import autoray as ar
 
 from tenet.leg import IN, OUT
 from tenet.ops.permutation import permutation_plan
+from tenet.space import GradedSpace
 from tenet.structure import TensorStructure
-from tenet.symmetry.base import BendingCoefficients, CapabilityError, requires
+from tenet.symmetry.base import BendingCoefficients, CapabilityError, FlipPhase, requires
 
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
@@ -63,6 +66,7 @@ __all__ = [
     "RepartitionPlan",
     "bend",
     "bend_plan",
+    "flip",
     "repartition",
     "repartition_plan",
 ]
@@ -343,3 +347,121 @@ def repartition(
             f"{t.provider.name}'s coefficients dropped terms"
         )
     return SymmetricTensor(plan.new_structure, tuple(blocks[i] for i in range(n)))
+
+
+def _flip_refuse(structure: TensorStructure) -> None:
+    """Turn the bare capability failure into a message a user can act on."""
+    provider = structure.provider
+    try:
+        requires(provider, FlipPhase)
+    except CapabilityError as exc:
+        raise CapabilityError(
+            f"flip: toggling a leg's dual flag re-expresses the leg through the "
+            f"V_a -> V_a^* isomorphism, and provider {provider.name} does not implement "
+            "FlipPhase. The scalar is chi_a * theta_a — the Frobenius-Schur phase times "
+            "the twist — per flipped leg per fusion tree, so a provider must supply "
+            "flip_phase (1 for a bosonic Abelian symmetry, (-1)^parity for fermion "
+            "parity, the FS phase for SU(2)/SU(N)). Faking it would give correct "
+            "shapes, correct sector bookkeeping and a wrong sign."
+        ) from exc
+
+
+def _flip_axes(structure: TensorStructure, axes: Any) -> tuple[int, ...]:
+    """``axes`` — an int, a leg name, or a sequence of either — as axis indices."""
+    ndim = structure.ndim
+    single = isinstance(axes, str) or not isinstance(axes, Sequence)
+    resolved = []
+    for item in (axes,) if single else tuple(axes):
+        try:
+            ax = operator.index(item)
+        except TypeError:
+            names = [i for i, leg in enumerate(structure.legs) if leg.name == item]
+            if not names:
+                raise ValueError(
+                    f"flip: no leg is named {item!r}; axes are ints or leg names"
+                ) from None
+            if len(names) > 1:
+                raise ValueError(
+                    f"flip: leg name {item!r} is ambiguous — axes {tuple(names)} all "
+                    "carry it; use the axis index instead"
+                ) from None
+            ax = names[0]
+        else:
+            if not 0 <= ax < ndim:
+                raise ValueError(f"flip: axis {ax} is out of range for a {ndim}-dimensional tensor")
+        if ax in resolved:
+            raise ValueError(f"flip: axis {ax} is repeated in {axes!r}")
+        resolved.append(ax)
+    return tuple(resolved)
+
+
+def flip(
+    t: "SymmetricTensor",
+    axes: int | Hashable | Sequence[int | Hashable],
+    *,
+    inv: bool = False,
+) -> "SymmetricTensor":
+    """Toggle the ``dual`` flag of ``axes``, keeping the tensor the same morphism.
+
+    **Not** ``numpy.flip``: no axis is reversed and no element moves. Each named
+    leg's ``dual`` flag is toggled and its space is relabelled through
+    ``provider.dual`` (so a U(1) leg over charges ``{q}`` comes back over
+    ``{-q}``), which is the ``V_a -> V_a^*`` isomorphism made explicit — the
+    operation TensorKit calls ``flip``. ``side`` and ``name`` are unchanged:
+    moving a leg between domain and codomain stays :func:`repartition`'s job.
+
+    ``axes`` is an int, a leg name, or a sequence of either; ``flip(t, ())`` is
+    ``t``. Two contracts, both TensorKit's: flipping the two legs of a
+    contractible pair leaves the contraction result unchanged, and ``flip`` is
+    **not** an involution — flipping the same leg twice multiplies each tree by
+    ``chi_a * theta_a`` once (``-1`` on an SU(2) half-integer or odd
+    fermion-parity line), and ``inv=True`` is the exact inverse instead.
+
+    Because the relabel and the flag toggle cancel inside ``Leg.fused_sector``,
+    every fusion-tree leaf — and with it the block set, order and shapes — is
+    unchanged: the whole operation is one scalar per block. Requires
+    :class:`~tenet.symmetry.base.FlipPhase`.
+    """
+    from tenet.tensor import SymmetricTensor
+
+    picked = _flip_axes(t.structure, axes)
+    if not picked:
+        return t
+    _flip_refuse(t.structure)
+
+    structure = t.structure
+    provider = structure.provider
+    legs = list(structure.legs)
+    for ax in picked:
+        leg = legs[ax]
+        relabelled = GradedSpace.new(
+            provider, tuple((provider.dual(a), m) for a, m in leg.space.sectors)
+        )
+        legs[ax] = replace(leg, space=relabelled, dual=not leg.dual)
+    new_structure = TensorStructure(tuple(legs))
+
+    # Position of each flipped axis inside its own side's tree.
+    tree_pos = {ax: k for k, ax in enumerate(structure.out_axes)}
+    tree_pos |= {ax: k for k, ax in enumerate(structure.in_axes)}
+
+    blocks = []
+    for key, block in zip(structure.block_order, t.blocks, strict=True):
+        factor: complex = 1.0
+        for ax in picked:
+            leg = structure.legs[ax]
+            out = leg.side is OUT
+            tree = key.output_tree if out else key.input_tree
+            # the leaf is invariant under the flip, so old key and new key agree
+            base = complex(provider.flip_phase(tree.uncoupled[tree_pos[ax]]))
+            if not out:  # the input tree enters the pairing conjugated
+                base = base.conjugate()
+            if not inv:
+                factor *= base if leg.dual else 1.0
+            else:
+                factor *= 1.0 if leg.dual else base.conjugate()
+        if factor != 1:
+            # keep a real coefficient real, so a real tensor stays real
+            block = block * (factor.real if factor.imag == 0 else factor)
+        blocks.append(block)
+    # same key set, same sorted order: blocks stay aligned position for position
+    return SymmetricTensor(new_structure, tuple(blocks))

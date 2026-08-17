@@ -42,7 +42,6 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 import numpy as np
 
-from tenet.space import GradedSpace
 from tenet.structure import TensorStructure
 from tenet.symmetry.base import QuantumDimension, requires
 
@@ -330,8 +329,7 @@ def _summed_legs(
         if i not in axes:
             yield a
             continue
-        merged = {s: a.space.degeneracy(s) + b.space.degeneracy(s) for s in (*a.space, *b.space)}
-        yield replace(a, space=GradedSpace.new(a.provider, merged))
+        yield replace(a, space=a.space.direct_sum(b.space))
 
 
 def direct_sum(
@@ -344,6 +342,8 @@ def direct_sum(
     from ``t``). Every axis **in** ``axes`` must agree in provider, ``side`` and
     ``dual``; its spaces may differ freely, and the result's space has
     ``m_a = t.degeneracy(a) + u.degeneracy(a)`` for every sector of either.
+    A ``dual`` mismatch is refused, never coerced — :func:`tenet.flip` is the
+    way to normalise the operands' dual conventions before summing.
 
     Placement is ``t`` in the **leading** degeneracy slots and ``u`` in the
     trailing ones, on every summed axis — the same prefix convention ``embed``

@@ -17,6 +17,7 @@ __all__ = [
     "CapabilityError",
     "ClebschGordan",
     "DualBasis",
+    "FlipPhase",
     "FusionProvider",
     "MultiplicityRecoupling",
     "PermutationCoefficients",
@@ -140,6 +141,21 @@ class BendingCoefficients(Protocol):
         self, key: "FusionBlockKey", *, dual: bool
     ) -> tuple[tuple["FusionBlockKey", complex], ...]:
         """The inverse direction: last line of ``input_tree`` onto ``output_tree``."""
+        ...
+
+
+@runtime_checkable
+class FlipPhase(Protocol):
+    """Providers that can pay for toggling one leg's dual flag in place.
+
+    ``tenet.flip`` relabels a leg's space through ``dual`` and toggles the flag,
+    which leaves every fusion-tree leaf invariant — the whole numerical content
+    is one scalar per flipped leg per tree, supplied here.
+    """
+
+    def flip_phase(self, a: Sector) -> complex:
+        """``chi_a * theta_a`` — the scalar a dual line pays for the ``V_a -> V_a^*``
+        isomorphism: the Frobenius-Schur phase times the twist of ``a``."""
         ...
 
 
@@ -612,6 +628,10 @@ class TrivialProvider:
     def z_matrix(self, a: Sector) -> np.ndarray:
         """``Z = [[1]]``, read-only: one-dimensional irrep, Frobenius-Schur phase 1."""
         return _Z
+
+    def flip_phase(self, a: Sector) -> float:
+        """``chi_a * theta_a = 1``: one sector, everything trivial."""
+        return 1.0
 
 
 _Z = np.ones((1, 1))

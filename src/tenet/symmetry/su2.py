@@ -172,6 +172,10 @@ class SU2Provider:
         """``chi_a = (-1)^(2j)``: ``+1`` for integer spin, ``-1`` for half-integer."""
         return _su2_coeff.frobenius_schur(a.two_j)
 
+    def flip_phase(self, a: SU2Sector) -> int:
+        """``chi_a * theta_a = chi_a``: SU(2) braiding is symmetric, so the twist is 1."""
+        return self.frobenius_schur(a)
+
     def z_matrix(self, a: SU2Sector) -> np.ndarray:
         """``Z_a: V_a -> V_a^*``, shape ``(d_a, d_dual(a)) == (d_a, d_a)``; read-only.
 
