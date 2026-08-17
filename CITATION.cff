@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: "If you use TeNeT-py in your research, please cite it as below."
+title: "TeNeT-py"
+type: software
+authors:
+  - family-names: "Watanabe"
+    given-names: "Ryo"
+repository-code: "https://github.com/Ryo-wtnb11/TeNeT-py"
+url: "https://ryo-wtnb11.github.io/TeNeT-py/"
+license: Apache-2.0
+abstract: >-
+  A pure-Python library for non-Abelian symmetric tensor networks:
+  graded tensors over U(1), Z2, fermionic Z2, SU(2) and SU(N),
+  with automatic MPO construction, DMRG and CTMRG.
