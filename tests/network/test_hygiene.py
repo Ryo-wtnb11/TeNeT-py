@@ -13,11 +13,16 @@ a test below:
   driver that reads them is doing arithmetic below the public API.
 
 **The one named exception**, spelled out because it is a line and not a loophole:
-reading ``t.provider``, ``provider.qdim`` and ``provider.unit`` is allowed. Two reads are
-left, and each has one owner: ``common.spectrum`` needs ``sqrt(qdim)`` for its Schmidt
-weights, and ``ctmrg.py`` needs ``provider.unit`` for the trivial sector. That is
+reading ``t.provider`` and the provider's ``qdim``, ``unit``, ``fusion``, ``dual`` and
+``permute_tree`` is allowed, and each read has an owner: ``common.spectrum`` needs
+``sqrt(qdim)`` for its Schmidt weights, ``ctmrg.py`` needs ``provider.unit`` for the
+trivial sector, ``mps.py`` accumulates charges with ``fusion`` (#133), derives
+``MPS.product``'s bonds backwards with ``fusion`` and ``dual`` (M14), and probes the
+braiding with ``permute_tree`` for the fermionic refusal (M13b). That is
 *symmetry-generic metadata*: ``provider.qdim(c)`` is fine, ``isinstance(provider,
-SU2Provider)`` is not, and the second is what the branch test below forbids.
+SU2Provider)`` is not, and the second is what the branch test below forbids. Since M14
+the metadata test also catches reads through a local binding (``sym = space.provider``),
+so the list enforced and the list ``network/__init__.py`` claims are the same list.
 
 **The duplicated-``scalar`` finding #112 recorded, corrected and closed (#114, #126).** It
 was recorded as *three* files writing the same five-line ``sum(qdim(c) * trace(m))``; it
@@ -106,13 +111,40 @@ def test_no_module_branches_on_which_provider_it_has(path):
             assert getattr(node.args[1], "id", None) in {"int", "str"}, node.lineno
 
 
-def test_the_allowed_metadata_reads_are_only_qdim_and_unit():
-    """Whatever this package reads off a provider must stay on the named list."""
-    allowed = {"qdim", "unit", "provider"}
+def test_the_allowed_metadata_reads_stay_on_the_named_list():
+    """Whatever this package reads off a provider must stay on the named list.
+
+    Two AST shapes are covered: the direct chain ``x.provider.ATTR``, and reads through a
+    local binding -- ``sym = space.provider`` then ``sym.ATTR`` -- which #133's
+    ``sym.fusion`` introduced and the original test could not see. The binding scan is
+    per-module and by name, so a name bound to a provider anywhere in a module counts
+    everywhere in it; that over-approximates, which is the right direction for a limit.
+    """
+    allowed = {"qdim", "unit", "provider", "fusion", "dual", "permute_tree"}
     seen = set()
     for _path, tree in trees():
+        bound = set()  # names locally bound to a provider, e.g. ``sym = space.provider``
         for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Attribute):
-                if node.value.attr == "provider":
-                    seen.add(node.attr)
+            if not isinstance(node, ast.Assign):
+                continue
+            target, value = node.targets[0], node.value
+            pairs = (
+                list(zip(target.elts, value.elts, strict=True))
+                if isinstance(target, ast.Tuple) and isinstance(value, ast.Tuple)
+                else [(target, value)]
+            )
+            for t, v in pairs:
+                if (
+                    isinstance(t, ast.Name)
+                    and isinstance(v, ast.Attribute)
+                    and v.attr == "provider"
+                ):
+                    bound.add(t.id)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute):
+                continue
+            if isinstance(node.value, ast.Attribute) and node.value.attr == "provider":
+                seen.add(node.attr)
+            elif isinstance(node.value, ast.Name) and node.value.id in bound:
+                seen.add(node.attr)
     assert seen <= allowed, sorted(seen - allowed)

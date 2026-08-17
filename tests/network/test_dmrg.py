@@ -10,7 +10,7 @@ import pytest
 
 import tenet
 from tenet import GradedSpace
-from tenet.network import MPS, Env, dmrg_, lanczos, sweep_
+from tenet.network import MPO, MPS, Env, Sweep, dmrg_, lanczos, local_op, sweep_
 from tenet.symmetry import SU2, U1, SU2Sector, U1Sector
 
 from . import test_mpo as mpo_test  # the SU(2) Hamiltonian, built once and shared
@@ -142,6 +142,203 @@ def test_the_first_su2_dmrg_reproduces_the_u1_ground_state_at_n6():
     assert abs(energy - dmrg_(u1, example.mpo(6), chi=16).energy) < 1e-10
     exact = np.linalg.eigvalsh(np.asarray(example.mpo(6).to_dense()))[0]
     assert abs(energy - exact) < 1e-10
+
+
+# --- M14: the schedule ---------------------------------------------------------------
+
+
+def test_schedule_and_flat_kwargs_are_exclusive():
+    """Silently letting one spelling win is how a run reports a ``chi`` it did not use."""
+    psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+    with pytest.raises(ValueError, match="schedule.*chi"):
+        dmrg_(psi, example.mpo(6), schedule=[Sweep(8)], chi=8)
+    with pytest.raises(ValueError, match="schedule.*cutoff"):
+        dmrg_(psi, example.mpo(6), schedule=[Sweep(8)], cutoff=1e-12)
+    with pytest.raises(ValueError, match="empty"):
+        dmrg_(psi, example.mpo(6), schedule=[])
+
+
+def test_the_flat_kwargs_are_a_one_entry_schedule_bit_for_bit():
+    """``chi=8`` and ``schedule=[Sweep(chi=8)]`` are the same run: ``==``, no tolerance."""
+    flat_psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+    flat = dmrg_(flat_psi, example.mpo(6), chi=8, max_sweeps=3)
+    sched_psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+    sched = dmrg_(sched_psi, example.mpo(6), schedule=[Sweep(chi=8)], max_sweeps=3)
+    assert flat.energy == sched.energy
+    assert flat.history == sched.history
+    assert np.array_equal(np.asarray(flat_psi.to_dense()), np.asarray(sched_psi.to_dense()))
+    assert len(flat.schedule) == flat.sweeps == len(flat.history)
+
+
+def test_the_last_schedule_entry_repeats_until_max_sweeps():
+    """A 2-entry schedule with ``max_sweeps=5`` realizes ``[s0, s1, s1, s1, s1]``."""
+    s0, s1 = Sweep(4), Sweep(8)
+    psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+    out = dmrg_(psi, example.mpo(6), schedule=[s0, s1], schmidt_tol=0.0, max_sweeps=5)
+    assert out.schedule == [s0, s1, s1, s1, s1]
+    assert len(out.schedule) == out.sweeps == len(out.history) == 5
+
+
+def test_a_noisy_final_entry_blocks_the_convergence_exit():
+    """The block2 guard: no exit while the current sweep's noise is nonzero.
+
+    Both loop tolerances are set absurdly loose, so the *only* thing that can keep the
+    loop running is the guard -- the mirror of
+    ``test_the_schmidt_criterion_is_what_stops_the_loop``.
+    """
+    psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+    out = dmrg_(
+        psi,
+        example.mpo(6),
+        schedule=[Sweep(8, noise=1e-3)],
+        energy_tol=1e3,
+        schmidt_tol=1e3,
+        max_sweeps=4,
+    )
+    assert out.sweeps == 4
+    assert out.denergy < 1e3  # the tolerances were met; only the noise guard held
+
+
+def test_the_exit_waits_for_the_schedules_last_entry():
+    """``[Sweep(4)]*2 + [Sweep(16)]`` may not exit inside the chi=4 phase."""
+    psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+    schedule = [Sweep(4)] * 2 + [Sweep(16)]
+    out = dmrg_(psi, example.mpo(6), schedule=schedule, energy_tol=1e3, schmidt_tol=1e3)
+    assert out.sweeps == 3  # the first sweep allowed to exit is the last entry's
+    assert out.schedule == schedule
+
+
+# --- M14: noise ----------------------------------------------------------------------
+
+
+def test_noise_is_reproducible_by_seed_and_varies_with_it():
+    schedule = [Sweep(8, noise=1e-3)] * 2
+    energies = []
+    for seed in (0, 0, 1):
+        psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+        energies.append(
+            dmrg_(psi, example.mpo(6), schedule=schedule, max_sweeps=2, seed=seed).energy
+        )
+    assert energies[0] == energies[1]
+    assert energies[0] != energies[2]
+
+
+def test_a_noisy_sweep_perturbs_and_a_noisy_schedule_recovers():
+    """Noise is not variational, and it is transient: the zero-noise tail undoes it."""
+    sweep_energies = []
+    for noise in (0.0, 1e-2):
+        psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0).canonize_()
+        env = Env(psi, example.mpo(6)).setup_()
+        energy, _ = sweep_(psi, example.mpo(6), env, {}, chi=8, cutoff=1e-14, noise=noise)
+        sweep_energies.append(energy)
+    assert sweep_energies[1] > sweep_energies[0]
+
+    finals = []
+    for schedule in ([Sweep(8)] * 8, [Sweep(8, noise=1e-2)] * 3 + [Sweep(8)] * 5):
+        psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+        out = dmrg_(psi, example.mpo(6), schedule=schedule, max_sweeps=8)
+        finals.append(out.energy)
+    assert finals[1] <= finals[0] + 1e-12
+
+
+def test_noise_opens_a_sector_the_eigensolver_cannot():
+    """The criterion the whole feature exists for, and not an energy comparison.
+
+    ``H = sum_i S^z_i S^z_{i+1}`` is diagonal in the product basis and its MPO bond
+    carries only charge 0, so ``heff2`` preserves the coupled-sector content of the
+    two-site tensor: a Neel product state is stuck in its own D=1 bonds forever at
+    ``noise=0``, which is exactly the local minimum a symmetric DMRG falls into. The
+    wavefunction perturbation fills every structurally allowed coupled sector, so one
+    noisy sweep opens the bond.
+    """
+    _, sz, *_ = example._spin_half()
+    op_sz = local_op(sz, phys=example.PHYS, charge=U1Sector(0))
+    h = MPO.from_terms(6, [(1.0, [(op_sz, i), (op_sz, i + 1)]) for i in range(5)])
+    bonds = {}
+    for noise in (0.0, 1e-2):
+        psi = MPS.product(example.PHYS, [U1Sector(1), U1Sector(-1)] * 3).canonize_()
+        env = Env(psi, h).setup_()
+        sweep_(psi, h, env, {}, chi=8, cutoff=1e-14, noise=noise, seed=7)
+        bonds[noise] = psi[3].legs[0].space
+    assert U1Sector(-1) not in bonds[0.0]  # the eigensolver alone cannot create it
+    assert U1Sector(-1) in bonds[1e-2]
+
+
+def test_a_noisy_sweep_leaves_the_mps_normalized():
+    """Renormalized after the perturbation, so the Pythagoras discarded weight holds."""
+    psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0).canonize_()
+    env = Env(psi, example.mpo(6)).setup_()
+    sweep_(psi, example.mpo(6), env, {}, chi=8, cutoff=1e-14, noise=1e-2)
+    assert psi.norm() == pytest.approx(1.0, abs=1e-12)
+
+
+# --- M14: callback and restart -------------------------------------------------------
+
+
+def test_callback_sees_each_finished_sweep_and_its_exceptions_propagate():
+    seen = []
+    psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+    out = dmrg_(
+        psi,
+        example.mpo(6),
+        chi=8,
+        max_sweeps=4,
+        callback=lambda o: seen.append((o.sweeps, len(o.history))),
+    )
+    assert seen == [(k, k) for k in range(1, out.sweeps + 1)]
+
+    def boom(_):
+        raise RuntimeError("from the callback")
+
+    with pytest.raises(RuntimeError, match="from the callback"):
+        dmrg_(
+            MPS.random(example.PHYS, example.bond_spaces(6), seed=0),
+            example.mpo(6),
+            chi=8,
+            max_sweeps=2,
+            callback=boom,
+        )
+
+
+def test_a_saved_run_re_entered_with_a_schedule_slice_matches_uninterrupted(tmp_path):
+    """Restart is ``MPS.save``/``load`` plus ``schedule=schedule[k:]`` -- no new argument."""
+    h = example.mpo(6)
+    schedule = [Sweep(4)] * 2 + [Sweep(8)] * 4
+    full_psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+    full = dmrg_(full_psi, h, schedule=schedule, energy_tol=0.0, max_sweeps=6)
+
+    psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+    first = dmrg_(psi, h, schedule=schedule[:2], energy_tol=0.0, max_sweeps=2)
+    psi.save(tmp_path / "checkpoint")
+    loaded = MPS.load(tmp_path / "checkpoint")
+    assert Env(loaded, h).measure() == pytest.approx(first.energy, abs=1e-12)
+    resumed = dmrg_(loaded, h, schedule=schedule[2:], energy_tol=0.0, max_sweeps=4)
+    assert resumed.energy == pytest.approx(full.energy, abs=1e-10)
+
+
+# --- M14: the product seed and the SU(2) schedule ------------------------------------
+
+
+def test_dmrg_from_a_neel_product_state_reaches_the_random_seed_energy():
+    """``MPS.product`` end to end: the D=1 seed grows into the same ground state."""
+    neel = MPS.product(example.PHYS, [U1Sector(1), U1Sector(-1)] * 3)
+    seeded = dmrg_(neel, example.mpo(6), chi=16).energy
+    psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+    assert abs(seeded - dmrg_(psi, example.mpo(6), chi=16).energy) < 1e-10
+
+
+def test_an_su2_schedule_run_with_noise_completes():
+    """#135's Heisenberg MPO under a noisy ramp: the noise path touches no coefficient.
+
+    The proof is the run itself -- a valid MPS whose norm is 1 -- because a wrong
+    recoupling in the perturbation would surface as a structure error or a broken norm.
+    """
+    psi = MPS.random(mpo_test.SU2_PHYS, su2_bond_spaces(6), seed=0)
+    schedule = [Sweep(16, noise=1e-4)] * 2 + [Sweep(32)] * 2
+    out = dmrg_(psi, mpo_test.su2_heisenberg(6), schedule=schedule, max_sweeps=4)
+    assert out.schedule == schedule
+    assert len(out.schedule) == out.sweeps == len(out.history) == 4
+    assert psi.norm() == pytest.approx(1.0, abs=1e-12)
 
 
 def test_the_su2_mps_bond_holds_the_same_state_in_a_third_of_the_multiplets():

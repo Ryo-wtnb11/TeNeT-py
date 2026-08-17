@@ -16,7 +16,10 @@ so it is written where it holds:
   energy change, and M11c's :meth:`MPS.save` / :meth:`MPS.load`, :meth:`MPS.compress_`
   and :func:`expectation_1site` / :func:`expectation_2site` are outside for the same
   reasons -- filesystem I/O, a re-decided bond space, and a truncating split, and M13's
-  :meth:`MPO.from_terms` joins them because its compression sweep is ``svd_truncated``;
+  :meth:`MPO.from_terms` joins them because its compression sweep is ``svd_truncated``,
+  as do M14's :class:`Sweep` and :meth:`MPS.product` with the rest of ``mps.py`` /
+  ``dmrg.py`` -- a schedule only re-parameterizes the sweeps above, and a product state's
+  bonds are decided sector by sector;
 * ``common.py`` -- **trace-neutral**; :func:`spectrum` is nonetheless only ever called
   outside a trace, its ``sorted`` Python list being driver output rather than a tensor;
 * ``ctmrg.py`` -- **both**, stated per function in its own docstrings. :func:`ctmrg`
@@ -45,6 +48,11 @@ symmetry-**invariant** *k*-site form, and :meth:`MPO.from_terms` takes a tuple o
 for it and splits it with ``svd_truncated``, so it is **no longer Abelian-only**: a
 non-Abelian term is one invariant operator whose coupling lives in its own blocks, and the
 aux bond it runs through, multiplicities and all, is derived from the SVD.
+M14: :class:`Sweep` and :meth:`MPS.product` -- :func:`dmrg_` takes a per-sweep
+``schedule`` whose last entry repeats, :func:`sweep_` takes a wavefunction ``noise``, a
+per-sweep ``callback`` reports while the run happens, and :class:`DMRG_out` records the
+realized schedule; :meth:`MPS.product` builds a product state whose bonds are derived
+backwards from the site sectors, putting the total charge on bond 0.
 Shared: the bond spectrum :func:`spectrum` and the :func:`ones` seed -- the two
 scalar exits that sat beside them left for ``tenet.ops`` in #126, as
 :func:`tenet.full_trace` and :func:`tenet.inner`. Promoted verbatim from
@@ -53,10 +61,14 @@ that no number may move.
 
 Uses **public ``tenet`` API only**: no ``jax``/``torch``/``scipy``/``quimb``/
 ``opt_einsum``, no ``_``-prefixed reach into other modules, no numerical use of
-``t.blocks``. The one named exception is reading ``t.provider`` / ``provider.qdim`` /
-``provider.unit``, which :func:`spectrum`'s ``sqrt(qdim)`` diagonal weight and
-``ctmrg.py``'s unit sector need; that is symmetry-generic metadata, not a provider
-branch. ``tests/network/test_hygiene.py`` enforces both halves.
+``t.blocks``. The one named exception is reading ``t.provider`` and the provider's
+``qdim``, ``unit``, ``fusion``, ``dual`` and ``permute_tree``: :func:`spectrum`'s
+``sqrt(qdim)`` diagonal weight, ``ctmrg.py``'s unit sector, ``mps.py``'s charge
+accumulation (:meth:`MPO.from_terms`), :meth:`MPS.product`'s backwards bond derivation
+through ``fusion`` and ``dual``, and the braiding probe behind the fermionic refusal.
+Every one is symmetry-generic metadata, not a provider branch.
+``tests/network/test_hygiene.py`` enforces both halves, including reads through a local
+binding such as ``sym = space.provider``.
 """
 
 from tenet.network.common import ones, spectrum
@@ -76,7 +88,7 @@ from tenet.network.ctmrg import (
     single_layer,
     single_layer_ctm,
 )
-from tenet.network.dmrg import DMRG_out, dmrg_, lanczos, sweep_
+from tenet.network.dmrg import DMRG_out, Sweep, dmrg_, lanczos, sweep_
 from tenet.network.env import Env
 from tenet.network.mps import MPO, MPS, expectation_1site, expectation_2site, local_op
 
@@ -88,6 +100,7 @@ __all__ = [
     "CTMRG_out",
     "DMRG_out",
     "Env",
+    "Sweep",
     "ctmrg",
     "ctmrg_unrolled",
     "dmrg_",
