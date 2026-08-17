@@ -359,7 +359,7 @@ def test_the_su2_mps_bond_holds_the_same_state_in_a_third_of_the_multiplets():
     assert abs(su2.energy - u1.energy) < 1e-10
 
 
-def test_fermionic_dmrg_reaches_the_even_parity_ground_energy(monkeypatch):
+def test_fermionic_dmrg_reaches_the_even_parity_ground_energy():
     """N=4 spinless hopping on fZ2 legs: ``dmrg_`` against even-parity ED to 1e-10.
 
     #147's gate-1 report measured this run at -1.4142136 against the ED value
@@ -372,6 +372,29 @@ def test_fermionic_dmrg_reaches_the_even_parity_ground_energy(monkeypatch):
     from .test_env import _fermionic_chain, _fermionic_state  # noqa: PLC0415
 
     for cutoff in (None, 1e-13):
-        h = _fermionic_chain(4, monkeypatch, cutoff=cutoff)
+        h = _fermionic_chain(4, cutoff=cutoff)
         out = dmrg_(_fermionic_state(4, seed=3), h, chi=16, cutoff=1e-14)
         assert out.energy == pytest.approx(ed, abs=1e-10)
+
+
+def test_fermionic_dmrg_on_the_interacting_chain_matches_ed():
+    """Gate 3 (#147): N=6 spinless hopping plus ``V n_m n_{m+1}`` against even-parity ED.
+
+    N=6 rather than the issue's N=8: the physics (an interacting fermionic chain whose
+    ground energy no free-fermion argument gives) is identical, and N=8 measured ~28 s
+    under #160's audit, which does not fit the suite budget; the ED oracle is a 64-dim
+    ``eigh`` masked to even parity either way. One route (the compressed dense path);
+    the prepared path's agreement is pinned per-bond in
+    ``tests/integration/test_dmrg_prepared.py``.
+    """
+    n, v = 6, 1.5
+    from .test_env import _fermionic_chain, _fermionic_state  # noqa: PLC0415
+
+    hop = sum(mpo_test._jw_hop(n, m, m + 1) for m in range(n - 1))
+    num = [np.diag([(k >> (n - 1 - s)) & 1 for k in range(2**n)]) for s in range(n)]
+    dense = hop + v * sum(num[m] @ num[m + 1] for m in range(n - 1))
+    even = [k for k in range(2**n) if bin(k).count("1") % 2 == 0]
+    ed = float(np.linalg.eigvalsh(dense[np.ix_(even, even)]).min())  # even-parity block
+    h = _fermionic_chain(n, cutoff=1e-13, interaction=v)
+    out = dmrg_(_fermionic_state(n, seed=3), h, chi=16, cutoff=1e-14)
+    assert out.energy == pytest.approx(ed, abs=1e-10)

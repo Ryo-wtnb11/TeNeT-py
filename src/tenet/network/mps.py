@@ -523,26 +523,6 @@ def _braids_with_signs(space: GradedSpace) -> bool:
     return False
 
 
-_FERMIONIC = (
-    "from_terms refuses fermionic braiding: the Jordan-Wigner string needs a swap "
-    "gate between an odd MPO bond and a physical line, which tenet does not have "
-    "(docs/design.md:2888 lists fermionic swap gates as not planned). Env and "
-    "sweep_ would contract the result silently and wrongly rather than refuse it"
-)
-
-
-def _refuse_fermionic(space: GradedSpace) -> None:
-    """Raise :data:`_FERMIONIC` when ``space`` braids with signs.
-
-    A separate function from :func:`_braids_with_signs` because the probe now has a
-    second, load-bearing caller -- :func:`_instantiate`'s spectator classification --
-    and the fermionic oracle tests bypass only the *refusal* (#147's gate discipline),
-    never the classification.
-    """
-    if _braids_with_signs(space):
-        raise ValueError(_FERMIONIC)
-
-
 def _check_op(op: SymmetricTensor, phys: GradedSpace | None) -> GradedSpace:
     """Validate one term operator and return the physical space it declares."""
     if op.ndim != 3 and (op.ndim < 4 or op.ndim % 2):
@@ -563,7 +543,6 @@ def _check_op(op: SymmetricTensor, phys: GradedSpace | None) -> GradedSpace:
                 f"one space, got {[(leg.space, leg.side) for leg in op.legs]}; an MPO site "
                 "tensor, with its bond legs, is not a term operator"
             )
-        _refuse_fermionic(got)
         return got
     emitted = op.legs[2].space
     if emitted.reduced_dim != 1:
@@ -582,8 +561,6 @@ def _check_op(op: SymmetricTensor, phys: GradedSpace | None) -> GradedSpace:
             "Hand the whole term over instead: one invariant k-site operator from "
             "local_op(dense, phys=...) with no charge, on a tuple of sites"
         )
-    _refuse_fermionic(got)
-    _refuse_fermionic(emitted)
     return got
 
 
@@ -617,11 +594,19 @@ def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
 
     The util legs are ``dual`` because ``_as_w``'s bend makes the *derived* bonds dual, and
     an MPO bond carries one ``dual`` convention — ``V (+) V*`` is not a graded space; on
-    the unit sector the flag is free.
+    the unit sector the flag is free. **Except on a sign-braiding grading**: for a bond
+    sector with a ``-1`` self-braiding the two caps differ by exactly that twist, so a
+    dual odd bond contracted in #160's composition order pays one Koszul sign per cut —
+    measured as ``(-1)^(number of odd internal bonds)`` on the chain (#147 gate 2). The
+    factors are therefore flipped to the non-dual convention the rank-3 route already
+    uses, with the twist paid once per bond (``inv`` on exactly one end -- ``flip`` twice
+    is ``chi_a * theta_a``, ``-1`` on an odd line); bosonic splits are byte-identical.
     """
     sym = op.legs[0].space.provider
+    fermionic = _braids_with_signs(op.legs[0].space)
     body = string.ascii_uppercase[: op.ndim]
-    carry = tenet.einsum(f"ba,{body}->a{body}b", tenet.identity((_unit_leg(sym, True),)), op)
+    util = _unit_leg(sym, not fermionic)
+    carry = tenet.einsum(f"ba,{body}->a{body}b", tenet.identity((util,)), op)
     out = []
     while carry.ndim > 4:
         m = (carry.ndim - 2) // 2
@@ -631,8 +616,10 @@ def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
         body = string.ascii_uppercase[: vh.ndim - 1]
         carry = tenet.einsum(f"xy,y{body}->x{body}", s, vh)
     out.append(_as_w(carry))
-    for w in out:
-        _refuse_fermionic(w.legs[3].space)  # the derived bond, which no argument declared
+    if fermionic:
+        for k in range(len(out) - 1):
+            out[k] = tenet.flip(out[k], 3)
+            out[k + 1] = tenet.flip(out[k + 1], 0, inv=True)
     return out
 
 
@@ -792,6 +779,23 @@ def _term_edges(
     """
     sym, d = phys.provider, phys.dim
     unit_space = GradedSpace.new(sym, {sym.unit: 1})
+    # A term is the *ordered product* of its operators. Placement walks the sites left
+    # to right, so putting the list into site order first costs one Koszul sign per
+    # swap of two sign-braiding operators -- `c+_1 c_0` written as
+    # ``[(c+, 1), (c, 0)]`` is ``-(c_0 c+_1)`` and both spellings build the same MPO.
+    # Bosonic operators commute freely; a k-site operator is invariant, hence even.
+    odd_sites = [
+        sites if isinstance(sites, int) else sites[0]
+        for op, sites in ops
+        if op.ndim == 3 and _braids_with_signs(op.legs[2].space)
+    ]
+    inversions = sum(
+        1
+        for x in range(len(odd_sites))
+        for y in range(x + 1, len(odd_sites))
+        if odd_sites[x] > odd_sites[y]
+    )
+    coeff = coeff * (-1.0) ** inversions
     placed: dict[int, tuple] = {}
     for op, sites in ops:
         sites = (sites,) if isinstance(sites, int) else tuple(sites)
@@ -834,6 +838,18 @@ def _term_edges(
                 left = GradedSpace.new(sym, {sym.dual(c) if dual else c: 1})
                 legs = (Leg(left, IN, dual), Leg(phys, OUT), Leg(phys, IN), Leg(space, OUT, dual))
                 block = np.reshape(np.asarray(op.to_dense())[:, :, 0], (1, d, d, 1))
+                # The running charge to the *right* of this site crosses the site's
+                # incoming physical line on its way out -- a braiding the dense
+                # ``[:, :, 0]`` round trip cannot see. The R-coefficient is paid here,
+                # per physical sector: ``+1`` everywhere for a bosonic grading, the
+                # parity sign for a super one, which is exactly the Jordan-Wigner
+                # string's foothold on the operator's own site (#147 gate 4 -- at
+                # ``d=2`` it is invisible because ``a+ Z = a+`` and ``Z a = a``).
+                if _braids_with_signs(space):
+                    block = block.copy()
+                    for a, _, o, e in _slabs(phys):
+                        tree = FusionTree((lab, a), (), (0,), sym.fusion(lab, a)[0])
+                        block[:, :, o : o + e, :] *= sym.permute_tree(tree, (1, 0))[0][1].real
                 rank3[key] = SymmetricTensor.from_dense(block, legs)
             wt = rank3[key]
             open_next = None
@@ -1232,8 +1248,17 @@ class MPO:
         structure error instead of a message about ``phys``. Uniform physical space only,
         and every term's charges must sum to the unit sector.
 
-        Fermionic terms, and non-Abelian terms spelled as a *list* of charge-leg
-        operators, are refused with a message rather than accepted. Outside
+        Fermionic terms build like any other graded terms, and the braided route needs
+        no Jordan-Wigner operator in the API: an odd FSM bond crossing a physical line
+        *is* the string, paid by the Koszul braiding under #160's composition rule
+        (#147). Two conventions follow from that and are pinned by the gate-4 oracle.
+        A term's operator list is the **ordered product** of its operators --
+        ``[(c, i), (c+, j)]`` is ``c_i c+_j``, which for ``i != j`` is ``-c+_j c_i`` --
+        with the reordering-to-site-order sign paid on the coefficient. And intra-site
+        ordering for a multi-flavour site (spinful ``d=4``) is a property of the
+        *on-site matrices*, documented where they are defined, not of this assembler.
+        Non-Abelian terms spelled as a *list* of charge-leg operators are refused with
+        a message rather than accepted. Outside
         ``jit``/``grad`` like the rest of this module, because the assembly decides
         :class:`~tenet.GradedSpace`\\ s.
         """
@@ -1249,7 +1274,12 @@ class MPO:
         sym = phys.provider
         # One dual convention per MPO, set by whether any k-site split runs in it: the
         # split's derived bonds come back dual, and a bond hosts both kinds of state.
-        dual = any(op.ndim != 3 for _, ops in strings for op, _ in ops)
+        # On a sign-braiding grading ``_split`` hands its bonds back non-dual (the dual
+        # cap would cost the twist per odd cut; see its docstring), so the whole MPO
+        # stays on the rank-3 route's non-dual convention there.
+        dual = any(op.ndim != 3 for _, ops in strings for op, _ in ops) and not (
+            _braids_with_signs(phys)
+        )
         split_cutoff = 1e-13 if cutoff is None else cutoff
         splits: dict[int, list[SymmetricTensor]] = {}
 
