@@ -341,6 +341,64 @@ def test_su2_dmrg_reaches_the_same_n12_energy():
     assert out.psi[0].legs[0].space == GradedSpace.new(SU2, {SU2Sector(0): 1})
 
 
+# --- M14: the schedule does arithmetic, and the extrapolation recipe ----------------
+
+
+def test_a_ramp_reaches_below_its_own_first_phase():
+    """``[Sweep(8)]*3 + [Sweep(32)]*3`` at N=12: the schedule is not bookkeeping.
+
+    The chi=32 tail must end below the energy the chi=8 phase plateaued at, and with a
+    smaller discarded weight than any chi=8 sweep reported.
+    """
+    psi = network.MPS.random(dmrg.PHYS, dmrg.bond_spaces(12), seed=0)
+    schedule = [network.Sweep(8)] * 3 + [network.Sweep(32)] * 3
+    out = network.dmrg_(psi, dmrg.mpo(12), schedule=schedule, energy_tol=0.0, max_sweeps=6)
+    assert out.schedule == schedule
+    assert out.history[-1][0] < out.history[2][0]
+    assert out.history[-1][3] < min(h[3] for h in out.history[:3])
+
+
+def test_the_reverse_schedule_extrapolation_beats_its_cheapest_run(main_runs):
+    """block2's energy-extrapolation protocol as a test, not a function.
+
+    A converged chi=64 run is re-swept on a *reverse* schedule -- zero noise throughout,
+    ``energy_tol=0.0`` so nothing exits early, an even number of sweeps per chi, the
+    first reverse chi below the last forward one -- and the linear fit of energy against
+    discarded weight lands closer to the exact N=12 energy than the chi=8 run does. The
+    residual check is what makes it a statement about *linearity* rather than luck, and
+    the protocol is only valid because every sweep here is two-site (a one-site sweep at
+    zero noise reports near-zero discarded weight); the recipe with block2's conventions
+    is in ``docs/tutorials/dmrg.md``.
+    """
+    small, _ = main_runs
+    psi = small.psi.copy()
+    schedule = [network.Sweep(16, noise=0.0)] * 2 + [network.Sweep(12)] * 2 + [network.Sweep(8)] * 2
+    out = network.dmrg_(psi, dmrg.mpo(12), schedule=schedule, energy_tol=0.0, max_sweeps=6)
+    dws = [h[3] for h in out.history]
+    energies = [h[0] for h in out.history]
+    fit = np.polyfit(dws, energies, 1)
+    assert abs(fit[1] - E_OBC_12) < abs(run(12, 8).energy - E_OBC_12)
+    residuals = np.asarray(energies) - np.polyval(fit, dws)
+    assert np.abs(residuals).max() < 0.05 * (max(energies) - min(energies))
+
+
+def test_a_product_seeded_run_keeps_the_sector_structural():
+    """``test_the_target_sector_is_structural`` for an ``MPS.product`` Neel seed at N=12.
+
+    The D=1 product seed carries the ``S^z_tot = 0`` statement on its boundary legs
+    exactly as the random seed does, and every forbidden amplitude of the converged
+    state is exactly zero -- the sector survives the sweeps structurally, not
+    approximately.
+    """
+    psi = network.MPS.product(dmrg.PHYS, [U1Sector(1), U1Sector(-1)] * 6)
+    assert psi[0].legs[0].space == dmrg.BOUNDARY
+    out = network.dmrg_(psi, dmrg.mpo(12), chi=32)
+    amplitudes = np.asarray(out.psi.to_dense()).reshape(-1)
+    forbidden = [s for s in range(2**12) if bin(s).count("1") != 6]
+    assert np.count_nonzero(amplitudes[forbidden]) == 0
+    assert np.linalg.norm(amplitudes) == pytest.approx(1.0, abs=1e-10)
+
+
 # --- the example runs standalone ---------------------------------------------------
 
 
@@ -353,4 +411,6 @@ def test_main_runs(main_runs):
     small, big = main_runs
     assert small.sweeps > 1 and big.sweeps > 1
     assert len(small.history) == small.sweeps
+    for out in (small, big):  # M14: the realized schedule, one entry per sweep
+        assert len(out.schedule) == out.sweeps == len(out.history)
     assert small.denergy < 1e-12 and small.max_dSchmidt < 1e-8

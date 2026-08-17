@@ -132,6 +132,71 @@ class MPS:
         )
 
     @classmethod
+    def product(cls, phys: GradedSpace, states: Sequence[Sector]) -> "MPS":
+        """A product state: one physical sector per site, bonds derived rather than declared.
+
+        ``states[n]`` names the basis vector site ``n`` carries -- a sector of ``phys``
+        at degeneracy 1 -- and the bond spaces fall out of the charges: bond
+        ``len(states)`` is the unit sector and the loop runs backwards through the
+        provider's ``dual``, so **bond 0 carries the total charge**, which is where the
+        target-sector statement lives (YASTN's charged-first-virtual-leg recipe,
+        ``_initialize.py``:194). ``psi[0].legs[0].space`` is then printable and
+        assertable: on the U(1) spin chain a ``D=1`` boundary leg carrying ``U1Sector(q)``
+        targets ``S^z_tot = q/2`` (the leg is dual there when ``q`` is non-unit, which is
+        what puts the recipe's sign on the space). The result has norm 1 and a single
+        dense amplitude of exactly 1.0.
+
+        Abelian-only, by construction and permanently: when a fusion has more than one
+        channel the bonds are not determined -- a single sector is not a non-Abelian
+        multiplet -- and the constructor refuses rather than picking a channel. To target
+        a sector under a non-Abelian symmetry, seed with :meth:`MPS.random` and put the
+        target on a charged ``D=1`` boundary leg of bond 0.
+        """
+        states = list(states)
+        sym = phys.provider
+        for n, a in enumerate(states):
+            if a not in phys:
+                raise ValueError(
+                    f"sector {a!r} at site {n} is not in the physical space; available: "
+                    f"{[b for b, _ in phys.sectors]}"
+                )
+            if phys.degeneracy(a) != 1:
+                raise ValueError(
+                    f"sector {a!r} has degeneracy {phys.degeneracy(a)} in the physical "
+                    "space, and a product state names a basis vector: this constructor "
+                    "has no slot for the degeneracy index (a states: "
+                    "Sequence[tuple[Sector, int]] spelling would be the upgrade)"
+                )
+        bonds = [GradedSpace.new(sym, {sym.unit: 1})]  # bond len(states), built backwards
+        for n in range(len(states) - 1, -1, -1):
+            channels = sym.fusion(bonds[0].sectors[0][0], sym.dual(states[n]))
+            if len(channels) != 1:
+                raise ValueError(
+                    f"MPS.product is Abelian-only: fusing bond {n + 1} with the dual of "
+                    f"{states[n]!r} has {len(channels)} channels, so the bonds are not "
+                    "determined -- a single sector is not a non-Abelian multiplet (a "
+                    "single spin-up is not an SU(2) multiplet). Seed with MPS.random and "
+                    "a charged D=1 boundary leg on bond 0 to target a sector instead"
+                )
+            bonds.insert(0, GradedSpace.new(sym, {channels[0]: 1}))
+        # Bond 0's *space* shows the total charge with the recipe's sign -- +q targets
+        # S^z_tot = q/2 -- so the leg is dual there (Leg.fused_sector then feeds the
+        # accumulated sector to the invariance check unchanged). On the unit sector the
+        # flag is a pure label and stays False, so Env's plain boundary legs match and a
+        # charge-0 product state feeds dmrg_ directly.
+        total = sym.dual(bonds[0].sectors[0][0])
+        first = Leg(GradedSpace.new(sym, {total: 1}), OUT, total != sym.unit)
+        sites = []
+        for n, a in enumerate(states):
+            dense = np.zeros((1, phys.dim, 1))
+            dense[0, phys.sector_offset(a), 0] = 1.0
+            left = first if n == 0 else Leg(bonds[n], OUT)
+            sites.append(
+                SymmetricTensor.from_dense(dense, (left, Leg(phys, OUT), Leg(bonds[n + 1], IN)))
+            )
+        return cls(sites)
+
+    @classmethod
     def from_tensors(cls, tensors: Iterable[SymmetricTensor]) -> "MPS":
         """An MPS over already-built site tensors, each through the write barrier."""
         return cls(tensors)

@@ -17,7 +17,7 @@ import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.network import MPS, Env, expectation_1site, expectation_2site
 from tenet.network.mps import MPS_FORMAT_VERSION
-from tenet.symmetry import SU2, SU2Sector
+from tenet.symmetry import SU2, U1, SU2Sector, U1Sector
 
 # A four-site SU(2) chain of spin-1/2s: the container is provider-generic even though the
 # Hamiltonian is not (REPOSITORY_RULES:61). ``SU2Sector(2 j)``, so 1 is the doublet.
@@ -142,6 +142,58 @@ def test_norm_matches_the_dense_norm_before_any_canonization():
     psi = u1_mps(4, seed=3)
     dense = float(np.linalg.norm(np.asarray(psi.to_dense())))
     assert psi.norm() == pytest.approx(dense, rel=1e-12)
+
+
+# --- M14: MPS.product -----------------------------------------------------------------
+
+
+def test_product_puts_the_total_charge_on_bond_zero():
+    """The target sector is readable off the result, and the amplitudes are exact.
+
+    Dense physical index 0 is charge -1 (down) and 1 is charge +1 (up), so the Neel
+    string's single amplitude sits at ``(1, 0, 1, 0, ...)`` -- exactly 1.0, everything
+    else exactly zero, no tolerance.
+    """
+    neel = MPS.product(example.PHYS, [U1Sector(1), U1Sector(-1)] * 4)
+    assert neel[0].legs[0].space == example.BOUNDARY
+    expected = np.zeros((2,) * 8)
+    expected[(1, 0) * 4] = 1.0
+    assert np.array_equal(np.asarray(neel.to_dense()), expected)
+
+    up = MPS.product(example.PHYS, [U1Sector(1)] * 4)
+    assert up[0].legs[0].space == GradedSpace.new(U1, {U1Sector(4): 1})
+    assert up[len(up) - 1].legs[2].space == example.BOUNDARY  # the other end is the unit
+
+
+def test_product_is_normalized_and_measures_its_own_sectors():
+    """``norm()`` is 1 and ``expectation_1site`` reads +-0.5 -- the #122 oracle."""
+    states = [U1Sector(1), U1Sector(-1)] * 4
+    psi = MPS.product(example.PHYS, states)
+    assert psi.norm() == pytest.approx(1.0, abs=1e-12)
+    sz = SymmetricTensor.from_dense(
+        np.diag([-0.5, 0.5]), (Leg(example.PHYS, OUT), Leg(example.PHYS, IN))
+    )
+    for n, a in enumerate(states):
+        want = 0.5 if a == U1Sector(1) else -0.5
+        assert expectation_1site(psi, sz, n) == pytest.approx(want, abs=1e-12)
+
+
+def test_product_refuses_a_sector_absent_from_phys():
+    with pytest.raises(ValueError, match="not in the physical space; available"):
+        MPS.product(example.PHYS, [U1Sector(1), U1Sector(3)])
+
+
+def test_product_refuses_a_degenerate_sector():
+    """A product state names a *basis vector*; this constructor has no degeneracy slot."""
+    wide = GradedSpace.new(U1, {U1Sector(0): 2})
+    with pytest.raises(ValueError, match=r"degeneracy 2.*Sequence\[tuple\[Sector, int\]\]"):
+        MPS.product(wide, [U1Sector(0), U1Sector(0)])
+
+
+def test_product_refuses_a_non_abelian_fusion():
+    """Abelian-only, permanently: a single spin-up is not an SU(2) multiplet."""
+    with pytest.raises(ValueError, match=r"SU\(2\) multiplet.*MPS\.random"):
+        MPS.product(SU2_PHYS, [SU2Sector(1)] * 4)
 
 
 # --- provider-generic: the same container on SU(2) legs ------------------------------
