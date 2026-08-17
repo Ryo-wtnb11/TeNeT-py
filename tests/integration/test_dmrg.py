@@ -20,9 +20,18 @@ measured for #110 by ``scipy.sparse.linalg.eigsh(k=1, which='SA', tol=0)`` on th
 Hamiltonian -- because ``C(20, 10) = 184 756`` is past what a test should diagonalize.
 That is the recorded-baseline pattern ``test_ctmrg.py``:555 already uses.
 
-**Runtime: the budget is 60 s** and the module measures **33.7 s**, dominated by the
-``main_runs`` fixture (24.7 s: the N=32 chi=32 run inside ``dmrg.main()`` is the single
-most expensive thing here, and it is deliberately *shared* with the large-N band check
+**The third oracle class (#152) is an independent library**: MPSKit.jl, vendored as
+``tests/fixtures/mpskit_heisenberg.json`` and regenerable by its committed generator
+``tools/oracles/heisenberg_mpskit.jl`` (Julia is never run in CI or by this module --
+the fixture is read by ``json.loads`` and nothing more). The fixture's own validation
+entries reproduce ``E_OBC_12``/``E_OBC_20`` to better than 1e-12, which is what licenses
+its N=32 numbers as an oracle above ED's ceiling: the ``main_runs`` N=32 chi=64 energy
+agrees with MPSKit's chi=256 value to a measured ``2e-10``, and all 31 bond energies
+``<S_i . S_{i+1}>`` agree with MPSKit's profile to a measured ``6e-10``.
+
+**Runtime: the budget is 60 s** and the module measures **~44 s**, dominated by the
+``main_runs`` fixture (~31 s: the N=32 chi=64 run inside ``dmrg.main()`` is the single
+most expensive thing here, and it is deliberately *shared* with the MPSKit cross-checks
 and the N=12 oracle rather than run three times) and
 :func:`test_n20_matches_the_recorded_literal` (5.6 s). Unlike
 ``test_ctmrg.py``, whose ~47 s floor is one-off XLA compilation, **there is no compile
@@ -35,6 +44,7 @@ x64 is enabled process-globally in ``tests/conftest.py``; every tolerance here d
 it.
 """
 
+import json
 import pathlib
 import sys
 
@@ -53,6 +63,12 @@ import dmrg  # noqa: E402
 # energy and is not a target for an OBC MPS anywhere in this file.
 E_OBC_12 = -5.142090632840532
 E_OBC_20 = -8.682473334398956
+
+# The MPSKit.jl oracle (#152): vendored, provenance-pinned, regenerated only by running
+# its committed generator. Read here with stdlib json; Julia is never a test dependency.
+_MPSKIT = json.loads(
+    (pathlib.Path(__file__).parents[1] / "fixtures" / "mpskit_heisenberg.json").read_text()
+)
 
 # Simplification: a plain dict of completed runs, as ``test_ctmrg._ENVS`` is. A DMRG run is the
 # expensive thing in this module and nothing here mutates one.
@@ -236,18 +252,86 @@ def test_n20_matches_the_recorded_literal():
     assert out.energy == pytest.approx(E_OBC_20, abs=1e-8)
 
 
-def test_n32_lands_in_the_fitted_band(main_runs):
-    """N=32 at chi=32 in ``[-14.01, -13.98]``.
+# --- M22: the MPSKit.jl oracle (#152) ----------------------------------------------
 
-    The band is a *measured fit*, not a hand-wave at the Bethe limit: fitting
-    ``E(N) = N e_inf + a - c/N`` on #110's own N=18/N=20 pair gives ``a = 0.18796``,
-    ``c = 0.1498`` and hence ``E(32) ~ -13.997``. Comparing ``E/N`` to
-    ``e_inf = -0.4431471805599453`` instead would be a ~1.2% statement and would pass for
-    a badly converged run.
+
+def test_fixture_provenance_pins_the_mpskit_stack():
+    """The seven provenance keys and the three pinned versions, asserted.
+
+    The role ``test_fixture_header_names_tensorkitsectors_as_oracle`` plays for the racah
+    fixtures: a silent regeneration against a different MPSKit shows up as a red test and
+    a version bump in the diff, not as quietly different floats.
+    """
+    p = _MPSKIT["provenance"]
+    assert set(p) == {
+        "mpskit",
+        "mpskitmodels",
+        "tensorkit",
+        "julia",
+        "generator",
+        "generated_utc",
+        "script_sha256",
+    }
+    assert p["mpskit"] == "0.13.13"
+    assert p["mpskitmodels"] == "0.4.7"
+    assert p["tensorkit"] == "0.17.1"
+    assert p["generator"] == "tools/oracles/heisenberg_mpskit.jl"
+
+
+def test_fixture_validation_entries_match_the_ed_literals():
+    """MPSKit's N=12 and N=20 energies equal ``E_OBC_12``/``E_OBC_20`` to 1e-12.
+
+    Pure arithmetic, no DMRG run: this is what fires if the fixture is ever regenerated
+    against a different Hamiltonian convention (a rescaled J, a sign flip, periodic
+    boundaries). Both #110 literals were single-sourced until #152 cross-checked them.
+    """
+    v = _MPSKIT["validation"]
+    assert v["N12_trivial"]["energy"] == pytest.approx(E_OBC_12, abs=1e-12)
+    assert v["N12_su2"]["energy"] == pytest.approx(E_OBC_12, abs=1e-12)
+    assert v["N20_su2"]["energy"] == pytest.approx(E_OBC_20, abs=1e-12)
+
+
+def test_n32_matches_the_mpskit_oracle(main_runs):
+    """N=32 at chi=64 against MPSKit's chi=256 value, to 1e-9 (measured gap ~2e-10).
+
+    This replaces ``test_n32_lands_in_the_fitted_band``'s 0.03-wide window, which was the
+    best available before #152: fitting ``E(N) = N e_inf + a - c/N`` on #110's own
+    N=18/N=20 pair gives ``a = 0.18796``, ``c = 0.1498`` and hence ``E(32) ~ -13.997``,
+    and the band ``[-14.01, -13.98]`` asserted exactly that. The fixture's chi ladder
+    pins the same quantity to 1e-12, so the band survives only as this record. The
+    Bethe-limit line is a different statement (a finite open chain sits above the
+    thermodynamic limit) and is kept.
     """
     _, big = main_runs
-    assert -14.01 <= big.energy <= -13.98
+    assert big.energy == pytest.approx(_MPSKIT["N32"]["chi256"]["energy"], abs=1e-9)
     assert big.energy / 32 > dmrg.E_INF  # a finite open chain sits above the limit
+
+
+def test_bond_energies_match_the_mpskit_profile(main_runs):
+    """All 31 ``<S_i . S_{i+1}>`` of the converged N=32 MPS against MPSKit's, to 1e-8.
+
+    A total energy is one number that averages over 31 bonds and can hide a compensating
+    error in a boundary tensor; the profile cannot -- the edge bond is ``-0.652`` and its
+    neighbour ``-0.296``, so a swapped or mis-normalized boundary tensor is loud here and
+    quiet in the sum. The two-site operator is ``h2_dense()``'s construction from
+    ``tests/network/test_mps.py``, rebuilt here because ``tests/`` is not a package.
+    Measured max deviation: 5.8e-10, for ~0.6 s on the MPS ``main_runs`` already paid for.
+    """
+    _, big = main_runs
+    _, sz, sp, sm = dmrg._spin_half()
+    h2 = np.einsum("Pp,Qq->PQpq", sz, sz)
+    h2 = h2 + 0.5 * np.einsum("Pp,Qq->PQpq", sp, sm) + 0.5 * np.einsum("Pp,Qq->PQpq", sm, sp)
+    legs = (
+        tenet.Leg(dmrg.PHYS, tenet.OUT),
+        tenet.Leg(dmrg.PHYS, tenet.OUT),
+        tenet.Leg(dmrg.PHYS, tenet.IN),
+        tenet.Leg(dmrg.PHYS, tenet.IN),
+    )
+    op = tenet.SymmetricTensor.from_dense(h2, legs)
+    profile = _MPSKIT["N32_bond_energies"]
+    assert len(profile) == 31
+    for n, want in enumerate(profile):  # fixture bond i = 1..31 is tenet bond n = 0..30
+        assert network.expectation_2site(big.psi, op, n) == pytest.approx(want, abs=1e-8), n
 
 
 # --- the three variational checks --------------------------------------------------
