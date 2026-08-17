@@ -142,8 +142,10 @@ def permutation_plan(structure: TensorStructure, axes: tuple[int, ...]) -> Permu
 
     built: list[tuple[int, int, complex]] = []
     for src, key in enumerate(structure.block_order):
-        for out_tree, c_out in provider.permute_tree(key.output_tree, out_perm):
-            for in_tree, c_in in provider.permute_tree(key.input_tree, in_perm):
+        # _refuse() above ran requires(provider, PermutationCoefficients);
+        # a raise-based capability check does not narrow
+        for out_tree, c_out in provider.permute_tree(key.output_tree, out_perm):  # ty: ignore[unresolved-attribute]
+            for in_tree, c_in in provider.permute_tree(key.input_tree, in_perm):  # ty: ignore[unresolved-attribute]
                 coeff = c_out * c_in
                 if coeff == 0:
                     continue

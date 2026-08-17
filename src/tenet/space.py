@@ -65,7 +65,12 @@ class GradedSpace(_HashMemo):
             if a in seen:
                 raise ValueError(f"duplicate sector {a!r}")
             seen.add(a)
-        return cls(provider, tuple(sorted(pairs, key=lambda p: p[0])))
+        # Sector is an order=True dataclass, so the key is comparable; ty does
+        # not synthesize dataclass ordering methods here
+        return cls(
+            provider,
+            tuple(sorted(pairs, key=lambda p: p[0])),  # ty: ignore[no-matching-overload]
+        )
 
     def direct_sum(self, other: "GradedSpace") -> "GradedSpace":
         """``self ⊕ other`` at the label level: union of sectors, degeneracies added.
@@ -117,7 +122,8 @@ class GradedSpace(_HashMemo):
     def dim(self) -> int:
         """``Σ m_a d_a``: the full dense dimension. Requires ``ClebschGordan``."""
         requires(self.provider, ClebschGordan)
-        return sum(m * self.provider.irrep_dim(a) for a, m in self.sectors)
+        # requires() above; raise-based check does not narrow
+        return sum(m * self.provider.irrep_dim(a) for a, m in self.sectors)  # ty: ignore[unresolved-attribute]
 
     def sector_offset(self, a: Sector) -> int:
         """Start of ``a``'s slab in the dense layout. Requires ``ClebschGordan``.
@@ -130,7 +136,7 @@ class GradedSpace(_HashMemo):
         for b, m in self.sectors:
             if b == a:
                 return offset
-            offset += m * self.provider.irrep_dim(b)
+            offset += m * self.provider.irrep_dim(b)  # ty: ignore[unresolved-attribute]  # see above
         raise KeyError(a)
 
 

@@ -71,7 +71,7 @@ round-trips our ``to_dense`` output at exactly 0.0.
 
 
 @dataclass(frozen=True, slots=True, order=True)
-class SU2Sector(Sector):
+class SU2Sector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deliberate, see Sector
     """An SU(2) irrep labelled by ``two_j = 2j >= 0``."""
 
     two_j: int
@@ -161,12 +161,18 @@ class SU2Provider:
         self, key: "FusionBlockKey", *, dual: bool
     ) -> tuple[tuple["FusionBlockKey", complex], ...]:
         """One term: ``sqrt(qdim(c)/qdim(a))·B(a,b,c)``, times ``chi`` if already dual."""
-        return bend_braided(self, key, right=True, dual=dual)
+        # ``self``'s Sector parameters are narrowed to this symmetry's own sector
+        # type; deliberate per-symmetry specialization the unparameterized
+        # protocol cannot express, so the checker misreads the conformance.
+        return bend_braided(self, key, right=True, dual=dual)  # ty: ignore[invalid-argument-type]
 
     def bend_left(
         self, key: "FusionBlockKey", *, dual: bool
     ) -> tuple[tuple["FusionBlockKey", complex], ...]:
-        return bend_braided(self, key, right=False, dual=dual)
+        # ``self``'s Sector parameters are narrowed to this symmetry's own sector
+        # type; deliberate per-symmetry specialization the unparameterized
+        # protocol cannot express, so the checker misreads the conformance.
+        return bend_braided(self, key, right=False, dual=dual)  # ty: ignore[invalid-argument-type]
 
     def frobenius_schur(self, a: SU2Sector) -> int:
         """``chi_a = (-1)^(2j)``: ``+1`` for integer spin, ``-1`` for half-integer."""

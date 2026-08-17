@@ -106,7 +106,12 @@ def fusion_trees(
     coupled: Sector,
 ) -> tuple[FusionTree, ...]:
     """All valid left-associated trees for ``uncoupled -> coupled``, sorted."""
-    return _fusion_trees(provider, tuple(uncoupled), coupled)
+    # The ignores in this module: providers are frozen dataclasses, hashable by
+    # contract (symmetry.base module docstring); ``__hash__`` is deliberately
+    # not a protocol member — the member set is pinned by
+    # ``test_fusion_provider_is_a_protocol`` — so the ``@cache`` wrappers see a
+    # non-Hashable protocol.
+    return _fusion_trees(provider, tuple(uncoupled), coupled)  # ty: ignore[invalid-argument-type]
 
 
 def coupled_sectors(
@@ -114,19 +119,24 @@ def coupled_sectors(
     uncoupled: Sequence[Sector],
 ) -> tuple[Sector, ...]:
     """Every sector reachable from ``uncoupled``, canonically sorted."""
-    return _coupled_sectors(provider, tuple(uncoupled))
+    # hashable by provider contract; see the ignore rationale at _fusion_trees
+    return _coupled_sectors(provider, tuple(uncoupled))  # ty: ignore[invalid-argument-type]
 
 
 @cache
 def _fusion_trees(
     provider: FusionProvider, uncoupled: tuple[Sector, ...], coupled: Sector
 ) -> tuple[FusionTree, ...]:
-    return tuple(t for t in _all_trees(provider, uncoupled) if t.coupled == coupled)
+    # hashable by provider contract; see the ignore rationale at fusion_trees
+    trees = _all_trees(provider, uncoupled)  # ty: ignore[invalid-argument-type]
+    return tuple(t for t in trees if t.coupled == coupled)
 
 
 @cache
 def _coupled_sectors(provider: FusionProvider, uncoupled: tuple[Sector, ...]) -> tuple[Sector, ...]:
-    return tuple(sorted({t.coupled for t in _all_trees(provider, uncoupled)}))
+    # hashable by provider contract; see the ignore rationale at fusion_trees
+    trees = _all_trees(provider, uncoupled)  # ty: ignore[invalid-argument-type]
+    return tuple(sorted({t.coupled for t in trees}))
 
 
 @cache
@@ -138,7 +148,8 @@ def _all_trees(provider: FusionProvider, uncoupled: tuple[Sector, ...]) -> tuple
         return (FusionTree(uncoupled, (), (), uncoupled[0]),)
     u = uncoupled[-1]
     out = []
-    for tree in _all_trees(provider, uncoupled[:-1]):
+    # hashable by provider contract; see the ignore rationale at _fusion_trees
+    for tree in _all_trees(provider, uncoupled[:-1]):  # ty: ignore[invalid-argument-type]
         e = tree.coupled
         inner = (*tree.inner, e) if tree.rank >= 2 else ()
         for c in provider.fusion(e, u):

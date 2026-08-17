@@ -118,7 +118,8 @@ def bend_plan(structure: TensorStructure, axis: int) -> BendPlan:
     provider = structure.provider
     leg = structure.legs[axis]
     right = leg.side is OUT
-    bend_tree = provider.bend_right if right else provider.bend_left
+    # _refuse() above ran requires(provider, BendingCoefficients)
+    bend_tree = provider.bend_right if right else provider.bend_left  # ty: ignore[unresolved-attribute]
 
     moved = replace(leg, side=IN if right else OUT, dual=not leg.dual)
     new_structure = TensorStructure(
@@ -452,7 +453,8 @@ def flip(
             out = leg.side is OUT
             tree = key.output_tree if out else key.input_tree
             # the leaf is invariant under the flip, so old key and new key agree
-            base = complex(provider.flip_phase(tree.uncoupled[tree_pos[ax]]))
+            # flip() ran requires(provider, FlipPhase) before building this plan
+            base = complex(provider.flip_phase(tree.uncoupled[tree_pos[ax]]))  # ty: ignore[unresolved-attribute]
             if not out:  # the input tree enters the pairing conjugated
                 base = base.conjugate()
             if not inv:

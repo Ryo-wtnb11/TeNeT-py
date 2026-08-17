@@ -15,7 +15,7 @@ That convention, fixed once and depended on downstream: axis ``i`` has length
 order; within sector ``a``'s slab the index is ``alpha * d_a + m``.
 """
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +27,8 @@ from tenet.structure import FusionBlockKey, TensorStructure
 from tenet.symmetry.base import FusionProvider
 
 if TYPE_CHECKING:
+    from types import ModuleType
+
     from tenet.map_view import TensorMapView
 
 __all__ = ["SymmetricTensor"]
@@ -234,7 +236,7 @@ class SymmetricTensor:
     # dependency edge stays one-way (ops -> tensor). No __iadd__: the tensor is
     # frozen and Python's rebinding fallback is the intended behaviour.
 
-    def _ops(self):
+    def _ops(self) -> "ModuleType":
         from tenet.ops import basic
 
         return basic
@@ -402,7 +404,7 @@ class SymmetricTensor:
         return direct_sum(self, other, axes)
 
     def __repr__(self) -> str:
-        def safe(get) -> Any:
+        def safe(get: Callable[[], Any]) -> Any:
             try:
                 return get()
             except Exception:

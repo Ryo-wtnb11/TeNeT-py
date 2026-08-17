@@ -45,7 +45,7 @@ Written into a saved file's header by :func:`tenet.save` and compared on
 
 
 @dataclass(frozen=True, slots=True, order=True)
-class SUNSector(Sector):
+class SUNSector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deliberate, see Sector
     """An SU(N) irrep labelled by its Dynkin label ``(a_1, ..., a_{N-1})``.
 
     A list is accepted and stored as a tuple, so a sector survives a JSON round
@@ -200,12 +200,18 @@ class SUNProvider:
         self, key: "FusionBlockKey", *, dual: bool
     ) -> tuple[tuple["FusionBlockKey", complex], ...]:
         """``sqrt(qdim(c)/qdim(a))·B(a,b,c)``, expanded over the new vertex's multiplicity."""
-        return bend_braided(self, key, right=True, dual=dual)
+        # ``self``'s Sector parameters are narrowed to this symmetry's own sector
+        # type; deliberate per-symmetry specialization the unparameterized
+        # protocol cannot express, so the checker misreads the conformance.
+        return bend_braided(self, key, right=True, dual=dual)  # ty: ignore[invalid-argument-type]
 
     def bend_left(
         self, key: "FusionBlockKey", *, dual: bool
     ) -> tuple[tuple["FusionBlockKey", complex], ...]:
-        return bend_braided(self, key, right=False, dual=dual)
+        # ``self``'s Sector parameters are narrowed to this symmetry's own sector
+        # type; deliberate per-symmetry specialization the unparameterized
+        # protocol cannot express, so the checker misreads the conformance.
+        return bend_braided(self, key, right=False, dual=dual)  # ty: ignore[invalid-argument-type]
 
 
 def _scalar(block: np.ndarray, which: str) -> float:

@@ -161,7 +161,9 @@ def norm(t: "SymmetricTensor") -> Any:
     if not t.blocks:
         return 0.0
     total = sum(
-        provider.qdim(key.coupled) * ar.do("sum", ar.do("abs", block) ** 2)
+        # requires() above; raise-based check does not narrow
+        provider.qdim(key.coupled)  # ty: ignore[unresolved-attribute]
+        * ar.do("sum", ar.do("abs", block) ** 2)
         for key, block in t.items()
     )
     # No float(): concretizing here makes `norm` unusable under jit/grad/vmap.

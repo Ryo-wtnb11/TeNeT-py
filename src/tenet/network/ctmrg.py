@@ -408,7 +408,13 @@ def ctmrg(
         previous = current
         if history[-1] < tol:
             break
-    return CTMRG_out(len(history), history[-1], history[-1] < tol, CTMEnv(c, e, bond), history)
+    return CTMRG_out(
+        len(history),
+        history[-1],
+        history[-1] < tol,
+        CTMEnv(c, e, bond),  # ty: ignore[invalid-argument-type]  # max_sweeps >= 1: move() assigned bond
+        history,
+    )
 
 
 def ctmrg_unrolled(

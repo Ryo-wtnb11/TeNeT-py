@@ -73,6 +73,8 @@ Usage::
 # ever hits a badly scaled tensor, and add a criterion at that point.
 # Simplification: no ``custom_jvp``; add one when something asks for ``jacfwd``.
 
+from typing import Any
+
 try:
     import jax
     import jax.numpy as jnp
@@ -95,17 +97,17 @@ _EPSILON = 1e-12
 _NAMES = ("linalg.svd", "linalg.eigh")
 
 
-def _dag(x):
+def _dag(x: jax.Array) -> jax.Array:
     """``x†`` for one dense coupled-sector matrix."""
     return jnp.conj(x).T
 
 
-def _antiherm(x):
+def _antiherm(x: jax.Array) -> jax.Array:
     """``(x - x†)/2``. The gauge-carrying part of ``U† dU``; the rest is unphysical."""
     return (x - _dag(x)) / 2
 
 
-def _safe_inverse(x, eps: float):
+def _safe_inverse(x: jax.Array, eps: float) -> jax.Array:
     """``1/x``, Lorentzian-broadened: ``x/(x**2 + eps)``. tensorgrad's ``safe_inverse``.
 
     Note that it is exactly ``0`` at ``x == 0``, which is what zeroes the diagonal of
@@ -120,19 +122,24 @@ def _safe_inverse(x, eps: float):
 
 
 @jax.custom_vjp
-def _svd(b):
+def _svd(b: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
     # a plain tuple, not JAX's SVDResult: fwd must return the same treedef, and
     # ops/linalg.py only ever indexes it
     u, s, vh = jnp.linalg.svd(b, full_matrices=False)
     return u, s, vh
 
 
-def _svd_fwd(b):
+def _svd_fwd(
+    b: jax.Array,
+) -> tuple[tuple[jax.Array, jax.Array, jax.Array], tuple[jax.Array, jax.Array, jax.Array]]:
     u, s, vh = jnp.linalg.svd(b, full_matrices=False)
     return (u, s, vh), (u, s, vh)
 
 
-def _svd_bwd(res, ct):
+def _svd_bwd(
+    res: tuple[jax.Array, jax.Array, jax.Array],
+    ct: tuple[jax.Array, jax.Array, jax.Array],
+) -> tuple[jax.Array]:
     """PRX 9, 031041 Eq. (4) with ``1/x -> safe_inverse(x)``, per coupled-sector matrix.
 
     The ``1/(sigma_i + sigma_j)`` **diagonal is kept**, and that is deliberate:
@@ -178,17 +185,21 @@ _svd.defvjp(_svd_fwd, _svd_bwd)
 
 
 @jax.custom_vjp
-def _eigh(b):
+def _eigh(b: jax.Array) -> tuple[jax.Array, jax.Array]:
     w, v = jnp.linalg.eigh(b)
     return w, v
 
 
-def _eigh_fwd(b):
+def _eigh_fwd(
+    b: jax.Array,
+) -> tuple[tuple[jax.Array, jax.Array], tuple[jax.Array, jax.Array]]:
     w, v = jnp.linalg.eigh(b)
     return (w, v), (w, v)
 
 
-def _eigh_bwd(res, ct):
+def _eigh_bwd(
+    res: tuple[jax.Array, jax.Array], ct: tuple[jax.Array, jax.Array]
+) -> tuple[jax.Array]:
     """PRX 9, 031041 Eq. (3) with ``1/x -> safe_inverse(x)``. ``F``'s diagonal is zero
     for free (see :func:`_safe_inverse`), and the result is Hermitian by construction:
     ``F`` is antisymmetric and ``aV`` antihermitian. Same cotangent-convention ``conj``
@@ -205,7 +216,7 @@ _eigh.defvjp(_eigh_fwd, _eigh_bwd)
 # --- the seam ----------------------------------------------------------------------
 
 
-def _svd_dispatch(b, full_matrices=True, **kwargs):
+def _svd_dispatch(b: jax.Array, full_matrices: bool = True, **kwargs: Any):
     """What ``ar.do("linalg.svd", jax_array, ...)`` resolves to after :func:`install`.
 
     Anything but the compact factorization is handed straight back to JAX with its stock
@@ -218,7 +229,7 @@ def _svd_dispatch(b, full_matrices=True, **kwargs):
     return _svd(b)
 
 
-def _eigh_dispatch(b, **kwargs):
+def _eigh_dispatch(b: jax.Array, **kwargs: Any):
     """As :func:`_svd_dispatch`: a non-default ``UPLO`` goes back to JAX untouched."""
     return jnp.linalg.eigh(b, **kwargs) if kwargs else _eigh(b)
 

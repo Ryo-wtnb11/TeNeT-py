@@ -23,6 +23,7 @@ way no shape check catches.
 import dataclasses
 import json
 import os
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 import autoray as ar
@@ -107,10 +108,15 @@ def _kind(provider: FusionProvider) -> str:
 def _encode_provider(provider: FusionProvider) -> dict[str, Any]:
     kind = _kind(provider)
     if kind == "Product":
-        return {"kind": kind, "factors": [_encode_provider(f) for f in provider.factors]}
+        # kind == "Product" pins the concrete ProductProvider, which has factors
+        return {
+            "kind": kind,
+            "factors": [_encode_provider(f) for f in provider.factors],  # ty: ignore[unresolved-attribute]
+        }
     # Every dataclass field, not just ``name``: SUNProvider also carries ``n``, and a
     # provider reconstructed without it would be a different symmetry.
-    fields = {f.name: getattr(provider, f.name) for f in dataclasses.fields(provider)}
+    # every concrete provider is a frozen dataclass; the protocol cannot say so
+    fields = {f.name: getattr(provider, f.name) for f in dataclasses.fields(provider)}  # ty: ignore[invalid-argument-type]
     return {"kind": kind, **fields}
 
 
@@ -134,7 +140,11 @@ def _decode_sector(provider: FusionProvider, args: list[Any]) -> Sector:
     kind = _kind(provider)
     if kind == "Product":
         return ProductSector(
-            tuple(_decode_sector(f, x) for f, x in zip(provider.factors, args, strict=True))
+            # kind == "Product" pins ProductProvider, which has factors
+            tuple(
+                _decode_sector(f, x)
+                for f, x in zip(provider.factors, args, strict=True)  # ty: ignore[unresolved-attribute]
+            )
         )
     return _SECTORS[kind](*args)
 
@@ -167,7 +177,7 @@ def _decode_leg(d: Any) -> Leg:
     return Leg(space, Side(d["side"]), bool(d["dual"]), d["name"])
 
 
-def _gauges(providers) -> dict[str, str]:
+def _gauges(providers: "Iterable[FusionProvider]") -> dict[str, str]:
     """The gauge fingerprint of every kind present that has one, product factors included."""
     out: dict[str, str] = {}
     stack = list(providers)
@@ -175,7 +185,8 @@ def _gauges(providers) -> dict[str, str]:
         p = stack.pop()
         kind = _kind(p)
         if kind == "Product":
-            stack.extend(p.factors)
+            # kind == "Product" pins the concrete ProductProvider, which has factors
+            stack.extend(p.factors)  # ty: ignore[unresolved-attribute]
         elif kind in _GAUGES:
             out[kind] = _GAUGES[kind]
     return out

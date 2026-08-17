@@ -91,12 +91,15 @@ def _cast_leg(leg: Leg, target: FusionProvider) -> tuple[Leg, list[int]]:
     p = leg.provider
     labels: list[Sector] = []
     for a, m in leg.space.sectors:
-        charges = p.branch(target, a)
+        # SymmetryCast/ClebschGordan are checked by requires() in cast()
+        # before any leg is cast; a raise-based check does not narrow
+        charges = p.branch(target, a)  # ty: ignore[unresolved-attribute]
         for q in charges:
-            if target.irrep_dim(q) != 1:
+            if target.irrep_dim(q) != 1:  # ty: ignore[unresolved-attribute]  # see above
                 raise CapabilityError(
                     f"cast: target {target.name} sector {q!r} has irrep_dim "
-                    f"{target.irrep_dim(q)} > 1; one target label per dense basis vector "
+                    f"{target.irrep_dim(q)} > 1; "  # ty: ignore[unresolved-attribute]  # see above
+                    "one target label per dense basis vector "
                     "is only well-defined when the target's irreps are one-dimensional, "
                     "i.e. when the target is abelian"
                 )

@@ -244,7 +244,8 @@ def _refuse_discarded(t: "SymmetricTensor", kept: "SymmetricTensor", atol: float
     worst: tuple[float, Any] = (0.0, None)
     discarded_sq = total_sq = 0.0
     for key, block in t.items():
-        weight = provider.qdim(key.coupled)
+        # requires() above; raise-based check does not narrow
+        weight = provider.qdim(key.coupled)  # ty: ignore[unresolved-attribute]
         whole = weight * _sum_squares(block)
         total_sq += whole
         i = index.get(key)
