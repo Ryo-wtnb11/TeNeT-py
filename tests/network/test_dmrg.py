@@ -357,3 +357,21 @@ def test_the_su2_mps_bond_holds_the_same_state_in_a_third_of_the_multiplets():
     assert (graded.reduced_dim, graded.dim) == (3, 8)
     assert (plain.reduced_dim, plain.dim) == (8, 8)
     assert abs(su2.energy - u1.energy) < 1e-10
+
+
+def test_fermionic_dmrg_reaches_the_even_parity_ground_energy(monkeypatch):
+    """N=4 spinless hopping on fZ2 legs: ``dmrg_`` against even-parity ED to 1e-10.
+
+    #147's gate-1 report measured this run at -1.4142136 against the ED value
+    -2.2360680 -- the cap-direction Koszul signs of the environment contractions.
+    #160's composition rule (with its explicitly bent wires) is what closes the gap.
+    ``cutoff=None`` takes the prepared per-bond path through the Jordan block table;
+    the default cutoff takes the dense ``W`` path; both must land on ED.
+    """
+    ed = -(5.0**0.5)  # even-parity ground energy of the open 4-site hopping chain
+    from .test_env import _fermionic_chain, _fermionic_state  # noqa: PLC0415
+
+    for cutoff in (None, 1e-13):
+        h = _fermionic_chain(4, monkeypatch, cutoff=cutoff)
+        out = dmrg_(_fermionic_state(4, seed=3), h, chi=16, cutoff=1e-14)
+        assert out.energy == pytest.approx(ed, abs=1e-10)

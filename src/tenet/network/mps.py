@@ -7,6 +7,10 @@ Promoted from ``examples/dmrg.py`` (#110) with no arithmetic change: ``random_mp
 them to :mod:`tenet.network.common`, where ``network/ctmrg.py`` can reach them without
 importing a driver it shares no concept with; #126 then promoted the first two out of the
 driver layer entirely, as :func:`tenet.full_trace` and :func:`tenet.inner`.
+
+Every two-operand ``tenet.einsum`` in this module follows the package's composition rule
+-- operand 1 supplies ``IN`` on every shared wire; stated once in
+``network/__init__.py``, pinned by ``tests/network/test_hygiene.py`` (#160).
 """
 
 import json
@@ -527,6 +531,18 @@ _FERMIONIC = (
 )
 
 
+def _refuse_fermionic(space: GradedSpace) -> None:
+    """Raise :data:`_FERMIONIC` when ``space`` braids with signs.
+
+    A separate function from :func:`_braids_with_signs` because the probe now has a
+    second, load-bearing caller -- :func:`_instantiate`'s spectator classification --
+    and the fermionic oracle tests bypass only the *refusal* (#147's gate discipline),
+    never the classification.
+    """
+    if _braids_with_signs(space):
+        raise ValueError(_FERMIONIC)
+
+
 def _check_op(op: SymmetricTensor, phys: GradedSpace | None) -> GradedSpace:
     """Validate one term operator and return the physical space it declares."""
     if op.ndim != 3 and (op.ndim < 4 or op.ndim % 2):
@@ -547,8 +563,7 @@ def _check_op(op: SymmetricTensor, phys: GradedSpace | None) -> GradedSpace:
                 f"one space, got {[(leg.space, leg.side) for leg in op.legs]}; an MPO site "
                 "tensor, with its bond legs, is not a term operator"
             )
-        if _braids_with_signs(got):
-            raise ValueError(_FERMIONIC)
+        _refuse_fermionic(got)
         return got
     emitted = op.legs[2].space
     if emitted.reduced_dim != 1:
@@ -567,8 +582,8 @@ def _check_op(op: SymmetricTensor, phys: GradedSpace | None) -> GradedSpace:
             "Hand the whole term over instead: one invariant k-site operator from "
             "local_op(dense, phys=...) with no charge, on a tuple of sites"
         )
-    if _braids_with_signs(got) or _braids_with_signs(emitted):
-        raise ValueError(_FERMIONIC)
+    _refuse_fermionic(got)
+    _refuse_fermionic(emitted)
     return got
 
 
@@ -616,8 +631,8 @@ def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
         body = string.ascii_uppercase[: vh.ndim - 1]
         carry = tenet.einsum(f"xy,y{body}->x{body}", s, vh)
     out.append(_as_w(carry))
-    if any(_braids_with_signs(w.legs[3].space) for w in out):
-        raise ValueError(_FERMIONIC)  # the derived bond, which no argument declared
+    for w in out:
+        _refuse_fermionic(w.legs[3].space)  # the derived bond, which no argument declared
     return out
 
 
@@ -727,11 +742,17 @@ class JordanBlocks(NamedTuple):
     bond, which is the whole reason the table survives instantiation.
 
     Three derived views serve the matvec's term merging: ``idmap`` is the rank-2 0/1 map
-    of every identity channel of the site -- the two corners plus the ``a`` spectators --
-    between the full left and right bonds, so all "identity through this site" paths ride
-    one tensor; ``spec_op`` is the same spectator map restricted to the open subspaces;
-    and ``a_real_op`` is ``a_op`` minus the spectators, the genuinely operator-carrying
-    open-to-open edges, ``None`` for every purely string-built model.
+    of every identity channel of the site -- the two corners plus the free-riding ``a``
+    spectators -- between the full left and right bonds, so all "identity through this
+    site" paths ride one tensor; ``spec_op`` is the same spectator map restricted to the
+    open subspaces; and ``a_real_op`` is ``a_op`` minus those spectators. **A spectator
+    rides the rank-2 maps only if its state's space braids with no sign** (#160): the
+    identity tensor interleaves the bond line with the two physical lines, and for a
+    state that braids with signs that crossing is the Jordan-Wigner string -- it lives
+    in the rank-4 tensor and in nothing cheaper, so such a state is classified into
+    ``a_real_op`` instead, where :meth:`Env.heff2`'s open-to-open chain contracts the
+    full tensor. For every sign-free provider the classification is what it always was,
+    at the cost it always had.
     """
 
     a: dict
@@ -907,9 +928,9 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
                     identities[space] = _identity_w(Leg(space, IN, dual), phys)
                 w = identities[space]
             if e_l is not None:
-                w = tenet.einsum("ax,xpqy->apqy", e_l[left], w)
+                w = tenet.einsum("xpqy,ax->apqy", w, e_l[left])
             if e_r is not None:
-                w = tenet.einsum("apqy,yb->apqb", w, e_r[r])
+                w = tenet.einsum("yb,apqy->apqb", e_r[r], w)
             acc = w if acc is None else acc + w
         out.append(acc)
 
@@ -981,9 +1002,17 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
                     else ("c" if left == _IDL else ("b" if r == _IDR else "a"))
                 )
                 dicts[block][left, r] = w
-                spectator = w is None
-                if spectator:
-                    id_channels.append(left)
+                # A spectator may ride the factorized rank-2 channel maps only if its
+                # state's space braids with no sign: the identity tensor interleaves the
+                # bond line with the two physical lines, and for a state that braids
+                # with signs that crossing is the Jordan-Wigner string, which lives in
+                # the rank-4 tensor and in nothing cheaper (#160). Such a state is
+                # classified as operator-carrying and rides ``a_real_op``. Grading
+                # metadata off the space, not a provider branch.
+                spectator = w is None and not _braids_with_signs(states[left])
+                if w is None:
+                    if spectator:
+                        id_channels.append(left)
                     space = states[left]
                     if space not in identities:
                         identities[space] = _identity_w(Leg(space, IN, dual), phys)
@@ -991,11 +1020,11 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
                 if block in ("a", "b"):  # the open left end goes onto the open subspace
                     space, slots, _keys = groups[n]["open"]
                     e = _embedding(space, states[left], slots[left], left=True, dual=dual)
-                    w = tenet.einsum("ax,xpqy->apqy", e, w)
+                    w = tenet.einsum("xpqy,ax->apqy", w, e)
                 if block in ("a", "c"):  # the open right end likewise
                     space, slots, _keys = groups[n + 1]["open"]
                     e = _embedding(space, states[r], slots[r], left=False, dual=dual)
-                    w = tenet.einsum("apqy,yb->apqb", w, e)
+                    w = tenet.einsum("yb,apqy->apqb", e, w)
                 ops[block] = w if ops[block] is None else ops[block] + w
                 if block == "a" and not spectator:
                     a_real = w if a_real is None else a_real + w
@@ -1041,13 +1070,13 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
 
     if dual:
         # The two *outer* legs go back non-dual: ``Env`` builds its boundary environments
-        # with ``Leg(mpo_l, OUT)`` (``env.py``:50-53) and the other builder's ends are
+        # from the boundary legs' own flags (``Env.__init__``) and the other builder's ends are
         # non-dual too. Both ends are D=1 on the unit sector, where the flag is a label.
         triv = GradedSpace.new(sym, {sym.unit: 1})
         cap = SymmetricTensor.from_dense(np.ones((1, 1)), (Leg(triv, IN), Leg(triv, OUT, True)))
-        out[0] = _as_w(tenet.einsum("ax,xpqr->apqr", cap, out[0]))
+        out[0] = _as_w(tenet.einsum("xpqr,ax->apqr", out[0], cap))
         cap = SymmetricTensor.from_dense(np.ones((1, 1)), (Leg(triv, IN, True), Leg(triv, OUT)))
-        out[-1] = _as_w(tenet.einsum("apqx,xb->apqb", out[-1], cap))
+        out[-1] = _as_w(tenet.einsum("xb,apqx->apqb", cap, out[-1]))
     return out, tables
 
 
@@ -1264,12 +1293,17 @@ class MPO:
             u, s, vh = tenet.linalg.svd_truncated(sites[n], ((0,), (1, 2, 3)), cutoff=cutoff)
             sites[n] = _as_w(vh)
             carry = tenet.einsum("xy,yz->xz", u, s)
-            sites[n - 1] = _as_w(tenet.einsum("apqx,xy->apqy", sites[n - 1], carry))
+            # ``u`` came back on the map partition, its ``wl`` leg bent; spell the bend
+            # with ``repartition`` so the join below is a composition, not an implicit cap.
+            carry = tenet.repartition(carry, (), (0, 1))
+            sites[n - 1] = _as_w(tenet.einsum("xy,apqx->apqy", carry, sites[n - 1]))
         for n in range(n_sites - 1):
             u, s, vh = tenet.linalg.svd_truncated(sites[n], ((0, 1, 2), (3,)), cutoff=cutoff)
             sites[n] = _as_w(u)
             carry = tenet.einsum("xy,yz->xz", s, vh)
-            sites[n + 1] = _as_w(tenet.einsum("xy,ypqr->xpqr", carry, sites[n + 1]))
+            # ``vh``'s ``wr`` leg came back bent; spell the bend, as in the sweep above.
+            carry = tenet.repartition(carry, (0, 1), ())
+            sites[n + 1] = _as_w(tenet.einsum("ypqr,xy->xpqr", sites[n + 1], carry))
         return cls(sites)
 
     def to_dense(self) -> Any:
@@ -1281,7 +1315,7 @@ class MPO:
         out = self[0]
         for n in range(1, len(self)):
             body = string.ascii_uppercase[: 2 * n]
-            out = tenet.einsum(f"a{body}x,xpqr->a{body}pqr", out, self[n])
+            out = tenet.einsum(f"xpqr,a{body}x->a{body}pqr", self[n], out)
         n_sites, d = len(self), self[0].legs[1].space.dim
         order = list(range(0, 2 * n_sites, 2)) + list(range(1, 2 * n_sites, 2))
         return out.to_dense()[0, ..., 0].transpose(order).reshape(d**n_sites, d**n_sites)

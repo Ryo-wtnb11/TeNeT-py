@@ -336,6 +336,109 @@ def test_from_terms_refuses_fermionic_braiding():
         MPO.from_terms(3, [(1.0, [(op, 0), (op, 1)])])
 
 
+FZ2_PHYS = GradedSpace.new(fZ2, {FZ2Sector(0): 1, FZ2Sector(1): 1})
+_A = np.array([[0.0, 1.0], [0.0, 0.0]])  # annihilation, |1> -> |0>; creation is _A.T
+_Z = np.diag([1.0, -1.0])  # the explicit Jordan-Wigner string, oracle side only
+
+
+def _jw_c(n_sites, site, dag):
+    """Dense ``c_site`` (or ``c+``) with the explicit JW string on the left."""
+    full = np.array([[1.0]])
+    factors = [_Z] * site + [_A.T if dag else _A] + [np.eye(2)] * (n_sites - site - 1)
+    for f in factors:
+        full = np.kron(full, f)
+    return full
+
+
+def _jw_hop(n_sites, i, j):
+    """Dense ``c+_i c_j + h.c.`` with the explicit JW string, in the ``|0>, |1>`` basis."""
+    return _jw_c(n_sites, i, True) @ _jw_c(n_sites, j, False) + _jw_c(n_sites, j, True) @ _jw_c(
+        n_sites, i, False
+    )
+
+
+def _bypass_refusal(monkeypatch):
+    """#147's gate discipline: bypass only the refusal, never the classification."""
+    from tenet.network import mps as _mps  # noqa: PLC0415
+
+    monkeypatch.setattr(_mps, "_refuse_fermionic", lambda space: None)
+
+
+def _fermionic_ops():
+    op_cd = local_op(_A.T, phys=FZ2_PHYS, charge=FZ2Sector(1))
+    op_c = local_op(_A, phys=FZ2_PHYS, charge=FZ2Sector(1))
+    return op_cd, op_c
+
+
+def _fermionic_hop_mpo(n_sites, i, j, monkeypatch, *, cutoff=None):
+    """``c+_i c_j + h.c.`` through the rank-3 charge-leg route, refusal bypassed."""
+    _bypass_refusal(monkeypatch)
+    op_cd, op_c = _fermionic_ops()
+    terms = [(1.0, [(op_cd, i), (op_c, j)]), (1.0, [(op_cd, j), (op_c, i)])]
+    return MPO.from_terms(n_sites, terms, cutoff=cutoff)
+
+
+def test_an_adjacent_fermionic_hop_matches_the_jordan_wigner_oracle(monkeypatch):
+    """``c+_0 c_1 + h.c.`` on fZ2 legs against the dense JW oracle, element-wise.
+
+    #147's gate-1 deciding experiment, which failed as ``-1x`` the oracle and stopped
+    that issue: each pairwise einsum that contracted an odd MPO-bond wire with the OUT
+    end as operand 1 paid the cap-direction Koszul sign ``ops/contraction.py``:596-603
+    warns about. #160's composition rule -- operand 1 supplies IN on every shared wire,
+    pinned by ``test_hygiene.py`` -- is what makes this pass now; the site tensors were
+    always exact and needed no change.
+    """
+    h = _fermionic_hop_mpo(2, 0, 1, monkeypatch)
+    assert np.abs(np.asarray(h.to_dense()) - _jw_hop(2, 0, 1)).max() < 1e-13
+
+
+def test_a_spectator_site_carries_the_jordan_wigner_string(monkeypatch):
+    """``c+_0 c_2 + h.c.`` at N=3: ``_identity_w`` moves an odd bond past a physical line.
+
+    This was #147's candidate failure -- a naive inversion count over the spectator's two
+    same-sector physical lines could cancel where the string needs ``(-1)^n`` -- and it
+    comes out **exact**: the braided route does write ``a+ (x) Z (x) a``, so the Koszul
+    machinery is the string. It passed already at gate 1, element-wise, even though the
+    adjacent case above failed then: the two odd-bond contractions paid the cap-direction
+    sign twice and ``(-1)**2`` cancelled; the ``Z`` on the spectator is genuine either way.
+    """
+    h = _fermionic_hop_mpo(3, 0, 2, monkeypatch)
+    assert np.abs(np.asarray(h.to_dense()) - _jw_hop(3, 0, 2)).max() < 1e-13
+
+
+def test_every_fermionic_hop_placement_matches_the_jordan_wigner_oracle(monkeypatch):
+    """The systematic sweep behind #147's ``(-1)^(j-i)`` table, all gone to ``+1``.
+
+    Every ``c+_i c_j + h.c.`` placement and distance up to N=5, both term-list orders,
+    both hop directions, under ``cutoff=None`` and the default sweep -- the exact case
+    set gate 1 measured as ``(-1)^(j-i)`` times the oracle -- plus the two-pair
+    four-fermion term ``c+_0 c_1 c+_2 c_3``, whose two odd runs made it ``+1`` even
+    then. Element-wise against dense ``kron`` with the explicit ``Z`` string.
+    """
+    _bypass_refusal(monkeypatch)
+    op_cd, op_c = _fermionic_ops()
+    for n_sites in range(2, 6):
+        for i in range(n_sites):
+            for j in range(i + 1, n_sites):
+                oracle = _jw_hop(n_sites, i, j)
+                forward = [(1.0, [(op_cd, i), (op_c, j)]), (1.0, [(op_cd, j), (op_c, i)])]
+                backward = [(1.0, [(op_c, i), (op_cd, j)]), (1.0, [(op_c, j), (op_cd, i)])]
+                for direction, terms in ((0, forward), (1, backward)):
+                    for order in (terms, terms[::-1]):
+                        for cutoff in (None, 1e-13):
+                            h = MPO.from_terms(n_sites, order, cutoff=cutoff)
+                            got = np.asarray(h.to_dense())
+                            assert np.abs(got - oracle).max() < 1e-12, (
+                                f"c+_{i} c_{j} at N={n_sites}, direction {direction}, "
+                                f"cutoff={cutoff}"
+                            )
+    two_pair = [(1.0, [(op_cd, 0), (op_c, 1), (op_cd, 2), (op_c, 3)])]
+    oracle = _jw_c(4, 0, True) @ _jw_c(4, 1, False) @ _jw_c(4, 2, True) @ _jw_c(4, 3, False)
+    for cutoff in (None, 1e-13):
+        h = MPO.from_terms(4, two_pair, cutoff=cutoff)
+        assert np.abs(np.asarray(h.to_dense()) - oracle).max() < 1e-12
+
+
 def test_from_terms_refuses_a_charged_term():
     """Both MPO boundaries are the trivial ``D=1`` leg, so a term must close on the unit."""
     _, op_sp, _ = _ops()
