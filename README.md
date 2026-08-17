@@ -5,7 +5,7 @@
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/LICENSE)
 [![python](https://img.shields.io/badge/python-%E2%89%A53.12-blue.svg)](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/pyproject.toml)
 
-**Non-Abelian symmetric tensors with ndarray-style Python APIs and backend-native numerical execution.**
+**A Python library for symmetric tensor networks: NumPy on the surface, category theory under the hood.**
 
 `tenet` provides block-sparse tensors with **non-Abelian** symmetries — SU(2) and its
 products, alongside the Abelian and fermionic cases — using exact recoupling
@@ -131,7 +131,8 @@ If you use TeNeT-py in your research, please cite it:
 ```bibtex
 @software{tenet-py,
   author  = {Watanabe, Ryo},
-  title   = {{TeNeT-py}: non-Abelian symmetric tensor networks in pure Python},
+  title   = {{TeNeT-py}: a symmetric tensor {Python} library for tensor
+             networks with {Abelian}, fermionic and non-{Abelian} symmetries},
   url     = {https://github.com/Ryo-wtnb11/TeNeT-py},
   license = {Apache-2.0},
   year    = {2026}

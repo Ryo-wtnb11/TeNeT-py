@@ -9,6 +9,7 @@ repository-code: "https://github.com/Ryo-wtnb11/TeNeT-py"
 url: "https://ryo-wtnb11.github.io/TeNeT-py/"
 license: Apache-2.0
 abstract: >-
-  A pure-Python library for non-Abelian symmetric tensor networks:
-  graded tensors over U(1), Z2, fermionic Z2, SU(2) and SU(N),
-  with automatic MPO construction, DMRG and CTMRG.
+  A symmetric tensor Python library for tensor networks with Abelian,
+  fermionic and non-Abelian symmetries: graded tensors over U(1), Z2,
+  fermionic Z2, SU(2) and SU(N), differentiable through JAX, with
+  automatic MPO construction, DMRG and CTMRG.
