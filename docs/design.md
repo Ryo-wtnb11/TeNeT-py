@@ -2939,6 +2939,36 @@ The split:
   with its reason instead: M11c's argument was regenerability, and a term list makes an
   MPO *more* regenerable, not less.
 
+- **M15** — shipped: symbolic MPO construction. `MPO.from_terms` no longer sums M bond-1
+  term strings with `direct_sum` (an intermediate bond exactly as wide as the term
+  count); it assembles a finite-state machine over labelled bond states — identity-left,
+  identity-right, and one state per distinct open left-partial-string, so terms sharing
+  an opening share a state and the closing edge carries the coefficient. Each state
+  carries its **own** space (the running fused charge for rank-3 operators, or the graded
+  `Leg` a k-site operator's internal SVD derived), the bond at each cut is the direct sum
+  of its live states' spaces after pruning unreachable and dead-end states, and each edge
+  is placed by `einsum` through 0/1 embedding isometries built at `from_dense`'s default
+  `atol` — so an inconsistent state space *raises* instead of being projected away. This
+  reverses M13's FSM refusal on evidence: the refusal priced in tenpy's hundred-line
+  charge solver, but tenpy's graph edges carry operator *names* while tenet's carry
+  tensors that already know their spaces (MPSKit's fourteen-line virtual-space read is
+  the precedent), so no solver exists here. The compressing SVD sweeps are demoted from
+  the assembly to an optional post-pass: the default `cutoff=1e-13` keeps them (they earn
+  their cost exactly on power-law couplings, where they see numerical low rank the graph
+  cannot), and `cutoff=None` skips both, making the bond combinatorial and tolerance-free
+  — the k-site operator's internal SVD is a different SVD and still runs. Measured:
+  R=4 1/r² Ising at N=96 fell from 12 s to under 0.3 s, the finite-range FSM bond equals
+  the compressed bond exactly (6 = 6), and the all-pairs pre-compression bond fell from
+  496 to 32. Refused with it, each with the criterion that would buy it: block2's
+  minimum-vertex-cover bond basis (wins only where the coefficient matrix is dense *and*
+  not numerically low rank — the ab-initio integral tensor and essentially only it, plus
+  a hand-written max-flow since scipy is optional), the normal/complementary operator
+  machinery (a per-Hamiltonian derivation, not an algorithm; no quantum-chemistry
+  caller), symbolic simplification rules (they need an operator vocabulary; tenet's
+  operators are anonymous by design), lazily shared numeric payloads (a bond of a few
+  dozen states is kilobytes), and an exponentially-decaying-coupling front end (now one
+  state and one self-loop edge — cheap, but still a model DSL with no caller).
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 
 ---

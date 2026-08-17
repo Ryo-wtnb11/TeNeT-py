@@ -85,6 +85,15 @@ def test_no_module_reaches_into_another_modules_private_names(path):
             assert not private, f"{path.name} imports {private} from {node.module}"
 
 
+def test_direct_sum_left_the_mpo_builder():
+    """M15 (#138): ``from_terms`` assembles a finite-state machine, edge by edge.
+
+    ``tenet.direct_sum``'s block-diagonal placement is the wrong primitive for a graph
+    whose edges are deliberately off-diagonal, so it does not appear in ``mps.py`` at all.
+    """
+    assert "direct_sum" not in (PACKAGE / "mps.py").read_text()
+
+
 @pytest.mark.parametrize("path", MODULES, ids=lambda p: p.name)
 def test_no_module_uses_reduced_blocks_numerically(path):
     """``.blocks`` is storage. ``apply_blocks`` is the public spelling and is not this."""

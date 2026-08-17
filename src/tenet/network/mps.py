@@ -600,7 +600,7 @@ def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
     omitted, which is why nothing here needs a coupling tree or a multiplicity label.
 
     The util legs are ``dual`` because ``_as_w``'s bend makes the *derived* bonds dual, and
-    :func:`tenet.direct_sum` refuses ``V (+) V*``: one convention per term string, and on
+    an MPO bond carries one ``dual`` convention — ``V (+) V*`` is not a graded space; on
     the unit sector the flag is free.
     """
     sym = op.legs[0].space.provider
@@ -620,70 +620,228 @@ def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
     return out
 
 
-def _term_string(
-    n_sites: int, coeff: float, ops, phys: GradedSpace, cutoff: float
-) -> list[SymmetricTensor]:
-    """One term as a bond-1 MPO: identities on the untouched sites, charge accumulated.
+# --- the symbolic layer -------------------------------------------------------------
+#
+# ``from_terms`` assembles a finite-state machine over the MPO bond before it touches a
+# single wide tensor. A bond *state* is ``_IDL`` (identity to the left, the term not yet
+# begun), ``_IDR`` (the term already closed), or the tuple of ``(operator, site)`` events
+# a term has placed so far — its open left-partial-string. Terms sharing an opening share
+# a state; the closing edge carries the coefficient. Each state carries its **own**
+# ``GradedSpace``: the running fused charge for rank-3 operators, or the ``Leg``
+# :func:`_split`'s ``svd_truncated`` derived for a rank-2k operator mid-split. The bond
+# space at a cut is the direct sum, over that cut's states, of the states' spaces — no
+# charge solver anywhere (MPSKit's ``mpohamiltonian.jl``:479-492 is the precedent).
+# Simplification: operator identity is object identity (``id(op)``) — two equal-valued but
+# distinct operator objects get two states, and the compressing sweep erases the
+# difference; a symbolic ``Rule`` needs an operator vocabulary tenet refuses to grow.
 
-    For the charge-leg form the running MPO bond at each cut carries exactly the sum of
-    the charges emitted to its left, which is the whole of ``q(p_out) + q(wr) = q(wl) +
-    q(p_in)`` for a ``D=1`` bond. For the invariant form the bond is whatever
-    :func:`_split` derived, and the term closes on the unit by construction.
+_IDL: tuple = ()  # the empty prefix
+_IDR = "IdR"
+
+
+def _slabs(space: GradedSpace):
+    """``(sector, degeneracy, dense offset, dense extent)`` per sector, canonical order."""
+    offsets = [space.sector_offset(a) for a in space]
+    ends = [*offsets[1:], space.dim]
+    for (a, m), o, e in zip(space.sectors, offsets, ends, strict=True):
+        yield a, m, o, e - o
+
+
+def _embedding(
+    bond: GradedSpace, state: GradedSpace, starts, *, left: bool, dual: bool
+) -> SymmetricTensor:
+    """The 0/1 isometry placing one state's space at its slots of the bond space.
+
+    ``starts[a]`` is the dense row offset of the state's sector ``a`` inside ``bond``.
+    Built through ``from_dense`` at its **default** relative ``atol``: a state space that
+    disagrees with the slot it is placed into makes construction *raise* rather than
+    project — the same proof-by-refusal :meth:`MPO.from_w` claims for its grading.
     """
-    placed: dict[int, SymmetricTensor] = {}
+    dense = np.zeros((bond.dim, state.dim))
+    for a, _, o, ext in _slabs(state):
+        r0 = starts[a]
+        dense[r0 : r0 + ext, o : o + ext] = np.eye(ext)
+    if left:
+        return SymmetricTensor.from_dense(dense, (Leg(bond, IN, dual), Leg(state, OUT, dual)))
+    return SymmetricTensor.from_dense(dense.T, (Leg(state, IN, dual), Leg(bond, OUT, dual)))
+
+
+_INTERLEAVE = (
+    "the operators of one term interleave at site {}: each k-site operator's "
+    "derived bond must close before the next one begins"
+)
+
+
+def _term_edges(
+    n_sites, coeff, ops, phys, dual, split, rank3, states, order, moves, stops, spectators
+):
+    """Walk one term left to right: allocate prefix states, emit its edges.
+
+    ``moves[n]`` collects the non-closing edges ``(state_l, state_r) -> W`` of site ``n``
+    (set-once: terms sharing a prefix share the edge), ``stops[n]`` the closing edges into
+    ``_IDR`` (accumulating — the coefficient rides here, so repeated strings sum), and
+    ``spectators[n]`` the states whose space runs through site ``n`` untouched.
+    """
+    sym, d = phys.provider, phys.dim
+    unit_space = GradedSpace.new(sym, {sym.unit: 1})
+    placed: dict[int, tuple] = {}
     for op, sites in ops:
         sites = (sites,) if isinstance(sites, int) else tuple(sites)
-        span = [op] if op.ndim == 3 else _split(op, cutoff)
+        span = [op] if op.ndim == 3 else split(op)
         if len(sites) != len(span):
             raise ValueError(
                 f"a rank-{op.ndim} term operator spans {len(span)} site(s), got sites {sites}"
             )
-        for site, w in zip(sites, span, strict=True):
+        for j, (site, w) in enumerate(zip(sites, span, strict=True)):
             if site not in range(n_sites):
                 raise ValueError(f"term site index {site} is outside range({n_sites})")
             if site in placed:
                 raise ValueError(
                     f"two operators of one term sit on site {site}; multiply them first"
                 )
-            placed[site] = w
-    sym, d = phys.provider, phys.dim
-    # One dual convention per string, set by whether any k-site split runs in it.
-    unit, out = _unit_leg(sym, any(op.ndim != 3 for op, _ in ops)), []
-    aux = unit
-    for n in range(n_sites):
-        w = placed.get(n)
-        if w is None:
-            out.append(_identity_w(aux, phys))
-        elif w.ndim == 3:
-            running = sym.fusion(aux.space.sectors[0][0], w.legs[2].space.sectors[0][0])[0]
-            right = GradedSpace.new(sym, {running: 1})
-            legs = (aux, Leg(phys, OUT), Leg(phys, IN), Leg(right, OUT))
-            block = np.reshape(np.asarray(w.to_dense())[:, :, 0], (1, d, d, 1))
-            out.append(_as_w(SymmetricTensor.from_dense(block, legs)))
-            aux = Leg(right, IN)
+            elem = (id(op), site) if op.ndim == 3 else (id(op), sites, j)
+            placed[site] = (op, w, elem, j, len(span))
+    walk = sorted(placed)
+    if not walk:  # a constant shift: coeff times the identity, closed at the last site
+        w = tenet.multiply(_identity_w(Leg(unit_space, IN, dual), phys), coeff)
+        stops[n_sites - 1][_IDL] = stops[n_sites - 1][_IDL] + w if _IDL in stops[n_sites - 1] else w
+        return
+    prefix, c, open_k, prev = _IDL, sym.unit, None, -1
+    for s in walk:
+        op, w, elem, j, k = placed[s]
+        for m in range(prev + 1, s):
+            spectators[m].add(prefix)
+        is3 = op.ndim == 3
+        if open_k is not None and (is3 or (id(op), j) != open_k):
+            raise ValueError(_INTERLEAVE.format(s))
+        if not is3 and open_k is None and (j != 0 or c != sym.unit):
+            raise ValueError(_INTERLEAVE.format(s))
+        if is3:
+            q = op.legs[2].space.sectors[0][0]
+            c_next = sym.fusion(c, q)[0]
+            lab = sym.dual(c_next) if dual else c_next
+            space = GradedSpace.new(sym, {lab: 1})
+            key = (id(op), c)
+            if key not in rank3:
+                left = GradedSpace.new(sym, {sym.dual(c) if dual else c: 1})
+                legs = (Leg(left, IN, dual), Leg(phys, OUT), Leg(phys, IN), Leg(space, OUT, dual))
+                block = np.reshape(np.asarray(op.to_dense())[:, :, 0], (1, d, d, 1))
+                rank3[key] = SymmetricTensor.from_dense(block, legs)
+            wt = rank3[key]
+            open_next = None
         else:
-            if w.legs[0] != aux:
+            wt, space = w, w.legs[3].space
+            c_next = sym.unit
+            open_next = (id(op), j + 1) if j + 1 < k else None
+        if s == walk[-1]:
+            if is3 and c_next != sym.unit:
                 raise ValueError(
-                    f"the operators of one term interleave at site {n}: each k-site operator's "
-                    f"derived bond must close before the next one begins"
+                    f"a term's operator charges must sum to the unit sector, got {space}; "
+                    "both MPO boundaries are the trivial D=1 leg, so a charged term has "
+                    "nowhere to end"
                 )
-            out.append(w)
-            aux = Leg(w.legs[3].space, IN, w.legs[3].dual)
-    if aux != unit:
-        raise ValueError(
-            f"a term's operator charges must sum to the unit sector, got {aux.space}; both "
-            "MPO boundaries are the trivial D=1 leg, so a charged term has nowhere to end"
+            wt = tenet.multiply(wt, coeff)
+            stops[s][prefix] = stops[s][prefix] + wt if prefix in stops[s] else wt
+        else:
+            new_prefix = (*prefix, elem)
+            if new_prefix not in states:
+                states[new_prefix] = space
+                order.append(new_prefix)
+            moves[s].setdefault((prefix, new_prefix), wt)
+            prefix, c = new_prefix, c_next
+        open_k = open_next
+        prev = s
+
+
+def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators):
+    """Prune dead states, derive the bond spaces, and place every edge numerically.
+
+    Pruning intersects each cut's states with (reachable from ``_IDL``) and (co-reachable
+    to ``_IDR``) — two passes over the edge tables, tenpy's ``add_missing_IdL_IdR`` and
+    block2's zero-propagation doing the same job in their own spellings. The bond space
+    at a cut is the direct sum of the surviving states' spaces, in allocation order with
+    the identities at the two ends; each edge lands via
+    ``einsum("ax,xpqy,yb->apqb", e_l, w, e_r)`` with :func:`_embedding` isometries, and a
+    site is the plain sum of its placed edges.
+    """
+    sym = phys.provider
+    edges: list[dict] = []
+    for n in range(n_sites):
+        e = dict(moves[n])
+        for l_key, w in stops[n].items():
+            e[(l_key, _IDR)] = w
+        for k in spectators[n]:
+            e[(k, k)] = None  # a spectator identity, instantiated lazily below
+        edges.append(e)
+    reach = [set() for _ in range(n_sites + 1)]
+    reach[0] = {_IDL}
+    for n in range(n_sites):
+        reach[n + 1] = {r for (left, r) in edges[n] if left in reach[n]}
+    live = [set() for _ in range(n_sites + 1)]
+    live[n_sites] = reach[n_sites] & {_IDR}
+    for n in reversed(range(n_sites)):
+        live[n] = reach[n] & {left for (left, r) in edges[n] if r in live[n + 1]}
+    ordered = [[k for k in (_IDL, *order, _IDR) if k in live[n]] for n in range(n_sites + 1)]
+
+    bonds, starts = [], []
+    for cut in ordered:
+        merged: dict = {}
+        for k in cut:
+            for a, m in states[k].sectors:
+                merged[a] = merged.get(a, 0) + m
+        bond = GradedSpace.new(sym, merged)
+        seen: dict = {}
+        per_state = {}
+        for k in cut:
+            slots = {}
+            for a, m, _, ext in _slabs(states[k]):
+                slots[a] = bond.sector_offset(a) + seen.get(a, 0) * (ext // m)
+                seen[a] = seen.get(a, 0) + m
+            per_state[k] = slots
+        bonds.append(bond)
+        starts.append(per_state)
+
+    identities: dict = {}
+    out = []
+    for n in range(n_sites):
+        lcut, rcut = ordered[n], ordered[n + 1]
+        e_l = (
+            {k: _embedding(bonds[n], states[k], starts[n][k], left=True, dual=dual) for k in lcut}
+            if len(lcut) > 1
+            else None
         )
-    if unit.dual:
+        e_r = (
+            {
+                k: _embedding(bonds[n + 1], states[k], starts[n + 1][k], left=False, dual=dual)
+                for k in rcut
+            }
+            if len(rcut) > 1
+            else None
+        )
+        acc = None
+        for (left, r), w in edges[n].items():
+            if left not in live[n] or r not in live[n + 1]:
+                continue
+            if w is None:
+                space = states[left]
+                if space not in identities:
+                    identities[space] = _identity_w(Leg(space, IN, dual), phys)
+                w = identities[space]
+            if e_l is not None:
+                w = tenet.einsum("ax,xpqy->apqy", e_l[left], w)
+            if e_r is not None:
+                w = tenet.einsum("apqy,yb->apqb", w, e_r[r])
+            acc = w if acc is None else acc + w
+        out.append(acc)
+    if dual:
         # The two *outer* legs go back non-dual: ``Env`` builds its boundary environments
         # with ``Leg(mpo_l, OUT)`` (``env.py``:50-53) and the other builder's ends are
         # non-dual too. Both ends are D=1 on the unit sector, where the flag is a label.
-        triv = unit.space
+        triv = GradedSpace.new(sym, {sym.unit: 1})
         cap = SymmetricTensor.from_dense(np.ones((1, 1)), (Leg(triv, IN), Leg(triv, OUT, True)))
         out[0] = _as_w(tenet.einsum("ax,xpqr->apqr", cap, out[0]))
         cap = SymmetricTensor.from_dense(np.ones((1, 1)), (Leg(triv, IN, True), Leg(triv, OUT)))
         out[-1] = _as_w(tenet.einsum("apqx,xb->apqb", out[-1], cap))
-    out[0] = tenet.multiply(out[0], coeff)
     return out
 
 
@@ -754,8 +912,8 @@ class MPO:
         return cls([first, *[bulk] * (n_sites - 2), last])
 
     @classmethod
-    def from_terms(cls, n_sites: int, terms: Iterable, *, cutoff: float = 1e-13) -> "MPO":
-        """A term list ``[(coeff, [(op, sites), ...]), ...]`` as a compressed graded MPO.
+    def from_terms(cls, n_sites: int, terms: Iterable, *, cutoff: float | None = 1e-13) -> "MPO":
+        """A term list ``[(coeff, [(op, sites), ...]), ...]`` as a graded MPO.
 
         Each ``op`` comes from :func:`local_op` in one of its two forms, and ``sites`` is
         an ``int`` or a tuple of that many site indices -- ``i`` and ``(i,)`` are the same
@@ -770,17 +928,31 @@ class MPO:
           through the identities on the sites in between.
 
         A term is a coefficient and a list of ``(operator, sites)`` pairs, with identities
-        implied on every untouched site. Every
-        term is *already* a bond-1 MPO, so the sum is one :func:`tenet.direct_sum` per site
-        over the MPO-bond axes -- shared at the two ends, so the chain sums rather than
-        block-diagonalizing -- and :func:`tenet.linalg.svd_truncated` then compresses the
-        M-wide bond to the operator Schmidt rank.
+        implied on every untouched site. The sum is assembled **symbolically**, as a
+        finite-state machine over labelled bond states: identity-left, identity-right,
+        and one state per distinct open left-partial-string, so terms that share an
+        opening share a state and the closing edge carries the coefficient. States
+        unreachable from the left identity or unable to reach the right one are pruned,
+        each edge is placed as one rank-4 tensor, and a site is the plain sum of its
+        edges. The bond handed to the compressing sweep is therefore the FSM's — one
+        state per open string — never one channel per term.
 
         **The MPO bond spaces are derived, never declared.** Charges enter once, as
-        :func:`local_op`'s ``charge``; from there the bond is arithmetic on legs and
-        ``svd_truncated`` decides the sector-by-sector degeneracies, omitting a sector
-        entirely when nothing is kept there. There is no place left to write a wrong
-        grading down.
+        :func:`local_op`'s ``charge``; from there every FSM state carries its own space —
+        the running fused charge of the rank-3 operators to its left, or the graded
+        ``Leg`` a k-site operator's internal SVD produced — and the bond at each cut is
+        the direct sum of its states' spaces. There is no place left to write a wrong
+        grading down, and nothing re-decides the grading afterwards.
+
+        ``cutoff`` controls the two compressing SVD sweeps that run after assembly (right
+        to left, then left to right), taking the FSM bond down to the operator Schmidt
+        rank -- worth it exactly for couplings with numerical low rank the graph cannot
+        see, such as power laws. ``cutoff=0.0`` keeps every singular value;
+        ``cutoff=None`` skips **both sweeps entirely**: the MPO is the finite-state
+        machine, its bond dimension is combinatorial, and no floating-point tolerance
+        participates in the assembly. A k-site operator's *internal* SVD -- the one that
+        peels it into ``k`` tensors -- is a different SVD and is **unaffected** by
+        ``cutoff=None``; it runs at the default ``1e-13`` in that case.
 
         **There is no** ``phys=`` **argument**: the operators carry the physical space and
         a second source of truth could disagree with them, which would surface as a
@@ -788,10 +960,9 @@ class MPO:
         and every term's charges must sum to the unit sector.
 
         Fermionic terms, and non-Abelian terms spelled as a *list* of charge-leg
-        operators, are refused with a message rather than accepted;
-        ``cutoff`` is a keyword so a test can tighten or loosen the compression. Outside
-        ``jit``/``grad`` like the rest of this module, because ``svd_truncated`` re-decides
-        a :class:`~tenet.GradedSpace`.
+        operators, are refused with a message rather than accepted. Outside
+        ``jit``/``grad`` like the rest of this module, because the assembly decides
+        :class:`~tenet.GradedSpace`\\ s.
         """
         phys = None
         strings = []
@@ -802,19 +973,46 @@ class MPO:
             strings.append((coeff, ops))
         if phys is None:
             raise ValueError("from_terms: no terms; the physical space is read off an operator")
-        sites = _term_string(n_sites, *strings[0], phys, cutoff)
-        for coeff, ops in strings[1:]:
-            other = _term_string(n_sites, coeff, ops, phys, cutoff)
-            for n in range(n_sites):
-                # The end bonds stay shared and D=1: summed there, the chain would become a
-                # direct sum of scalars instead of a sum of terms.
-                axes = ([0] if n else []) + ([3] if n < n_sites - 1 else [])
-                sites[n] = (
-                    tenet.direct_sum(sites[n], other[n], axes) if axes else sites[n] + other[n]
-                )
+        sym = phys.provider
+        # One dual convention per MPO, set by whether any k-site split runs in it: the
+        # split's derived bonds come back dual, and a bond hosts both kinds of state.
+        dual = any(op.ndim != 3 for _, ops in strings for op, _ in ops)
+        split_cutoff = 1e-13 if cutoff is None else cutoff
+        splits: dict[int, list[SymmetricTensor]] = {}
+
+        def split(op: SymmetricTensor) -> list[SymmetricTensor]:
+            if id(op) not in splits:
+                splits[id(op)] = _split(op, split_cutoff)
+            return splits[id(op)]
+
+        states: dict = {_IDL: GradedSpace.new(sym, {sym.unit: 1})}
+        states[_IDR] = states[_IDL]
+        order: list = []
+        rank3: dict = {}
+        moves: list[dict] = [{} for _ in range(n_sites)]
+        stops: list[dict] = [{} for _ in range(n_sites)]
+        spectators: list[set] = [{_IDL, _IDR} for _ in range(n_sites)]
+        for coeff, ops in strings:
+            _term_edges(
+                n_sites,
+                coeff,
+                ops,
+                phys,
+                dual,
+                split,
+                rank3,
+                states,
+                order,
+                moves,
+                stops,
+                spectators,
+            )
+        sites = _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators)
+        if cutoff is None:
+            return cls(sites)
         # Right to left first, exactly as ``MPS.compress_`` canonizes before it truncates:
         # a forward sweep alone measures the rank of the *left* part against the raw
-        # M-wide channel bond, which overshoots wherever the redundancy is only visible
+        # FSM bond, which overshoots wherever the redundancy is only visible
         # from the right. After this pass the forward rank is the operator Schmidt rank.
         for n in range(n_sites - 1, 0, -1):
             u, s, vh = tenet.linalg.svd_truncated(sites[n], ((0,), (1, 2, 3)), cutoff=cutoff)
