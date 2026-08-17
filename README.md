@@ -131,7 +131,7 @@ If you use TeNeT-py in your research, please cite it:
 ```bibtex
 @software{tenet-py,
   author  = {Watanabe, Ryo},
-  title   = {{TeNeT-py}: non-Abelian symmetric tensor networks in pure Python},
+  title   = {{TeNeT-py}: a non-{Abelian} symmetric tensor {Python} library},
   url     = {https://github.com/Ryo-wtnb11/TeNeT-py},
   license = {Apache-2.0},
   year    = {2026}
