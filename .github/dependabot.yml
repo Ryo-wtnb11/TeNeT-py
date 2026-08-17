@@ -1,0 +1,14 @@
+# Keep the GitHub Actions pins fresh: one grouped PR per month, after a 7-day
+# cooldown on each release. Python deps are deliberately absent -- uv resolves
+# fresh on every CI run, so a dependency bump PR would duplicate that signal.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

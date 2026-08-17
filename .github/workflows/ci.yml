@@ -5,9 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+# A superseded push to the same PR cancels the run it replaced; pushes to main
+# always run to completion so every merge commit keeps its own green check.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The suite is ~5 min end to end; 15 caps a hung download at minutes, not hours.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
