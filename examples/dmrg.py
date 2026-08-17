@@ -221,8 +221,8 @@ def dmrg(n_sites: int, chi: int = 64, *, seed: int = 0, **kwargs) -> network.DMR
     return network.dmrg_(psi, mpo(n_sites), chi=chi, **kwargs)
 
 
-def main(n_sites: int = 12, chi: int = 64, big_sites: int = 32, big_chi: int = 32):
-    """N=12 at chi=64 against the exact ground state, then N=32 at chi=32 against ``e_inf``.
+def main(n_sites: int = 12, chi: int = 64, big_sites: int = 32, big_chi: int = 64):
+    """N=12 at chi=64 against the exact ground state, then N=32 at chi=64 against ``e_inf``.
 
     The N=12 reference printed here is the **open**-boundary energy
     ``-5.142090632840532``; the periodic chain's ``-5.387390917445203`` is a different
