@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # download ci.yml's coverage artifact for the badge (#145)
   pages: write
   id-token: write
 
@@ -29,6 +30,24 @@ jobs:
         with:
           enable-cache: true
       - run: uv run --group docs mkdocs build --strict
+      # The coverage badge (#145): rendered from the newest successful CI run on
+      # main rather than re-running the suite here — measuring belongs to ci.yml,
+      # publishing to Pages belongs here. On the very first deploy (or if CI for
+      # this push is still running) the newest artifact can lag one commit or be
+      # absent; a missing badge 404s in the README until the next deploy, which
+      # is why the step is non-fatal.
+      - name: Coverage badge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id=$(gh run list --workflow ci.yml --branch main --status success \
+            --limit 1 --json databaseId -q '.[0].databaseId')
+          if [ -n "$run_id" ] && gh run download "$run_id" -n coverage-xml -D cov; then
+            uvx --from 'genbadge[coverage]' genbadge coverage \
+              -i cov/coverage.xml -o site/coverage-badge.svg
+          else
+            echo "no coverage artifact yet; badge deferred to the next deploy"
+          fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
