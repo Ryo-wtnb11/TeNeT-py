@@ -1,10 +1,10 @@
 """Issue #110 — finite-chain two-site DMRG against exact diagonalization.
 
-``examples/dmrg.py`` variationally minimizes a U(1)-graded MPS against the open-boundary
+``examples/toy_codes/dmrg.py`` variationally minimizes a U(1)-graded MPS against the open-boundary
 spin-1/2 Heisenberg chain, and this module judges it against the *many-body ground state*
 rather than against a self-consistency check. Like ``tests/integration/test_ctmrg.py``
 (#102) and ``test_vmc.py`` (#69) it adds nothing to ``src/tenet`` and nothing to the
-example: it imports ``examples/dmrg.py`` and drives it, so the example cannot rot.
+example: it imports ``examples/toy_codes/dmrg.py`` and drives it, so the example cannot rot.
 
 **The N=12 oracle is computed here, not trusted.** The Heisenberg Hamiltonian restricted
 to ``S^z_tot = 0`` at N=12 is 924 x 924, which ``np.linalg.eigvalsh`` diagonalizes in
@@ -55,7 +55,7 @@ import tenet
 from tenet import GradedSpace, network
 from tenet.symmetry import SU2, U1, SU2Sector, U1Sector
 
-sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples"))
+sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples" / "toy_codes"))
 import dmrg  # noqa: E402
 
 # The open-boundary ground-state energies measured for #110 by sparse Lanczos on

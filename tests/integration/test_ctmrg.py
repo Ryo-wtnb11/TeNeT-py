@@ -1,7 +1,7 @@
 """Issues #102/#104 — differentiable CTMRG: the first end-to-end algorithm, against an oracle.
 
 This is the first test in the repository that judges a *physics* result against a closed
-form rather than against a self-consistency check: ``examples/ctmrg.py`` converges a CTMRG
+form rather than against a self-consistency check: ``examples/toy_codes/ctmrg.py`` converges a CTMRG
 environment for the classical 2D Ising model and its free energy per site is compared with
 Onsager's, which is itself pinned here by two independent closed forms before it is used to
 judge anything. It then differentiates ``k`` unrolled fixed-structure sweeps and checks the
@@ -17,7 +17,7 @@ criterion, which :func:`test_the_retired_nan_criterion` retires with its reasoni
 than deferring it a third time.
 
 Like ``tests/integration/test_vmc.py`` (#69) it adds nothing to ``src/tenet`` and nothing to
-the example: it imports ``examples/ctmrg.py`` and runs it, so the example cannot rot. The
+the example: it imports ``examples/toy_codes/ctmrg.py`` and runs it, so the example cannot rot. The
 only code of its own is the second Onsager form and the tolerances.
 
 **Since #114 the environment machinery is ``tenet.network``** -- ``Absorb``, both absorbers
@@ -120,7 +120,7 @@ jnp = pytest.importorskip("jax.numpy")
 import tenet.ad  # noqa: E402
 import tenet.pytree  # noqa: E402, F401  # registration is the import's side effect
 
-sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples"))
+sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples" / "toy_codes"))
 import ctmrg  # noqa: E402
 
 CHI, K = 16, 4

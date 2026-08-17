@@ -83,8 +83,8 @@ the caller, so this layer still names no accelerator.
 Shared: the bond spectrum :func:`spectrum` and the :func:`ones` seed -- the two
 scalar exits that sat beside them left for ``tenet.ops`` in #126, as
 :func:`tenet.full_trace` and :func:`tenet.inner`. Promoted verbatim from
-``examples/dmrg.py`` (#110) and ``examples/ctmrg.py`` (#102/#104/#105/#107) under the rule
-that no number may move.
+``examples/toy_codes/dmrg.py`` (#110) and ``examples/toy_codes/ctmrg.py``
+(#102/#104/#105/#107) under the rule that no number may move.
 
 Uses **public ``tenet`` API only**: no ``jax``/``torch``/``scipy``/``quimb``/
 ``opt_einsum``, no ``_``-prefixed reach into other modules, no numerical use of

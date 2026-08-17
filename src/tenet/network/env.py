@@ -1,6 +1,6 @@
 """The environment cache: ``<psi|H|psi>`` partial contractions, keyed by *directed* bond.
 
-Promoted from ``examples/dmrg.py`` (#110) with no arithmetic change: ``boundary_envs``
+Promoted from ``examples/toy_codes/dmrg.py`` (#110) with no arithmetic change: ``boundary_envs``
 :318-331, ``update_env`` :334-349, ``invalidate`` :352-360, ``setup_envs`` :363-368 and
 ``heff2`` :374-390. :meth:`Env.measure` is the one genuinely new capability in M11a.
 """

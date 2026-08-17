@@ -3,7 +3,7 @@
 This is the first test that composes ``tenet.pytree`` (#41), pairwise contraction
 (#51/#52) and fixed-structure ``svd`` (#57) into a single ``jax.grad``-ed objective,
 which is what docs/design.md's "VMC and neural quantum states" diagram claims the library can
-already do. It adds nothing to ``src/tenet``: it imports ``examples/vmc_mps.py`` and
+already do. It adds nothing to ``src/tenet``: it imports ``examples/toy_codes/vmc_mps.py`` and
 runs it, so the example cannot rot.
 
 x64 is enabled process-globally in ``tests/conftest.py``; the finite-difference
@@ -24,7 +24,7 @@ jnp = pytest.importorskip("jax.numpy")
 
 import tenet.pytree  # noqa: E402, F401  # registration is the import's side effect
 
-sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples"))
+sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples" / "toy_codes"))
 import vmc_mps  # noqa: E402
 
 PROVIDERS = ["u1", "su2"]

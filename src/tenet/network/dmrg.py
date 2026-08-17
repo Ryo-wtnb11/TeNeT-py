@@ -1,6 +1,6 @@
 """The driver: a Krylov step, a two-site sweep, and the loop that repeats it.
 
-Promoted from ``examples/dmrg.py`` (#110) with no arithmetic change: ``lanczos``
+Promoted from ``examples/toy_codes/dmrg.py`` (#110) with no arithmetic change: ``lanczos``
 :393-437, ``sweep_`` :443-484, ``_schmidt_change`` :487-503, ``DMRG_out`` :506-520 and
 ``dmrg_`` :524-557. Function-shaped drivers, YASTN's decomposition (``_dmrg.py``:42-128),
 not TenPy's ``Sweep``/``EffectiveH`` hierarchy -- M11a ships **one** sweep, and a base

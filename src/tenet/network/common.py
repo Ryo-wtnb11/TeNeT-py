@@ -47,6 +47,6 @@ def spectrum(s: SymmetricTensor) -> list[float]:
 
 
 def ones(legs: Sequence[Leg]) -> SymmetricTensor:
-    """A tensor of ones on ``legs`` -- ``examples/ctmrg.py::init_env``'s seed spelling."""
+    """A tensor of ones on ``legs`` -- ``examples/toy_codes/ctmrg.py::init_env``'s seed spelling."""
     t = SymmetricTensor.zeros(legs)
     return t.apply_blocks(lambda b: ar.do("ones_like", b))

@@ -10,7 +10,7 @@ and it runs on Z2, U(1) and SU(2). The **trace** half sits below a module-level
 ``svd_truncated``-outside / ``svd(bond=)``-inside pairing (#77) that this module is the
 first library API to carry in its signatures.
 
-The physics is borrowed, not copied: ``ising_bulk`` comes from ``examples/ctmrg.py``, as
+The physics is borrowed, not copied: ``ising_bulk`` comes from ``examples/toy_codes/ctmrg.py``, as
 ``conftest.py`` explains. Runtime budget **15 s**: a Z2 Ising CTMRG at ``chi=4``-``8``
 converges in tens of milliseconds per sweep and the two jit tests compile one small move
 each. Anything slower than that is an integration test in the wrong directory.

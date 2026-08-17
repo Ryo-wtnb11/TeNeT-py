@@ -1019,7 +1019,7 @@ def test_a_mini_differentiable_ctmrg_step():
 
 # --- the example still runs ------------------------------------------------------
 
-sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples"))
+sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples" / "toy_codes"))
 import vmc_mps  # noqa: E402
 
 

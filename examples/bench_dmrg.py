@@ -9,21 +9,24 @@ Hamiltonians whose prepared operators exercise every populated field pattern.
 
 ``--backend jax --jit`` hands ``jax.jit`` to :class:`tenet.network.Env` as the
 ``compile=`` callable -- the network layer names no accelerator, so the injection
-happens here, at application level, exactly like ``examples/dmrg.py``'s backend choice.
+happens here, at application level, exactly like ``examples/toy_codes/dmrg.py``'s backend choice.
 No GPU number is promised anywhere; this is the instrument that would measure one.
 """
 
 import argparse
+import pathlib
 import sys
 import time
 
-import dmrg as example  # noqa: E402  (examples/ sibling, same pattern as the tests)
 import numpy as np
 
 import tenet
 from tenet import GradedSpace
 from tenet.network import MPO, MPS, Env, local_op
 from tenet.symmetry import SU2, SU2Sector, U1Sector
+
+sys.path.insert(0, str(pathlib.Path(__file__).parent / "toy_codes"))
+import dmrg as example  # noqa: E402  (examples/toy_codes, same pattern as the tests)
 
 
 def u1_ops():
