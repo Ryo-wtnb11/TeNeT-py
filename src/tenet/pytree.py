@@ -58,7 +58,10 @@ def _unflatten(structure: TensorStructure, blocks: object) -> SymmetricTensor:
     """
     t = object.__new__(SymmetricTensor)
     object.__setattr__(t, "structure", structure)
-    object.__setattr__(t, "blocks", tuple(blocks))  # type: ignore[call-overload]
+    # ``blocks`` is whatever iterable the tree library hands back (see docstring);
+    # it is deliberately typed ``object`` and left unvalidated here, so the
+    # checker cannot see it is iterable.
+    object.__setattr__(t, "blocks", tuple(blocks))  # ty: ignore[invalid-argument-type]
     return t
 
 

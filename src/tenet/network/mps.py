@@ -16,7 +16,7 @@ Every two-operand ``tenet.einsum`` in this module follows the package's composit
 import json
 import pathlib
 import string
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -112,7 +112,7 @@ class MPS:
             raise TypeError(f"MPS index must be an int, got {type(n).__name__}")
         self.sites[n] = _as_site(t)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[SymmetricTensor]:
         return iter(self.sites)
 
     def copy(self) -> "MPS":
@@ -515,7 +515,9 @@ def _braids_with_signs(space: GradedSpace) -> bool:
     sym = space.provider
     for a, _ in space.sectors:
         signs = [
-            sym.permute_tree(FusionTree((a, a), (), (0,), c), (1, 0))[0][1].real
+            # permute_tree is the opt-in PermutationCoefficients capability;
+            # every provider that reaches this braiding question implements it
+            sym.permute_tree(FusionTree((a, a), (), (0,), c), (1, 0))[0][1].real  # ty: ignore[unresolved-attribute]
             for c in sym.fusion(a, a)
         ]
         if signs and all(sign < 0 for sign in signs):
@@ -642,7 +644,7 @@ _IDL: tuple = ()  # the empty prefix
 _IDR = "IdR"
 
 
-def _slabs(space: GradedSpace):
+def _slabs(space: GradedSpace) -> Iterator[tuple[Sector, int, int, int]]:
     """``(sector, degeneracy, dense offset, dense extent)`` per sector, canonical order."""
     offsets = [space.sector_offset(a) for a in space]
     ends = [*offsets[1:], space.dim]
@@ -651,7 +653,7 @@ def _slabs(space: GradedSpace):
 
 
 def _embedding(
-    bond: GradedSpace, state: GradedSpace, starts, *, left: bool, dual: bool
+    bond: GradedSpace, state: GradedSpace, starts: Mapping[Sector, int], *, left: bool, dual: bool
 ) -> SymmetricTensor:
     """The 0/1 isometry placing one state's space at its slots of the bond space.
 
@@ -1090,9 +1092,15 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
         # non-dual too. Both ends are D=1 on the unit sector, where the flag is a label.
         triv = GradedSpace.new(sym, {sym.unit: 1})
         cap = SymmetricTensor.from_dense(np.ones((1, 1)), (Leg(triv, IN), Leg(triv, OUT, True)))
-        out[0] = _as_w(tenet.einsum("xpqr,ax->apqr", out[0], cap))
+        # every W slot was filled in the site loop above; the None placeholder
+        # the list started from is what ty still sees
+        out[0] = _as_w(
+            tenet.einsum("xpqr,ax->apqr", out[0], cap)  # ty: ignore[invalid-argument-type]
+        )
         cap = SymmetricTensor.from_dense(np.ones((1, 1)), (Leg(triv, IN, True), Leg(triv, OUT)))
-        out[-1] = _as_w(tenet.einsum("xb,apqx->apqb", cap, out[-1]))
+        out[-1] = _as_w(
+            tenet.einsum("xb,apqx->apqb", cap, out[-1])  # ty: ignore[invalid-argument-type]
+        )
     return out, tables
 
 
@@ -1133,7 +1141,7 @@ class MPO:
     def __getitem__(self, n: int) -> SymmetricTensor:
         return self.sites[n]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[SymmetricTensor]:
         return iter(self.sites)
 
     def jordan(self, n: int) -> JordanBlocks | None:

@@ -79,7 +79,7 @@ _CGC_HINT = "A product's Clebsch-Gordan tensor is the outer product of the facto
 
 
 @dataclass(frozen=True, slots=True, order=True)
-class ProductSector(Sector):
+class ProductSector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deliberate, see Sector
     """One sector per factor, in factor order. Ordering is lexicographic by component."""
 
     components: tuple[Sector, ...]
@@ -190,7 +190,8 @@ class ProductProvider:
                 continue
             shape = tuple(p * q for p, q in zip(out.shape, g.shape, strict=True))
             out = np.einsum("abcm,ABCM->aAbBcCmM", out, g).reshape(shape)
-        return out
+        # a product has at least one factor, so the loop assigned out
+        return out  # ty: ignore[invalid-return-type]
 
     def permute_tree(
         self, tree: "FusionTree", perm: tuple[int, ...]
@@ -205,7 +206,9 @@ class ProductProvider:
         """
         self._require_all(PermutationCoefficients, _PERM_HINT)
         per_factor = [
-            f.permute_tree(project(self, tree, i), perm) for i, f in enumerate(self.factors)
+            # _require_all(PermutationCoefficients) above; no narrowing
+            f.permute_tree(project(self, tree, i), perm)  # ty: ignore[unresolved-attribute]
+            for i, f in enumerate(self.factors)
         ]
         out = []
         for terms in itertools.product(*per_factor):

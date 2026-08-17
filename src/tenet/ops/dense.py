@@ -43,7 +43,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
 from itertools import product
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import autoray as ar
 import numpy as np
@@ -139,7 +139,14 @@ def _refuse_dual(provider: FusionProvider, axis: int) -> None:
         ) from exc
 
 
-def _tree_cgt(provider: ClebschGordan, tree: FusionTree, duals: tuple[bool, ...]) -> np.ndarray:
+class _DenseCapable(FusionProvider, ClebschGordan, DualBasis, Protocol):
+    """What :func:`_tree_cgt` actually calls: fusion data plus CG tensors plus
+    the Z-isomorphism. ``ClebschGordan`` alone understated it — the dual-leg
+    branch reads ``dual`` and ``z_matrix`` (runtime-guarded by
+    ``_check_capabilities``/``_refuse_dual`` before any tree is expanded)."""
+
+
+def _tree_cgt(provider: _DenseCapable, tree: FusionTree, duals: tuple[bool, ...]) -> np.ndarray:
     """A tree's CG tensor, shape ``(d_u0, ..., d_u{N-1}, d_coupled)``.
 
     Left-associated contraction along the spine. Rank 0 is the unit's ``(1,)``
@@ -210,8 +217,10 @@ def dense_plan(structure: TensorStructure) -> DensePlan:
 
     grouped: dict[tuple[Sector, ...], list[tuple[int, np.ndarray]]] = {}
     for i, key in enumerate(structure.block_order):
-        xout = _tree_cgt(provider, key.output_tree, tuple(duals[a] for a in out_axes))
-        xin = _tree_cgt(provider, key.input_tree, tuple(duals[a] for a in in_axes))
+        # _check_capabilities(structure) above proved ClebschGordan (and
+        # DualBasis for any dual leg); a raise-based check does not narrow
+        xout = _tree_cgt(provider, key.output_tree, tuple(duals[a] for a in out_axes))  # ty: ignore[invalid-argument-type]
+        xin = _tree_cgt(provider, key.input_tree, tuple(duals[a] for a in in_axes))  # ty: ignore[invalid-argument-type]
         cgt = np.tensordot(xout, xin.conj(), axes=([-1], [-1]))
         grouped.setdefault(structure.axis_sectors(key), []).append(
             (i, np.transpose(cgt, to_public))
@@ -220,7 +229,7 @@ def dense_plan(structure: TensorStructure) -> DensePlan:
     cells = []
     for sectors, entries in grouped.items():
         degens = tuple(leg.degeneracy(a) for leg, a in zip(legs, sectors, strict=True))
-        dims = tuple(provider.irrep_dim(a) for a in sectors)
+        dims = tuple(provider.irrep_dim(a) for a in sectors)  # ty: ignore[unresolved-attribute]  # see above
         offsets = tuple(leg.space.sector_offset(a) for leg, a in zip(legs, sectors, strict=True))
         matrix = np.stack([cgt.reshape(-1) for _, cgt in entries])
         cells.append(
@@ -238,7 +247,7 @@ def dense_plan(structure: TensorStructure) -> DensePlan:
 
     axis_sectors = tuple(leg.sectors for leg in legs)
     axis_sizes = tuple(
-        tuple(leg.degeneracy(a) * provider.irrep_dim(a) for a in sectors)
+        tuple(leg.degeneracy(a) * provider.irrep_dim(a) for a in sectors)  # ty: ignore[unresolved-attribute]
         for leg, sectors in zip(legs, axis_sectors, strict=True)
     )
     # block indices "abc", CG indices "def", output interleaved "adbecf": the

@@ -19,7 +19,7 @@ __all__ = ["U1", "U1Provider", "U1Sector"]
 
 
 @dataclass(frozen=True, slots=True, order=True)
-class U1Sector(Sector):
+class U1Sector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deliberate, see Sector
     """A U(1) irrep, labelled by its integer charge."""
 
     charge: int
@@ -60,18 +60,27 @@ class U1Provider:
         self, tree: "FusionTree", perm: tuple[int, ...]
     ) -> tuple[tuple["FusionTree", complex], ...]:
         """One term, coefficient 1: charge addition is commutative and ``F = R = 1``."""
-        return permute_unique_tree(self, tree, perm)
+        # ``self``'s Sector parameters are narrowed to this symmetry's own sector
+        # type; deliberate per-symmetry specialization the unparameterized
+        # protocol cannot express, so the checker misreads the conformance.
+        return permute_unique_tree(self, tree, perm)  # ty: ignore[invalid-argument-type]
 
     def bend_right(
         self, key: "FusionBlockKey", *, dual: bool
     ) -> tuple[tuple["FusionBlockKey", complex], ...]:
         """One term, coefficient 1: for an Abelian irrep ``B = N``, ``dim = 1``, ``FS = 1``."""
-        return bend_unique(self, key, right=True, dual=dual)
+        # ``self``'s Sector parameters are narrowed to this symmetry's own sector
+        # type; deliberate per-symmetry specialization the unparameterized
+        # protocol cannot express, so the checker misreads the conformance.
+        return bend_unique(self, key, right=True, dual=dual)  # ty: ignore[invalid-argument-type]
 
     def bend_left(
         self, key: "FusionBlockKey", *, dual: bool
     ) -> tuple[tuple["FusionBlockKey", complex], ...]:
-        return bend_unique(self, key, right=False, dual=dual)
+        # ``self``'s Sector parameters are narrowed to this symmetry's own sector
+        # type; deliberate per-symmetry specialization the unparameterized
+        # protocol cannot express, so the checker misreads the conformance.
+        return bend_unique(self, key, right=False, dual=dual)  # ty: ignore[invalid-argument-type]
 
     def z_matrix(self, a: U1Sector) -> np.ndarray:
         """``Z = [[1]]``, read-only: ``V_q`` is one-dimensional and the FS phase is 1."""

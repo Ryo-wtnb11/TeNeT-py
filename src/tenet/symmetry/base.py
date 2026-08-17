@@ -58,6 +58,12 @@ class _HashMemo:
 
     __slots__ = ("_hash",)
 
+    # Annotation only: subclasses fill the slot in ``__post_init__`` via
+    # ``object.__setattr__``, which no checker can see. Not a dataclass field —
+    # ``@dataclass`` collects annotations from the decorated class and dataclass
+    # bases only, and ``_HashMemo`` is neither.
+    _hash: int
+
 
 @dataclass(frozen=True, slots=True, order=True)
 class Sector:
@@ -245,6 +251,14 @@ class MultiplicityRecoupling(Protocol):
         ...
 
 
+class _BraidedProvider(FusionProvider, RecouplingData, QuantumDimension, Protocol):
+    """What the braided tree helpers below actually call: fusion data
+    (``fusion``/``n_symbol``/``dual``/``unit``/``name``) plus the scalar
+    recoupling symbols plus ``qdim``. Annotating them ``RecouplingData`` alone
+    understated the requirement — every real caller (SU(2), SU(N)) is a full
+    provider, and the helpers read fusion data on the first line."""
+
+
 class CapabilityError(TypeError):
     """Raised when a provider lacks a capability an operation requires."""
 
@@ -297,7 +311,7 @@ def permute_unique_tree(
 
 @cache
 def permute_braided_tree(
-    provider: "RecouplingData", tree: "FusionTree", perm: tuple[int, ...]
+    provider: _BraidedProvider, tree: "FusionTree", perm: tuple[int, ...]
 ) -> tuple[tuple["FusionTree", complex], ...]:
     """``permute_tree`` for any provider supplying F- and R-symbols.
 
@@ -330,7 +344,9 @@ def permute_braided_tree(
             current[i], current[i + 1] = current[i + 1], current[i]
             nxt: dict[FusionTree, complex] = {}
             for t, c in terms.items():
-                for braided, cb in _artin_braid(provider, t, i):
+                # hashable by provider contract; the protocol deliberately
+                # omits __hash__ (member set pinned by its test)
+                for braided, cb in _artin_braid(provider, t, i):  # ty: ignore[invalid-argument-type]
                     nxt[braided] = nxt.get(braided, 0) + c * cb
             terms = nxt
     return tuple(terms.items())
@@ -338,7 +354,7 @@ def permute_braided_tree(
 
 @cache
 def _artin_braid(
-    provider: "RecouplingData", tree: "FusionTree", i: int
+    provider: _BraidedProvider, tree: "FusionTree", i: int
 ) -> tuple[tuple["FusionTree", complex], ...]:
     """Swap uncoupled lines ``i`` and ``i+1`` of a left-associated tree.
 
@@ -485,7 +501,7 @@ def bend_unique(
 
 
 def bend_braided(
-    provider: "RecouplingData", key: "FusionBlockKey", *, right: bool, dual: bool
+    provider: _BraidedProvider, key: "FusionBlockKey", *, right: bool, dual: bool
 ) -> tuple[tuple["FusionBlockKey", complex], ...]:
     """``bend_right``/``bend_left`` for any provider supplying B, FS and ``qdim``.
 
@@ -576,7 +592,7 @@ def _unique_tree(
 
 
 @dataclass(frozen=True, slots=True, order=True)
-class TrivialSector(Sector):
+class TrivialSector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deliberate, see Sector
     """The single sector of the trivial symmetry."""
 
 

@@ -58,7 +58,7 @@ which refuses a file recorded under a different convention.
 
 
 @dataclass(frozen=True, slots=True, order=True)
-class FZ2Sector(Sector):
+class FZ2Sector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deliberate, see Sector
     """A fermion-parity sector: ``parity in {0, 1}``. 0 is even (the unit), 1 is odd."""
 
     parity: int
@@ -83,7 +83,10 @@ def koszul_sign(uncoupled: tuple[Sector, ...], perm: tuple[int, ...]) -> float:
     and restricting to odd positions commutes with inversion, so
     ``koszul_sign(u, perm) == koszul_sign(permuted(u, perm), inverse(perm))``.
     """
-    odd = [i for i in perm if uncoupled[i].parity]  # old positions of odd lines, in NEW order
+    # old positions of odd lines, in NEW order. The sectors arrive as the base
+    # ``Sector`` (a tree's uncoupled tuple), but every caller hands in
+    # parity-graded ones (FZ2Sector, and Z2Sector in tests), which carry ``.parity``.
+    odd = [i for i in perm if uncoupled[i].parity]  # ty: ignore[unresolved-attribute]
     inversions = sum(1 for j in range(len(odd)) for k in range(j + 1, len(odd)) if odd[j] > odd[k])
     # Simplification: O(n^2). Merge-sort inversion count if tree ranks ever leave single digits.
     return -1.0 if inversions % 2 else 1.0
@@ -132,7 +135,10 @@ class FZ2Provider:
         That is *not* true for SU(2), whose exchange sign ``(-1)^(j_a+j_b-j_c)``
         reads the fused channel; the spine may be ignored here and nowhere else.
         """
-        ((permuted, _),) = permute_unique_tree(self, tree, perm)
+        # ``self``'s Sector parameters are narrowed to this symmetry's own sector
+        # type; deliberate per-symmetry specialization the unparameterized
+        # protocol cannot express, so the checker misreads the conformance.
+        ((permuted, _),) = permute_unique_tree(self, tree, perm)  # ty: ignore[invalid-argument-type]
         return ((permuted, koszul_sign(tree.uncoupled, perm)),)
 
     def bend_right(
@@ -149,12 +155,18 @@ class FZ2Provider:
         The ``-1`` of fermion parity lives in ``twist``, not in FS — see the module
         docstring.
         """
-        return bend_unique(self, key, right=True, dual=dual)
+        # ``self``'s Sector parameters are narrowed to this symmetry's own sector
+        # type; deliberate per-symmetry specialization the unparameterized
+        # protocol cannot express, so the checker misreads the conformance.
+        return bend_unique(self, key, right=True, dual=dual)  # ty: ignore[invalid-argument-type]
 
     def bend_left(
         self, key: "FusionBlockKey", *, dual: bool
     ) -> tuple[tuple["FusionBlockKey", complex], ...]:
-        return bend_unique(self, key, right=False, dual=dual)
+        # ``self``'s Sector parameters are narrowed to this symmetry's own sector
+        # type; deliberate per-symmetry specialization the unparameterized
+        # protocol cannot express, so the checker misreads the conformance.
+        return bend_unique(self, key, right=False, dual=dual)  # ty: ignore[invalid-argument-type]
 
     def z_matrix(self, a: FZ2Sector) -> np.ndarray:
         """``Z = [[1]]``, read-only: ``V_a`` is one-dimensional and ``FS == +1``."""

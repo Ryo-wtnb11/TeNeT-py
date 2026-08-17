@@ -55,21 +55,21 @@ No ``svd``/``qr`` registration in ``array/dispatch.py``: that list is closed and
 # Simplification: ``S`` stores a dense ``m_c × m_c`` block per sector where a vector would
 # do; add a diagonal storage type when a bond dimension makes that memory actually hurt.
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
 from tenet.leg import IN, OUT, Leg
-from tenet.map_view import check_square, from_matrices, map_layout, to_matrices
+from tenet.map_view import MapLayout, check_square, from_matrices, map_layout, to_matrices
 from tenet.ops.repartition import repartition
 from tenet.space import GradedSpace
 from tenet.structure import TensorStructure
-from tenet.symmetry.base import QuantumDimension, StructureChangingError, requires
+from tenet.symmetry.base import QuantumDimension, Sector, StructureChangingError, requires
 
 if TYPE_CHECKING:
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import Array, SymmetricTensor
 
 __all__ = [
     "eig",
@@ -249,7 +249,7 @@ def qr(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sym
 # --- issue #63: eigh, polar and lq ------------------------------------------------
 
 
-def _dagger(mat):
+def _dagger(mat: "Array") -> "Array":
     """``B_c†`` for one dense coupled-sector matrix. Two backend calls, no capability."""
     return ar.do("conj", ar.do("transpose", mat))
 
@@ -387,7 +387,7 @@ def lq(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sym
 # --- issue #88: left_null and right_null ----------------------------------------------
 
 
-def _complement(layout, caller: str) -> dict:
+def _complement(layout: "MapLayout", caller: str) -> dict[Sector, int]:
     """``{c: extra_c}``, the structural complement's per-sector degeneracy.
 
     ``rows_c - cols_c`` for ``left_null`` and ``cols_c - rows_c`` for
@@ -639,7 +639,7 @@ _NOT_TRACEABLE = (
 )
 
 
-def _spectrum(parts: dict) -> list[tuple[float, object, int]]:
+def _spectrum(parts: dict) -> list[tuple[float, Sector, int]]:
     """``[(sigma, c, i), ...]`` descending by **bare** sigma, ties by ``(c, i)``.
 
     ``float(sigma)`` is the tracer check, and it is the honest one: the selection
@@ -656,7 +656,12 @@ def _spectrum(parts: dict) -> list[tuple[float, object, int]]:
     return entries
 
 
-def _admissible(spectrum: list, qdim, cutoff: float | None, mode: str) -> int:
+def _admissible(
+    spectrum: list[tuple[float, Sector, int]],
+    qdim: Callable[[Sector], float],
+    cutoff: float | None,
+    mode: str,
+) -> int:
     """How long a prefix of ``spectrum`` the cutoff admits.
 
     The bare sigma is what ``"abs"``/``"rel"`` compare; only the cumulative modes
@@ -683,7 +688,7 @@ def _admissible(spectrum: list, qdim, cutoff: float | None, mode: str) -> int:
     return kept
 
 
-def _validate(max_bond, cutoff, cutoff_mode, renorm) -> None:
+def _validate(max_bond: int | None, cutoff: float | None, cutoff_mode: str, renorm: bool) -> None:
     if max_bond is None and cutoff is None:
         raise ValueError(
             "svd_truncated needs at least one of max_bond or cutoff; for the untruncated "
@@ -787,7 +792,8 @@ def svd_truncated(
     m, _, mats = _lower(t, axes)
     provider = m.provider
     requires(provider, QuantumDimension)
-    qdim = provider.qdim
+    # requires() above; raise-based check does not narrow
+    qdim = provider.qdim  # ty: ignore[unresolved-attribute]
 
     parts = {c: ar.do("linalg.svd", b, full_matrices=False) for c, b in mats.items()}
     spectrum = _spectrum(parts)

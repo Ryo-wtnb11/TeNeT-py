@@ -45,7 +45,7 @@ import autoray as ar
 
 from tenet.fusion_tree import FusionTree
 from tenet.leg import Leg
-from tenet.space import ProductSpace
+from tenet.space import GradedSpace, ProductSpace
 from tenet.structure import FusionBlockKey, TensorStructure
 from tenet.symmetry.base import Sector
 
@@ -249,7 +249,9 @@ class TensorMapView:
 
         return adjoint(self.tensor)
 
-    def svd(self, *, bond=None) -> tuple["SymmetricTensor", "SymmetricTensor", "SymmetricTensor"]:
+    def svd(
+        self, *, bond: GradedSpace | None = None
+    ) -> tuple["SymmetricTensor", "SymmetricTensor", "SymmetricTensor"]:
         """``U, S, Vh`` for the current partition. See :func:`tenet.linalg.svd`.
 
         ``bond=<GradedSpace>`` projects onto a pre-decided bond space, exactly as the
@@ -260,7 +262,7 @@ class TensorMapView:
         return svd(self.tensor, bond=bond)
 
     def svd_truncated(
-        self, **kwargs
+        self, **kwargs: Any
     ) -> tuple["SymmetricTensor", "SymmetricTensor", "SymmetricTensor"]:
         """Truncated ``U, S, Vh`` for the current partition. Not jittable.
 

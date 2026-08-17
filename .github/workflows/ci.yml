@@ -25,6 +25,12 @@ jobs:
       - run: uv sync
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+      # Before pytest so a type error fails in seconds, not minutes. Measured
+      # 0.2 s locally on the warm uvx cache (#166); ty is a single static binary
+      # resolved by uvx, so no new dependency group. Unpinned deliberately: ty is
+      # alpha and its fixes land fast; if an upgrade ever breaks the gate, pin
+      # with `uvx ty@<version> check`.
+      - run: uvx ty check src/tenet
       - run: uv run pytest
       # Appended to the same job, not a matrix axis: the suite is ~275s (measured
       # 273.76s locally at #146; CI is slower still) and the

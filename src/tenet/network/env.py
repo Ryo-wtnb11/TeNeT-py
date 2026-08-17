@@ -13,7 +13,7 @@ import numpy as np
 import tenet
 from tenet import IN, OUT, Leg, SymmetricTensor
 from tenet.network.common import ones
-from tenet.network.mps import MPO, MPS
+from tenet.network.mps import MPO, MPS, JordanBlocks
 
 __all__ = ["Env"]
 
@@ -154,7 +154,7 @@ class _Cores(NamedTuple):
     open_r: SymmetricTensor | None
 
 
-def _cores2(t1, t2, eye_p) -> _Cores:
+def _cores2(t1, t2, eye_p: SymmetricTensor) -> _Cores:
     """Merge the bond's Jordan blocks into MPSKit's prepared cores, environment-free.
 
     ``hamiltonian_derivatives.jl``:272-345 in ``tenet.einsum`` -- ``CB = C1 . B2``,
@@ -276,26 +276,32 @@ def _apply2(p: _Prepared, aa: SymmetricTensor) -> SymmetricTensor:
         nonlocal y
         y = t if y is None else tenet.add(y, t)
 
+    # The per-line ignores below: _prepare sets _Prepared's fields in groups —
+    # ``gl`` with ``grt``, ``gl2``/``gr2`` with ``ra1`` or ``sr2``, ``ra2`` with
+    # ``ra1`` — so inside each branch the sibling field is non-None; a cross-field
+    # invariant no checker narrows.
     if p.grt is not None:  # II + EE + sign-free spectator AA: identity through both sites
         t = _composed("rxs,apqr->apqxs", p.grt, aa, bend="r")
-        acc(_composed("axB,apqxs->Bpqs", p.gl, t, bend="x"))
+        acc(_composed("axB,apqxs->Bpqs", p.gl, t, bend="x"))  # ty: ignore[invalid-argument-type]
     if p.caf is not None:  # IC + ID + CB + CA: the IdL channel left of the bond is gauge-1
         acc(_composed("PpQqrs,apqr->aPQs", p.caf, aa, bend="r"))
     if p.abf is not None:  # AB + BE + DE: the IdR channel right of the bond is gauge-1
         acc(tenet.einsum("aPpQqB,apqr->BPQr", p.abf, aa))
     if p.ra1 is not None:  # AA remainder, left factor operator-carrying
-        t = tenet.einsum("apqr,rws->apqws", aa, p.gr2)
-        t = _composed("apqws,mQqw->apQms", t, p.ra2, bend="q")
+        t = tenet.einsum("apqr,rws->apqws", aa, p.gr2)  # ty: ignore[invalid-argument-type]
+        t = _composed("apqws,mQqw->apQms", t, p.ra2, bend="q")  # ty: ignore[invalid-argument-type]
         t = _composed("apQms,wPpm->aPQws", t, p.ra1, bend="p")
-        acc(_composed("aPQws,awB->BPQs", t, p.gl2, bend="a"))
+        acc(_composed("aPQws,awB->BPQs", t, p.gl2, bend="a"))  # ty: ignore[invalid-argument-type]
     if p.sr2 is not None:  # AA remainder, free spectator left then operator right
-        t = tenet.einsum("apqr,rws->apqws", aa, p.gr2)
+        t = tenet.einsum("apqr,rws->apqws", aa, p.gr2)  # ty: ignore[invalid-argument-type]
         t = _composed("apqws,mQqw->apQms", t, p.sr2, bend="q")
-        acc(_composed("apQms,amB->BpQs", t, p.gl2, bend="a"))
-    return y
+        acc(_composed("apQms,amB->BpQs", t, p.gl2, bend="a"))  # ty: ignore[invalid-argument-type]
+    return y  # ty: ignore[invalid-return-type]  # some branch always fired: h has at least one term
 
 
-def _fold_last(t, f, a, bra) -> SymmetricTensor:
+def _fold_last(
+    t: JordanBlocks, f: SymmetricTensor, a: SymmetricTensor, bra: SymmetricTensor
+) -> SymmetricTensor:
     """One prepared left-to-right environment step, exact for any state.
 
     The half-transferred ``F . A`` is shared by every path; the identity channels --
@@ -309,7 +315,7 @@ def _fold_last(t, f, a, bra) -> SymmetricTensor:
         comp = tenet.einsum("Bps,xBpr->rxs", bra, t1)
         out = tenet.einsum("xm,rxs->rms", t.idmap, comp)
 
-    def flow(src, w, emb):
+    def flow(src, w, emb) -> SymmetricTensor:
         s = tenet.einsum("vPpw,vBpr->BrPw", w, src)
         s = tenet.einsum("BPs,BrPw->rws", bra, s)
         return tenet.einsum("wm,rws->rms", emb, s)
@@ -330,10 +336,14 @@ def _fold_last(t, f, a, bra) -> SymmetricTensor:
         if t.a_real_op is not None:
             part = flow(to, t.a_real_op, t.open_r)
             out = part if out is None else tenet.add(out, part)
-    return out
+    # at least one of the operator groups is present in every table row, so the
+    # accumulator is assigned before the return; ty sees only the None seed
+    return out  # ty: ignore[invalid-return-type]
 
 
-def _fold_first(t, f, a, bra) -> SymmetricTensor:
+def _fold_first(
+    t: JordanBlocks, f: SymmetricTensor, a: SymmetricTensor, bra: SymmetricTensor
+) -> SymmetricTensor:
     """One prepared right-to-left environment step -- :func:`_fold_last` mirrored.
 
     Mirrored in the cap sense, not only in the loop direction: a right-directed
@@ -351,7 +361,7 @@ def _fold_first(t, f, a, bra) -> SymmetricTensor:
         comp = _composed("Bps,apys->ayB", bra, t1, bend="s")
         out = _composed("xy,ayB->axB", t.idmap, comp, bend="y")
 
-    def flow(src, w, emb):
+    def flow(src, w, emb) -> SymmetricTensor:
         s = _composed("vPpw,apws->avPs", w, src, bend="w")
         s = _composed("BPs,avPs->avB", bra, s, bend="s")
         return _composed("xv,avB->axB", emb, s, bend="v")
@@ -372,7 +382,9 @@ def _fold_first(t, f, a, bra) -> SymmetricTensor:
         if t.a_real_op is not None:
             part = flow(to, t.a_real_op, t.open_l)
             out = part if out is None else tenet.add(out, part)
-    return out
+    # at least one of the operator groups is present in every table row, so the
+    # accumulator is assigned before the return; ty sees only the None seed
+    return out  # ty: ignore[invalid-return-type]
 
 
 class Env:

@@ -383,7 +383,8 @@ def full_trace(t: "SymmetricTensor") -> Any:
     check_square(t, "full_trace")
     if not t.blocks:
         return 0.0
-    qdim = t.provider.qdim
+    # requires() above; raise-based check does not narrow
+    qdim = t.provider.qdim  # ty: ignore[unresolved-attribute]
     return sum(qdim(c) * ar.do("trace", m) for c, m in to_matrices(t).items())
 
 
@@ -549,7 +550,12 @@ def einsum(
     # tensordot's output is a's free legs then b's free legs, in each operand's order
     free = [label for label in terms[0] if label not in shared]
     free += [label for label in terms[1] if label not in shared]
-    return transpose(tensordot(*operands, axes), tuple(free.index(label) for label in out))
+    # exactly two operands on this path (the len() checks above); a tuple
+    # unpack of statically unknown length is what the checker refuses
+    return transpose(
+        tensordot(*operands, axes),  # ty: ignore[too-many-positional-arguments]
+        tuple(free.index(label) for label in out),
+    )
 
 
 # Simplification: no path cache. Path finding for a ten-tensor network is microseconds

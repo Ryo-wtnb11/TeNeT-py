@@ -21,6 +21,8 @@ class between modules, and makes ``"tenet"`` a documented fact rather than a
 heuristic's accident. This mirrors symmray's ``interface.py``.
 """
 
+from collections.abc import Callable
+
 import autoray as ar
 
 from tenet.ops import (
@@ -60,10 +62,12 @@ def _fuse(t: SymmetricTensor, *axes_groups: object) -> SymmetricTensor:
             "determined by the groups alone. Fuse one group at a time: "
             "tenet.fuse(t, (0, 1))"
         )
-    return fuse(t, axes_groups[0])  # type: ignore[arg-type]
+    # autoray hands the groups through untyped varargs, so the single group
+    # arrives as ``object``; the adapter contract above makes it a Sequence[int].
+    return fuse(t, axes_groups[0])  # ty: ignore[invalid-argument-type]  # untyped autoray varargs
 
 
-def _elementwise_refused(name: str):
+def _elementwise_refused(name: str) -> "Callable[..., SymmetricTensor]":
     """Refuse a dense-elementwise name that ``tenet`` happens to export (#93).
 
     ``tenet.sqrt`` and ``tenet.power`` are module-level, and autoray resolves an
