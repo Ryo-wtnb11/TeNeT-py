@@ -46,6 +46,9 @@ explicit = true
 dev = [
     "jax>=0.10",  # wide-matrix qr JVP; see the [jax] extra (#80)
     "pytest>=8.0",
+    # Coverage measurement for the CI badge (#145). No threshold gate: the number is
+    # reported, not enforced.
+    "pytest-cov>=6.0",
     "quimb>=1.11",
     # The [sun] extra, installed from source until racah-py is on PyPI. Same reason
     # scipy sits here: without it the SU(N) provider tests would never run in CI.

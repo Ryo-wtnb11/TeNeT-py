@@ -36,3 +36,23 @@ jobs:
       # nav entry and internal link into a failure, which is the whole check (#118).
       # A broken docs build reddens CI; the deploy lives in docs.yml and cannot.
       - run: uv run --group docs mkdocs build --strict
+
+  # A separate job, not a step in `test` (#145): coverage instrumentation measured
+  # +63% on the suite locally (269 s -> 439 s), which would blow the 290 s budget.
+  # Non-blocking: a hiccup here never reddens the primary suite, and there is no
+  # --cov-fail-under gate — the percentage is published (badge via docs.yml), not
+  # enforced.
+  coverage:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv run pytest -q --cov=src/tenet --cov-report=xml
+      # docs.yml downloads this to render the README's coverage badge on Pages.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml

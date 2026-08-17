@@ -32,16 +32,29 @@ jnp = pytest.importorskip("jax.numpy")
 import tenet.ad  # noqa: E402
 import tenet.pytree  # noqa: E402, F401  # registration is the import's side effect
 
+# The vendored SU(3) fixture provider lives beside the tests that built it; pytest
+# puts each test file's own directory on sys.path, so from here it needs the same
+# explicit insert the examples import at the bottom of this file uses. No racah-py:
+# the coefficients are read from tests/fixtures/su3_*.txt.
+sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "symmetry"))
+from _su3_fixture import EIGHT, ONE, SU3  # noqa: E402
+
 # Square maps: one OUT leg and its IN partner, so every coupled-sector matrix is
 # m_c x m_c and both svd and eigh accept the tensor. Degeneracies of 3 and 2 give a
 # sector big enough for *two* zero singular values and one that is not.
 Q = GradedSpace.new(U1, {U1Sector(0): 3, U1Sector(1): 2})
 V = GradedSpace.new(SU2, {SU2Sector(0): 2, SU2Sector(1): 2})  # qdim weights 1 and 3
 F = GradedSpace.new(fZ2, {FZ2Sector(0): 3, FZ2Sector(1): 2})
+# The multiplicity-bearing provider: the adjoint is self-dual and 8 x 8 -> 8 has
+# N = 2, so plans over this space cross the matrix-valued F/R/B branch that SU(2)
+# structurally cannot reach. Same space on both legs keeps every coupled-sector
+# matrix square, as the SQUARE comment above requires.
+W = GradedSpace.new(SU3, {ONE: 3, EIGHT: 2})
 SQUARE = {
     "u1": (Leg(Q, OUT), Leg(Q, IN)),
     "su2": (Leg(V, OUT), Leg(V, IN)),
     "fz2": (Leg(F, OUT), Leg(F, IN)),
+    "su3": (Leg(W, OUT), Leg(W, IN)),
 }
 PROVIDERS = list(SQUARE)
 
@@ -55,10 +68,12 @@ RECT = (Leg(QA, OUT), Leg(QB, IN))
 # coverage is not U(1)-only.
 VB = GradedSpace.new(SU2, {SU2Sector(0): 3, SU2Sector(1): 1})
 FB = GradedSpace.new(fZ2, {FZ2Sector(0): 2, FZ2Sector(1): 3})
+WB = GradedSpace.new(SU3, {ONE: 2, EIGHT: 3})  # (3, 2) and (2, 3), as for u1
 RECT_BY_PROVIDER = {
     "u1": RECT,
     "su2": (Leg(V, OUT), Leg(VB, IN)),
     "fz2": (Leg(F, OUT), Leg(FB, IN)),
+    "su3": (Leg(W, OUT), Leg(WB, IN)),
 }
 
 # A bigger structure for the jit trace-count test: same provider, different degeneracy.
