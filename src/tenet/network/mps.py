@@ -1,6 +1,6 @@
 """The containers: :class:`MPS` and :class:`MPO`.
 
-Promoted from ``examples/dmrg.py`` (#110) with no arithmetic change: ``random_mps``
+Promoted from ``examples/toy_codes/dmrg.py`` (#110) with no arithmetic change: ``random_mps``
 :266-274, ``_as_site`` :277-286 (now the :meth:`MPS.__setitem__` write barrier),
 ``canonicalize`` :289-306 (now :meth:`MPS.canonize_`) and ``mpo`` :220-240 (now
 :meth:`MPO.from_w`). ``scalar``, ``inner`` and ``spectrum`` lived here until #114 moved
@@ -56,8 +56,9 @@ class MPS:
     Charge flows left to right, ``bond_n (x) phys_n -> bond_{n+1}``, and both end bonds
     have ``D=1``; a non-unit sector on bond 0 targets that total charge (YASTN's
     charged-first-virtual-leg recipe, ``_initialize.py``:194). The convention is not
-    invented here -- ``examples/dmrg.py``:57-59 and ``examples/vmc_mps.py``:69-74 both
-    chose it independently and ``tests/integration/test_dmrg.py`` already pins it.
+    invented here -- ``examples/toy_codes/dmrg.py``:57-59 and
+    ``examples/toy_codes/vmc_mps.py``:69-74 both chose it independently and
+    ``tests/integration/test_dmrg.py`` already pins it.
 
     **Why a mutable container does not violate REPOSITORY_RULES:30.** That rule protects
     *categorical* objects -- ``Leg``, ``GradedSpace``, ``TensorStructure``,
@@ -127,7 +128,7 @@ class MPS:
 
         The library takes bond *spaces*; deciding which are reachable for a given
         symmetry and target charge is physics and stays in the caller
-        (``examples/dmrg.py::bond_spaces``).
+        (``examples/toy_codes/dmrg.py::bond_spaces``).
         """
         return cls(
             SymmetricTensor.random(

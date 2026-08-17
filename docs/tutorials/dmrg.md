@@ -1,13 +1,13 @@
 # DMRG — a U(1) Heisenberg chain against exact diagonalization
 
-Source: [`examples/dmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/dmrg.py).
+Source: [`examples/toy_codes/dmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/dmrg.py).
 **Oracle:** exact diagonalization of the same finite chain, plus the thermodynamic limit
 `1/4 - ln 2` (Bethe 1931; Hulthén 1938) that `main()` reports against. The file is
 executed by `tests/integration/test_dmrg.py`, so the code you read there is code that
 runs — read it in the repository rather than a copy pasted here.
 
 ```sh
-uv run python examples/dmrg.py
+uv run python examples/toy_codes/dmrg.py
 ```
 
 ## What the library owns, and what the example owns
@@ -219,7 +219,7 @@ import tenet
 from tenet import IN, OUT, Leg
 from tenet.network import MPS, expectation_1site
 
-out = dmrg(8, chi=32)  # examples/dmrg.py
+out = dmrg(8, chi=32)  # examples/toy_codes/dmrg.py
 
 out.psi.save("ground-state")  # a directory: 000.npz .. 007.npz plus mps.json
 psi = MPS.load("ground-state")  # NumPy blocks; .to_backend("jax") per site to restore
@@ -255,6 +255,17 @@ the convergence diagnostic".
 - **The MPO is written out, not generated.** `tenet.network.MPO.from_w` takes the array;
   an `Hterm`-style generator is the right API for arbitrary Hamiltonians and the wrong
   thing for a file whose Hamiltonian is one line of physics.
+
+## The usage lane
+
+This page's toy code writes the `W` matrix and its bond spaces out by hand — that is what
+it teaches. To see the same chain *called* through the library instead, run
+[`examples/heisenberg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/heisenberg.py)
+(`local_op` → `MPO.from_terms` → `MPS.product` → `dmrg_` → `expectation_2site`, no `W`
+anywhere) and
+[`examples/su2_heisenberg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/su2_heisenberg.py),
+which runs the same chain under SU(2) and prints the multiplet-vs-dense table above as
+computed numbers. Both run on a core install and are executed by `tests/test_examples.py`.
 
 ## Reference
 

@@ -2,7 +2,7 @@
 
 The write barrier is the point of the class (#112): every factorization in
 ``tenet.linalg`` lowers its input to a *map* first, so a rank-3 factor comes back on the
-map's partition, and ``examples/dmrg.py`` used to repair that at each of two call sites
+map's partition, and ``examples/toy_codes/dmrg.py`` used to repair that at each of two call sites
 with a private ``_as_site``. Storing the factor is now the repair, and these tests are
 what say so.
 """

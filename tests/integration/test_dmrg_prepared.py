@@ -16,7 +16,7 @@ import sys
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples"))
+sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples" / "toy_codes"))
 
 import dmrg as example  # noqa: E402
 

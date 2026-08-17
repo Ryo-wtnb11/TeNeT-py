@@ -1,12 +1,12 @@
 # CTMRG — classical Ising against Onsager, then a U(1)/SU(2) iPEPS gradient
 
-Source: [`examples/ctmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/ctmrg.py).
+Source: [`examples/toy_codes/ctmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/ctmrg.py).
 **Oracle:** Onsager's closed-form free energy per site, and its `d(βf)/dβ` as the check on
 `jax.grad` taken through the unrolled sweeps. The file is executed by
 `tests/integration/test_ctmrg.py`; read the code there rather than a copy.
 
 ```sh
-uv run --extra jax python examples/ctmrg.py
+uv run --extra jax python examples/toy_codes/ctmrg.py
 ```
 
 ## Two physical problems, one CTMRG core
@@ -62,6 +62,14 @@ follows [`vmc_mps.py`](vmc.md): random symmetric `h`, no comparison against
 `tenet.cast` is mentioned there and deliberately not used: building an SU(2) ansatz and
 casting it to U(1) would be a third concept in a file that already has two models. The
 SU(2) provider is instead run through the same iPEPS path via a `provider` parameter.
+
+## The usage lane
+
+The toy code above needs `--extra jax`; for the CTMRG a **core** install can run, see
+[`examples/ising2d.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/ising2d.py) —
+it borrows `ising_bulk` and the Onsager oracle from the toy code, calls
+`ctmrg(*single_layer_ctm(bulk), chi=24)` at three temperatures, and prints the exactly
+doubled ordered-phase corner spectrum. Executed by `tests/test_examples.py`.
 
 ## Reference
 

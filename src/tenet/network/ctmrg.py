@@ -1,6 +1,6 @@
 """C4v corner-transfer-matrix renormalization: the half of this package that is traced.
 
-Promoted from ``examples/ctmrg.py`` (#102/#104/#105/#107) by #114 with no arithmetic
+Promoted from ``examples/toy_codes/ctmrg.py`` (#102/#104/#105/#107) by #114 with no arithmetic
 change; the example keeps the physics -- the Boltzmann tensor, the C4v ansatz constraint,
 the observables -- and this module keeps the environment machinery.
 

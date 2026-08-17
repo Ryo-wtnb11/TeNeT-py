@@ -111,7 +111,7 @@ def test_both_mpo_builders_give_the_same_ground_state_energy_at_n6():
 def su2_bond_spaces(n_sites):
     """The reachable total-spin sectors of a spin-1/2 chain, degeneracy 1 each.
 
-    ``examples/dmrg.py::bond_spaces``'s SU(2) twin, and the same #112 statement: which
+    ``examples/toy_codes/dmrg.py::bond_spaces``'s SU(2) twin, and the same #112 statement: which
     spaces are reachable is physics and stays out of the library. ``2 j`` on bond ``i``
     runs over ``i % 2, i % 2 + 2, ..., min(i, n - i)`` -- ``i`` spin-1/2s fix the parity,
     and the total spin must still be able to fall back to a singlet by the last site.

@@ -27,10 +27,10 @@ so the list enforced and the list ``network/__init__.py`` claims are the same li
 
 **The duplicated-``scalar`` finding #112 recorded, corrected and closed (#114, #126).** It
 was recorded as *three* files writing the same five-line ``sum(qdim(c) * trace(m))``; it
-was **two**. ``examples/vmc_mps.py``:158-160 is a *different* function --
+was **two**. ``examples/toy_codes/vmc_mps.py``:158-160 is a *different* function --
 ``t.blocks[0][0, 0]``, the trivial-leg shortcut for a network with no non-unit sector on
 the open bond, not qdim-weighted at all -- and it is deliberately untouched. The two real
-copies were ``examples/ctmrg.py`` and ``tenet/network/mps.py::scalar``; #114 moved them
+copies were ``examples/toy_codes/ctmrg.py`` and ``tenet/network/mps.py::scalar``; #114 moved them
 into ``network/common.py`` with their bodies unchanged, and #126 finished the job by
 promoting the qdim-weighted trace to ``tenet.full_trace`` (and ``inner`` to
 ``tenet.inner``) in ``tenet.ops``, next to ``trace``. There is now a public spelling, so

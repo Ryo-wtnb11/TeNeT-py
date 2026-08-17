@@ -1,11 +1,11 @@
 # VMC — symmetric MPS → JAX pytree → grad → SGD step
 
-Source: [`examples/vmc_mps.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/vmc_mps.py).
+Source: [`examples/toy_codes/vmc_mps.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/vmc_mps.py).
 **Oracle:** the variational energy decreases across the SGD step, checked by
 `tests/integration/test_vmc_mps.py`, which executes the file.
 
 ```sh
-uv run --extra jax python examples/vmc_mps.py
+uv run --extra jax python examples/toy_codes/vmc_mps.py
 ```
 
 ## What it demonstrates
