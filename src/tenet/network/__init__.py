@@ -15,7 +15,8 @@ so it is written where it holds:
   breakdown tests a norm against ``tol``, and :func:`dmrg_`'s loop exits on a measured
   energy change, and M11c's :meth:`MPS.save` / :meth:`MPS.load`, :meth:`MPS.compress_`
   and :func:`expectation_1site` / :func:`expectation_2site` are outside for the same
-  reasons -- filesystem I/O, a re-decided bond space, and a truncating split;
+  reasons -- filesystem I/O, a re-decided bond space, and a truncating split, and M13's
+  :meth:`MPO.from_terms` joins them because its compression sweep is ``svd_truncated``;
 * ``common.py`` -- **trace-neutral**; :func:`spectrum` is nonetheless only ever called
   outside a trace, its ``sorted`` Python list being driver output rather than a tensor;
 * ``ctmrg.py`` -- **both**, stated per function in its own docstrings. :func:`ctmrg`
@@ -37,7 +38,9 @@ Contents. M11a: :class:`MPS`, :class:`MPO`, :class:`Env`, :func:`lanczos`, :func
 and :func:`ring`. M11c: :meth:`MPS.save` / :meth:`MPS.load` and :meth:`MPS.compress_`,
 the two measurements :func:`expectation_1site` and :func:`expectation_2site`, and
 :class:`CTMRG_out` -- :func:`ctmrg`'s return, which was a bare ``(CTMEnv, history)``
-tuple. Shared: the bond spectrum :func:`spectrum` and the :func:`ones` seed -- the two
+tuple. M13: :func:`local_op` and :meth:`MPO.from_terms`, the term-list MPO builder whose
+bond spaces are derived rather than declared, with :meth:`MPO.to_dense` as its oracle exit.
+Shared: the bond spectrum :func:`spectrum` and the :func:`ones` seed -- the two
 scalar exits that sat beside them left for ``tenet.ops`` in #126, as
 :func:`tenet.full_trace` and :func:`tenet.inner`. Promoted verbatim from
 ``examples/dmrg.py`` (#110) and ``examples/ctmrg.py`` (#102/#104/#105/#107) under the rule
@@ -70,7 +73,7 @@ from tenet.network.ctmrg import (
 )
 from tenet.network.dmrg import DMRG_out, dmrg_, lanczos, sweep_
 from tenet.network.env import Env
-from tenet.network.mps import MPO, MPS, expectation_1site, expectation_2site
+from tenet.network.mps import MPO, MPS, expectation_1site, expectation_2site, local_op
 
 __all__ = [
     "MPO",
@@ -90,6 +93,7 @@ __all__ = [
     "init_env",
     "lanczos",
     "layers",
+    "local_op",
     "move",
     "normalized",
     "ones",
