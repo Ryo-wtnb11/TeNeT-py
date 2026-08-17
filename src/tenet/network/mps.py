@@ -375,26 +375,46 @@ def expectation_2site(psi: MPS, o: SymmetricTensor, n: int) -> float:
 # --- the Hamiltonian ----------------------------------------------------------------
 
 
-def local_op(dense: Any, *, phys: GradedSpace, charge: Sector) -> SymmetricTensor:
-    """A ``(d, d)`` dense operator as rank 3 on ``(phys OUT, phys IN, charge OUT)``.
+def local_op(dense: Any, *, phys: GradedSpace, charge: Sector | None = None) -> SymmetricTensor:
+    """A dense operator as a term operator: rank 3 with a charge leg, or invariant on *k* sites.
 
-    The third leg is why this exists. ``S^+`` raises ``2 S^z`` by 2, so as a rank-2 tensor
-    it is symmetry-forbidden and ``from_dense`` refuses it, correctly; the charge has to
-    live on a leg. Invariance reads ``q(p_out) + q(charge) = q(p_in)``, so ``charge`` is
-    literally the MPO bond the operator emits. Built at ``from_dense``'s **default**
-    relative ``atol``, so a ``charge`` that does not match the array *raises*.
+    With ``charge``, a ``(d, d)`` array becomes rank 3 on ``(phys OUT, phys IN, charge
+    OUT)``. The third leg is why that form exists: ``S^+`` raises ``2 S^z`` by 2, so as a
+    rank-2 tensor it is symmetry-forbidden and ``from_dense`` refuses it, correctly; the
+    charge has to live on a leg. Invariance reads ``q(p_out) + q(charge) = q(p_in)``, so
+    ``charge`` is literally the MPO bond the operator emits.
 
-    The matrices themselves are physics and stay in the caller; turning one into a
-    charge-carrying tensor is the step the caller cannot get right by hand.
+    With ``charge=None`` the array is **one whole term** spanning *k* sites -- ``(d**k,
+    d**k)`` or ``(d,)*2k``, *k* inferred from ``d``, the layout ``np.kron(a, b)`` already
+    has -- and the result is rank 2*k* on ``(phys OUT)*k`` then ``(phys IN)*k`` with no
+    auxiliary leg at all. A term is a scalar under the symmetry, so this form **cannot
+    express a symmetry-breaking term**: on SU(2) legs ``Sz (x) Sz`` alone raises and
+    ``S.S`` builds. A non-Abelian term's coupling lives inside the array's own blocks,
+    which is why it needs no coupling-tree argument; :meth:`MPO.from_terms` splits it with
+    ``svd_truncated`` and the MPO bond comes out of that SVD.
+
+    Both forms are built at ``from_dense``'s **default** relative ``atol``, so an array
+    that does not match what it was declared to be *raises*. The matrices themselves are
+    physics and stay in the caller.
     """
     d = phys.dim
     shape = tuple(np.shape(dense))
-    if shape != (d, d):
-        raise ValueError(f"local_op: expected a ({d}, {d}) array on this phys, got {shape}")
-    emitted = Leg(GradedSpace.new(phys.provider, {charge: 1}), OUT)
-    return SymmetricTensor.from_dense(
-        np.reshape(dense, (d, d, 1)), (Leg(phys, OUT), Leg(phys, IN), emitted)
-    )
+    if charge is not None:
+        if shape != (d, d):
+            raise ValueError(f"local_op: expected a ({d}, {d}) array on this phys, got {shape}")
+        emitted = Leg(GradedSpace.new(phys.provider, {charge: 1}), OUT)
+        return SymmetricTensor.from_dense(
+            np.reshape(dense, (d, d, 1)), (Leg(phys, OUT), Leg(phys, IN), emitted)
+        )
+    k = next((k for k in range(1, 9) if shape in ((d**k, d**k), (d,) * (2 * k))), None)
+    if k is None:
+        raise ValueError(
+            f"local_op: with charge=None the array is an invariant k-site term, so it is "
+            f"({d}**k, {d}**k) or ({d},)*2k on this phys (d={d}); got {shape}, from which no "
+            f"integer k follows"
+        )
+    legs = (Leg(phys, OUT),) * k + (Leg(phys, IN),) * k
+    return SymmetricTensor.from_dense(np.reshape(dense, (d,) * (2 * k)), legs)
 
 
 def _as_w(t: SymmetricTensor) -> SymmetricTensor:
@@ -417,27 +437,54 @@ def _braids_with_signs(space: GradedSpace) -> bool:
 
     Asked of the braiding rather than of the provider's identity -- a category is fermionic
     exactly when some sector braids past itself with coefficient ``-1``, which is
-    symmetry-generic recoupling metadata and not a provider branch. Called only after the
-    Abelian check below, because SU(2)'s ``(-1)^(j_a + j_b - j_c)`` wears the same minus.
+    symmetry-generic recoupling metadata and not a provider branch. The sign is demanded
+    in **every** channel, because in a super-vector space it depends on parity alone:
+    SU(2) wears a minus in some channels only (``(-1)^(j_a + j_b - j_c)``, ``-1`` on the
+    singlet and ``+1`` on the triplet), and it is not fermionic.
     """
     sym = space.provider
     for a, _ in space.sectors:
-        tree = FusionTree((a, a), (), (0,), sym.fusion(a, a)[0])
-        if sym.permute_tree(tree, (1, 0))[0][1].real < 0:
+        signs = [
+            sym.permute_tree(FusionTree((a, a), (), (0,), c), (1, 0))[0][1].real
+            for c in sym.fusion(a, a)
+        ]
+        if signs and all(sign < 0 for sign in signs):
             return True
     return False
 
 
+_FERMIONIC = (
+    "from_terms refuses fermionic braiding: the Jordan-Wigner string needs a swap "
+    "gate between an odd MPO bond and a physical line, which tenet does not have "
+    "(docs/design.md:2888 lists fermionic swap gates as not planned). Env and "
+    "sweep_ would contract the result silently and wrongly rather than refuse it"
+)
+
+
 def _check_op(op: SymmetricTensor, phys: GradedSpace | None) -> GradedSpace:
     """Validate one term operator and return the physical space it declares."""
-    if op.ndim != 3:
+    if op.ndim != 3 and (op.ndim < 4 or op.ndim % 2):
         raise ValueError(
-            f"a term operator is rank 3 on (phys OUT, phys IN, charge OUT), got rank "
-            f"{op.ndim}; build it with tenet.network.local_op, which adds the charge leg"
+            f"a term operator is rank 3 on (phys OUT, phys IN, charge OUT) or rank 2k on "
+            f"(phys OUT)*k then (phys IN)*k for an invariant k-site term (k >= 2), got rank "
+            f"{op.ndim}; build it with tenet.network.local_op"
         )
-    got, emitted = op.legs[0].space, op.legs[2].space
+    got = op.legs[0].space
     if phys is not None and got != phys:
         raise ValueError(f"term operators disagree about the physical space: {phys} vs {got}")
+    if op.ndim != 3:
+        k = op.ndim // 2
+        sides = (OUT,) * k + (IN,) * k
+        if any(leg.side != s or leg.space != got for leg, s in zip(op.legs, sides, strict=True)):
+            raise ValueError(
+                f"an invariant {k}-site term operator is (phys OUT)*{k} then (phys IN)*{k} on "
+                f"one space, got {[(leg.space, leg.side) for leg in op.legs]}; an MPO site "
+                "tensor, with its bond legs, is not a term operator"
+            )
+        if _braids_with_signs(got):
+            raise ValueError(_FERMIONIC)
+        return got
+    emitted = op.legs[2].space
     if emitted.reduced_dim != 1:
         raise ValueError(
             f"a term operator's charge leg carries one sector at degeneracy 1, got "
@@ -451,54 +498,127 @@ def _check_op(op: SymmetricTensor, phys: GradedSpace | None) -> GradedSpace:
             "from_terms is Abelian-only: this operator's charge leg has irrep_dim > 1, and "
             "a list of non-Abelian operators does not determine a term -- three of them "
             "fuse through several channels and the DSL has no slot for a coupling tree. "
-            "The 2-site case is the named follow-up (tenet.ops.fusion.fused_leg)"
+            "Hand the whole term over instead: one invariant k-site operator from "
+            "local_op(dense, phys=...) with no charge, on a tuple of sites"
         )
     if _braids_with_signs(got) or _braids_with_signs(emitted):
-        raise ValueError(
-            "from_terms refuses fermionic braiding: the Jordan-Wigner string needs a swap "
-            "gate between an odd MPO bond and a physical line, which tenet does not have "
-            "(docs/design.md:2888 lists fermionic swap gates as not planned). Env and "
-            "sweep_ would contract the result silently and wrongly rather than refuse it"
-        )
+        raise ValueError(_FERMIONIC)
     return got
 
 
-def _term_string(n_sites: int, coeff: float, ops, phys: GradedSpace) -> list[SymmetricTensor]:
+def _unit_leg(sym, dual: bool) -> Leg:
+    """The trivial ``D=1`` MPO boundary leg, ``IN``."""
+    return Leg(GradedSpace.new(sym, {sym.unit: 1}), IN, dual)
+
+
+def _identity_w(aux: Leg, phys: GradedSpace) -> SymmetricTensor:
+    """A spectator site: ``id(aux) (x) id(phys)`` on ``(wl IN, p OUT, p IN, wr OUT)``.
+
+    Symmetry-generic, so the MPO bond a k-site term derives may be *graded* and still run
+    through the sites the term does not touch -- which is what makes a non-adjacent term
+    work, and what the old ``np.eye`` spectator could not do. ``id(aux)``'s legs are
+    ``(OUT, IN)``, so the subscripts put its IN on the left of the ``W`` and its OUT on
+    the right; ``aux`` is a whole :class:`~tenet.Leg` because the derived bond's ``dual``
+    flag would be dropped by a space alone.
+    """
+    return _as_w(
+        tenet.einsum("ba,pq->apqb", tenet.identity((aux,)), tenet.identity((Leg(phys, IN),)))
+    )
+
+
+def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
+    """One invariant rank-2k operator as k MPO tensors -- MPSKit's ``decompose_localmpo``.
+
+    A trivial leg is glued to each end (``add_util_leg``) so that every peeled factor is
+    already rank 4, then one site at a time is peeled off by ``svd_truncated``. **The aux
+    bonds are never declared**: they come out of the SVD sector by sector, empty sectors
+    omitted, which is why nothing here needs a coupling tree or a multiplicity label.
+
+    The util legs are ``dual`` because ``_as_w``'s bend makes the *derived* bonds dual, and
+    :func:`tenet.direct_sum` refuses ``V (+) V*``: one convention per term string, and on
+    the unit sector the flag is free.
+    """
+    sym = op.legs[0].space.provider
+    body = string.ascii_uppercase[: op.ndim]
+    carry = tenet.einsum(f"ba,{body}->a{body}b", tenet.identity((_unit_leg(sym, True),)), op)
+    out = []
+    while carry.ndim > 4:
+        m = (carry.ndim - 2) // 2
+        rest = (*range(2, 1 + m), *range(2 + m, 2 * m + 2))
+        u, s, vh = tenet.linalg.svd_truncated(carry, ((0, 1, 1 + m), rest), cutoff=cutoff)
+        out.append(_as_w(u))
+        body = string.ascii_uppercase[: vh.ndim - 1]
+        carry = tenet.einsum(f"xy,y{body}->x{body}", s, vh)
+    out.append(_as_w(carry))
+    if any(_braids_with_signs(w.legs[3].space) for w in out):
+        raise ValueError(_FERMIONIC)  # the derived bond, which no argument declared
+    return out
+
+
+def _term_string(
+    n_sites: int, coeff: float, ops, phys: GradedSpace, cutoff: float
+) -> list[SymmetricTensor]:
     """One term as a bond-1 MPO: identities on the untouched sites, charge accumulated.
 
-    The running MPO bond at each cut carries exactly the sum of the charges emitted to its
-    left, which is the whole of ``q(p_out) + q(wr) = q(wl) + q(p_in)`` for a ``D=1`` bond.
+    For the charge-leg form the running MPO bond at each cut carries exactly the sum of
+    the charges emitted to its left, which is the whole of ``q(p_out) + q(wr) = q(wl) +
+    q(p_in)`` for a ``D=1`` bond. For the invariant form the bond is whatever
+    :func:`_split` derived, and the term closes on the unit by construction.
     """
     placed: dict[int, SymmetricTensor] = {}
-    for op, site in ops:
-        if site not in range(n_sites):
-            raise ValueError(f"term site index {site} is outside range({n_sites})")
-        if site in placed:
-            raise ValueError(f"two operators of one term sit on site {site}; multiply them first")
-        placed[site] = op
+    for op, sites in ops:
+        sites = (sites,) if isinstance(sites, int) else tuple(sites)
+        span = [op] if op.ndim == 3 else _split(op, cutoff)
+        if len(sites) != len(span):
+            raise ValueError(
+                f"a rank-{op.ndim} term operator spans {len(span)} site(s), got sites {sites}"
+            )
+        for site, w in zip(sites, span, strict=True):
+            if site not in range(n_sites):
+                raise ValueError(f"term site index {site} is outside range({n_sites})")
+            if site in placed:
+                raise ValueError(
+                    f"two operators of one term sit on site {site}; multiply them first"
+                )
+            placed[site] = w
     sym, d = phys.provider, phys.dim
-    running, out = sym.unit, []
+    # One dual convention per string, set by whether any k-site split runs in it.
+    unit, out = _unit_leg(sym, any(op.ndim != 3 for op, _ in ops)), []
+    aux = unit
     for n in range(n_sites):
-        left = GradedSpace.new(sym, {running: 1})
-        op = placed.get(n)
-        if op is None:
-            mat = np.eye(d)
+        w = placed.get(n)
+        if w is None:
+            out.append(_identity_w(aux, phys))
+        elif w.ndim == 3:
+            running = sym.fusion(aux.space.sectors[0][0], w.legs[2].space.sectors[0][0])[0]
+            right = GradedSpace.new(sym, {running: 1})
+            legs = (aux, Leg(phys, OUT), Leg(phys, IN), Leg(right, OUT))
+            block = np.reshape(np.asarray(w.to_dense())[:, :, 0], (1, d, d, 1))
+            out.append(_as_w(SymmetricTensor.from_dense(block, legs)))
+            aux = Leg(right, IN)
         else:
-            mat = np.asarray(op.to_dense())[:, :, 0]
-            running = sym.fusion(running, op.legs[2].space.sectors[0][0])[0]
-        legs = (
-            Leg(left, IN),
-            Leg(phys, OUT),
-            Leg(phys, IN),
-            Leg(GradedSpace.new(sym, {running: 1}), OUT),
-        )
-        block = np.reshape(coeff * mat if n == 0 else mat, (1, d, d, 1))
-        out.append(_as_w(SymmetricTensor.from_dense(block, legs)))
-    if running != sym.unit:
+            if w.legs[0] != aux:
+                raise ValueError(
+                    f"the operators of one term interleave at site {n}: each k-site operator's "
+                    f"derived bond must close before the next one begins"
+                )
+            out.append(w)
+            aux = Leg(w.legs[3].space, IN, w.legs[3].dual)
+    if aux != unit:
         raise ValueError(
-            f"a term's operator charges must sum to the unit sector, got {running}; both "
+            f"a term's operator charges must sum to the unit sector, got {aux.space}; both "
             "MPO boundaries are the trivial D=1 leg, so a charged term has nowhere to end"
         )
+    if unit.dual:
+        # The two *outer* legs go back non-dual: ``Env`` builds its boundary environments
+        # with ``Leg(mpo_l, OUT)`` (``env.py``:50-53) and the other builder's ends are
+        # non-dual too. Both ends are D=1 on the unit sector, where the flag is a label.
+        triv = unit.space
+        cap = SymmetricTensor.from_dense(np.ones((1, 1)), (Leg(triv, IN), Leg(triv, OUT, True)))
+        out[0] = _as_w(tenet.einsum("ax,xpqr->apqr", cap, out[0]))
+        cap = SymmetricTensor.from_dense(np.ones((1, 1)), (Leg(triv, IN, True), Leg(triv, OUT)))
+        out[-1] = _as_w(tenet.einsum("apqx,xb->apqb", out[-1], cap))
+    out[0] = tenet.multiply(out[0], coeff)
     return out
 
 
@@ -570,10 +690,22 @@ class MPO:
 
     @classmethod
     def from_terms(cls, n_sites: int, terms: Iterable, *, cutoff: float = 1e-13) -> "MPO":
-        """A term list ``[(coeff, [(op, site), ...]), ...]`` as a compressed graded MPO.
+        """A term list ``[(coeff, [(op, sites), ...]), ...]`` as a compressed graded MPO.
 
-        Each ``op`` is rank 3 from :func:`local_op`; a term is a coefficient and a list of
-        ``(operator, site)`` pairs, with identities implied on every untouched site. Every
+        Each ``op`` comes from :func:`local_op` in one of its two forms, and ``sites`` is
+        an ``int`` or a tuple of that many site indices -- ``i`` and ``(i,)`` are the same
+        thing. The dispatch is on ``op.ndim`` alone:
+
+        * **rank 3**, the charge-leg form, one site, Abelian only;
+        * **rank 2k**, an invariant *k*-site term on ``k`` sites, any symmetry.
+          :func:`tenet.linalg.svd_truncated` peels it into ``k`` MPO tensors and **the aux
+          bond it runs through is the one the SVD found**, so a non-Abelian term needs no
+          coupling tree and no multiplicity label: both live inside the operator's own
+          blocks. The sites need not be adjacent -- the derived bond, graded or not, runs
+          through the identities on the sites in between.
+
+        A term is a coefficient and a list of ``(operator, sites)`` pairs, with identities
+        implied on every untouched site. Every
         term is *already* a bond-1 MPO, so the sum is one :func:`tenet.direct_sum` per site
         over the MPO-bond axes -- shared at the two ends, so the chain sums rather than
         block-diagonalizing -- and :func:`tenet.linalg.svd_truncated` then compresses the
@@ -590,7 +722,8 @@ class MPO:
         structure error instead of a message about ``phys``. Uniform physical space only,
         and every term's charges must sum to the unit sector.
 
-        Fermionic and non-Abelian terms are refused with a message rather than accepted;
+        Fermionic terms, and non-Abelian terms spelled as a *list* of charge-leg
+        operators, are refused with a message rather than accepted;
         ``cutoff`` is a keyword so a test can tighten or loosen the compression. Outside
         ``jit``/``grad`` like the rest of this module, because ``svd_truncated`` re-decides
         a :class:`~tenet.GradedSpace`.
@@ -604,9 +737,9 @@ class MPO:
             strings.append((coeff, ops))
         if phys is None:
             raise ValueError("from_terms: no terms; the physical space is read off an operator")
-        sites = _term_string(n_sites, *strings[0], phys)
+        sites = _term_string(n_sites, *strings[0], phys, cutoff)
         for coeff, ops in strings[1:]:
-            other = _term_string(n_sites, coeff, ops, phys)
+            other = _term_string(n_sites, coeff, ops, phys, cutoff)
             for n in range(n_sites):
                 # The end bonds stay shared and D=1: summed there, the chain would become a
                 # direct sum of scalars instead of a sum of terms.

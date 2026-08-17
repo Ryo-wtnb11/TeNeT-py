@@ -43,7 +43,7 @@ import pytest
 
 import tenet
 from tenet import GradedSpace, network
-from tenet.symmetry import U1, U1Sector
+from tenet.symmetry import SU2, U1, SU2Sector, U1Sector
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples"))
 import dmrg  # noqa: E402
@@ -305,6 +305,40 @@ def test_the_target_sector_is_structural(main_runs):
     forbidden = [s for s in range(2**n_sites) if bin(s).count("1") != n_sites // 2]
     assert np.count_nonzero(amplitudes[forbidden]) == 0
     assert np.linalg.norm(amplitudes) == pytest.approx(1.0, abs=1e-10)
+
+
+# --- M13b: the same chain, the same number, a different symmetry -------------------
+
+
+def test_su2_dmrg_reaches_the_same_n12_energy():
+    """N=12 SU(2) against ``E_OBC_12``: the same constant, the same Hamiltonian, no U(1).
+
+    The Hamiltonian is one invariant ``S.S`` array split by ``svd_truncated`` (#135); no
+    ``W`` was written for it and nothing in ``Env``/``sweep_``/``lanczos`` changed. The
+    multiplet numbers are printed rather than asserted -- ``max_bond`` bounds the *dense*
+    bond ``Sum_c qdim(c) m_c`` (``linalg.py``:750-757), so at chi=32 the SU(2) mid-chain
+    bond holds 12 multiplets against U(1)'s 32 states for the same energy, and no target
+    number for that ratio is defensible in advance.
+
+    Runtime: ~0.6 s, against the U(1) chi=32 run's ~1.4 s, so the file's 60 s budget is
+    untouched. The seed and the reachable-sector construction are the SU(2) twins of
+    ``dmrg.bond_spaces``, and they live here for #112's reason: which spaces are reachable
+    is physics.
+    """
+    phys = GradedSpace.new(SU2, {SU2Sector(1): 1})
+    _, sz, sp, sm = dmrg._spin_half()
+    ss = network.local_op(np.kron(sz, sz) + (np.kron(sp, sm) + np.kron(sm, sp)) / 2, phys=phys)
+    h = network.MPO.from_terms(12, [(1.0, [(ss, (i, i + 1))]) for i in range(11)])
+    bonds = [
+        GradedSpace.new(SU2, {SU2Sector(j): 1 for j in range(i % 2, min(i, 12 - i) + 1, 2)})
+        for i in range(13)
+    ]
+    out = network.dmrg_(network.MPS.random(phys, bonds, seed=0), h, chi=32)
+    assert out.energy == pytest.approx(E_OBC_12, abs=1e-10)
+
+    bond = out.psi[6].legs[0].space
+    assert (bond.reduced_dim, bond.dim) == (12, 32)
+    assert out.psi[0].legs[0].space == GradedSpace.new(SU2, {SU2Sector(0): 1})
 
 
 # --- the example runs standalone ---------------------------------------------------

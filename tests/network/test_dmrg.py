@@ -11,7 +11,9 @@ import pytest
 import tenet
 from tenet import GradedSpace
 from tenet.network import MPS, Env, dmrg_, lanczos, sweep_
-from tenet.symmetry import U1, U1Sector
+from tenet.symmetry import SU2, U1, SU2Sector, U1Sector
+
+from . import test_mpo as mpo_test  # the SU(2) Hamiltonian, built once and shared
 
 
 def test_lanczos_finds_the_lowest_eigenvalue():
@@ -104,3 +106,57 @@ def test_both_mpo_builders_give_the_same_ground_state_energy_at_n6():
     assert abs(energies[0] - energies[1]) < 1e-10
     exact = np.linalg.eigvalsh(np.asarray(example.mpo(6).to_dense()))[0]
     assert abs(energies[0] - exact) < 1e-10
+
+
+def su2_bond_spaces(n_sites):
+    """The reachable total-spin sectors of a spin-1/2 chain, degeneracy 1 each.
+
+    ``examples/dmrg.py::bond_spaces``'s SU(2) twin, and the same #112 statement: which
+    spaces are reachable is physics and stays out of the library. ``2 j`` on bond ``i``
+    runs over ``i % 2, i % 2 + 2, ..., min(i, n - i)`` -- ``i`` spin-1/2s fix the parity,
+    and the total spin must still be able to fall back to a singlet by the last site.
+    """
+    return [
+        GradedSpace.new(SU2, {SU2Sector(j): 1 for j in range(i % 2, min(i, n_sites - i) + 1, 2)})
+        for i in range(n_sites + 1)
+    ]
+
+
+def test_the_first_su2_dmrg_reproduces_the_u1_ground_state_at_n6():
+    """**The first time this repository has run DMRG on a non-Abelian symmetry.**
+
+    Nothing in ``Env``, ``heff2``, ``lanczos`` or ``sweep_`` changed for it -- #135's audit
+    said none of them reads a provider and this run is how that claim is falsifiable. The
+    Hamiltonian is one ``S.S`` array and a list comprehension, with the ``W``'s recoupling
+    derived by ``svd_truncated`` rather than written down (#110 deferred exactly that).
+
+    The state is a total **singlet**: the MPS boundary carries ``SU2Sector(0)``, which is
+    the whole "target sector" statement, and the energy is the U(1) run's to 1e-10 as well
+    as the exact open-chain value's.
+    """
+    psi = MPS.random(mpo_test.SU2_PHYS, su2_bond_spaces(6), seed=0)
+    assert psi[0].legs[0].space == GradedSpace.new(SU2, {SU2Sector(0): 1})
+    energy = dmrg_(psi, mpo_test.su2_heisenberg(6), chi=16).energy
+
+    u1 = MPS.random(example.PHYS, example.bond_spaces(6), seed=0)
+    assert abs(energy - dmrg_(u1, example.mpo(6), chi=16).energy) < 1e-10
+    exact = np.linalg.eigvalsh(np.asarray(example.mpo(6).to_dense()))[0]
+    assert abs(energy - exact) < 1e-10
+
+
+def test_the_su2_mps_bond_holds_the_same_state_in_a_third_of_the_multiplets():
+    """``max_bond`` bounds the **dense** bond, and for SU(2) that is not the reduced one.
+
+    ``svd_truncated``'s docstring (``linalg.py``:750-757) says the two differ and that it
+    will surprise people; this is the first thing in the repository to measure it. At
+    ``chi=16``, N=6, both symmetries converge to the same energy, and the SU(2) mid-chain
+    bond carries 3 multiplets where U(1) carries 8 states -- the compression is on the MPS
+    side, not on the MPO's, whose dense bond is 5 either way.
+    """
+    psi = MPS.random(mpo_test.SU2_PHYS, su2_bond_spaces(6), seed=0)
+    su2 = dmrg_(psi, mpo_test.su2_heisenberg(6), chi=16)
+    u1 = dmrg_(MPS.random(example.PHYS, example.bond_spaces(6), seed=0), example.mpo(6), chi=16)
+    graded, plain = su2.psi[3].legs[0].space, u1.psi[3].legs[0].space
+    assert (graded.reduced_dim, graded.dim) == (3, 8)
+    assert (plain.reduced_dim, plain.dim) == (8, 8)
+    assert abs(su2.energy - u1.energy) < 1e-10

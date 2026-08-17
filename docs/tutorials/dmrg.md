@@ -64,6 +64,34 @@ sector for sector — `{0: 3, +2: 1, −2: 1}` — with no grading written down 
 example keeps `from_w` as its primary route because the 5×5 `W` and its channel table are
 what teach what an MPO *is*.
 
+## The same chain under SU(2)
+
+Under SU(2) there is no `S_z` and no `S⁺`: they are not invariant, so they are not
+operators you can write. What *is* invariant is the whole term. Hand it over as one array
+— `local_op` with no `charge` takes `(d**k, d**k)` or `(d,)*2k`, which is the layout
+`np.kron` already produces — and `MPO.from_terms` splits it with `svd_truncated`:
+
+```python
+PHYS = GradedSpace.new(SU2, {SU2Sector(1): 1})  # one spin-1/2 doublet
+ss = network.local_op(np.kron(sz, sz) + (np.kron(sp, sm) + np.kron(sm, sp)) / 2, phys=PHYS)
+h = network.MPO.from_terms(n_sites, [(1.0, [(ss, (i, i + 1))]) for i in range(n_sites - 1)])
+```
+
+Nothing about the recoupling is written down, and there is no coupling tree to name: it is
+already inside the array's blocks, and the MPO bond comes out of the SVD. Hand it
+`np.kron(sz, sz)` alone and `from_dense` *raises* — the DSL cannot express a
+symmetry-breaking term. The bond spaces this derives:
+
+| | SU(2) | U(1) |
+|---|---|---|
+| one `S·S` term's bond | `{2: 1}` — **1 block**, dense 3 | `{0: 1, ±2: 1}` — 3 blocks, dense 3 |
+| bulk MPO bond | `{0: 2, 2: 1}` — **3 blocks**, dense 5 | `MPO_BOND` — 5 blocks, dense 5 |
+
+The MPO's *dense* bond is 5 either way; what SU(2) buys there is three blocks instead of
+five, matching MPSKit's finite Jordan form. The compression is on the MPS side: `dmrg_` on
+this MPO reaches the same N=12 energy at a mid-chain bond of 12 multiplets where U(1)
+needs 32 states, because `max_bond` bounds the *dense* dimension `Σ_c qdim(c)·m_c`.
+
 ## Why there is no `jit` and no `grad` here
 
 DMRG is a fixed-point solver whose control flow is data-dependent at every level: the

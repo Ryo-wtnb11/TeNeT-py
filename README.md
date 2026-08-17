@@ -92,7 +92,9 @@ print(g.legs == a.legs)
 - **Algorithms included.** `tenet.network` ships DMRG and CTMRG — MPS/MPO,
   environments, sweeps — specified by fully worked examples. A Hamiltonian can be written
   out as a `W` matrix (`MPO.from_w`) or listed as terms (`MPO.from_terms`), and the term
-  route *derives* the graded MPO bond spaces instead of asking you to declare them.
+  route *derives* the graded MPO bond spaces instead of asking you to declare them. A term
+  may be a symmetry-**invariant** *k*-site operator, so the SU(2) Heisenberg chain is one
+  `np.kron` and a list comprehension — and DMRG runs on it.
 
 ## Examples
 
