@@ -124,6 +124,12 @@ oracle; the SU(2) coefficient conventions themselves are pinned by vendored fixt
   model, and the milestone plan.
 - [`REPOSITORY_RULES.md`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/REPOSITORY_RULES.md) — process rules for contributing.
 
+## Citation
+
+If you use TeNeT-py in your research, please cite it. Citation metadata lives in
+[`CITATION.cff`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/CITATION.cff) —
+GitHub's "Cite this repository" button renders it as BibTeX or APA.
+
 ## License
 
 Apache License 2.0 — see [`LICENSE`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/LICENSE).
