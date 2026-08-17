@@ -131,8 +131,8 @@ If you use TeNeT-py in your research, please cite it:
 ```bibtex
 @software{tenet-py,
   author  = {Watanabe, Ryo},
-  title   = {{TeNeT-py}: a symmetric tensor {Python} library for tensor
-             networks with {Abelian}, fermionic and non-{Abelian} symmetries},
+  title   = {{TeNeT-py}: a {Python} library for symmetric tensor networks
+             --- {NumPy} on the surface, category theory under the hood},
   url     = {https://github.com/Ryo-wtnb11/TeNeT-py},
   license = {Apache-2.0},
   year    = {2026}
