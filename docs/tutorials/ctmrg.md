@@ -69,7 +69,8 @@ The toy code above needs `--extra jax`; for the CTMRG a **core** install can run
 [`examples/ising2d.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/ising2d.py) —
 it borrows `ising_bulk` and the Onsager oracle from the toy code, calls
 `ctmrg(*single_layer_ctm(bulk), chi=24)` at three temperatures, and prints the exactly
-doubled ordered-phase corner spectrum. Executed by `tests/test_examples.py`.
+doubled ordered-phase corner spectrum. Executed by `tests/test_examples.py`; its committed
+output is on the [2D Ising CTMRG](../examples/ising2d.md) example page.
 
 ## Reference
 

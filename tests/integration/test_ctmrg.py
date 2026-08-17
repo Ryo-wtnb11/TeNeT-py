@@ -102,6 +102,8 @@ The iPEPS half is the rest, and since #107 the old diagnosis in this paragraph i
    ``ctmrg`` sits outside the trace and ``ctmrg_unrolled`` inside it).
 """
 
+import contextlib
+import io
 import math
 import pathlib
 import sys
@@ -110,6 +112,7 @@ from functools import partial
 import autoray as ar
 import numpy as np
 import pytest
+from helpers import check_example_page
 
 import tenet
 from tenet import SymmetricTensor
@@ -698,5 +701,9 @@ def test_structures_survive_the_traced_region(provider):
 
 def test_main_runs_both_halves():
     """The standalone entry point, at the module's own chi and k so that every plan it
-    needs is already cached."""
-    ctmrg.main(chi_ising=CHI, k=K, steps=1)
+    needs is already cached. ``steps=1`` stays: raising to ``main()``'s default 3 costs
+    a measured 17.4 s warm (#164), against this module's 100 s budget."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        ctmrg.main(chi_ising=CHI, k=K, steps=1)
+    check_example_page("toy-ctmrg.md", buf.getvalue())

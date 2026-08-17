@@ -8,6 +8,9 @@ Source: [`examples/toy_codes/vmc_mps.py`](https://github.com/Ryo-wtnb11/TeNeT-py
 uv run --extra jax python examples/toy_codes/vmc_mps.py
 ```
 
+The output that command prints is committed on the
+[Toy VMC on an MPS](../examples/toy-vmc-mps.md) example page.
+
 ## What it demonstrates
 
 Entirely with library code that already exists — no new `src/tenet` module, no `optax`,

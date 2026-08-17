@@ -6,11 +6,50 @@ issue #39 and promoted here unchanged when #51 needed the same oracle for
 ``transpose``, so the two suites must weigh it on the same scale.
 """
 
+import math
+import os
+import pathlib
+import re
+
 import numpy as np
 
 from tenet.space import GradedSpace
 
-__all__ = ["parity_vector", "sector_parity", "supersign"]
+__all__ = ["check_example_page", "parity_vector", "sector_parity", "supersign"]
+
+DOCS_EXAMPLES = pathlib.Path(__file__).parents[1] / "docs" / "examples"
+
+_FENCE = re.compile(r"```text\n(.*?)```", re.DOTALL)
+_NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+
+
+def check_example_page(page_path: str, captured_stdout: str) -> None:
+    """The docs example page's output fence against the run CI just performed (#164).
+
+    Non-numeric text is compared exactly; every number to a relative tolerance of 1e-6
+    (with a 1e-12 absolute floor, so float-noise diagnostics like ``max|<S^z>|`` survive
+    a BLAS change while any physical digit does not). ``TENET_UPDATE_EXAMPLE_PAGES=1``
+    rewrites the fence in place instead of asserting — that is the regeneration path.
+    """
+    page = DOCS_EXAMPLES / page_path
+    text = page.read_text()
+    match = _FENCE.search(text)
+    assert match is not None, f"{page} has no ```text output fence"
+    if os.environ.get("TENET_UPDATE_EXAMPLE_PAGES") == "1":
+        page.write_text(text[: match.start(1)] + captured_stdout + text[match.end(1) :])
+        return
+    fence = match.group(1)
+    assert _NUMBER.sub("#", fence) == _NUMBER.sub("#", captured_stdout), (
+        f"{page}: the output fence's text no longer matches the run — regenerate with "
+        f"TENET_UPDATE_EXAMPLE_PAGES=1.\n--- page ---\n{fence}--- run ---\n{captured_stdout}"
+    )
+    for committed, fresh in zip(
+        _NUMBER.findall(fence), _NUMBER.findall(captured_stdout), strict=True
+    ):
+        assert math.isclose(float(committed), float(fresh), rel_tol=1e-6, abs_tol=1e-12), (
+            f"{page}: committed {committed} vs computed {fresh} — regenerate with "
+            f"TENET_UPDATE_EXAMPLE_PAGES=1"
+        )
 
 
 def sector_parity(sector) -> int:
