@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use TeNeT-py in your research, please cite it as below."
-title: "TeNeT-py"
+title: "TeNeT-py: a Python library for symmetric tensor networks — NumPy on the surface, category theory under the hood"
 type: software
 authors:
   - family-names: "Watanabe"
