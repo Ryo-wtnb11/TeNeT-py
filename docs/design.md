@@ -2969,6 +2969,25 @@ The split:
   dozen states is kilobytes), and an exponentially-decaying-coupling front end (now one
   state and one self-loop edge — cheap, but still a model DSL with no caller).
 
+- **M16** — shipped: edge-preserving `heff2` and a structure-keyed compiled matvec.
+  `from_terms(cutoff=None)` no longer discards its finite-state machine at
+  instantiation: each site keeps a Jordan block table (`MPO.jordan`) — the four blocks
+  `A`/`B`/`C`/`D` of MPSKit's `(1 C D; · A B; · · 1)` form, identity edges stored as
+  `None`, corners implicit — and `Env` folds the two environments into those blocks once
+  per bond (MPSKit's `JordanMPO_AC2_Hamiltonian`), amortized over the whole Krylov
+  solve and compiled through an injected `compile=` per structure key. The design is
+  the block-DMRG correspondence made executable: `IdL`/`IdR` are the not-yet-begun and
+  completed channels, each open FSM state is one boundary operator `S`, and the
+  prepared matvec is `Ψ·H_env + H_sys·Ψ + Σ S·Ψ·S` in MPO clothing — the identity
+  channels (corners plus spectators) ride one composed rank-2 map, so a width-10
+  cylinder's 38 live edges against `D_w² = 1024` never touch a dense `W`. Refused with
+  it, on measurement: a Python loop over edges inside the matvec — four dense proxy
+  implementations measured 0.44×–0.87× at `d = 2`, where a single BLAS GEMM beats every
+  bandwidth-bound sparse form — with the criterion that reverses it: **`d ≥ 4`**
+  (spinful fermions, `S ≥ 3/2`, grouped sites), where the same experiment measures
+  1.93×–2.78×; and recovering a table from a compressed MPO, because the SVD gauge
+  mixes the states and leaves zero identity edges on every model measured.
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 
 ---

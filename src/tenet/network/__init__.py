@@ -19,7 +19,12 @@ so it is written where it holds:
   :meth:`MPO.from_terms` joins them because its compression sweep is ``svd_truncated``,
   as do M14's :class:`Sweep` and :meth:`MPS.product` with the rest of ``mps.py`` /
   ``dmrg.py`` -- a schedule only re-parameterizes the sweeps above, and a product state's
-  bonds are decided sector by sector;
+  bonds are decided sector by sector. One carve-out inside ``env.py`` (M16): the prepared
+  two-site matvec is **structure-preserving and traceable** -- :meth:`Env.heff2` returns
+  a tensor with its input's structure exactly, so the apply is a pure fixed-structure
+  function that an injected ``compile=`` may trace, keyed by structure exactly as the
+  rule at the end of this list demands -- while :func:`sweep_` around it stays outside,
+  because ``svd_truncated`` re-decides the bond spaces between one matvec and the next;
 * ``common.py`` -- **trace-neutral**; :func:`spectrum` is nonetheless only ever called
   outside a trace, its ``sorted`` Python list being driver output rather than a tensor;
 * ``ctmrg.py`` -- **both**, stated per function in its own docstrings. :func:`ctmrg`
@@ -53,6 +58,11 @@ M14: :class:`Sweep` and :meth:`MPS.product` -- :func:`dmrg_` takes a per-sweep
 per-sweep ``callback`` reports while the run happens, and :class:`DMRG_out` records the
 realized schedule; :meth:`MPS.product` builds a product state whose bonds are derived
 backwards from the site sectors, putting the total charge on bond 0.
+M16: :meth:`MPO.jordan` -- ``from_terms(cutoff=None)`` keeps its finite-state machine as
+a per-site block table, :meth:`Env.heff2` and :meth:`Env.update_` fold environments into
+those blocks once per bond instead of contracting a dense ``W``, and :class:`Env` takes
+an optional ``compile=`` callable applied to the fixed-structure matvec -- injected by
+the caller, so this layer still names no accelerator.
 Shared: the bond spectrum :func:`spectrum` and the :func:`ones` seed -- the two
 scalar exits that sat beside them left for ``tenet.ops`` in #126, as
 :func:`tenet.full_trace` and :func:`tenet.inner`. Promoted verbatim from

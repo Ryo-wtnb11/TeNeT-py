@@ -13,7 +13,7 @@ import json
 import pathlib
 import string
 from collections.abc import Iterable, Sequence
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 
@@ -26,6 +26,7 @@ __all__ = [
     "MPO",
     "MPS",
     "MPS_FORMAT_VERSION",
+    "JordanBlocks",
     "expectation_1site",
     "expectation_2site",
     "local_op",
@@ -666,6 +667,92 @@ def _embedding(
     return SymmetricTensor.from_dense(dense.T, (Leg(state, IN, dual), Leg(bond, OUT, dual)))
 
 
+def _merge(sym, keys, states):
+    """Direct-sum the given states' spaces; return the space and each state's dense slots.
+
+    The bond space at a cut and every group subspace inside it are the same construction:
+    per state, per sector, one slab whose dense offset is recorded so that
+    :func:`_embedding` can place it. Allocation order is the caller's ``keys`` order.
+    """
+    merged: dict = {}
+    for k in keys:
+        for a, m in states[k].sectors:
+            merged[a] = merged.get(a, 0) + m
+    space = GradedSpace.new(sym, merged)
+    seen: dict = {}
+    per_state = {}
+    for k in keys:
+        slots = {}
+        for a, m, _, ext in _slabs(states[k]):
+            slots[a] = space.sector_offset(a) + seen.get(a, 0) * (ext // m)
+            seen[a] = seen.get(a, 0) + m
+        per_state[k] = slots
+    return space, per_state
+
+
+def _group_embedding(bond, bond_starts, group, group_starts, keys, states, *, left, dual, dual_b):
+    """The 0/1 isometry between one *group* of states and its slots of the full bond.
+
+    :func:`_embedding` for a set of states at once: the ``left`` orientation reads
+    ``(bond IN, group OUT)`` and slices a left environment down to the group; the other
+    reads ``(group IN, bond OUT)`` and does the same to a right environment, or embeds a
+    group-resolved environment back into the full bond. ``dual_b`` is the bond side's
+    ``dual`` flag, which differs from the states' at the two capped boundary cuts.
+    """
+    dense = np.zeros((bond.dim, group.dim))
+    for k in keys:
+        for a, _, _o, ext in _slabs(states[k]):
+            r0, c0 = bond_starts[k][a], group_starts[k][a]
+            dense[r0 : r0 + ext, c0 : c0 + ext] = np.eye(ext)
+    if left:
+        return SymmetricTensor.from_dense(dense, (Leg(bond, IN, dual_b), Leg(group, OUT, dual)))
+    return SymmetricTensor.from_dense(dense.T, (Leg(group, IN, dual), Leg(bond, OUT, dual_b)))
+
+
+class JordanBlocks(NamedTuple):
+    """One site of the Jordan block table: the FSM edges, split the way the matvec eats them.
+
+    MPSKit's ``(1 C D; . A B; . . 1)`` partition (``jordanmpotensor.jl``:1-42): ``a`` holds
+    the open-to-open edges, ``b`` open-to-``IdR``, ``c`` ``IdL``-to-open and ``d`` the
+    ``IdL``-to-``IdR`` closings, each keyed by its ``(state_l, state_r)`` labels with the
+    per-edge rank-4 tensor on the *states' own* bond legs -- ``None`` meaning "identity",
+    never a materialised identity tensor, which is MPSKit's ``tensors``/``scalars`` split
+    with the scalar always 1. The two corner identities are implicit.
+
+    ``a_op``/``b_op``/``c_op``/``d_op`` are the same blocks summed onto group-restricted
+    bond legs (``IdL`` / open / ``IdR`` subspaces), and the six embeddings connect those
+    groups to the full instantiated bond: ``*_l`` slice the site's left cut as
+    ``(bond IN, group OUT)``, ``*_r`` its right cut as ``(group IN, bond OUT)``; a missing
+    group is ``None``. :meth:`Env.heff2` folds environments into these blocks once per
+    bond, which is the whole reason the table survives instantiation.
+
+    Three derived views serve the matvec's term merging: ``idmap`` is the rank-2 0/1 map
+    of every identity channel of the site -- the two corners plus the ``a`` spectators --
+    between the full left and right bonds, so all "identity through this site" paths ride
+    one tensor; ``spec_op`` is the same spectator map restricted to the open subspaces;
+    and ``a_real_op`` is ``a_op`` minus the spectators, the genuinely operator-carrying
+    open-to-open edges, ``None`` for every purely string-built model.
+    """
+
+    a: dict
+    b: dict
+    c: dict
+    d: dict
+    a_op: SymmetricTensor | None
+    b_op: SymmetricTensor | None
+    c_op: SymmetricTensor | None
+    d_op: SymmetricTensor | None
+    idmap: SymmetricTensor | None
+    spec_op: SymmetricTensor | None
+    a_real_op: SymmetricTensor | None
+    idl_l: SymmetricTensor | None
+    open_l: SymmetricTensor | None
+    idr_l: SymmetricTensor | None
+    idl_r: SymmetricTensor | None
+    open_r: SymmetricTensor | None
+    idr_r: SymmetricTensor | None
+
+
 _INTERLEAVE = (
     "the operators of one term interleave at site {}: each k-site operator's "
     "derived bond must close before the next one begins"
@@ -753,7 +840,7 @@ def _term_edges(
         prev = s
 
 
-def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators):
+def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *, table=False):
     """Prune dead states, derive the bond spaces, and place every edge numerically.
 
     Pruning intersects each cut's states with (reachable from ``_IDL``) and (co-reachable
@@ -763,6 +850,10 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators):
     the identities at the two ends; each edge lands via
     ``einsum("ax,xpqy,yb->apqb", e_l, w, e_r)`` with :func:`_embedding` isometries, and a
     site is the plain sum of its placed edges.
+
+    With ``table=True`` the surviving edges are *also* returned as one
+    :class:`JordanBlocks` per site — the same pruned graph, in the Jordan partition the
+    two-site matvec consumes — instead of being discarded once the dense sites exist.
     """
     sym = phys.provider
     edges: list[dict] = []
@@ -785,19 +876,7 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators):
 
     bonds, starts = [], []
     for cut in ordered:
-        merged: dict = {}
-        for k in cut:
-            for a, m in states[k].sectors:
-                merged[a] = merged.get(a, 0) + m
-        bond = GradedSpace.new(sym, merged)
-        seen: dict = {}
-        per_state = {}
-        for k in cut:
-            slots = {}
-            for a, m, _, ext in _slabs(states[k]):
-                slots[a] = bond.sector_offset(a) + seen.get(a, 0) * (ext // m)
-                seen[a] = seen.get(a, 0) + m
-            per_state[k] = slots
+        bond, per_state = _merge(sym, cut, states)
         bonds.append(bond)
         starts.append(per_state)
 
@@ -833,6 +912,133 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators):
                 w = tenet.einsum("apqy,yb->apqb", w, e_r[r])
             acc = w if acc is None else acc + w
         out.append(acc)
+
+    tables = None
+    if table:
+        # Per cut: the three Jordan groups (IdL / open / IdR) as (space, slots, keys), then
+        # both embedding orientations against the full bond. The bond side of the two
+        # boundary cuts is non-dual, matching the caps below and ``Env``'s boundary legs.
+        groups, embeds = [], []
+        for i in range(n_sites + 1):
+            per = {}
+            for name, keys in (
+                ("idl", [_IDL] if _IDL in live[i] else []),
+                ("open", [k for k in ordered[i] if k not in (_IDL, _IDR)]),
+                ("idr", [_IDR] if _IDR in live[i] else []),
+            ):
+                per[name] = (*_merge(sym, keys, states), keys) if keys else None
+            groups.append(per)
+            dual_b = dual and 0 < i < n_sites
+            emb = {}
+            for name, g in per.items():
+                if g is None:
+                    emb[name] = (None, None)
+                    continue
+                space, slots, keys = g
+                emb[name] = tuple(
+                    _group_embedding(
+                        bonds[i],
+                        starts[i],
+                        space,
+                        slots,
+                        keys,
+                        states,
+                        left=left,
+                        dual=dual,
+                        dual_b=dual_b,
+                    )
+                    for left in (True, False)
+                )
+            embeds.append(emb)
+
+        def channel_map(keys, spaces, slots_l, slots_r, dual_l, dual_r):
+            """The rank-2 0/1 map carrying each key's space identically across a site."""
+            dense = np.zeros((spaces[0].dim, spaces[1].dim))
+            for k in keys:
+                for a, _, _o, ext in _slabs(states[k]):
+                    r0, c0 = slots_l[k][a], slots_r[k][a]
+                    dense[r0 : r0 + ext, c0 : c0 + ext] = np.eye(ext)
+            legs = (Leg(spaces[0], IN, dual_l), Leg(spaces[1], OUT, dual_r))
+            return SymmetricTensor.from_dense(dense, legs)
+
+        tables = []
+        for n in range(n_sites):
+            dicts = {"a": {}, "b": {}, "c": {}, "d": {}}
+            ops: dict = {"a": None, "b": None, "c": None, "d": None}
+            a_real = None
+            id_channels = []  # states carried identically through this site, corners included
+            for corner in (_IDL, _IDR):
+                if corner in live[n] and corner in live[n + 1]:
+                    id_channels.append(corner)
+            for (left, r), w in edges[n].items():
+                if left not in live[n] or r not in live[n + 1] or left == r == _IDL:
+                    continue
+                if left == r == _IDR:
+                    continue  # the two corner identities stay implicit
+                block = (
+                    "d"
+                    if left == _IDL and r == _IDR
+                    else ("c" if left == _IDL else ("b" if r == _IDR else "a"))
+                )
+                dicts[block][left, r] = w
+                spectator = w is None
+                if spectator:
+                    id_channels.append(left)
+                    space = states[left]
+                    if space not in identities:
+                        identities[space] = _identity_w(Leg(space, IN, dual), phys)
+                    w = identities[space]
+                if block in ("a", "b"):  # the open left end goes onto the open subspace
+                    space, slots, _keys = groups[n]["open"]
+                    e = _embedding(space, states[left], slots[left], left=True, dual=dual)
+                    w = tenet.einsum("ax,xpqy->apqy", e, w)
+                if block in ("a", "c"):  # the open right end likewise
+                    space, slots, _keys = groups[n + 1]["open"]
+                    e = _embedding(space, states[r], slots[r], left=False, dual=dual)
+                    w = tenet.einsum("apqy,yb->apqb", w, e)
+                ops[block] = w if ops[block] is None else ops[block] + w
+                if block == "a" and not spectator:
+                    a_real = w if a_real is None else a_real + w
+            idmap = (
+                channel_map(
+                    id_channels,
+                    (bonds[n], bonds[n + 1]),
+                    starts[n],
+                    starts[n + 1],
+                    dual and n > 0,
+                    dual and n + 1 < n_sites,
+                )
+                if id_channels
+                else None
+            )
+            spec_keys = [k for k in id_channels if k not in (_IDL, _IDR)]
+            spec = None
+            if spec_keys:
+                gl_space, gl_slots, _ = groups[n]["open"]
+                gr_space, gr_slots, _ = groups[n + 1]["open"]
+                spec = channel_map(spec_keys, (gl_space, gr_space), gl_slots, gr_slots, dual, dual)
+            tables.append(
+                JordanBlocks(
+                    dicts["a"],
+                    dicts["b"],
+                    dicts["c"],
+                    dicts["d"],
+                    ops["a"],
+                    ops["b"],
+                    ops["c"],
+                    ops["d"],
+                    idmap,
+                    spec,
+                    a_real,
+                    embeds[n]["idl"][0],
+                    embeds[n]["open"][0],
+                    embeds[n]["idr"][0],
+                    embeds[n + 1]["idl"][1],
+                    embeds[n + 1]["open"][1],
+                    embeds[n + 1]["idr"][1],
+                )
+            )
+
     if dual:
         # The two *outer* legs go back non-dual: ``Env`` builds its boundary environments
         # with ``Leg(mpo_l, OUT)`` (``env.py``:50-53) and the other builder's ends are
@@ -842,7 +1048,7 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators):
         out[0] = _as_w(tenet.einsum("ax,xpqr->apqr", cap, out[0]))
         cap = SymmetricTensor.from_dense(np.ones((1, 1)), (Leg(triv, IN, True), Leg(triv, OUT)))
         out[-1] = _as_w(tenet.einsum("apqx,xb->apqb", out[-1], cap))
-    return out
+    return out, tables
 
 
 class MPO:
@@ -858,12 +1064,23 @@ class MPO:
     structural bookkeeping, which is the pattern tenet is typed to avoid. TenPy agrees for
     its own reason (``mpo.py``:16-18: "unlike for an MPS, this doesn't simplify
     calculations. Thus, an MPO has no ``form``"). Two classes, no branch.
+
+    :meth:`jordan` is the one read-only accessor beyond the container protocol: the
+    per-site :class:`JordanBlocks` table when :meth:`from_terms` kept its finite-state
+    machine (``cutoff=None``), ``None`` for every other MPO. It exists so that
+    :class:`~tenet.network.Env` can reach the symbolic edge structure without touching a
+    private name -- #138 refused public exposure of the symbolic layer "if a caller ever
+    needs to inspect it, that is a separate issue with an argument attached", and the
+    prepared two-site matvec is that caller and that argument (#141).
     """
 
     sites: list[SymmetricTensor]
 
-    def __init__(self, sites: Iterable[SymmetricTensor]) -> None:
+    def __init__(
+        self, sites: Iterable[SymmetricTensor], jordan: Sequence[JordanBlocks] | None = None
+    ) -> None:
         self.sites = list(sites)
+        self._jordan = None if jordan is None else list(jordan)
 
     def __len__(self) -> int:
         return len(self.sites)
@@ -873,6 +1090,17 @@ class MPO:
 
     def __iter__(self):
         return iter(self.sites)
+
+    def jordan(self, n: int) -> JordanBlocks | None:
+        """Site ``n``'s :class:`JordanBlocks`, or ``None`` when no table survived.
+
+        Only ``from_terms(..., cutoff=None)`` carries a table: the compressing sweep's
+        SVD gauge mixes the FSM states, so a compressed ``W`` *has* no edge structure to
+        recover -- measured in #141, the sweep leaves zero identity edges on every model
+        -- and :meth:`from_w` never had one. ``None`` therefore also routes
+        :meth:`Env.heff2` onto its dense path.
+        """
+        return None if self._jordan is None else self._jordan[n]
 
     @classmethod
     def from_w(
@@ -954,6 +1182,22 @@ class MPO:
         peels it into ``k`` tensors -- is a different SVD and is **unaffected** by
         ``cutoff=None``; it runs at the default ``1e-13`` in that case.
 
+        **For finite-range models the compressing sweeps reduce the bond dimension by
+        exactly nothing** -- on nearest-neighbour Heisenberg, an R=4 chain and
+        width-6/width-10 cylinders, 5 stays 5, 14 stays 14, 20 stays 20, 32 stays 32 --
+        while the SVD gauge mixes the FSM states, turning 38 sparse edges into 302 dense
+        pairs on the width-10 cylinder and erasing every identity edge on every model
+        measured (#141). Only ``cutoff=None`` keeps the block table that :meth:`jordan`
+        exposes and that routes :meth:`Env.heff2` onto its prepared per-bond operator.
+        **Whether that trade wins depends on the backend**: with a ``compile=`` callable
+        injected into :class:`~tenet.network.Env` the prepared matvec measured ~20x
+        faster than the dense path, but on the plain numpy backend at small bond
+        dimension the prepared path pays a per-call dispatch premium and a full sweep
+        measured 1.5-2.6x *slower* (#141's own tables) -- there the default cutoff is the
+        faster end-to-end choice. The default stays ``1e-13`` also because power-law
+        couplings are where the sweep earns its keep -- all-pairs ``1/r^2`` at N=32
+        takes the bond 33 to 8 -- and there the compressed MPO can win outright.
+
         **There is no** ``phys=`` **argument**: the operators carry the physical space and
         a second source of truth could disagree with them, which would surface as a
         structure error instead of a message about ``phys``. Uniform physical space only,
@@ -1007,9 +1251,11 @@ class MPO:
                 stops,
                 spectators,
             )
-        sites = _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators)
+        sites, tables = _instantiate(
+            n_sites, phys, dual, states, order, moves, stops, spectators, table=cutoff is None
+        )
         if cutoff is None:
-            return cls(sites)
+            return cls(sites, tables)
         # Right to left first, exactly as ``MPS.compress_`` canonizes before it truncates:
         # a forward sweep alone measures the rank of the *left* part against the raw
         # FSM bond, which overshoots wherever the redundancy is only visible
