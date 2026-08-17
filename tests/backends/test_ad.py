@@ -1022,14 +1022,41 @@ def test_a_mini_differentiable_ctmrg_step():
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples" / "toy_codes"))
 import vmc_mps  # noqa: E402
 
+# The first trace per provider, memoized so the docs page test below reuses the run
+# ``test_vmc_example_is_unchanged`` already pays for (#164).
+_VMC_TRACES: dict[str, list] = {}
+
+
+def _vmc_trace(provider):
+    if provider not in _VMC_TRACES:
+        _VMC_TRACES[provider] = vmc_mps.main(provider=provider)
+    return _VMC_TRACES[provider]
+
 
 @pytest.mark.parametrize("provider", ["u1", "su2"])
 def test_vmc_example_is_unchanged(provider):
     """Unchanged to 1e-10 without ``install()``, and to 1e-8 with it."""
-    reference = vmc_mps.main(provider=provider)
+    reference = _vmc_trace(provider)
     np.testing.assert_allclose(vmc_mps.main(provider=provider), reference, rtol=0, atol=1e-10)
     tenet.ad.install()
     np.testing.assert_allclose(vmc_mps.main(provider=provider), reference, rtol=0, atol=1e-8)
+
+
+def test_vmc_page_output_is_current():
+    """The docs page's two lines, from the traces the parametrized test above computed.
+
+    ``main()`` returns the trace and prints nothing; the formatting lives in the file's
+    ``__main__`` guard, and the toy codes are frozen content (#148).
+    """
+    from helpers import check_example_page
+
+    # Simplification: duplicates the guard's format string from
+    # examples/toy_codes/vmc_mps.py; move the print into main() if the freeze is lifted.
+    lines = [
+        f"{provider}: " + " ".join(f"{e:+.6f}" for e in _vmc_trace(provider))
+        for provider in ("u1", "su2")
+    ]
+    check_example_page("toy-vmc-mps.md", "".join(line + "\n" for line in lines))
 
 
 @pytest.mark.parametrize("provider", ["u1", "su2"])

@@ -265,7 +265,9 @@ it teaches. To see the same chain *called* through the library instead, run
 anywhere) and
 [`examples/su2_heisenberg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/su2_heisenberg.py),
 which runs the same chain under SU(2) and prints the multiplet-vs-dense table above as
-computed numbers. Both run on a core install and are executed by `tests/test_examples.py`.
+computed numbers. Both run on a core install and are executed by `tests/test_examples.py`;
+their committed output is on the [Heisenberg, U(1)](../examples/heisenberg.md) and
+[Heisenberg, SU(2)](../examples/su2-heisenberg.md) example pages.
 
 ## Reference
 

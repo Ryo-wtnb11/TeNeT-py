@@ -30,6 +30,14 @@ nav:
       - DMRG: tutorials/dmrg.md
       - CTMRG: tutorials/ctmrg.md
       - VMC: tutorials/vmc.md
+  - Examples:
+      - examples/index.md
+      - Heisenberg, U(1): examples/heisenberg.md
+      - Heisenberg, SU(2): examples/su2-heisenberg.md
+      - 2D Ising CTMRG: examples/ising2d.md
+      - Toy DMRG: examples/toy-dmrg.md
+      - Toy CTMRG: examples/toy-ctmrg.md
+      - Toy VMC on an MPS: examples/toy-vmc-mps.md
   - API:
       - tenet: api/tenet.md
       - tenet.linalg: api/linalg.md

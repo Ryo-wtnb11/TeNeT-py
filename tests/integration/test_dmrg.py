@@ -44,12 +44,15 @@ x64 is enabled process-globally in ``tests/conftest.py``; every tolerance here d
 it.
 """
 
+import contextlib
+import io
 import json
 import pathlib
 import sys
 
 import numpy as np
 import pytest
+from helpers import check_example_page
 
 import tenet
 from tenet import GradedSpace, network
@@ -82,10 +85,18 @@ def run(n_sites: int, chi: int, **kwargs):
     return _RUNS[key]
 
 
+# ``main_runs``'s stdout, for the docs example page (#164).
+_MAIN_STDOUT: dict[str, str] = {}
+
+
 @pytest.fixture(scope="module")
 def main_runs():
     """``dmrg.main()``'s own ``(N=12 chi=64, N=32 chi=32)`` pair, run exactly once."""
-    return dmrg.main()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        result = dmrg.main()
+    _MAIN_STDOUT["text"] = buf.getvalue()
+    return result
 
 
 # --- the oracle --------------------------------------------------------------------
@@ -498,3 +509,7 @@ def test_main_runs(main_runs):
     for out in (small, big):  # M14: the realized schedule, one entry per sweep
         assert len(out.schedule) == out.sweeps == len(out.history)
     assert small.denergy < 1e-12 and small.max_dSchmidt < 1e-8
+
+
+def test_main_page_output_is_current(main_runs):
+    check_example_page("toy-dmrg.md", _MAIN_STDOUT["text"])
