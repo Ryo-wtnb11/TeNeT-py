@@ -3,14 +3,12 @@
 import random
 from collections import Counter
 from dataclasses import fields
-from fractions import Fraction
 from math import sqrt
 
 import numpy as np
 import pytest
 
 from tenet.symmetry import SU2, ClebschGordanData, FusionRules, QuantumDimensionData, SU2Sector
-from tenet.symmetry._su2_coeff import value, w6j
 from tenet.symmetry.su2 import _SU2_GAUGE, SU2Provider
 
 # static conformance: fails type checking if SU2Provider drifts from the protocols
@@ -180,12 +178,6 @@ def test_condon_shortley_full_one_times_half_table():
     assert np.count_nonzero(half) == len(expected_12)
 
 
-def test_w6j_known_value_and_zero():
-    # {1 1 1; 1 1 1} = 1/6; a triangle-violating argument list gives exactly zero.
-    assert value(w6j(2, 2, 2, 2, 2, 2)) == pytest.approx(1 / 6, abs=1e-12)
-    assert w6j(2, 2, 2, 2, 2, 1) == (0, Fraction(0))
-
-
 # --- provider hygiene (invariant 8) ---------------------------------------------
 
 
@@ -195,7 +187,15 @@ def test_provider_is_hashable_and_array_free():
         assert not isinstance(getattr(SU2, f.name), np.ndarray)
 
 
-def test_gauge_fingerprint_is_pinned():
-    assert _SU2_GAUGE == (
-        "3j=condon-shortley;cg=condon-shortley;f=tks-su2irrep;r=tks-su2irrep;fs=tks-su2irrep"
+def test_gauge_fingerprint_embeds_the_racah_fingerprint():
+    """No longer a pinned literal: since #180 the SU(2) coefficients come from racah,
+    so the fingerprint is racah's own, exactly as ``_SUN_GAUGE`` is. The literal it
+    used to be is the one string ``serialize._LEGACY_GAUGES`` still accepts on load."""
+    import racah
+
+    from tenet.serialize import _LEGACY_GAUGES
+
+    assert _SU2_GAUGE == f"su2=racah;{racah.sun_authority_fingerprint()}"
+    assert _LEGACY_GAUGES["SU2"] == frozenset(
+        {"3j=condon-shortley;cg=condon-shortley;f=tks-su2irrep;r=tks-su2irrep;fs=tks-su2irrep"}
     )

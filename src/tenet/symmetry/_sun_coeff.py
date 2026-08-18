@@ -3,25 +3,17 @@
 Every array this module returns is read-only and indexed by Dynkin *tuples*, not
 by :class:`~tenet.symmetry.sun.SUNSector`, so the provider stays array-free.
 
-Importing this module — or :mod:`tenet.symmetry.sun` — without ``racah`` raises
-``ImportError`` naming ``pip install 'tenet-py[sun]'``. There is no pure-Python
-fallback and there will not be one: a second implementation of these coefficients
-would be a second gauge.
+``racah`` is a core dependency (#180), so this module imports unconditionally and
+``tenet.symmetry.sun`` works on a plain ``pip install tenet-py``. There is no
+pure-Python fallback and there will not be one: a second implementation of these
+coefficients would be a second gauge.
 """
 
 from functools import cache
 from math import sqrt
 
 import numpy as np
-
-try:
-    import racah
-except ImportError as exc:  # pragma: no cover - exercised by the packaging test
-    raise ImportError(
-        "tenet.symmetry.sun needs the racah coefficient backend: "
-        "pip install 'tenet-py[sun]'. There is no pure-Python fallback by design - "
-        "a second implementation would be a second gauge (see tenet.symmetry.su2)."
-    ) from exc
+import racah
 
 __all__ = [
     "GAUGE",

@@ -23,6 +23,6 @@ bond energies: -0.6534 -0.2943 -0.5664 -0.3370 -0.5401 -0.3540 -0.5286 -0.3616 -
 sum of bond energies = -8.682473334397699  vs  out.energy = -8.682473334397688
 max_n |<S^z_n>| = 4.7e-13
 U(1) : 9 sweeps  E = -8.682473334398  mid bond 64 states
-SU(2): 5 sweeps  E = -8.682473334397  mid bond 22 multiplets, 62 dense
-|E_su2 - E_u1| = 2.6e-13
+SU(2): 5 sweeps  E = -8.682473334396  mid bond 22 multiplets, 62 dense
+|E_su2 - E_u1| = 2.1e-12
 ```

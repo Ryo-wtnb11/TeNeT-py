@@ -16,7 +16,21 @@ from test_su2 import spin_matrices  # same directory, pytest's prepend import mo
 
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.symmetry import SU2, CapabilityError, DualBasis, SU2Sector
-from tenet.symmetry._su2_coeff import cg_tensor, frobenius_schur, z_matrix
+
+
+# The doubled-spin entry points this file was written against; the pure-Python module is gone
+# since #180 and the provider is the only coefficient surface left.
+def cg_tensor(dj1: int, dj2: int, dj3: int) -> np.ndarray:
+    return SU2.cgc(SU2Sector(dj1), SU2Sector(dj2), SU2Sector(dj3))[..., 0]
+
+
+def frobenius_schur(dj: int) -> int:
+    return SU2.frobenius_schur(SU2Sector(dj))
+
+
+def z_matrix(dj: int) -> np.ndarray:
+    return SU2.z_matrix(SU2Sector(dj))
+
 
 DJS = range(9)
 
@@ -51,9 +65,12 @@ def test_provider_rejects_a_foreign_sector():
         SU2.z_matrix(U1Sector(1))
 
 
-def test_module_level_cache_and_no_provider_field():
-    assert z_matrix(3) is z_matrix(3)
-    assert SU2.z_matrix(SU2Sector(3)) is z_matrix(3)
+def test_no_provider_field():
+    """``z_matrix`` used to be a ``functools.cache``d module function and the identity
+    was asserted here; since #180 it comes from racah, which owns its own caches, so
+    what is left to pin is that the provider still carries no array field."""
+    np.testing.assert_array_equal(z_matrix(3), SU2.z_matrix(SU2Sector(3)))
+    assert not z_matrix(3).flags.writeable
     assert not dataclasses.fields(SU2)[1:]  # only ``name``
     assert hash(SU2) == hash(SU2)
 
@@ -225,7 +242,6 @@ def test_z_matrix_is_only_used_by_to_dense_in_library_code():
         "u1.py",
         "fz2.py",
         "z2.py",
-        "_su2_coeff.py",
         "sun.py",
         "_sun_coeff.py",
     }
