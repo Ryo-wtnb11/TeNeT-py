@@ -31,7 +31,15 @@ __all__ = ["ones", "spectrum"]
 
 
 def spectrum(s: SymmetricTensor) -> list[float]:
-    """The Schmidt values on a bond, descending.
+    """The singular values on a bond, descending -- the spectrum of an ``svd`` output.
+
+    Spectrum *of what*: of the diagonal tensor an
+    [svd_truncated][tenet.ops.linalg.svd_truncated] returned, and of nothing
+    else. Both callers hand it exactly that, and read it for two different
+    things -- ``network/dmrg.py`` for the Schmidt values of a bond,
+    ``network/ctmrg.py`` for the corner spectrum whose convergence ends a sweep
+    -- which is why the name stays the general one rather than either caller's
+    (#120, reaffirmed #185).
 
     Parameters
     ----------

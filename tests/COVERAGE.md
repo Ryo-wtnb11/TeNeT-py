@@ -43,9 +43,9 @@ in CI**; every empty cell is a decision, not a constraint.
 | 5 | `compose` / `tensordot` / `einsum` | `{trivial, u1, su2, fz2, product}`; `einsum_multi` drops product | `tests/ops/test_einsum.py:75`; `tests/ops/test_einsum_multi.py:82`; `tests/ops/test_contraction.py:61` |
 | 6 | `full_trace` / `inner` | `{su2, u1}` (+ torch row below) | `tests/ops/test_full_trace.py:20-23` |
 | 7 | linalg (`svd`/`qr`/`lq`/`polar`/`eigh`/`eig`/`expm`/`*_null`/`svd_truncated`) | `{trivial, u1, su2, fz2}` | `tests/ops/test_linalg.py:52-62`; `tests/ops/test_svd_truncated.py:15-24` imports that same `PROVIDERS` — the reuse pattern the budget rule mandates |
-| 8 | `flip` (#142) | capability on all 8; numerically `{u1, fz2, su2, su3}` (+ Z2/product spaces) | `tests/symmetry/test_flip_scalar.py:34`; `tests/ops/test_flip.py` |
+| 8 | `flip_dual` (#142) | capability on all 8; numerically `{u1, fz2, su2, su3}` (+ Z2/product spaces) | `tests/symmetry/test_flip_scalar.py:34`; `tests/ops/test_flip_dual.py` |
 | 9 | `embed` / `restrict` / `direct_sum` / `isometry` | `{trivial, u1, su2, fz2, product}` | `tests/ops/test_embed.py:57`; `tests/ops/test_isometry.py:45-61` |
-| 10 | `cast` | bounded by `SymmetryCast`: targets `{SU2, Trivial, fZ2, U1×U1}`; U1-as-source is the refusal | `tests/ops/test_cast.py:97`, `:386-408` |
+| 10 | `to_symmetry` | bounded by `BranchingRules`: targets `{SU2, Trivial, fZ2, U1×U1}`; U1-as-source is the refusal | `tests/ops/test_to_symmetry.py:97`, `:386-408` |
 | 11 | `save` / `load` | `{trivial, u1, z2, su2, fz2, product, nested}` + SU(N) — all seven registered providers round-trip | `tests/test_serialize.py:36-57`; `tests/symmetry/test_z2.py:390-419`; `tests/symmetry/test_sun.py:451-501` |
 | 12 | network MPS/MPO/Env/dmrg/ctmrg | `{u1, su2, z2, su3, fz2}` (fermionic MPO/DMRG since #147; ctmrg stays bosonic) | `tests/network/test_mps.py:24-32`; `tests/network/test_mpo.py`; `tests/network/test_hubbard.py`; `tests/network/test_heff2.py:110-125`; `tests/network/test_ctmrg.py` |
 | 13 | map view | `{su2, u1, trivial}` + jax | `tests/ops/test_map.py:143-166`, `:347-364` |
@@ -55,8 +55,8 @@ in CI**; every empty cell is a decision, not a constraint.
 - **numpy eager** — every row above.
 - **jax eager + jit** — scattered per module, never parametrized over providers:
   `test_blocks.py`, `test_embed.py:384`, `test_einsum.py`,
-  `test_contraction_plan.py`, `test_flip.py:325-336`,
-  `test_svd_truncated.py:564-586`, `test_map.py:347-364`, `test_cast.py`,
+  `test_contraction_plan.py`, `test_flip_dual.py:325-336`,
+  `test_svd_truncated.py:564-586`, `test_map.py:347-364`, `test_to_symmetry.py`,
   `test_dense.py`, `test_basic.py`, `test_adjoint.py`,
   `test_full_trace.py:146-173`. Absent for `fuse`/`unfuse` (jax eager only,
   `test_fusion.py:470-492`), `repartition`/`bend`, `transpose`, core linalg,
@@ -71,7 +71,7 @@ in CI**; every empty cell is a decision, not a constraint.
 - **jax vmap** — `test_pytree.py:308-355` (SU(2) legs) and
   `tests/integration/test_vmc.py:63` (`{u1, su2}`). Nothing else.
 - **torch eager** — `tests/backends/test_torch.py:76-85`:
-  `{trivial, u1, su2, fz2, product}` × a broad op list. `flip` and
+  `{trivial, u1, su2, fz2, product}` × a broad op list. `flip_dual` and
   `full_trace`/`inner` joined in #146 (`:249`, `:414`); E1 fails on the next
   public operation that does not.
 - **torch autograd** — `test_torch.py` eager-backward section, `{u1, su2}`.
@@ -90,7 +90,7 @@ contract** (with the refusal test), **(d) blocked** (with what blocks it).
   Follow-up: "SU(3) joins the fusion and contraction oracles".
 - **a6. `tensordot`/`einsum` × SU(3), one dense-oracle test.** Rows 2 and 3
   cover SU(3); what has never run is the composition. Same follow-up as a4.
-- *Filled:* a1 (`flip` × torch), a2 (`full_trace`/`inner` × torch) and a3
+- *Filled:* a1 (`flip_dual` × torch), a2 (`full_trace`/`inner` × torch) and a3
   (`fuse`/`unfuse` × fZ2 against the dense oracle) by #146; a5 (grad × SU(N))
   by #145.
 
@@ -130,8 +130,8 @@ contract** (with the refusal test), **(d) blocked** (with what blocks it).
   structure from singular *values* — `tests/network/test_ctmrg.py:203-219`.
 - **c2.** Fermionic MPO: the coupling coefficients contain no swap gate —
   `tests/network/test_mpo.py:317-337`.
-- **c3.** `cast` with U(1) as source: `U1Provider` provides no `SymmetryCast` —
-  `tests/ops/test_cast.py:386-400`.
+- **c3.** `to_symmetry` with U(1) as source: `U1Provider` provides no `BranchingRules` —
+  `tests/ops/test_to_symmetry.py:386-400`.
 - **c4.** `save`/`load` × the SU(3) *fixture*: it has no registry name on
   purpose; `SUNProvider(3)` covers the row — `tests/symmetry/test_sun.py:451-501`.
 - **c5.** Non-Abelian MPO terms fusing through three channels —

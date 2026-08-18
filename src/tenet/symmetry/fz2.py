@@ -20,7 +20,7 @@ the condition invariant 12 demands before an ndarray spelling is allowed; no
 else here). TensorKit keeps a *regular* trace with positive quantum dimensions
 and absorbs the parity endomorphism into the right-evaluation map, which is
 exactly why the Frobenius-Schur phase stays ``+1`` while the twist carries the
-sign. ``tenet.flip`` consumes it through
+sign. ``tenet.flip_dual`` consumes it through
 [frobenius_schur][tenet.symmetry.FZ2Provider.frobenius_schur] times
 [twist][tenet.symmetry.FZ2Provider.twist]
 (``chi * theta = (-1)^parity``); ``norm`` is qdim-weighted

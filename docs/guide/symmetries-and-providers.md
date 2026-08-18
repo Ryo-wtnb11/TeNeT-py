@@ -77,15 +77,15 @@ lattice yourself with [supports][tenet.symmetry.supports] and
 [requires][tenet.symmetry.requires]:
 
 ```python
->>> from tenet.symmetry import Z2, ClebschGordanData, SymmetryCast, supports, requires
+>>> from tenet.symmetry import Z2, ClebschGordanData, BranchingRules, supports, requires
 >>> supports(U1, ClebschGordanData)
 True
->>> supports(Z2, SymmetryCast)
+>>> supports(Z2, BranchingRules)
 False
->>> requires(Z2, SymmetryCast)
+>>> requires(Z2, BranchingRules)
 Traceback (most recent call last):
     ...
-tenet.symmetry.base.CapabilityError: Z2Provider does not provide capability SymmetryCast
+tenet.symmetry.base.CapabilityError: Z2Provider does not provide capability BranchingRules
 
 ```
 

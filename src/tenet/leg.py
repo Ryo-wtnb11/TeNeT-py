@@ -158,12 +158,12 @@ class Leg(_HashMemo):
 
         Notes
         -----
-        ``tenet.flip`` is the sanctioned numerical route for changing a leg's
+        ``tenet.flip_dual`` is the sanctioned numerical route for changing a leg's
         ``dual`` flag: it also relabels the space through ``provider.dual`` and
         pays the Z-isomorphism's scalar per fusion tree. ``repartition`` is the
         route that changes ``side`` together with ``dual``, paying the bending
         coefficient (#38). ``dualized()`` itself is metadata-only, and it is
-        **not** the metadata half of ``flip``: toggling the flag alone changes
+        **not** the metadata half of ``flip_dual``: toggling the flag alone changes
         which sector the leg contributes to a fusion tree (``fused_sector`` goes
         from ``a`` to ``dual(a)``), so the block set genuinely changes and no
         scalar can express the difference — never use ``dualized()`` to build a

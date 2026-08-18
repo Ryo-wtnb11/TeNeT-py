@@ -365,7 +365,7 @@ def test_fermionic_dmrg_reaches_the_even_parity_ground_energy():
     #147's gate-1 report measured this run at -1.4142136 against the ED value
     -2.2360680 -- the cap-direction Koszul signs of the environment contractions.
     #160's composition rule (with its explicitly bent wires) is what closes the gap.
-    ``cutoff=None`` takes the prepared per-bond path through the Jordan block table;
+    ``cutoff=None`` takes the prepared per-bond path through the edge-block table;
     the default cutoff takes the dense ``W`` path; both must land on ED.
     """
     ed = -(5.0**0.5)  # even-parity ground energy of the open 4-site hopping chain

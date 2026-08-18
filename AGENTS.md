@@ -67,8 +67,10 @@ tests/           pytest tests, mirroring src/tenet/ structure
 
 ## Coding rules
 
-- Symmetry-specific math goes through capability protocols
-  (`FusionProvider` etc.). No `if symmetry == "su2":` branching in core code.
+- Symmetry-specific math goes through capability protocols — `FusionRules` for
+  structure, the `*Data` protocols (`FMatrixData`, `BendingCoefficients`, ...)
+  for the coefficients a category is defined by, `*Provider` for a concrete
+  symmetry. No `if symmetry == "su2":` branching in core code.
 - Test non-Abelian behavior with SU(2) from the start; Abelian-only tests can
   hide wrong assumptions (external sectors ≠ complete fusion basis).
 - Where feasible, validate numerical operations against explicit dense

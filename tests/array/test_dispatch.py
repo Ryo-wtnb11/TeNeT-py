@@ -143,21 +143,45 @@ def test_do_to_numpy_is_to_dense_exactly():
     [
         lambda a, b: ar.do("exp", a),
         lambda a, b: ar.do("svd", a),
-        # #93 ships tenet.sqrt / tenet.power as *blockwise* maps on the coefficients,
+        # #93 ships tenet.block_sqrt / tenet.block_power as *blockwise* maps on the coefficients,
         # and refuses both here. Not an oversight: autoray's "sqrt" is the dense
         # elementwise operation, and no non-linear function commutes with
         # T = sum_tau A^(tau) (x) C^(tau) -- measured 1.673 off on a dense scale of
         # 3.82 for a rank-3 SU(2) tensor. A refusal about meaning, not effort.
         lambda a, b: ar.do("sqrt", a),
         lambda a, b: ar.do("power", a, 0.5),
+        lambda a, b: ar.do("flip", a, 0),
     ],
-    ids=["exp", "svd", "sqrt", "power"],
+    ids=["exp", "svd", "sqrt", "power", "flip"],
 )
 def test_unregistered_operations_raise(call):
     """Invariant 11 at the dispatch layer: nothing unimplemented leaks through."""
     a, b = su2(0), su2(1)
     with pytest.raises(Exception):  # noqa: B017  the exception *type* is autoray's business
         call(a, b)
+
+
+@pytest.mark.parametrize(
+    ("call", "wanted"),
+    [
+        (lambda a: ar.do("flip", a, 0), "tenet.flip_dual(t, axes)"),
+        (lambda a: ar.do("sqrt", a), "tenet.block_sqrt(t)"),
+        (lambda a: ar.do("power", a, 2), "tenet.block_power(t)"),
+    ],
+    ids=["flip", "sqrt", "power"],
+)
+def test_the_three_numpy_name_collisions_refuse_in_our_own_voice(call, wanted):
+    """#185: the three names whose numpy meaning is not this package's.
+
+    autoray resolves an unregistered name by importing the backend module and
+    looking it up, so before M31 ``ar.do("flip", t, 0)`` reached ``tenet.flip``
+    and returned a dual-toggled tensor with no error at all. The renames close
+    the lookup; these registrations make the answer a sentence rather than an
+    ``ImportError``, and each names the operation that *was* meant.
+    """
+    with pytest.raises(ValueError, match="not defined for a symmetric tensor") as exc:
+        call(su2(0))
+    assert wanted in str(exc.value)
 
 
 def test_no_array_protocol_and_asarray_does_not_densify():

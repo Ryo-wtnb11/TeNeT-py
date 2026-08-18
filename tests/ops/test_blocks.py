@@ -140,13 +140,13 @@ def test_apply_blocks_is_set_params_of_get_params():
 
 def test_method_delegations():
     t = positive(tensor("su2"))
-    assert t.sqrt() == tenet.sqrt(t)
-    assert t.power(0.5) == tenet.power(t, 0.5)
+    assert t.block_sqrt() == tenet.block_sqrt(t)
+    assert t.block_power(0.5) == tenet.block_power(t, 0.5)
     assert t.apply_blocks(np.exp) == tenet.apply_blocks(t, np.exp)
 
 
 def test_exports():
-    for name in ("apply_blocks", "sqrt", "power"):
+    for name in ("apply_blocks", "block_sqrt", "block_power"):
         assert getattr(tenet, name) is getattr(tenet.ops, name)
 
 
@@ -158,7 +158,7 @@ def test_svd_sqrt_round_trip(name):
     """``u @ sqrt(s) @ (sqrt(s) @ vh) == t`` — measured 3.3e-14 / 22.66 on SU(2)."""
     t = tensor(name)
     u, s, vh = tenet.linalg.svd(t, AXES[name])
-    rs = tenet.sqrt(s)
+    rs = tenet.block_sqrt(s)
     left, right = u @ rs, rs @ vh
     ref = tenet.linalg.svd(t, AXES[name])[0] @ s @ vh  # t in the svd's own partition
     assert float(tenet.norm(left @ right - ref)) / float(tenet.norm(ref)) < 1e-14
@@ -173,14 +173,14 @@ def test_sqrt_of_s_is_the_matrix_square_root(name):
     diagonal matrix. See the sibling test below for the general failure.
     """
     _, s, _ = tenet.linalg.svd(tensor(name), AXES[name])
-    rs = tenet.sqrt(s)
+    rs = tenet.block_sqrt(s)
     assert float(tenet.norm(rs @ rs - s)) < 1e-14
 
 
 def test_sqrt_of_a_non_diagonal_tensor_is_not_the_matrix_square_root():
     """The coincidence above does not generalize; conflating the two is the trap."""
     m = positive(SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=3))
-    rm = tenet.sqrt(m)
+    rm = tenet.block_sqrt(m)
     assert float(tenet.norm(rm @ rm - m)) > 1.0
 
 
@@ -194,7 +194,7 @@ def test_blockwise_sqrt_equals_dense_sqrt_for_all_ones_cg(name):
     t = positive(SymmetricTensor.random(legs, seed=0))
     dense = t.to_dense()
     assert dense.min() >= 0.0  # positive blocks + all-ones CG: no negative entries
-    assert np.max(np.abs(tenet.sqrt(t).to_dense() - np.sqrt(dense))) == 0.0
+    assert np.max(np.abs(tenet.block_sqrt(t).to_dense() - np.sqrt(dense))) == 0.0
 
 
 def test_blockwise_sqrt_differs_from_dense_sqrt_for_su2():
@@ -214,7 +214,7 @@ def test_blockwise_sqrt_differs_from_dense_sqrt_for_su2():
     t = rank3("su2")
     dense = t.to_dense()
     assert dense.min() < 0.0
-    diff = np.max(np.abs(tenet.sqrt(t).to_dense() - np.sqrt(dense.astype(np.complex128))))
+    diff = np.max(np.abs(tenet.block_sqrt(t).to_dense() - np.sqrt(dense.astype(np.complex128))))
     assert diff > 1.0  # measured 1.85 here, 1.673 on the issue's filling
     scale = np.max(np.abs(dense))  # 2.00 here, 3.82 on the issue's
     assert diff > 0.4 * scale  # a large fraction of the array's own scale, not noise
@@ -244,19 +244,19 @@ def test_forbidden_dense_entries_stay_zero_even_when_f_of_zero_is_not_zero(name)
 @pytest.mark.parametrize("name", PROVIDERS)
 def test_power_half_agrees_with_sqrt(name):
     t = positive(tensor(name))
-    for a, b in zip(tenet.power(t, 0.5).blocks, tenet.sqrt(t).blocks, strict=True):
+    for a, b in zip(tenet.block_power(t, 0.5).blocks, tenet.block_sqrt(t).blocks, strict=True):
         assert np.allclose(a, b, rtol=0, atol=1e-15)
 
 
 @pytest.mark.parametrize("name", PROVIDERS)
 def test_power_one_is_the_identity(name):
     t = tensor(name)
-    assert tenet.power(t, 1) == t
+    assert tenet.block_power(t, 1) == t
 
 
 def test_power_minus_one_is_the_reciprocal_per_block():
     t = positive(tensor("su2"))
-    for a, b in zip(tenet.power(t, -1).blocks, t.blocks, strict=True):
+    for a, b in zip(tenet.block_power(t, -1).blocks, t.blocks, strict=True):
         assert np.allclose(a, 1 / b, rtol=0, atol=1e-15)
 
 
@@ -275,9 +275,9 @@ def test_ar_do_sqrt_and_power_still_raise(call):
 def test_jax_blocks_stay_jax():
     use_jax()
     t = positive(tensor("su2")).to_backend("jax")
-    out = tenet.sqrt(t)
+    out = tenet.block_sqrt(t)
     assert ar.infer_backend(out.blocks[0]) == "jax"
-    ref = tenet.sqrt(t.to_backend("numpy"))
+    ref = tenet.block_sqrt(t.to_backend("numpy"))
     assert np.allclose(np.asarray(out.blocks[0]), ref.blocks[0])
 
 
@@ -289,7 +289,7 @@ def test_jit_traces_once_per_structure():
     def f(t):
         nonlocal count
         count += 1
-        return tenet.norm(tenet.sqrt(t))
+        return tenet.norm(tenet.block_sqrt(t))
 
     a = positive(tensor("su2", 4)).to_backend("jax")
     b = positive(tensor("su2", 5)).to_backend("jax")
@@ -313,7 +313,7 @@ def test_grad_through_svd_and_sqrt_matches_finite_differences(name):
 
     def f(params):
         u, s, _ = tenet.linalg.svd(SymmetricTensor(structure, tuple(params)), AXES[name])
-        return tenet.norm(u @ tenet.sqrt(s))
+        return tenet.norm(u @ tenet.block_sqrt(s))
 
     grads = jax.grad(f)(list(t.blocks))
     assert all(bool(np.all(np.isfinite(np.asarray(g)))) for g in grads)
@@ -340,11 +340,11 @@ def test_grad_through_svd_and_sqrt_matches_finite_differences(name):
 def test_complex_sqrt_and_power_follow_the_backend_branch_cut():
     t = tensor("su2")
     c = tenet.apply_blocks(t, lambda b: b.astype(np.complex128) + 1j)
-    out = tenet.sqrt(c)
+    out = tenet.block_sqrt(c)
     assert out.dtype == np.complex128
     for a, b in zip(out.blocks, c.blocks, strict=True):
         assert np.array_equal(a, ar.do("sqrt", b))
-    for a, b in zip(tenet.power(c, 0.5).blocks, c.blocks, strict=True):
+    for a, b in zip(tenet.block_power(c, 0.5).blocks, c.blocks, strict=True):
         assert np.array_equal(a, ar.do("power", b, 0.5))
 
 
@@ -356,7 +356,7 @@ def test_negative_entries_give_the_backend_nan_before_and_after_ad_install():
     t = t.set_params(blocks)
 
     def check():
-        out = tenet.sqrt(t)
+        out = tenet.block_sqrt(t)
         assert np.isnan(np.asarray(out.blocks[0]).flat[0])
         assert np.isfinite(np.asarray(out.blocks[0]).flat[1:]).all()
         assert all(np.isfinite(np.asarray(b)).all() for b in out.blocks[1:])

@@ -1,7 +1,7 @@
 """The two mechanical guards of the coverage policy (issue #146, `tests/COVERAGE.md`).
 
 Everything else the policy asks for is review discipline; these two are greps.
-E1 is the failure that has happened three times — `flip` (#142), `full_trace` and
+E1 is the failure that has happened three times — `flip_dual` (#142), `full_trace` and
 `inner` (#126) each landed in `tenet.__all__` after #95's torch pass and never
 joined it. E2 is #145's gap turned into an invariant: the AD suite must keep a
 provider whose F/R/B symbols are matrix-valued, or `grad x SU(N)` silently stops

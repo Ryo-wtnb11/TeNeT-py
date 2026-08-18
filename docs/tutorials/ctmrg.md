@@ -59,7 +59,7 @@ of scope) or dropping the symmetry, which deletes the reason this half exists. S
 follows [`vmc_mps.py`](vmc.md): random symmetric `h`, no comparison against
 `-0.669437(5)`, said out loud in the file itself.
 
-`tenet.cast` is mentioned there and deliberately not used: building an SU(2) ansatz and
+`tenet.to_symmetry` is mentioned there and deliberately not used: building an SU(2) ansatz and
 casting it to U(1) would be a third concept in a file that already has two models. The
 SU(2) provider is instead run through the same iPEPS path via a `provider` parameter.
 

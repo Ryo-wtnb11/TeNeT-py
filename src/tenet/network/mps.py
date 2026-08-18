@@ -32,7 +32,7 @@ __all__ = [
     "MPO",
     "MPS",
     "MPS_FORMAT_VERSION",
-    "JordanBlocks",
+    "EdgeBlocks",
     "expectation_1site",
     "expectation_2site",
     "local_op",
@@ -895,7 +895,7 @@ def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
     dual odd bond contracted in #160's composition order pays one Koszul sign per cut —
     measured as ``(-1)^(number of odd internal bonds)`` on the chain (#147 gate 2). The
     factors are therefore flipped to the non-dual convention the rank-3 route already
-    uses, with the twist paid once per bond (``inv`` on exactly one end -- ``flip`` twice
+    uses, with the twist paid once per bond (``inv`` on exactly one end -- ``flip_dual`` twice
     is ``chi_a * theta_a``, ``-1`` on an odd line); bosonic splits are byte-identical.
     """
     sym = op.legs[0].space.provider
@@ -914,8 +914,8 @@ def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
     out.append(_as_w(carry))
     if fermionic:
         for k in range(len(out) - 1):
-            out[k] = tenet.flip(out[k], 3)
-            out[k + 1] = tenet.flip(out[k + 1], 0, inv=True)
+            out[k] = tenet.flip_dual(out[k], 3)
+            out[k + 1] = tenet.flip_dual(out[k + 1], 0, inv=True)
     return out
 
 
@@ -1008,8 +1008,8 @@ def _group_embedding(bond, bond_starts, group, group_starts, keys, states, *, le
     return SymmetricTensor.from_dense(dense.T, (Leg(group, IN, dual), Leg(bond, OUT, dual_b)))
 
 
-class JordanBlocks(NamedTuple):
-    """One site of the Jordan block table: the FSM edges, split the way the matvec eats them.
+class EdgeBlocks(NamedTuple):
+    """One site of the edge-block table: the FSM edges, split the way the matvec eats them.
 
     MPSKit's ``(1 C D; . A B; . . 1)`` partition (``jordanmpotensor.jl``:1-42): ``a`` holds
     the open-to-open edges, ``b`` open-to-``IdR``, ``c`` ``IdL``-to-open and ``d`` the
@@ -1039,6 +1039,12 @@ class JordanBlocks(NamedTuple):
     the
     full tensor. For every sign-free provider the classification is what it always was,
     at the cost it always had.
+
+    MPSKit calls this partition the MPO's *Jordan form*, and the type was spelled
+    ``JordanBlocks`` until #185. The citation stays; the identifier does not. In a
+    package that supports fermions, "Jordan" already names the Jordan-Wigner string
+    two paragraphs up and the Jordan normal form one import away from ``tenet.linalg``
+    -- three meanings for one word, which no docstring can separate at a call site.
     """
 
     a: dict
@@ -1188,7 +1194,7 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
     site is the plain sum of its placed edges.
 
     With ``table=True`` the surviving edges are *also* returned as one
-    ``JordanBlocks`` per site — the same pruned graph, in the Jordan partition the
+    ``EdgeBlocks`` per site — the same pruned graph, in the a/b/c/d partition the
     two-site matvec consumes — instead of being discarded once the dense sites exist.
     """
     sym = phys.provider
@@ -1251,7 +1257,7 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
 
     tables = None
     if table:
-        # Per cut: the three Jordan groups (IdL / open / IdR) as (space, slots, keys), then
+        # Per cut: the three edge groups (IdL / open / IdR) as (space, slots, keys), then
         # both embedding orientations against the full bond. The bond side of the two
         # boundary cuts is non-dual, matching the caps below and ``Env``'s boundary legs.
         groups, embeds = [], []
@@ -1362,7 +1368,7 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
                 gr_space, gr_slots, _ = groups[n + 1]["open"]
                 spec = channel_map(spec_keys, (gl_space, gr_space), gl_slots, gr_slots, dual, dual)
             tables.append(
-                JordanBlocks(
+                EdgeBlocks(
                     dicts["a"],
                     dicts["b"],
                     dicts["c"],
@@ -1408,7 +1414,7 @@ class MPO:
     ----------
     sites : Iterable of SymmetricTensor
         The rank-4 site tensors, left to right.
-    jordan : Sequence of JordanBlocks or None, optional
+    edge_blocks : Sequence of EdgeBlocks or None, optional
         The per-site block table [from_terms][tenet.network.MPO.from_terms]
         keeps at ``cutoff=None``; ``None`` (the default) for every other MPO.
 
@@ -1425,9 +1431,9 @@ class MPO:
     its own reason (``mpo.py``:16-18: "unlike for an MPS, this doesn't simplify
     calculations. Thus, an MPO has no ``form``"). Two classes, no branch.
 
-    [jordan][tenet.network.MPO.jordan] is the one read-only accessor beyond the container protocol:
-    the
-    per-site ``JordanBlocks`` table when [from_terms][tenet.network.MPO.from_terms] kept its
+    [edge_blocks][tenet.network.MPO.edge_blocks] is the one read-only accessor beyond
+    the container protocol: the
+    per-site ``EdgeBlocks`` table when [from_terms][tenet.network.MPO.from_terms] kept its
     finite-state
     machine (``cutoff=None``), ``None`` for every other MPO. It exists so that
     [Env][tenet.network.Env] can reach the symbolic edge structure without touching a
@@ -1439,10 +1445,10 @@ class MPO:
     sites: list[SymmetricTensor]
 
     def __init__(
-        self, sites: Iterable[SymmetricTensor], jordan: Sequence[JordanBlocks] | None = None
+        self, sites: Iterable[SymmetricTensor], edge_blocks: Sequence[EdgeBlocks] | None = None
     ) -> None:
         self.sites = list(sites)
-        self._jordan = None if jordan is None else list(jordan)
+        self._edge_blocks = None if edge_blocks is None else list(edge_blocks)
 
     def __len__(self) -> int:
         return len(self.sites)
@@ -1453,8 +1459,8 @@ class MPO:
     def __iter__(self) -> Iterator[SymmetricTensor]:
         return iter(self.sites)
 
-    def jordan(self, n: int) -> JordanBlocks | None:
-        """Site ``n``'s ``JordanBlocks``, or ``None`` when no table survived.
+    def edge_blocks(self, n: int) -> EdgeBlocks | None:
+        """Site ``n``'s ``EdgeBlocks``, or ``None`` when no table survived.
 
         Parameters
         ----------
@@ -1463,7 +1469,7 @@ class MPO:
 
         Returns
         -------
-        JordanBlocks or None
+        EdgeBlocks or None
             The site's block table, or ``None`` when the MPO carries none.
 
         Notes
@@ -1474,7 +1480,7 @@ class MPO:
         -- and [from_w][tenet.network.MPO.from_w] never had one. ``None`` therefore also routes
         [Env.heff2][tenet.network.Env.heff2] onto its dense path.
         """
-        return None if self._jordan is None else self._jordan[n]
+        return None if self._edge_blocks is None else self._edge_blocks[n]
 
     @classmethod
     def from_w(
@@ -1510,7 +1516,7 @@ class MPO:
         Returns
         -------
         MPO
-            ``[first, bulk * (n_sites - 2), last]``, no Jordan table.
+            ``[first, bulk * (n_sites - 2), last]``, no edge-block table.
 
         Raises
         ------
@@ -1568,7 +1574,7 @@ class MPO:
         -------
         MPO
             The assembled operator; with ``cutoff=None`` it carries the
-            per-site [jordan][tenet.network.MPO.jordan] table.
+            per-site [edge_blocks][tenet.network.MPO.edge_blocks] table.
 
         Raises
         ------
@@ -1651,7 +1657,7 @@ class MPO:
         while the SVD gauge mixes the FSM states, turning 38 sparse edges into 302 dense
         pairs on the width-10 cylinder and erasing every identity edge on every model
         measured (#141). Only ``cutoff=None`` keeps the block table that
-        [jordan][tenet.network.MPO.jordan]
+        [edge_blocks][tenet.network.MPO.edge_blocks]
         exposes and that routes [Env.heff2][tenet.network.Env.heff2] onto its prepared per-bond
         operator.
         **Whether that trade wins depends on the backend**: with a ``compile=`` callable

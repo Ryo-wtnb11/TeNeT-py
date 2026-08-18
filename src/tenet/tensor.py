@@ -561,8 +561,8 @@ class SymmetricTensor:
 
         return blocks.apply_blocks(self, fn)
 
-    def sqrt(self) -> "SymmetricTensor":
-        """Blockwise ``sqrt`` — *not* ``sqrt(self.to_dense())``. See [tenet.sqrt][].
+    def block_sqrt(self) -> "SymmetricTensor":
+        """Blockwise ``sqrt`` — *not* ``sqrt(self.to_dense())``. See [tenet.block_sqrt][].
 
         Returns
         -------
@@ -571,10 +571,10 @@ class SymmetricTensor:
         """
         from tenet.ops import blocks
 
-        return blocks.sqrt(self)
+        return blocks.block_sqrt(self)
 
-    def power(self, p: Any) -> "SymmetricTensor":
-        """Blockwise ``self ** p`` for a scalar ``p``. See [tenet.power][].
+    def block_power(self, p: Any) -> "SymmetricTensor":
+        """Blockwise ``self ** p`` for a scalar ``p``. See [tenet.block_power][].
 
         Parameters
         ----------
@@ -588,7 +588,7 @@ class SymmetricTensor:
         """
         from tenet.ops import blocks
 
-        return blocks.power(self, p)
+        return blocks.block_power(self, p)
 
     # --- serialization --------------------------------------------------------
 
@@ -728,8 +728,10 @@ class SymmetricTensor:
 
         return embed(self, legs)
 
-    def cast(self, target: _DualFusionRules, *, atol: float | None = None) -> "SymmetricTensor":
-        """Restrict to a smaller symmetry, e.g. SU(2) -> U(1). See ``tenet.cast``.
+    def to_symmetry(
+        self, target: _DualFusionRules, *, atol: float | None = None
+    ) -> "SymmetricTensor":
+        """Restrict to a smaller symmetry, e.g. SU(2) -> U(1). See ``tenet.to_symmetry``.
 
         Parameters
         ----------
@@ -743,9 +745,9 @@ class SymmetricTensor:
         SymmetricTensor
             The tensor over ``target``.
         """
-        from tenet.ops.cast import cast
+        from tenet.ops.cast import to_symmetry
 
-        return cast(self, target, atol=atol)
+        return to_symmetry(self, target, atol=atol)
 
     def restrict(self, legs: Sequence[Leg], *, atol: float | None = None) -> "SymmetricTensor":
         """Slice down to smaller, contained legs. See [tenet.restrict][].

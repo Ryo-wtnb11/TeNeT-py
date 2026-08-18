@@ -256,10 +256,10 @@ def test_flip(name):
     """
     t = tt(LEGS[name], seed=42)
     r = t.to_backend("numpy")
-    got = tenet.flip(t, 0)
+    got = tenet.flip_dual(t, 0)
     assert is_torch(got)
-    same(got, tenet.flip(r, 0))
-    same(tenet.flip(got, 0), tenet.flip(tenet.flip(r, 0), 0))
+    same(got, tenet.flip_dual(r, 0))
+    same(tenet.flip_dual(got, 0), tenet.flip_dual(tenet.flip_dual(r, 0), 0))
 
 
 @pytest.mark.parametrize("name", PROVIDERS)
@@ -322,17 +322,19 @@ def test_apply_blocks_sqrt_power(name):
     t = tenet.apply_blocks(tt(LEGS[name], seed=13), lambda b: ar.do("abs", b))
     assert is_torch(t)
     r = t.to_backend("numpy")
-    close(tenet.sqrt(t), tenet.sqrt(r), atol=1e-12)  # torch's vectorized sqrt, to a ulp
-    close(tenet.power(t, 3), tenet.power(r, 3), atol=1e-12)  # `pow` is torch's, to a ulp
+    close(tenet.block_sqrt(t), tenet.block_sqrt(r), atol=1e-12)  # torch's vectorized sqrt, to a ulp
+    close(
+        tenet.block_power(t, 3), tenet.block_power(r, 3), atol=1e-12
+    )  # `pow` is torch's, to a ulp
     same(t.apply_blocks(lambda b: b * 2), r.apply_blocks(lambda b: b * 2))
 
 
 def test_cast():
     """SU(2) -> U(1) forgetting: ``to_dense`` out, ``from_dense`` back in, on torch."""
     t = tt((Leg(V, OUT), Leg(V, IN)), seed=14)
-    got = tenet.cast(t, U1)
+    got = tenet.to_symmetry(t, U1)
     assert is_torch(got)
-    same(got, tenet.cast(t.to_backend("numpy"), U1))
+    same(got, tenet.to_symmetry(t.to_backend("numpy"), U1))
 
 
 def test_save_and_load(tmp_path):

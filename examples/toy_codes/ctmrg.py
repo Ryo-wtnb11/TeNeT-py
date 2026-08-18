@@ -43,9 +43,10 @@ unit cell (out of scope) or dropping the symmetry (which deletes the reason this
 exists). So it follows ``examples/vmc_mps.py``: random symmetric ``h``, no comparison
 against ``-0.669437(5)``, said out loud right here.
 
-Simplification: **``tenet.cast`` (#92) is mentioned and not used.** Building an SU(2) ansatz and
-casting it to U(1) is a third concept in a file that already has two models; the SU(2)
-provider is instead run through the *same* iPEPS path via a ``provider`` parameter.
+Simplification: **``tenet.to_symmetry`` (#92) is mentioned and not used.** Building an
+SU(2) ansatz and casting it to U(1) is a third concept in a file that already has
+two models; the SU(2) provider is instead run through the *same* iPEPS path via a
+``provider`` parameter.
 """
 
 import math
