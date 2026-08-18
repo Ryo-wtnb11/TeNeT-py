@@ -14,8 +14,11 @@ dual SU(2) legs.
 F-, R- and B-symbols and Frobenius-Schur signs are available through the
 [AssociatorData][tenet.symmetry.AssociatorData] / [BraidingData][tenet.symmetry.BraidingData]
 / [DualityData][tenet.symmetry.DualityData] / [FSIndicatorData][tenet.symmetry.FSIndicatorData]
-capabilities; their gauge is pinned to
-the vendored TensorKitSectors fixtures (see ``_SU2_GAUGE``). ``permute_tree`` is
+capabilities. Every one of them comes from ``racah`` at Dynkin label ``(two_j,)``
+(#180): SU(2) is SU(N) at N = 2, and a second pure-Python implementation of the
+same coefficients would be a second gauge. The vendored TensorKitSectors fixtures
+are the cross-check rather than the specification now, agreeing to 4.95e-14 over
+all 109,900 rows. ``permute_tree`` is
 built on them, so ``transpose`` is total for SU(2), and ``bend_right`` /
 ``bend_left`` are built on the B-symbol and the Frobenius-Schur sign, so
 ``repartition`` is total for SU(2) too (#38).
@@ -25,9 +28,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
+import racah
 
-from tenet.symmetry import _su2_coeff
-from tenet.symmetry._su2_coeff import cg_tensor, triangle
+from tenet.symmetry import _sun_coeff
 from tenet.symmetry.base import (
     CapabilityError,
     FusionRules,
@@ -43,15 +46,28 @@ if TYPE_CHECKING:
 
 __all__ = ["SU2", "SU2Provider", "SU2Sector"]
 
-_SU2_GAUGE = "3j=condon-shortley;cg=condon-shortley;f=tks-su2irrep;r=tks-su2irrep;fs=tks-su2irrep"
-"""Internal gauge fingerprint (racah / TensorKitSectors conventions).
 
-Keys: ``3j``/``cg`` — the 3j and Clebsch-Gordan phase convention (Condon-Shortley,
-magnetic indices descending); ``f``/``r``/``fs`` — F-symbols, R-symbols and
-Frobenius-Schur signs, all matching TensorKitSectors' ``SU2Irrep``. Written into a saved
-file's header by [tenet.save][] and compared on [tenet.load][], which refuses a
-file recorded under a different convention.
+def triangle(dj1: int, dj2: int, dj3: int) -> bool:
+    """Triangle rule on doubled spins: ``|j1-j2| <= j3 <= j1+j2`` with integer steps."""
+    return abs(dj1 - dj2) <= dj3 <= dj1 + dj2 and (dj1 + dj2 + dj3) % 2 == 0
 
+
+_SU2_GAUGE = f"su2=racah;{racah.sun_authority_fingerprint()}"
+"""Internal gauge fingerprint of the running ``racah`` build, verbatim from the crate.
+
+Written into a saved file's header by [tenet.save][] and compared on
+[tenet.load][], which refuses a file recorded under a different convention.
+
+Since #180 this is racah's own fingerprint, exactly as ``_SUN_GAUGE`` is: the
+string records the coefficient *source*, and the source is now racah at
+``(two_j,)`` rather than the pure-Python closed forms deleted with it. The one
+string files were written under before that swap is accepted on load —
+``tenet.serialize._LEGACY_GAUGES`` — because the two coefficient sets were
+measured to agree to 4.95e-14 over the full fixture table, so those blocks are
+numerically comparable and refusing them would be a false alarm.
+
+The conventions themselves are unchanged: 3j and CG in Condon-Shortley phase with
+magnetic indices descending, F/R/FS matching TensorKitSectors' ``SU2Irrep``.
 Cross-validated against froSTspin (2026-08-14; sympy Condon-Shortley lineage,
 descending-m, dimension-labeled irreps — an implementation lineage independent
 of racah/TensorKitSectors): all 215 admissible CG triples with ``dj <= 8``
@@ -153,7 +169,7 @@ class SU2Provider:
         """
         if not triangle(a.two_j, b.two_j, c.two_j):
             raise ValueError(f"{c} does not appear in the fusion of {a} and {b}")
-        return cg_tensor(a.two_j, b.two_j, c.two_j)[..., np.newaxis]
+        return _sun_coeff.cgc((a.two_j,), (b.two_j,), (c.two_j,))
 
     def f_symbol(
         self,
@@ -169,23 +185,44 @@ class SU2Provider:
         Real in this gauge, so downstream conjugation of domain-side coefficients
         is a no-op. Raises if any vertex has ``n_symbol > 1`` (unreachable for
         SU(2), asserted so the scalar-valued contract is not merely documentation).
+
+        Exactly ``0.0`` when any of the four vertices is empty. That guard is load-bearing:
+        racah raises ``ValueError`` on an ``N = 0`` vertex, where SU(2)'s contract is a
+        true zero.
         """
+        empty = False
         for x, y, z in ((a, b, e), (e, c, d), (b, c, f), (a, f, d)):
-            if self.n_symbol(x, y, z) > 1:
+            n = self.n_symbol(x, y, z)
+            if n > 1:
                 raise ValueError(
                     f"{self.name}: f_symbol is scalar-valued but "
                     f"N^{z!r}_{{{x!r},{y!r}}} > 1; matrix-valued F is not supported"
                 )
-        return _su2_coeff.f_symbol(a.two_j, b.two_j, c.two_j, d.two_j, e.two_j, f.two_j)
+            empty |= n == 0
+        if empty:
+            return 0.0
+        return float(_sun_coeff.f_matrix(*((x.two_j,) for x in (a, b, c, d, e, f)))[0, 0, 0, 0])
 
     def r_symbol(self, a: SU2Sector, b: SU2Sector, c: SU2Sector) -> int:
-        """``R^{ab}_c = (-1)^(ja + jb - jc)``, exactly ``+-1``; SU(2) braiding is symmetric."""
-        return _su2_coeff.r_symbol(a.two_j, b.two_j, c.two_j)
+        """``R^{ab}_c = (-1)^(ja + jb - jc)``, exactly ``+-1``; SU(2) braiding is symmetric.
+
+        racah returns it as a float ``+-1`` carrying float noise (``-0.9999999999999998``);
+        it is snapped back to ``int`` behind the unit-modulus assert, because the exact
+        integer is the contract every braid phase in ``permute_braided_tree`` multiplies
+        through, and a float chain there would buy nothing.
+        """
+        if not triangle(a.two_j, b.two_j, c.two_j):
+            return 0
+        v = float(_sun_coeff.r_matrix((a.two_j,), (b.two_j,), (c.two_j,))[0, 0])
+        assert abs(abs(v) - 1.0) < 1e-12, f"{self.name}: R^{a}{b}_{c} = {v!r} is not +-1"
+        return round(v)
 
     def b_symbol(self, a: SU2Sector, b: SU2Sector, c: SU2Sector) -> float:
         """``B^{ab}_c``, derived from
         [f_symbol][tenet.symmetry.SU2Provider.f_symbol]; real, of unit modulus."""
-        return _su2_coeff.b_symbol(a.two_j, b.two_j, c.two_j)
+        if not triangle(a.two_j, b.two_j, c.two_j):
+            return 0.0
+        return float(_sun_coeff.b_matrix((a.two_j,), (b.two_j,), (c.two_j,))[0, 0])
 
     def permute_tree(
         self, tree: "FusionTree", perm: tuple[int, ...]
@@ -212,7 +249,7 @@ class SU2Provider:
 
     def frobenius_schur(self, a: SU2Sector) -> int:
         """``chi_a = (-1)^(2j)``: ``+1`` for integer spin, ``-1`` for half-integer."""
-        return _su2_coeff.frobenius_schur(a.two_j)
+        return _sun_coeff.frobenius_schur((a.two_j,))
 
     def twist(self, a: SU2Sector) -> int:
         """``theta_a = 1``: SU(2) braiding is symmetric, so the twist is trivial."""
@@ -222,13 +259,15 @@ class SU2Provider:
         """``Z_a: V_a -> V_a^*``, shape ``(d_a, d_dual(a)) == (d_a, d_a)``; read-only.
 
         ``Z[i, d_a - 1 - i] = (-1)**i`` in the descending-m basis of
-        [cgc][tenet.symmetry.SU2Provider.cgc];
-        see ``tenet.symmetry._su2_coeff.z_matrix``. Not the identity for
-        ``two_j >= 1``, even though ``dual(a) == a``.
+        [cgc][tenet.symmetry.SU2Provider.cgc]. Derived, not declared: the singlet in
+        ``V_j (x) V_j`` *is* the duality pairing, so it cannot drift out of gauge with
+        the CG tensors ``to_dense`` contracts it against — see
+        ``tenet.symmetry._sun_coeff.z_matrix``. Not the identity for ``two_j >= 1``,
+        even though ``dual(a) == a``.
         """
         if not isinstance(a, SU2Sector):
             raise ValueError(f"{self.name}: {a!r} is not an SU(2) sector")
-        return _su2_coeff.z_matrix(a.two_j)
+        return _sun_coeff.z_matrix((a.two_j,))
 
     def branch(self, target: FusionRules, a: SU2Sector) -> tuple[Sector, ...]:
         """SU(2) -> U(1): the magnetic quantum numbers, doubled, descending.

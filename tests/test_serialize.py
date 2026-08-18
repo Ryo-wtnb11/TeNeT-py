@@ -16,7 +16,7 @@ import pytest
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-from tenet.serialize import FORMAT_VERSION
+from tenet.serialize import _LEGACY_GAUGES, FORMAT_VERSION
 from tenet.symmetry import (
     SU2,
     U1,
@@ -236,6 +236,28 @@ def test_mutated_gauge_is_refused(name, kind, gauge, tmp_path):
         tenet.load(tmp_path / "t.npz")
     assert gauge in str(exc.value)
     assert "mutated" in str(exc.value)
+
+
+def test_the_one_legacy_su2_gauge_loads_and_a_fabricated_third_does_not(tmp_path):
+    """#180 moved SU(2)'s coefficients to racah and the fingerprint moved with them.
+
+    The two sets agree to 4.95e-14 over all 109,900 fixture rows, so blocks written
+    under the old string are numerically comparable and refusing them would be a false
+    alarm. That is one grandfathered string, not a relaxation: anything else, including
+    a near-miss of the legacy string itself, is still refused.
+    """
+    original = tensor("su2")
+    tenet.save(original, tmp_path / "t.npz")
+    header = header_of(tmp_path / "t.npz")
+    (legacy,) = _LEGACY_GAUGES["SU2"]
+    header["gauges"]["SU2"] = legacy
+    rewrite_header(tmp_path / "t.npz", header)
+    assert tenet.load(tmp_path / "t.npz").structure == original.structure
+
+    header["gauges"]["SU2"] = legacy.replace("tks-su2irrep", "fabricated-su2irrep")
+    rewrite_header(tmp_path / "t.npz", header)
+    with pytest.raises(ValueError, match="different coefficient convention"):
+        tenet.load(tmp_path / "t.npz")
 
 
 def test_future_format_version_is_refused(tmp_path):

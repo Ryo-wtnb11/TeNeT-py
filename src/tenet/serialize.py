@@ -90,6 +90,20 @@ _SECTORS["SUN"] = SUNSector
 _KINDS[SUNProvider] = "SUN"
 _GAUGES["SUN"] = _SUN_GAUGE
 
+# Gauge strings a file may legitimately carry that are *not* the running one. Consulted
+# only when the header disagrees with ``_GAUGES``, so a genuinely foreign gauge is still
+# refused. Exactly one entry, forever: SU(2) coefficients moved from the pure-Python
+# closed forms to racah at ``(two_j,)`` in #180, and all 109,900 rows of
+# ``tests/fixtures/su2_f.txt`` agree between the two to 4.95e-14 - the blocks on disk are
+# numerically comparable, so refusing them would be a false alarm rather than a caught
+# error. A future racah upgrade that moves values is a real refusal and gets one, because
+# racah's contract makes any coefficient-affecting change a breaking release.
+_LEGACY_GAUGES: dict[str, frozenset[str]] = {
+    "SU2": frozenset(
+        {"3j=condon-shortley;cg=condon-shortley;f=tks-su2irrep;r=tks-su2irrep;fs=tks-su2irrep"}
+    )
+}
+
 
 # --- header encoding ---------------------------------------------------------
 
@@ -278,7 +292,10 @@ def load(path: str | os.PathLike) -> "SymmetricTensor":
         If — for SU(2), SU(N) or fZ2 — the file's gauge fingerprint is not the
         running build's: block coefficients are only meaningful against the
         CG / F / R conventions that produced them, so a gauge-mismatched file
-        is refused rather than silently misread. Also for a future ``format``
+        is refused rather than silently misread. The one exception is the SU(2)
+        fingerprint files carried before #180 moved the coefficients to racah:
+        it is accepted, because the two sets were measured to agree to 4.95e-14.
+        Also for a future ``format``
         version, a header block count that contradicts the structure, or a
         member set that is not exactly the header plus ``b0..b{n-1}``.
     KeyError
@@ -305,7 +322,8 @@ def load(path: str | os.PathLike) -> "SymmetricTensor":
             )
         for kind, gauge in header["gauges"].items():
             running = _GAUGES.get(kind)
-            if running is not None and gauge != running:
+            legacy = _LEGACY_GAUGES.get(kind, frozenset())
+            if running is not None and gauge != running and gauge not in legacy:
                 raise ValueError(
                     f"{path}: {kind} coefficient gauge on disk is {gauge!r}, but this build "
                     f"runs {running!r}; the file was written under a different coefficient "

@@ -1,8 +1,12 @@
-"""SU(2) F/R/B/FS symbols, pinned to the vendored racah (TensorKitSectors) fixtures.
+"""SU(2) F/R/B/FS symbols, cross-checked against the vendored TensorKitSectors fixtures.
 
-The fixtures are the specification of the gauge: pentagon and unitarity are
-gauge-*covariant* and hold in every valid gauge simultaneously, so only a full-table
-comparison can tell ours apart from a plausible-looking convention slip.
+Pentagon and unitarity are gauge-*covariant* and hold in every valid gauge
+simultaneously, so only a full-table comparison can tell ours apart from a
+plausible-looking convention slip.
+
+Since #180 the coefficients come from racah at Dynkin label ``(two_j,)``, so the
+fixtures are the cross-check rather than the specification: the two agree, but they
+are two independent computations and the tolerance below says so.
 """
 
 from itertools import product
@@ -22,7 +26,6 @@ from tenet.symmetry import (
     SU2Sector,
     Trivial,
 )
-from tenet.symmetry._su2_coeff import b_symbol, f_symbol, frobenius_schur, r_symbol, triangle
 from tenet.symmetry.coherence import (
     validate_hexagon,
     validate_pentagon,
@@ -30,8 +33,28 @@ from tenet.symmetry.coherence import (
     validate_spherical,
     validate_unitary,
 )
+from tenet.symmetry.su2 import triangle
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
+
+
+# The doubled-spin entry points this file was written against. They used to be
+# a private pure-Python module; that module is gone (#180) and the provider is the
+# only coefficient surface left, so they are thin adapters over it.
+def f_symbol(a: int, b: int, c: int, d: int, e: int, f: int) -> float:
+    return SU2.f_symbol(*(SU2Sector(x) for x in (a, b, c, d, e, f)))
+
+
+def r_symbol(a: int, b: int, c: int) -> int:
+    return SU2.r_symbol(SU2Sector(a), SU2Sector(b), SU2Sector(c))
+
+
+def b_symbol(a: int, b: int, c: int) -> float:
+    return SU2.b_symbol(SU2Sector(a), SU2Sector(b), SU2Sector(c))
+
+
+def frobenius_schur(dj: int) -> int:
+    return SU2.frobenius_schur(SU2Sector(dj))
 
 
 @pytest.fixture(scope="session")
@@ -70,21 +93,48 @@ def test_fixture_row_counts(f_table, r_table) -> None:
 
 
 def test_f_symbol_matches_full_fixture_table(f_table) -> None:
+    """The bound is 1e-13, deliberately looser than the 1e-14 this asserted before #180.
+
+    Two independent computations of the same gauge cannot be compared at bit level:
+    over the first 3000 rows only 7.2% of values are exactly equal, and the fixture
+    text carries its own rounding (``su2_f.txt``:11 stores 1.0000000000000002 for a
+    value of 1). The measured worst row is
+    ``dj = (12, 8, 12, 12, 6, 10)`` at 4.95e-14 — racah 0.40004034223679297 against
+    fixture 0.40004034223674345 — so 1e-13 is the first round bound above what the
+    numbers support, not a tolerance chosen to make a failure go away.
+
+    The loop iterates the fixture **in file order** and must keep doing so: racah's
+    internal coefficient caches are locality-sensitive, and a shuffled or set-ordered
+    rewrite of this loop costs ~780 s against 4 s here.
+    """
     dj, expected = f_table
     got = np.fromiter((f_symbol(*row) for row in map(tuple, dj.tolist())), float, len(dj))
     dev = np.abs(got - expected)
     worst = int(dev.argmax())
-    assert dev[worst] <= 1e-14, (
+    assert dev[worst] <= 1e-13, (
         f"max deviation {dev[worst]:.3e} at dj={tuple(dj[worst])}: "
-        f"got {got[worst]!r}, fixture {expected[worst]!r}"
+        f"got {got[worst]!r}, fixture {expected[worst]!r}; the worst row measured at "
+        f"#180 was dj=(12, 8, 12, 12, 6, 10) at 4.95e-14"
     )
 
 
-def test_r_symbol_matches_full_fixture_table_exactly(r_table) -> None:
+def test_r_symbol_matches_full_fixture_table_in_sign_and_magnitude(r_table) -> None:
+    """Sign against the fixture, magnitude on its own.
+
+    racah returns R as a float carrying noise (``-0.9999999999999998``), so the sign
+    is what the fixture pins; the exact ``+-1`` is the provider's own snap
+    (``round`` behind a unit-modulus assert) and is asserted separately rather than
+    folded into one ``==`` that would silently cover both.
+    """
     dj, expected = r_table
     got = [r_symbol(*row) for row in map(tuple, dj.tolist())]
-    bad = [(tuple(d), g, int(e)) for d, g, e in zip(dj, got, expected, strict=True) if g != e]
-    assert not bad, f"{len(bad)} exact mismatches, first: {bad[0]}"
+    bad = [
+        (tuple(d), g, int(e))
+        for d, g, e in zip(dj, got, expected, strict=True)
+        if (g > 0) != (int(e) > 0)
+    ]
+    assert not bad, f"{len(bad)} sign mismatches, first: {bad[0]}"
+    assert all(isinstance(g, int) and abs(g) == 1 for g in got)
 
 
 # --- structure --------------------------------------------------------------
@@ -229,8 +279,11 @@ def test_b_symbol_has_unit_modulus() -> None:
 
 
 def test_b_symbol_unit_codomain_collapse() -> None:
+    """``B^{0 b}_b == 1``, to float tolerance: racah derives B through the F-symbol and
+    a dimension ratio, so it lands on 1.0000000000000002 where the closed form hit 1.0
+    exactly. The identity is what matters, not the last bit."""
     for b in range(13):
-        assert b_symbol(0, b, b) == 1.0
+        assert abs(b_symbol(0, b, b) - 1.0) < 1e-13
 
 
 def test_b_symbol_from_cg_contraction() -> None:
@@ -276,23 +329,6 @@ def test_recoupling_capabilities() -> None:
     # the FS indicator alone is carried by every provider, Abelian ones included
     assert isinstance(U1, FSIndicatorData)
     assert isinstance(Trivial, FSIndicatorData)
-
-
-def test_provider_adapters_agree_with_doubled_spin_functions() -> None:
-    rng = np.random.default_rng(35)
-    s = SU2Sector
-    for _ in range(200):
-        dj = [int(x) for x in rng.integers(0, 9, 6)]
-        if not _admissible(*dj):
-            continue
-        assert SU2.f_symbol(*(s(x) for x in dj)) == f_symbol(*dj)
-    for a, b, c in product(range(7), repeat=3):
-        if not triangle(a, b, c):
-            continue
-        assert SU2.r_symbol(s(a), s(b), s(c)) == r_symbol(a, b, c)
-        assert SU2.b_symbol(s(a), s(b), s(c)) == b_symbol(a, b, c)
-    for dj in range(13):
-        assert SU2.frobenius_schur(s(dj)) == frobenius_schur(dj)
 
 
 def test_provider_f_symbol_raises_on_multiplicity() -> None:

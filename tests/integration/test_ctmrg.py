@@ -626,7 +626,7 @@ def test_the_unfused_corner_gives_the_old_projector(provider):
     same edge back down: same tensor, seen through a unitary refusal-to-fuse.
 
     Measured maximum absolute deviation over the spectrum: ``1.7e-16`` at SU(2) chi=6 and
-    ``5.6e-17`` at U(1) chi=4, with equal ``tenet.norm`` to the last bit.
+    ``5.6e-17`` at U(1) chi=4, with ``tenet.norm`` equal to 1.3e-15.
 
     Fusing the converged edge is also where the old convention's hidden M4 dependency
     shows: ``tenet.fuse`` wants its pair to lead the side, and ``tenet.unfuse`` -- the
@@ -649,7 +649,11 @@ def test_the_unfused_corner_gives_the_old_projector(provider):
         tenet.linalg.svd_truncated(new, ((0, 1, 2), (3, 4, 5)), max_bond=chi)[1]
     )
     np.testing.assert_allclose(new_s, old_s, atol=1e-14)
-    assert float(tenet.norm(new)) == pytest.approx(float(tenet.norm(old)), abs=1e-15)
+    # 1e-14 rather than the 1e-15 (bit equality, in practice) this held before #180: the
+    # two routes contract the same tensor through different orders of the same
+    # coefficients, and racah's F-symbols carry float noise where the deleted closed forms
+    # were exact rationals. Measured 1.3e-15 apart on a norm of 0.178.
+    assert float(tenet.norm(new)) == pytest.approx(float(tenet.norm(old)), abs=1e-14)
 
 
 def test_ipeps_grad_matches_central_differences_on_one_block(provider):
