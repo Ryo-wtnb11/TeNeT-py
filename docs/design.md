@@ -457,7 +457,7 @@ dual
 
 This allows the user-facing representation to retain full morphism semantics without forcing input and output legs to occupy contiguous axis ranges.
 
-A source-level comparison against TensorKit.jl (#142) showed the two libraries hold the same data in two spellings: TensorKit's `GradedSpace` carries its degeneracies **and** a `dual::Bool`, while `TeNeT-py`'s `GradedSpace` is dual-free and the flag lives on the `Leg`. The one operation that correspondence had left missing is `tenet.flip(t, axes, inv=)`: it toggles the named legs' `dual` flags and relabels their spaces through `provider.dual`, keeping the tensor the same morphism by paying the Z-isomorphism's scalar `χ_a · θ_a` per flipped leg per fusion tree (the `FSIndicatorData` and `TwistData` capabilities since M24). Because the relabel and the flag toggle cancel inside `Leg.fused_sector`, the block set is unchanged and `flip` is a per-block scalar multiply; `side` never moves — that remains `repartition`'s bend. The rest of TensorKit's space-level surface was reviewed and tiered in the same issue: `fuse(V₁,V₂)`, a subspace predicate, the orthogonal complement `⊖`, the unit-leg family and the bare twist are named follow-ups with triggering criteria, while the Deligne product `⊠` at the space level, `infimum`/`supremum`, the unit/zero-space family and the `CartesianSpace`/`ComplexSpace` analogues are refused — each either already has a `TeNeT-py` spelling one level up (`ProductProvider`, `TrivialProvider`) or has no caller.
+A source-level comparison against TensorKit.jl (#142) showed the two libraries hold the same data in two spellings: TensorKit's `GradedSpace` carries its degeneracies **and** a `dual::Bool`, while `TeNeT-py`'s `GradedSpace` is dual-free and the flag lives on the `Leg`. The one operation that correspondence had left missing is `tenet.flip_dual(t, axes, inv=)`: it toggles the named legs' `dual` flags and relabels their spaces through `provider.dual`, keeping the tensor the same morphism by paying the Z-isomorphism's scalar `χ_a · θ_a` per flipped leg per fusion tree (the `FSIndicatorData` and `TwistData` capabilities since M24). Because the relabel and the flag toggle cancel inside `Leg.fused_sector`, the block set is unchanged and `flip_dual` is a per-block scalar multiply; `side` never moves — that remains `repartition`'s bend. The rest of TensorKit's space-level surface was reviewed and tiered in the same issue: `fuse(V₁,V₂)`, a subspace predicate, the orthogonal complement `⊖`, the unit-leg family and the bare twist are named follow-ups with triggering criteria, while the Deligne product `⊠` at the space level, `infimum`/`supremum`, the unit/zero-space family and the `CartesianSpace`/`ComplexSpace` analogues are refused — each either already has a `TeNeT-py` spelling one level up (`ProductProvider`, `TrivialProvider`) or has no caller.
 
 ---
 
@@ -2478,7 +2478,7 @@ Supported and tested (`tests/backends/test_torch.py`, issue #95): every public
 op on torch blocks — arithmetic, `norm`, `transpose` (SU(2) braiding and
 fermionic Koszul signs), `repartition`, `fuse`/`unfuse`, `adjoint`, `compose`,
 `tensordot`, `trace`, `einsum`, `to_dense`/`from_dense`, `embed`/`restrict`,
-`direct_sum`, `cast`, the whole of `tenet.linalg`, and `get_params`/`set_params`
+`direct_sum`, `to_symmetry`, the whole of `tenet.linalg`, and `get_params`/`set_params`
 — with results bit-identical to the NumPy ones for everything `tenet` computes
 itself. **Eager** autograd works through the parameter protocol and nothing
 else:
@@ -2972,9 +2972,9 @@ The split:
   against the dense `kron` oracle at N=4 and 6, a bulk MPO bond of `{0: 2, 2: 1}` (3
   blocks, dense 5, against U(1)'s 5 blocks and dense 5), and DMRG at N=6 and N=12 hitting
   the U(1) energies to 1e-10 with 12 multiplets where U(1) needs 32 states. Nothing in
-  `Env`, `heff2`, `lanczos` or `sweep_` changed. **`MPO.cast` is still refused**: `cast`
+  `Env`, `heff2`, `lanczos` or `sweep_` changed. **`MPO.to_symmetry` is still refused**: `to_symmetry`
   reorders the dense basis per leg, so a per-site comparison fails on a correct
-  implementation, and `MPO([cast(w, U1) for w in h])` is all a test ever wanted.
+  implementation, and `MPO([to_symmetry(w, U1) for w in h])` is all a test ever wanted.
   `MPO.save`/`load` was promised for "the day a term-list builder lands" and is reversed
   with its reason instead: M11c's argument was regenerability, and a term list makes an
   MPO *more* regenerable, not less.
@@ -3011,7 +3011,7 @@ The split:
 
 - **M16** — shipped: edge-preserving `heff2` and a structure-keyed compiled matvec.
   `from_terms(cutoff=None)` no longer discards its finite-state machine at
-  instantiation: each site keeps a Jordan block table (`MPO.jordan`) — the four blocks
+  instantiation: each site keeps an edge-block table (`MPO.edge_blocks`) — the four blocks
   `A`/`B`/`C`/`D` of MPSKit's `(1 C D; · A B; · · 1)` form, identity edges stored as
   `None`, corners implicit — and `Env` folds the two environments into those blocks once
   per bond (MPSKit's `JordanMPO_AC2_Hamiltonian`), amortized over the whole Krylov

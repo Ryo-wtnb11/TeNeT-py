@@ -12,6 +12,17 @@ That measurement is why nothing here is registered in ``array/dispatch.py``:
 ``ar.do("sqrt", t)`` must keep raising, because autoray's ``"sqrt"`` means the
 dense elementwise one and this is not it.
 
+It is also why the functions are ``block_sqrt`` / ``block_power`` since #185
+rather than YASTN's and symmray's bare ``sqrt``. Those two are Abelian (and
+fermionic-Abelian), where a blockwise map and a dense elementwise map are the
+same numbers in a different order, so one name serves both; the ``1.673`` above
+is the non-Abelian case where it stops serving. The precedent is ``reshape``:
+when a numpy name's meaning does not exist for a symmetric tensor, this package
+refuses the numpy name and spells its own operation differently (``fuse`` /
+``unfuse`` there, ``block_*`` here) rather than rebinding it. TensorKit's
+``sqrt`` is a third meaning again -- the matrix square root of a positive
+tensor map -- so no reference lends the bare name to this operation.
+
 As in ``tenet.ops.basic``, there is no NumPy call anywhere in this module.
 """
 
@@ -23,7 +34,7 @@ import autoray as ar
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["apply_blocks", "power", "sqrt"]
+__all__ = ["apply_blocks", "block_power", "block_sqrt"]
 
 Array = Any
 
@@ -79,7 +90,7 @@ def apply_blocks(t: "SymmetricTensor", fn: Callable[[Array], Array]) -> "Symmetr
     return SymmetricTensor(t.structure, tuple(fn(b) for b in t.blocks))
 
 
-def sqrt(t: "SymmetricTensor") -> "SymmetricTensor":
+def block_sqrt(t: "SymmetricTensor") -> "SymmetricTensor":
     """Blockwise ``sqrt``. The ``svd`` splitter: ``u @ sqrt(s)``, ``sqrt(s) @ vh``.
 
     Parameters
@@ -100,7 +111,7 @@ def sqrt(t: "SymmetricTensor") -> "SymmetricTensor":
     >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
     >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
     >>> q = tenet.apply_blocks(a, abs)  # non-negative blocks
-    >>> tenet.allclose(tenet.sqrt(tenet.power(q, 2)), q)
+    >>> tenet.allclose(tenet.block_sqrt(tenet.block_power(q, 2)), q)
     True
 
     Notes
@@ -122,7 +133,7 @@ def sqrt(t: "SymmetricTensor") -> "SymmetricTensor":
     return apply_blocks(t, lambda b: ar.do("sqrt", b))
 
 
-def power(t: "SymmetricTensor", p: Any) -> "SymmetricTensor":
+def block_power(t: "SymmetricTensor", p: Any) -> "SymmetricTensor":
     """Blockwise ``t ** p``. ``p`` is a scalar exponent, never a tensor.
 
     Parameters
@@ -144,13 +155,13 @@ def power(t: "SymmetricTensor", p: Any) -> "SymmetricTensor":
     >>> from tenet.symmetry import U1, U1Sector
     >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
     >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
-    >>> tenet.allclose(tenet.power(a, 2), tenet.apply_blocks(a, lambda b: b * b))
+    >>> tenet.allclose(tenet.block_power(a, 2), tenet.apply_blocks(a, lambda b: b * b))
     True
 
     Notes
     -----
     Same coefficient-space semantics and the same backend-owned branch cuts and
-    ``nan``s as [sqrt][tenet.sqrt]; ``p = -0.5`` is the inverse-√S of
+    ``nan``s as [block_sqrt][tenet.block_sqrt]; ``p = -0.5`` is the inverse-√S of
     canonical-form and gauge-fixing loops.
     """
     return apply_blocks(t, lambda b: ar.do("power", b, p))

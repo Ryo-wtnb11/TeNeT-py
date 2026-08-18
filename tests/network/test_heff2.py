@@ -79,11 +79,11 @@ def test_only_cutoff_none_from_terms_carries_a_table():
     ``None`` -- measurement 2's reason: the compressing sweep leaves zero identity edges
     on every model, so there is nothing to recover and no table to hand out."""
     kept = MPO.from_terms(6, _heis(6), cutoff=None)
-    assert all(kept.jordan(n) is not None for n in range(6))
-    assert all(MPO.from_terms(6, _heis(6)).jordan(n) is None for n in range(6))
+    assert all(kept.edge_blocks(n) is not None for n in range(6))
+    assert all(MPO.from_terms(6, _heis(6)).edge_blocks(n) is None for n in range(6))
     from_w = example.mpo(6)
-    assert all(from_w.jordan(n) is None for n in range(6))
-    assert MPO(kept.sites).jordan(0) is None  # rebuilding the container drops the table
+    assert all(from_w.edge_blocks(n) is None for n in range(6))
+    assert MPO(kept.sites).edge_blocks(0) is None  # rebuilding the container drops the table
 
 
 def test_the_ly10_cylinder_middle_site_has_38_edges_of_which_29_identities(ly10):
@@ -91,7 +91,7 @@ def test_the_ly10_cylinder_middle_site_has_38_edges_of_which_29_identities(ly10)
     ``D_w^2 = 1024``, 29 of them identities. The two corner identities are implicit
     (``jordanmpotensor.jl``:64-65), so the four dicts hold 36 edges and 27 ``None``s."""
     assert ly10[12].legs[0].space.dim == 32  # D_w, so 32**2 = 1024 dense (l, r) pairs
-    table = ly10.jordan(12)
+    table = ly10.edge_blocks(12)
     stored = [v for name in "abcd" for v in getattr(table, name).values()]
     assert len(stored) + 2 == 38
     assert sum(v is None for v in stored) + 2 == 29
@@ -100,7 +100,7 @@ def test_the_ly10_cylinder_middle_site_has_38_edges_of_which_29_identities(ly10)
 def test_identity_edges_are_stored_as_none_never_materialised(ly10):
     """The ``tensors``/``scalars`` split with the scalar always 1: every spectator edge in
     the ``a`` block is ``None``, and every stored tensor is a genuine operator."""
-    table = ly10.jordan(12)
+    table = ly10.edge_blocks(12)
     assert table.a and all(v is None for v in table.a.values())
     for name in "bcd":
         for v in getattr(table, name).values():
@@ -121,7 +121,7 @@ def test_the_su3_state_space_survives_in_the_table_with_its_multiplicity():
     op = local_op(swap, phys=GradedSpace.new(SU3, {EIGHT: 1}))
     h = MPO.from_terms(2, [(1.0, [(op, (0, 1))])], cutoff=None)
     assert h[0].legs[3].space.degeneracy(EIGHT) == 2
-    ((_, edge),) = h.jordan(1).b.items()
+    ((_, edge),) = h.edge_blocks(1).b.items()
     assert edge.legs[0].space.degeneracy(EIGHT) == 2
 
 
@@ -223,7 +223,7 @@ def test_compile_is_called_once_per_structure_key_and_its_result_is_used():
 def test_env_reads_no_private_attribute_of_any_other_object():
     """The ``ImportFrom`` check in ``test_hygiene.py`` cannot see an attribute read, so
     this pins the rest: every ``_``-prefixed attribute access in ``env.py`` hangs off
-    ``self``. The block table is reached through ``MPO.jordan`` alone."""
+    ``self``. The block table is reached through ``MPO.edge_blocks`` alone."""
     path = pathlib.Path(__file__).parents[2] / "src" / "tenet" / "network" / "env.py"
     tree = ast.parse(path.read_text())
     for node in ast.walk(tree):

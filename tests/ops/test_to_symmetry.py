@@ -1,9 +1,9 @@
-"""Symmetry restriction — ``cast``, one test per criterion of #92.
+"""Symmetry restriction — ``to_symmetry``, one test per criterion of #92.
 
-The oracle throughout is the *defining dense identity*: ``cast`` is a permutation
+The oracle throughout is the *defining dense identity*: ``to_symmetry`` is a permutation
 of the dense basis and nothing else, so
 
-    to_dense(cast(t, U1)) == take(to_dense(t), take_i, axis=i)      exactly, 0.0
+    to_dense(to_symmetry(t, U1)) == take(to_dense(t), take_i, axis=i)      exactly, 0.0
 
 with ``take_i`` written independently below (:func:`expected_take`) rather than
 read back out of the implementation. Everything a caller cares about — norm
@@ -19,15 +19,15 @@ import pytest
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-from tenet.ops.cast import _cast_leg, cast
+from tenet.ops.cast import _cast_leg, to_symmetry
 from tenet.ops.dense import from_dense
 from tenet.symmetry import (
     SU2,
     U1,
+    BranchingRules,
     CapabilityError,
     ProductProvider,
     SU2Sector,
-    SymmetryCast,
     Trivial,
     U1Sector,
     fZ2,
@@ -100,28 +100,28 @@ def test_branch_refuses_a_target_it_cannot_reach(target):
 
 
 def test_only_su2_advertises_the_capability():
-    assert isinstance(SU2, SymmetryCast)
+    assert isinstance(SU2, BranchingRules)
     for p in (U1, fZ2, Trivial, ProductProvider((U1, U1))):
-        assert not isinstance(p, SymmetryCast)
+        assert not isinstance(p, BranchingRules)
 
 
-def test_symmetry_cast_is_exported_and_listed():
+def test_branching_rules_is_exported_and_listed():
     import tenet.symmetry as sym
     from tenet.symmetry import base
 
-    assert "SymmetryCast" in base.__all__
-    assert "SymmetryCast" in sym.__all__
-    assert sym.SymmetryCast is base.SymmetryCast
+    assert "BranchingRules" in base.__all__
+    assert "BranchingRules" in sym.__all__
+    assert sym.BranchingRules is base.BranchingRules
 
 
 # --- the defining dense identity ------------------------------------------------
 
 
 @pytest.mark.parametrize("name", ALL)
-def test_cast_is_exactly_the_per_axis_gather_of_the_dense_array(name):
+def test_to_symmetry_is_exactly_the_per_axis_gather_of_the_dense_array(name):
     t = tensor(name, seed=1)
     takes = [expected_take(leg)[0] for leg in t.legs]
-    got = cast(t, U1).to_dense()
+    got = to_symmetry(t, U1).to_dense()
     assert np.max(np.abs(got - gather(t.to_dense(), takes))) == 0.0
 
 
@@ -129,12 +129,12 @@ def test_cast_is_exactly_the_per_axis_gather_of_the_dense_array(name):
 def test_the_default_symmetry_check_passes(name):
     # atol=None: `from_dense` proves the U(1) blocks reproduce the permuted dense
     # array rather than approximate it. A wrong branch or a wrong sort is refused.
-    cast(tensor(name, seed=2), U1)
+    to_symmetry(tensor(name, seed=2), U1)
 
 
 def test_function_method_and_ops_export_agree():
     t = tensor("su2_3", seed=3)
-    a, b, c = tenet.cast(t, U1), t.cast(U1), tenet.ops.cast(t, U1)
+    a, b, c = tenet.to_symmetry(t, U1), t.to_symmetry(U1), tenet.ops.to_symmetry(t, U1)
     assert tenet.allclose(a, b) and tenet.allclose(a, c)
 
 
@@ -199,7 +199,7 @@ def test_z_matrix_is_an_antidiagonal_signed_permutation(two_j):
 @pytest.mark.parametrize("name", ALL)
 def test_the_target_space_is_exactly_the_branching_multiset(name):
     t = tensor(name, seed=5)
-    out = cast(t, U1)
+    out = to_symmetry(t, U1)
     for axis, leg in enumerate(t.legs):
         _, labels = expected_take(leg)
         space = out.legs[axis].space
@@ -210,7 +210,7 @@ def test_the_target_space_is_exactly_the_branching_multiset(name):
 
 def test_the_prototype_spaces_branch_to_the_stated_charges():
     t = tensor("su2_3", seed=6)
-    out = cast(t, U1)
+    out = to_symmetry(t, U1)
     assert dict(out.legs[0].space.sectors) == {
         U1Sector(-1): 1,
         U1Sector(0): 2,
@@ -253,16 +253,16 @@ def test_norm_is_preserved(name):
     Not bit-exact: the two are accumulated over different block decompositions.
     """
     t = tensor(name, seed=7)
-    assert float(tenet.norm(cast(t, U1))) == pytest.approx(float(tenet.norm(t)), abs=1e-14)
+    assert float(tenet.norm(to_symmetry(t, U1))) == pytest.approx(float(tenet.norm(t)), abs=1e-14)
 
 
-def test_the_cast_forgets_measurably():
+def test_to_symmetry_forgets_measurably():
     """More parameters, more blocks — SU(2) also constrains the ``m``-dependence
     through the CG coefficients that ``to_dense`` just spent. That is why there is
     no inverse: recovering SU(2) would be a projection with a tolerance.
     """
     t = tensor("su2_3", seed=8)
-    out = cast(t, U1)
+    out = to_symmetry(t, U1)
     assert (sum(b.size for b in t.blocks), len(t.blocks)) == (14, 4)
     assert (sum(b.size for b in out.blocks), len(out.blocks)) == (38, 13)
 
@@ -271,7 +271,7 @@ def test_the_cast_forgets_measurably():
 def test_side_dual_and_name_are_carried_through(name):
     legs = tuple(leg.renamed(f"leg{i}") for i, leg in enumerate(STRUCTURES[name]))
     t = SymmetricTensor.random(legs, seed=9)
-    for old, new in zip(t.legs, cast(t, U1).legs, strict=True):
+    for old, new in zip(t.legs, to_symmetry(t, U1).legs, strict=True):
         assert (new.side, new.dual, new.name) == (old.side, old.dual, old.name)
         assert new.provider is U1
         assert new.space != old.space
@@ -287,45 +287,49 @@ def test_side_dual_and_name_are_carried_through(name):
         ("su2_4", "su2_3", ((2, 3), (0, 1))),
     ],
 )
-def test_cast_commutes_with_tensordot(a, b, axes):
+def test_to_symmetry_commutes_with_tensordot(a, b, axes):
     """The load-bearing criterion: it is what lets a caller cast a whole network
     tensor by tensor. It works because a composable pair of legs shares a space
     and a ``dual`` flag, hence the *same* per-axis gather.
     """
     x, y = tensor(a, seed=10), tensor(b, seed=11)
     assert tenet.allclose(
-        cast(tenet.tensordot(x, y, axes), U1),
-        tenet.tensordot(cast(x, U1), cast(y, U1), axes),
+        to_symmetry(tenet.tensordot(x, y, axes), U1),
+        tenet.tensordot(to_symmetry(x, U1), to_symmetry(y, U1), axes),
     )
 
 
-def test_cast_commutes_with_compose_on_a_map_view():
+def test_to_symmetry_commutes_with_compose_on_a_map_view():
     x = SymmetricTensor.random((Leg(V, OUT), Leg(W, IN)), seed=12)
     y = SymmetricTensor.random((Leg(W, OUT), Leg(V, IN)), seed=13)
     assert tenet.allclose(
-        cast(tenet.as_map(x).compose(y), U1),
-        tenet.as_map(cast(x, U1)).compose(cast(y, U1)),
+        to_symmetry(tenet.as_map(x).compose(y), U1),
+        tenet.as_map(to_symmetry(x, U1)).compose(to_symmetry(y, U1)),
     )
 
 
-def test_cast_commutes_with_add_multiply_and_conj():
+def test_to_symmetry_commutes_with_add_multiply_and_conj():
     x, y = tensor("su2_3", seed=14), tensor("su2_3", seed=15)
-    assert tenet.allclose(cast(tenet.add(x, y), U1), tenet.add(cast(x, U1), cast(y, U1)))
-    assert tenet.allclose(cast(tenet.multiply(x, 2.5), U1), tenet.multiply(cast(x, U1), 2.5))
-    assert tenet.allclose(cast(tenet.conj(x), U1), tenet.conj(cast(x, U1)))
+    assert tenet.allclose(
+        to_symmetry(tenet.add(x, y), U1), tenet.add(to_symmetry(x, U1), to_symmetry(y, U1))
+    )
+    assert tenet.allclose(
+        to_symmetry(tenet.multiply(x, 2.5), U1), tenet.multiply(to_symmetry(x, U1), 2.5)
+    )
+    assert tenet.allclose(to_symmetry(tenet.conj(x), U1), tenet.conj(to_symmetry(x, U1)))
 
 
 def test_complex_blocks_stay_complex_and_satisfy_both_criteria():
     t = tensor("su2_3", seed=16)
     t = SymmetricTensor(t.structure, tuple(b + 0.5j * b[::-1] for b in t.blocks))
-    out = cast(t, U1)
+    out = to_symmetry(t, U1)
     assert out.dtype == np.complex128
     takes = [expected_take(leg)[0] for leg in t.legs]
     assert np.max(np.abs(out.to_dense() - gather(t.to_dense(), takes))) == 0.0
     u = tensor("su2_2w", seed=17)
     assert tenet.allclose(
-        cast(tenet.tensordot(t, u, ((2,), (0,))), U1),
-        tenet.tensordot(out, cast(u, U1), ((2,), (0,))),
+        to_symmetry(tenet.tensordot(t, u, ((2,), (0,))), U1),
+        tenet.tensordot(out, to_symmetry(u, U1), ((2,), (0,))),
     )
 
 
@@ -392,35 +396,35 @@ def test_a_provider_without_the_capability_is_refused():
         seed=18,
     )
     with pytest.raises(
-        CapabilityError, match="U1Provider does not provide capability SymmetryCast"
+        CapabilityError, match="U1Provider does not provide capability BranchingRules"
     ):
-        cast(t, U1)
+        to_symmetry(t, U1)
 
 
 def test_a_target_the_provider_cannot_reach_is_refused():
     with pytest.raises(CapabilityError, match="SU2: cannot branch to"):
-        cast(tensor("su2_2", seed=19), Trivial)
+        to_symmetry(tensor("su2_2", seed=19), Trivial)
 
 
 def test_a_target_sector_with_irrep_dim_above_one_is_refused():
     with pytest.raises(CapabilityError, match="irrep_dim 3 > 1"):
-        cast(_fake_tensor(_BranchesTooBig()), SU2)
+        to_symmetry(_fake_tensor(_BranchesTooBig()), SU2)
 
 
 def test_a_provider_without_clebsch_gordan_is_refused_by_to_dense():
     with pytest.raises(CapabilityError, match="does not provide capability ClebschGordanData"):
-        cast(_fake_tensor(_NoCGC()), U1)
+        to_symmetry(_fake_tensor(_NoCGC()), U1)
 
 
 def test_a_dual_leg_without_dual_basis_is_refused_by_to_dense():
     with pytest.raises(CapabilityError, match="does not implement DualBasis"):
-        cast(_fake_tensor(_NoDualBasis(), dual=True), U1)
+        to_symmetry(_fake_tensor(_NoDualBasis(), dual=True), U1)
 
 
 # --- plumbing -------------------------------------------------------------------
 
 
-def test_cast_owns_no_plan_and_no_cache_and_records_the_shortcut():
+def test_to_symmetry_owns_no_plan_and_no_cache_and_records_the_shortcut():
     import inspect
     import sys
 
@@ -433,7 +437,7 @@ def test_cast_owns_no_plan_and_no_cache_and_records_the_shortcut():
 def test_dispatch_list_is_untouched():
     from tenet.array import dispatch
 
-    assert "cast" not in getattr(dispatch, "__all__", [])
+    assert "to_symmetry" not in getattr(dispatch, "__all__", [])
 
 
 # --- backends -------------------------------------------------------------------
@@ -448,33 +452,35 @@ def use_jax():
 
 
 @pytest.mark.parametrize("name", ["su2_3", "su2_dual"])
-def test_cast_on_jax_blocks_returns_jax_blocks_with_the_same_values(name):
+def test_to_symmetry_on_jax_blocks_returns_jax_blocks_with_the_same_values(name):
     import autoray as ar
 
     use_jax()
     t = tensor(name, seed=20)
-    out = cast(t.to_backend("jax"), U1)
+    out = to_symmetry(t.to_backend("jax"), U1)
     assert ar.infer_backend(out.blocks[0]) == "jax"
-    np.testing.assert_allclose(np.asarray(out.to_dense()), cast(t, U1).to_dense(), atol=1e-13)
+    np.testing.assert_allclose(
+        np.asarray(out.to_dense()), to_symmetry(t, U1).to_dense(), atol=1e-13
+    )
 
 
-def test_cast_traces_only_with_atol_inf():
+def test_to_symmetry_traces_only_with_atol_inf():
     """The boundary, both sides on one screen, exactly as #82 pins ``from_dense``."""
     jax = use_jax()
     t = tensor("su2_3", seed=21).to_backend("jax")
 
     @jax.jit
     def go(x):
-        return cast(x, U1, atol=math.inf)
+        return to_symmetry(x, U1, atol=math.inf)
 
     out = go(t)
     np.testing.assert_allclose(
-        np.asarray(out.to_dense()), cast(tensor("su2_3", seed=21), U1).to_dense(), atol=1e-13
+        np.asarray(out.to_dense()), to_symmetry(tensor("su2_3", seed=21), U1).to_dense(), atol=1e-13
     )
 
     @jax.jit
     def checked(x):
-        return cast(x, U1)
+        return to_symmetry(x, U1)
 
     with pytest.raises(jax.errors.ConcretizationTypeError):
         checked(t)

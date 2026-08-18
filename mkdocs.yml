@@ -58,9 +58,10 @@ markdown_extensions:
   - attr_list
   - toc:
       permalink: true
-  # docs/design.md is byte-identical to the design document and writes its 29 math
-  # blocks as GitHub's ```math fences. The custom fence routes them to arithmatex so
-  # the file never has to be edited for this site (#118).
+  # docs/design.md writes its 29 math blocks as GitHub's ```math fences. The custom
+  # fence routes them to arithmatex, so the file is never edited *for this site*
+  # (#118) — it changes only when the design it records does (#185 renamed symbols
+  # in it).
   - pymdownx.arithmatex:
       generic: true
   - pymdownx.superfences:

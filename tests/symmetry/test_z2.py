@@ -27,6 +27,7 @@ from tenet.symmetry import (
     AssociatorData,
     BendingCoefficients,
     BraidingData,
+    BranchingRules,
     CapabilityError,
     ClebschGordanData,
     DualBasis,
@@ -38,7 +39,6 @@ from tenet.symmetry import (
     ProductSector,
     QuantumDimensionData,
     Sector,
-    SymmetryCast,
     U1Sector,
     Z2Provider,
     Z2Sector,
@@ -138,8 +138,8 @@ def test_z2_satisfies_exactly_the_u1_capability_set():
         assert isinstance(Z2, capability)
         assert isinstance(U1, capability)  # the identical set, stated as the reference
         assert requires(Z2, capability) is None
-    assert not isinstance(Z2, SymmetryCast)
-    for capability in (SymmetryCast, AssociatorData, BraidingData, DualityData):
+    assert not isinstance(Z2, BranchingRules)
+    for capability in (BranchingRules, AssociatorData, BraidingData, DualityData):
         assert not isinstance(Z2, capability)
         with pytest.raises(CapabilityError):
             requires(Z2, capability)

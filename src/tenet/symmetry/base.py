@@ -17,6 +17,7 @@ __all__ = [
     "BMatrixData",
     "BendingCoefficients",
     "BraidingData",
+    "BranchingRules",
     "CapabilityError",
     "ClebschGordanData",
     "DaggerData",
@@ -31,7 +32,6 @@ __all__ = [
     "RMatrixData",
     "Sector",
     "StructureChangingError",
-    "SymmetryCast",
     "Trivial",
     "TrivialProvider",
     "TrivialSector",
@@ -156,7 +156,7 @@ class _DualFusionRules(FusionRules, Protocol):
     """``FusionRules`` plus the label-level ``dual`` map.
 
     The honest annotation for the sites that store a provider and relabel
-    sectors through ``dual`` (``GradedSpace``, ``Leg``, ``flip``, the bend
+    sectors through ``dual`` (``GradedSpace``, ``Leg``, ``flip_dual``, the bend
     helpers). Deliberately **not** the full ``DualityData`` (which also
     carries ``b_symbol``), because every provider — Abelian ones included —
     satisfies this annotation while only braided/rigid ones supply B-symbols.
@@ -348,7 +348,7 @@ class DualBasis(Protocol):
 
 
 @runtime_checkable
-class SymmetryCast(Protocol):
+class BranchingRules(Protocol):
     """Providers that can be restricted to a smaller symmetry in the dense basis."""
 
     def branch(self, target: FusionRules, a: Sector) -> tuple[Sector, ...]:
@@ -733,12 +733,12 @@ def requires(provider: object, capability: type) -> None:
 
     Examples
     --------
-    >>> from tenet.symmetry import U1, Z2, ClebschGordanData, SymmetryCast, requires
+    >>> from tenet.symmetry import U1, Z2, ClebschGordanData, BranchingRules, requires
     >>> requires(U1, ClebschGordanData)  # U(1) has CG tensors: no raise
-    >>> requires(Z2, SymmetryCast)
+    >>> requires(Z2, BranchingRules)
     Traceback (most recent call last):
         ...
-    tenet.symmetry.base.CapabilityError: Z2Provider does not provide capability SymmetryCast
+    tenet.symmetry.base.CapabilityError: Z2Provider does not provide capability BranchingRules
     """
     if not isinstance(provider, capability):
         raise CapabilityError(
@@ -766,10 +766,10 @@ def supports(provider: object, capability: type) -> bool:
 
     Examples
     --------
-    >>> from tenet.symmetry import U1, Z2, ClebschGordanData, SymmetryCast, supports
+    >>> from tenet.symmetry import U1, Z2, ClebschGordanData, BranchingRules, supports
     >>> supports(U1, ClebschGordanData)
     True
-    >>> supports(Z2, SymmetryCast)
+    >>> supports(Z2, BranchingRules)
     False
     """
     return isinstance(provider, capability)

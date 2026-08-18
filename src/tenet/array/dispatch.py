@@ -68,16 +68,21 @@ def _fuse(t: SymmetricTensor, *axes_groups: object) -> SymmetricTensor:
 
 
 def _elementwise_refused(name: str) -> "Callable[..., SymmetricTensor]":
-    """Refuse a dense-elementwise name that ``tenet`` happens to export (#93).
+    """Refuse a dense-elementwise name in our own voice (#93, #185).
 
-    ``tenet.sqrt`` and ``tenet.power`` are module-level, and autoray resolves an
-    unregistered name by importing the backend's module and looking it up — so
-    without this, ``ar.do("sqrt", t)`` would silently reach the *blockwise* map.
-    autoray's ``"sqrt"`` means the dense elementwise one, and for a non-Abelian
-    provider the two are different operations: measured off by ``1.673`` on a
-    dense scale of ``3.82`` for a rank-3 SU(2) tensor. Same voice as
-    ``"reshape"`` — a refusal about meaning, not about effort — and, like it, no
-    addition to the defined-operation list.
+    Since M31 the blockwise maps are spelled ``tenet.block_sqrt`` /
+    ``tenet.block_power``, so autoray's module lookup no longer finds anything
+    under ``"sqrt"`` or ``"power"`` and the *wrong* number can no longer leak.
+    These two registrations therefore stay by choice, not by necessity: they
+    are a better answer than autoray's ``ImportError`` for a name whose dense
+    meaning genuinely does not exist here. autoray's ``"sqrt"`` is the dense
+    elementwise one, and for a non-Abelian provider the two are different
+    operations — measured off by ``1.673`` on a dense scale of ``3.82`` for a
+    rank-3 SU(2) tensor. Same precedent as ``"reshape"``, applied the same way:
+    the numpy name is refused and this package's own operation is spelled
+    differently (``fuse``/``unfuse`` there, ``block_sqrt``/``block_power`` here)
+    rather than rebound. A refusal about meaning, not about effort — and, like
+    ``"reshape"``, no addition to the defined-operation list.
     """
 
     def refuse(t: SymmetricTensor, *args: object, **kwargs: object) -> SymmetricTensor:
@@ -85,7 +90,7 @@ def _elementwise_refused(name: str) -> "Callable[..., SymmetricTensor]":
             f"{name} is not defined for a symmetric tensor: autoray's {name!r} is the dense "
             "elementwise operation, and no non-linear function commutes with "
             "T = sum_tau A^(tau) (x) C^(tau) (measured 1.673 off on a dense scale of 3.82 "
-            f"for SU(2)). The blockwise map on the coefficients is tenet.{name}(t) / "
+            f"for SU(2)). The blockwise map on the coefficients is tenet.block_{name}(t) / "
             "tenet.apply_blocks(t, fn); for dense semantics, densify explicitly."
         )
 
@@ -102,6 +107,25 @@ def _reshape(t: SymmetricTensor, *args: object, **kwargs: object) -> SymmetricTe
     )
 
 
+def _flip(t: SymmetricTensor, *args: object, **kwargs: object) -> SymmetricTensor:
+    """Refuse ``flip`` in our own voice — the hole #185 found still open.
+
+    ``numpy.flip`` reverses element order along an axis and takes the same
+    ``(t, axes)`` arguments this package's duality toggle used to take under the
+    same name, so before M31 ``ar.do("flip", t, 0)`` silently returned a tensor
+    with a toggled ``dual`` flag: a wrong answer, no error. The rename to
+    ``tenet.flip_dual`` closes the lookup; this registration replaces autoray's
+    ``ImportError`` with the sentence that says which operation was meant.
+    """
+    raise ValueError(
+        "flip is not defined for a symmetric tensor: autoray's 'flip' reverses element "
+        "order along an axis, and no element of a symmetric tensor may move without its "
+        "sector moving with it. The duality toggle — relabel a leg's space through "
+        "provider.dual and pay the Z-isomorphism's scalar — is tenet.flip_dual(t, axes); "
+        "for dense semantics, densify explicitly."
+    )
+
+
 for _name, _fn in {
     "transpose": transpose,
     "conj": conj,
@@ -115,8 +139,9 @@ for _name, _fn in {
     # not an addition to the list: an explicit, categorical refusal in place of
     # autoray's "couldn't find function 'reshape' for backend 'tenet'".
     "reshape": _reshape,
-    # likewise not additions: explicit refusals shadowing the module-level
-    # tenet.sqrt / tenet.power that autoray's module lookup would otherwise find.
+    "flip": _flip,
+    # likewise not additions: explicit refusals for three numpy names whose dense
+    # meaning has no categorical counterpart here.
     "sqrt": _elementwise_refused("sqrt"),
     "power": _elementwise_refused("power"),
     "einsum": einsum,

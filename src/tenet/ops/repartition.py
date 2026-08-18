@@ -11,7 +11,7 @@ are fixed here:
   tree needs (a U(1) charge ``q`` arrives on the other side as ``-q``). A model
   that identified IN with ``dual`` could not express this at all — invariant 2
   doing real work. Since #142 that sentence names two separate operations:
-  [flip][tenet.flip] toggles ``dual`` alone (relabelling the space and paying the
+  [flip_dual][tenet.flip_dual] toggles ``dual`` alone (relabelling the space and paying the
   Z-isomorphism's scalar), while a bend is the operation that moves ``side``.
 * **Our two trees are independent, both in ascending public-axis order.**
   TensorKit reads ``Hom(b₁⊗…⊗b_{N₂}, a₁⊗…⊗a_{N₁}) ≅ Hom(1, a₁⊗…⊗a_{N₁}⊗
@@ -72,7 +72,7 @@ __all__ = [
     "RepartitionPlan",
     "bend",
     "bend_plan",
-    "flip",
+    "flip_dual",
     "repartition",
     "repartition_plan",
 ]
@@ -436,7 +436,7 @@ def _flip_refuse(structure: TensorStructure) -> None:
             requires(provider, capability)
         except CapabilityError as exc:
             raise CapabilityError(
-                f"flip: toggling a leg's dual flag re-expresses the leg through the "
+                f"flip_dual: toggling a leg's dual flag re-expresses the leg through the "
                 f"V_a -> V_a^* isomorphism, and provider {provider.name} does not implement "
                 f"{capability.__name__}. The scalar is chi_a * theta_a — the Frobenius-Schur "
                 "indicator (FSIndicatorData) times the twist (TwistData) — per flipped leg "
@@ -459,24 +459,26 @@ def _flip_axes(structure: TensorStructure, axes: Any) -> tuple[int, ...]:
             names = [i for i, leg in enumerate(structure.legs) if leg.name == item]
             if not names:
                 raise ValueError(
-                    f"flip: no leg is named {item!r}; axes are ints or leg names"
+                    f"flip_dual: no leg is named {item!r}; axes are ints or leg names"
                 ) from None
             if len(names) > 1:
                 raise ValueError(
-                    f"flip: leg name {item!r} is ambiguous — axes {tuple(names)} all "
+                    f"flip_dual: leg name {item!r} is ambiguous — axes {tuple(names)} all "
                     "carry it; use the axis index instead"
                 ) from None
             ax = names[0]
         else:
             if not 0 <= ax < ndim:
-                raise ValueError(f"flip: axis {ax} is out of range for a {ndim}-dimensional tensor")
+                raise ValueError(
+                    f"flip_dual: axis {ax} is out of range for a {ndim}-dimensional tensor"
+                )
         if ax in resolved:
-            raise ValueError(f"flip: axis {ax} is repeated in {axes!r}")
+            raise ValueError(f"flip_dual: axis {ax} is repeated in {axes!r}")
         resolved.append(ax)
     return tuple(resolved)
 
 
-def flip(
+def flip_dual(
     t: "SymmetricTensor",
     axes: int | Hashable | Sequence[int | Hashable],
     *,
@@ -489,10 +491,10 @@ def flip(
     t : SymmetricTensor
         The tensor whose legs are flipped.
     axes : int, leg name, or sequence of either
-        The legs to flip; ``flip(t, ())`` is ``t``. A name must be carried by
+        The legs to flip; ``flip_dual(t, ())`` is ``t``. A name must be carried by
         exactly one leg.
     inv : bool, optional
-        ``flip`` is **not** an involution; ``inv=True`` applies the exact
+        ``flip_dual`` is **not** an involution; ``inv=True`` applies the exact
         inverse instead. Default ``False``.
 
     Returns
@@ -521,10 +523,10 @@ def flip(
     >>> from tenet.symmetry import U1, U1Sector
     >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
     >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
-    >>> f = tenet.flip(a, 0)  # charge q relabelled as -q on a dual leg
+    >>> f = tenet.flip_dual(a, 0)  # charge q relabelled as -q on a dual leg
     >>> f.legs[0].dual, f.legs[0].space.sectors
     (True, ((U1Sector(charge=-1), 1), (U1Sector(charge=0), 1)))
-    >>> bool(tenet.allclose(tenet.flip(f, 0, inv=True), a))
+    >>> bool(tenet.allclose(tenet.flip_dual(f, 0, inv=True), a))
     True
 
     Notes
@@ -533,12 +535,18 @@ def flip(
     leg's ``dual`` flag is toggled and its space is relabelled through
     ``provider.dual`` (so a U(1) leg over charges ``{q}`` comes back over
     ``{-q}``), which is the ``V_a -> V_a^*`` isomorphism made explicit — the
-    operation TensorKit calls ``flip``. ``side`` and ``name`` are unchanged:
+    operation TensorKit spells ``flip``. The name is qualified here and not there
+    because Python has ``numpy.flip``, which reverses element order along an axis
+    of the *tensor* while this toggles a flag on a *leg* -- a different operand and
+    a different operation under one name, reachable through autoray's module lookup
+    (#185). YASTN, the Python API reference, qualifies the same operation the same
+    way (``flip_signature`` / ``flip_charges``); ``dual`` is this package's noun for
+    the flag. ``side`` and ``name`` are unchanged:
     moving a leg between domain and codomain stays
     [repartition][tenet.SymmetricTensor.repartition]'s job.
 
     Two contracts, both TensorKit's: flipping the two legs of a
-    contractible pair leaves the contraction result unchanged, and ``flip`` is
+    contractible pair leaves the contraction result unchanged, and ``flip_dual`` is
     **not** an involution — flipping the same leg twice multiplies each tree by
     ``chi_a * theta_a`` once (``-1`` on an SU(2) half-integer or odd
     fermion-parity line), and ``inv=True`` is the exact inverse instead.
@@ -577,7 +585,7 @@ def flip(
             out = leg.side is OUT
             tree = key.output_tree if out else key.input_tree
             # the leaf is invariant under the flip, so old key and new key agree.
-            # flip() ran requires(provider, FSIndicatorData/TwistData) before this
+            # flip_dual() ran requires(provider, FSIndicatorData/TwistData) before this
             # plan; chi * theta is the flip scalar, per flipped leg per tree.
             a = tree.uncoupled[tree_pos[ax]]
             base = complex(provider.frobenius_schur(a) * provider.twist(a))  # ty: ignore[unresolved-attribute]

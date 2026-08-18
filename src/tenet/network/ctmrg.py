@@ -123,6 +123,11 @@ class CTMEnv(NamedTuple):
 class Absorb(NamedTuple):
     """How one model grows an environment: ``corner(c, e)`` and ``edge(e, p)``.
 
+    The type is the *definition* of a model's absorption, not the absorption
+    step -- that is [move][tenet.network.move]. Instances are called
+    ``absorber`` throughout this module and in the docstrings that return one;
+    the type keeps the literature's noun (#120, reaffirmed #185).
+
     Attributes
     ----------
     corner : Callable[[SymmetricTensor, SymmetricTensor], SymmetricTensor]

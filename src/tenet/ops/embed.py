@@ -442,7 +442,7 @@ def direct_sum(
         If the operands' leg counts differ; if ``axes`` is empty (with nothing
         to sum this would be [add][tenet.add]), out of range, or repeated; if
         an axis mismatches in provider, ``side`` or ``dual`` (a ``dual``
-        mismatch is refused, never coerced — [tenet.flip][] is the way to
+        mismatch is refused, never coerced — [tenet.flip_dual][] is the way to
         normalise the operands' dual conventions before summing); if an
         unsummed axis's spaces differ; or if the operands live on different
         backends (``.to_backend(...)`` is the explicit spelling).

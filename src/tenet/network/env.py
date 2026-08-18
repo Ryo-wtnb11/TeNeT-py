@@ -14,7 +14,7 @@ import numpy as np
 import tenet
 from tenet import IN, OUT, Leg, SymmetricTensor
 from tenet.network.common import ones
-from tenet.network.mps import MPO, MPS, JordanBlocks
+from tenet.network.mps import MPO, MPS, EdgeBlocks
 
 __all__ = ["Env"]
 
@@ -27,7 +27,7 @@ class _Prepared(NamedTuple):
     cases, so the apply is few, large contractions rather than ten small ones:
 
     * ``grt``/``gl`` -- every identity-through path (``II``, ``EE`` and the sign-free
-      spectator part of ``AA``, per ``JordanBlocks``'s
+      spectator part of ``AA``, per ``EdgeBlocks``'s
       classification) as *one* rank-2 channel map folded into the right environment,
       closed by the untouched left environment; exact for any state;
     * ``caf`` -- every ``IdL``-anchored path (``IC``, ``ID``, ``CB``, ``CA``) summed
@@ -91,12 +91,12 @@ def _composed(
 
 
 def _sl(gl: SymmetricTensor, emb: SymmetricTensor | None) -> SymmetricTensor | None:
-    """Slice a left environment down to one Jordan group of its MPO leg."""
+    """Slice a left environment down to one edge group of its MPO leg."""
     return None if emb is None else tenet.einsum("xv,axB->avB", emb, gl)
 
 
 def _sr(emb: SymmetricTensor | None, gr: SymmetricTensor) -> SymmetricTensor | None:
-    """Slice a right environment down to one Jordan group of its MPO leg."""
+    """Slice a right environment down to one edge group of its MPO leg."""
     return None if emb is None else tenet.einsum("rys,wy->rws", gr, emb)
 
 
@@ -156,7 +156,7 @@ class _Cores(NamedTuple):
 
 
 def _cores2(t1, t2, eye_p: SymmetricTensor) -> _Cores:
-    """Merge the bond's Jordan blocks into MPSKit's prepared cores, environment-free.
+    """Merge the bond's edge blocks into MPSKit's prepared cores, environment-free.
 
     ``hamiltonian_derivatives.jl``:272-345 in ``tenet.einsum`` -- ``CB = C1 . B2``,
     ``AB = A1 . B2`` -- followed by its ``prepare_operator!!`` merging: the
@@ -166,7 +166,7 @@ def _cores2(t1, t2, eye_p: SymmetricTensor) -> _Cores:
     folds one whole environment per family. ``None`` stands for every absent piece.
 
     ``idmap``/``spec_op`` already exclude any spectator whose state braids with signs
-    (``JordanBlocks``): its string crossing lives in the
+    (``EdgeBlocks``): its string crossing lives in the
     rank-4 blocks, so it reaches the matvec through the ``AA`` chains below instead of
     the phys-free ``thru`` ride (#160).
     """
@@ -302,7 +302,7 @@ def _apply2(p: _Prepared, aa: SymmetricTensor) -> SymmetricTensor:
 
 
 def _fold_last(
-    t: JordanBlocks, f: SymmetricTensor, a: SymmetricTensor, bra: SymmetricTensor
+    t: EdgeBlocks, f: SymmetricTensor, a: SymmetricTensor, bra: SymmetricTensor
 ) -> SymmetricTensor:
     """One prepared left-to-right environment step, exact for any state.
 
@@ -344,7 +344,7 @@ def _fold_last(
 
 
 def _fold_first(
-    t: JordanBlocks, f: SymmetricTensor, a: SymmetricTensor, bra: SymmetricTensor
+    t: EdgeBlocks, f: SymmetricTensor, a: SymmetricTensor, bra: SymmetricTensor
 ) -> SymmetricTensor:
     """One prepared right-to-left environment step -- ``_fold_last`` mirrored.
 
@@ -513,23 +513,25 @@ class Env:
         n : int
             The site whose directed-bond entry is written.
         to : str
-            The direction: ``'last'`` writes ``F[(n, n+1)]`` from
-            ``F[(n-1, n)]``, ``'first'`` writes ``F[(n, n-1)]`` from
-            ``F[(n+1, n)]``. Keyword-only.
+            The direction to write *toward*: ``'last'`` writes ``F[(n, n+1)]``
+            from ``F[(n-1, n)]``, ``'first'`` writes ``F[(n, n-1)]`` from
+            ``F[(n+1, n)]``. A direction, not a site -- unlike
+            [MPS.canonize_][tenet.network.MPS.canonize_]'s ``to``, which is an
+            ``int`` site index. Keyword-only.
 
         Notes
         -----
         ``to='last'`` writes ``F[(n, n+1)]`` from ``F[(n-1, n)]``; ``to='first'`` writes
         ``F[(n, n-1)]`` from ``F[(n+1, n)]``. Dense path: three pairwise ``tenet.einsum``
-        calls each -- environment first, then the ket, then the MPO, then the bra. With a
-        Jordan block table present the step goes edge-aware instead
+        calls each -- environment first, then the ket, then the MPO, then the bra. With an
+        edge-block table present the step goes edge-aware instead
         (``_fold_last`` / ``_fold_first``): the identity channels ride ``idmap``
         with no ``W`` contraction, only the operator-carrying blocks pay one, and unlike
         [heff2][tenet.network.Env.heff2] this path is **exact for any state** -- no gauge
         assumption.
         """
         a, bra = self.psi[n], tenet.adjoint(self.psi[n])
-        blocks = self.h.jordan(n)
+        blocks = self.h.edge_blocks(n)
         if to == "last":
             if blocks is not None:
                 self.F[n, n + 1] = _fold_last(blocks, self.F[n - 1, n], a, bra)
@@ -574,7 +576,7 @@ class Env:
 
         Notes
         -----
-        **Prepared path**, taken when ``self.h`` carries a Jordan block table -- which
+        **Prepared path**, taken when ``self.h`` carries an edge-block table -- which
         requires ``MPO.from_terms(..., cutoff=None)``, the precondition, because a
         compressed or ``from_w`` MPO has no edge structure left to prepare. The two
         environments are folded into the site blocks **once per bond** (``_build2``,
@@ -602,7 +604,7 @@ class Env:
         result has ``aa``'s structure exactly and [lanczos][tenet.network.lanczos] can add
         the two.
         """
-        if self.h.jordan(n) is not None:
+        if self.h.edge_blocks(n) is not None:
             p = self._prepare2(n)
             key = tuple(aa.legs)
             hit = self._compiled.get(n)
@@ -629,7 +631,7 @@ class Env:
         hit = self._prepared.get(n)
         if hit is not None and hit[0] is fl and hit[1] is fr:
             return hit[2]
-        t1, t2 = self.h.jordan(n), self.h.jordan(n + 1)
+        t1, t2 = self.h.edge_blocks(n), self.h.edge_blocks(n + 1)
         if n not in self._cores:  # environment-free, so never invalidated
             if self._eye_p is None:
                 self._eye_p = tenet.identity((self.psi[0].legs[1],))

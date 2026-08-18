@@ -1,6 +1,10 @@
-"""Symmetry restriction — ``cast`` (issue #92).
+"""Symmetry restriction — ``to_symmetry`` (issue #92).
 
-Let a tensor forget part of its symmetry: ``cast(t, U1)`` takes an SU(2)-symmetric
+The module keeps its ``cast.py`` file name on purpose: a submodule named after
+the public function is what makes griffe resolve ``tenet.to_symmetry`` to the
+module and drop the function from the API page (#173).
+
+Let a tensor forget part of its symmetry: ``to_symmetry(t, U1)`` takes an SU(2)-symmetric
 tensor and returns the U(1)-symmetric tensor describing the same physical object,
 each SU(2) irrep ``j`` splitting into the weights ``2 S_z = 2j, 2j-2, ..., -2j``.
 
@@ -14,7 +18,7 @@ permutation, so reversing the magnetic order and negating the weight cancel.
 That convention is pinned by a refusal in the tests, not by this comment.
 
 Which target sectors a provider's dense basis vectors carry is a provider fact,
-asked through the [SymmetryCast][tenet.symmetry.SymmetryCast] capability — never
+asked through the [BranchingRules][tenet.symmetry.BranchingRules] capability — never
 an ``isinstance`` branch here (invariant 5).
 """
 
@@ -33,10 +37,10 @@ from tenet.leg import Leg
 from tenet.ops.dense import from_dense, to_dense
 from tenet.space import GradedSpace
 from tenet.symmetry.base import (
+    BranchingRules,
     CapabilityError,
     ClebschGordanData,
     Sector,
-    SymmetryCast,
     _DualFusionRules,
     requires,
 )
@@ -44,10 +48,10 @@ from tenet.symmetry.base import (
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["cast"]
+__all__ = ["to_symmetry"]
 
 
-def cast(
+def to_symmetry(
     t: "SymmetricTensor", target: _DualFusionRules, *, atol: float | None = None
 ) -> "SymmetricTensor":
     """Restrict ``t`` to the smaller symmetry ``target``, in the dense basis.
@@ -56,7 +60,7 @@ def cast(
     ----------
     t : SymmetricTensor
         The tensor to restrict. Its provider must implement
-        [SymmetryCast][tenet.symmetry.SymmetryCast] (and ``ClebschGordanData``, plus
+        [BranchingRules][tenet.symmetry.BranchingRules] (and ``ClebschGordanData``, plus
         ``DualBasis`` for a ``dual`` leg, through ``to_dense``).
     target : FusionRules
         The smaller symmetry to restrict to. Must implement ``ClebschGordanData``
@@ -76,7 +80,7 @@ def cast(
     Raises
     ------
     CapabilityError
-        If ``t``'s provider does not implement ``SymmetryCast``, if ``target``
+        If ``t``'s provider does not implement ``BranchingRules``, if ``target``
         does not implement ``ClebschGordanData``, or if a target sector has
         ``irrep_dim > 1`` — one target label per dense basis vector is only
         well-defined when the target's irreps are one-dimensional.
@@ -91,7 +95,7 @@ def cast(
     >>> from tenet.symmetry import SU2, SU2Sector, U1
     >>> V = GradedSpace.new(SU2, {SU2Sector(0): 1, SU2Sector(1): 1})
     >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
-    >>> u = tenet.cast(t, U1)  # each SU(2) irrep j splits into weights 2Sz
+    >>> u = tenet.to_symmetry(t, U1)  # each SU(2) irrep j splits into weights 2Sz
     >>> u.legs[0].space.sectors
     ((U1Sector(charge=-1), 1), (U1Sector(charge=0), 1), (U1Sector(charge=1), 1))
     >>> u.shape == t.shape
@@ -102,12 +106,12 @@ def cast(
     ``atol`` is forwarded to ``from_dense``, whose default
     symmetry check is the free correctness oracle here — a wrong branching or a
     wrong sort produces an array that is not ``target``-symmetric and is refused.
-    ``atol=math.inf`` skips it, which is what makes ``cast`` traceable.
+    ``atol=math.inf`` skips it, which is what makes ``to_symmetry`` traceable.
 
     Forgetting is not invertible: the result has strictly more free parameters
     than its source, so there is no inverse cast in this direction.
     """
-    requires(t.structure.provider, SymmetryCast)
+    requires(t.structure.provider, BranchingRules)
     requires(target, ClebschGordanData)
     legs, takes = zip(*(_cast_leg(leg, target) for leg in t.legs), strict=True)
     dense = to_dense(t)
@@ -133,13 +137,13 @@ def _cast_leg(leg: Leg, target: _DualFusionRules) -> tuple[Leg, list[int]]:
     p = leg.provider
     labels: list[Sector] = []
     for a, m in leg.space.sectors:
-        # SymmetryCast/ClebschGordanData are checked by requires() in cast()
+        # BranchingRules/ClebschGordanData are checked by requires() in to_symmetry()
         # before any leg is cast; a raise-based check does not narrow
         charges = p.branch(target, a)  # ty: ignore[unresolved-attribute]
         for q in charges:
             if target.irrep_dim(q) != 1:  # ty: ignore[unresolved-attribute]  # see above
                 raise CapabilityError(
-                    f"cast: target {target.name} sector {q!r} has irrep_dim "
+                    f"to_symmetry: target {target.name} sector {q!r} has irrep_dim "
                     f"{target.irrep_dim(q)} > 1; "  # ty: ignore[unresolved-attribute]  # see above
                     "one target label per dense basis vector "
                     "is only well-defined when the target's irreps are one-dimensional, "

@@ -632,8 +632,8 @@ def test_casting_the_su2_sites_to_u1_gives_the_same_operator():
     """``branch``'s basis ordering against ``from_dense``'s, at MPO scale.
 
     **#135 predicted this as a per-tensor identity and that prediction was wrong**:
-    :func:`tenet.cast` *reorders the dense basis* by construction (``ops/cast.py``:69-77
-    gathers each axis into the target's sector order), so ``cast(w, U1).to_dense()``
+    :func:`tenet.to_symmetry` *reorders the dense basis* by construction (``ops/cast.py``:69-77
+    gathers each axis into the target's sector order), so ``to_symmetry(w, U1).to_dense()``
     differs from ``w.to_dense()`` by a per-leg permutation even when everything is right.
     Contracting the whole chain is the honest form of the same check: the bond gathers
     cancel between neighbours, the physical one is the spin flip that leaves ``H``
@@ -641,15 +641,16 @@ def test_casting_the_su2_sites_to_u1_gives_the_same_operator():
     ``from_dense``'s agree.
 
     Still not a cross-builder comparison: an MPO bond is fixed only up to a gauge and the
-    sector order inside it is ``GradedSpace``'s, so comparing ``cast(SU2_W, U1)`` against
+    sector order inside it is ``GradedSpace``'s, so comparing ``to_symmetry(SU2_W, U1)``
+    against
     the hand-graded ``W`` of ``examples/heisenberg_walkthrough.py`` per site would fail on a
-    *correct* implementation -- which is why ``MPO.cast`` does not exist. ``MPO`` over a list
-    comprehension is all the container-level cast anyone needed.
+    *correct* implementation -- which is why ``MPO.to_symmetry`` does not exist. ``MPO``
+    over a list comprehension is all the container-level restriction anyone needed.
     """
     h = su2_heisenberg(6)
-    cast = MPO([tenet.cast(w, U1) for w in h])
-    assert cast[3].legs[1].space == example.PHYS
-    assert np.abs(np.asarray(cast.to_dense()) - _heisenberg_kron(6)).max() < 1e-12
+    restricted = MPO([tenet.to_symmetry(w, U1) for w in h])
+    assert restricted[3].legs[1].space == example.PHYS
+    assert np.abs(np.asarray(restricted.to_dense()) - _heisenberg_kron(6)).max() < 1e-12
 
 
 def test_an_su3_two_site_term_derives_a_bond_with_multiplicity_two():

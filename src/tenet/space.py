@@ -137,7 +137,7 @@ class GradedSpace(_HashMemo):
         This says nothing about ``dual`` — the flag lives on the ``Leg``
         (invariant 2), not on the space, so whether two legs' conventions are
         summable is checked where the legs are, by the tensor-level
-        [tenet.direct_sum][]; ``tenet.flip`` is the numerical route for
+        [tenet.direct_sum][]; ``tenet.flip_dual`` is the numerical route for
         normalising a dual convention beforehand. TensorKit's ``⊕`` must compare
         ``isdual`` here precisely because its flag lives on the space.
         """

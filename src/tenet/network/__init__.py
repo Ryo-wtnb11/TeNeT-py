@@ -99,7 +99,7 @@ M14: [Sweep][tenet.network.Sweep] and [MPS.product][tenet.network.MPS.product] -
 realized schedule; [MPS.product][tenet.network.MPS.product] builds a product state whose
 bonds are derived
 backwards from the site sectors, putting the total charge on bond 0.
-M16: [MPO.jordan][tenet.network.MPO.jordan] -- ``from_terms(cutoff=None)`` keeps its
+M16: [MPO.edge_blocks][tenet.network.MPO.edge_blocks] -- ``from_terms(cutoff=None)`` keeps its
 finite-state machine as
 a per-site block table, [Env.heff2][tenet.network.Env.heff2] and
 [Env.update_][tenet.network.Env.update_] fold environments into

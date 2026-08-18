@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 from _su3_fixture import SU3, SU3Sector
 
-from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, flip, tensordot
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, flip_dual, tensordot
 from tenet.symmetry import (
     SU2,
     U1,
@@ -70,14 +70,14 @@ def test_su3_contract_after_flipping_both_legs():
     a = SymmetricTensor.random((Leg(space, OUT), Leg(space, IN, name="x")), seed=13)
     b = SymmetricTensor.random((Leg(space, OUT, name="y"), Leg(space, IN)), seed=14)
     ref = np.asarray(tensordot(a, b, ((1,), (0,))).to_dense())
-    got = np.asarray(tensordot(flip(a, 1), flip(b, 0), ((1,), (0,))).to_dense())
+    got = np.asarray(tensordot(flip_dual(a, 1), flip_dual(b, 0), ((1,), (0,))).to_dense())
     assert np.max(np.abs(got - ref)) <= 1e-12
 
 
 def test_su3_flip_relabels_three_to_threebar():
     three = GradedSpace.new(SU3, {SU3Sector((1, 0)): 2})
     t = SymmetricTensor.random((Leg(three, OUT), Leg(three, IN)), seed=15)
-    flipped = flip(t, 0)
+    flipped = flip_dual(t, 0)
     assert tuple(flipped.legs[0].space) == (SU3Sector((0, 1)),)
     assert flipped.legs[0].dual is True
     assert flipped.structure.block_order == t.structure.block_order
