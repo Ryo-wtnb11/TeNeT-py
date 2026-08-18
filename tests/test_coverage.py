@@ -14,7 +14,7 @@ import re
 import sys
 
 import tenet
-from tenet.symmetry.base import MultiplicityRecoupling
+from tenet.symmetry.base import BMatrixData, FMatrixData, RMatrixData
 
 TESTS = pathlib.Path(__file__).parent
 
@@ -50,7 +50,8 @@ def test_e2_the_ad_suite_carries_a_multiplicity_bearing_provider():
     sys.path.insert(0, str(TESTS / "symmetry"))
     from _su3_fixture import SU3  # noqa: PLC0415  # the provider that column instantiates
 
-    assert isinstance(SU3, MultiplicityRecoupling)
+    for capability in (FMatrixData, RMatrixData, BMatrixData):
+        assert isinstance(SU3, capability)
 
 
 # E3 (#167): the docstring standard's mechanical half. Scoped to stage 1 — the

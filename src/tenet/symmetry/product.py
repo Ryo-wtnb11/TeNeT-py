@@ -51,13 +51,12 @@ import numpy as np
 from tenet.symmetry.base import (
     CapabilityError,
     ClebschGordanData,
-    FlipPhase,
     FSIndicatorData,
-    FusionProvider,
     PermutationCoefficients,
     QuantumDimensionData,
     Sector,
     TwistData,
+    _DualFusionRules,
     requires,
 )
 
@@ -128,7 +127,7 @@ class ProductProvider:
     field, so it can never be a second source of truth.
     """
 
-    factors: tuple[FusionProvider, ...]
+    factors: tuple[_DualFusionRules, ...]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "factors", tuple(self.factors))
@@ -168,11 +167,6 @@ class ProductProvider:
     def qdim(self, a: Sector) -> float:
         self._require_all(QuantumDimensionData)
         return math.prod(f.qdim(x) for f, x in self._zip(a))
-
-    def flip_phase(self, a: Sector) -> complex:
-        """``chi * theta`` of a Deligne product factorizes, like every other phase."""
-        self._require_all(FlipPhase)
-        return math.prod(f.flip_phase(x) for f, x in self._zip(a))
 
     def frobenius_schur(self, a: Sector) -> complex:
         """``chi`` of a Deligne product factorizes, like every other phase."""

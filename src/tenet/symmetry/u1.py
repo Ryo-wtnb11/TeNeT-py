@@ -94,10 +94,6 @@ class U1Provider:
         """``theta_a = 1``: bosonic Abelian, trivial twist."""
         return 1.0
 
-    def flip_phase(self, a: U1Sector) -> float:
-        """``chi_a * theta_a = 1``: bosonic Abelian, FS phase 1 and trivial twist."""
-        return 1.0
-
 
 _CGC = np.ones((1, 1, 1, 1))
 _CGC.flags.writeable = False

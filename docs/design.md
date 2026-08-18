@@ -422,7 +422,7 @@ dual
 
 This allows the user-facing representation to retain full morphism semantics without forcing input and output legs to occupy contiguous axis ranges.
 
-A source-level comparison against TensorKit.jl (#142) showed the two libraries hold the same data in two spellings: TensorKit's `GradedSpace` carries its degeneracies **and** a `dual::Bool`, while `TeNeT-py`'s `GradedSpace` is dual-free and the flag lives on the `Leg`. The one operation that correspondence had left missing is `tenet.flip(t, axes, inv=)`: it toggles the named legs' `dual` flags and relabels their spaces through `provider.dual`, keeping the tensor the same morphism by paying the Z-isomorphism's scalar `χ_a · θ_a` per flipped leg per fusion tree (the `FlipPhase` capability). Because the relabel and the flag toggle cancel inside `Leg.fused_sector`, the block set is unchanged and `flip` is a per-block scalar multiply; `side` never moves — that remains `repartition`'s bend. The rest of TensorKit's space-level surface was reviewed and tiered in the same issue: `fuse(V₁,V₂)`, a subspace predicate, the orthogonal complement `⊖`, the unit-leg family and the bare twist are named follow-ups with triggering criteria, while the Deligne product `⊠` at the space level, `infimum`/`supremum`, the unit/zero-space family and the `CartesianSpace`/`ComplexSpace` analogues are refused — each either already has a `TeNeT-py` spelling one level up (`ProductProvider`, `TrivialProvider`) or has no caller.
+A source-level comparison against TensorKit.jl (#142) showed the two libraries hold the same data in two spellings: TensorKit's `GradedSpace` carries its degeneracies **and** a `dual::Bool`, while `TeNeT-py`'s `GradedSpace` is dual-free and the flag lives on the `Leg`. The one operation that correspondence had left missing is `tenet.flip(t, axes, inv=)`: it toggles the named legs' `dual` flags and relabels their spaces through `provider.dual`, keeping the tensor the same morphism by paying the Z-isomorphism's scalar `χ_a · θ_a` per flipped leg per fusion tree (the `FSIndicatorData` and `TwistData` capabilities since M24). Because the relabel and the flag toggle cancel inside `Leg.fused_sector`, the block set is unchanged and `flip` is a per-block scalar multiply; `side` never moves — that remains `repartition`'s bend. The rest of TensorKit's space-level surface was reviewed and tiered in the same issue: `fuse(V₁,V₂)`, a subspace predicate, the orthogonal complement `⊖`, the unit-leg family and the bare twist are named follow-ups with triggering criteria, while the Deligne product `⊠` at the space level, `infimum`/`supremum`, the unit/zero-space family and the `CartesianSpace`/`ComplexSpace` analogues are refused — each either already has a `TeNeT-py` spelling one level up (`ProductProvider`, `TrivialProvider`) or has no caller.
 
 ---
 
@@ -1070,7 +1070,7 @@ elif symmetry == "fibonacci":
 Instead:
 
 ```python
-class FusionProvider(Protocol):
+class FusionRules(Protocol):
     @property
     def unit(self):
         ...
@@ -2589,7 +2589,7 @@ linear algebra
 Implement:
 
 - immutable sector types;
-- `FusionProvider`;
+- `FusionRules`;
 - trivial symmetry;
 - U(1);
 - SU(2);

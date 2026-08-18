@@ -11,7 +11,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tenet.symmetry import SU2, U1, RecouplingData, SU2Provider, SU2Sector, Trivial
+from tenet.symmetry import (
+    SU2,
+    U1,
+    AssociatorData,
+    BraidingData,
+    DualityData,
+    FSIndicatorData,
+    SU2Provider,
+    SU2Sector,
+    Trivial,
+)
 from tenet.symmetry._su2_coeff import b_symbol, f_symbol, frobenius_schur, r_symbol, triangle
 from tenet.symmetry.coherence import (
     validate_hexagon,
@@ -257,10 +267,15 @@ def test_all_coefficients_are_real_so_domain_side_conjugation_is_a_noop() -> Non
 # --- the protocol and the provider adapters ---------------------------------
 
 
-def test_recoupling_data_capability() -> None:
-    assert isinstance(SU2, RecouplingData)
-    assert not isinstance(U1, RecouplingData)
-    assert not isinstance(Trivial, RecouplingData)
+def test_recoupling_capabilities() -> None:
+    for capability in (AssociatorData, BraidingData, DualityData, FSIndicatorData):
+        assert isinstance(SU2, capability)
+    for capability in (AssociatorData, BraidingData, DualityData):
+        assert not isinstance(U1, capability)
+        assert not isinstance(Trivial, capability)
+    # the FS indicator alone is carried by every provider, Abelian ones included
+    assert isinstance(U1, FSIndicatorData)
+    assert isinstance(Trivial, FSIndicatorData)
 
 
 def test_provider_adapters_agree_with_doubled_spin_functions() -> None:

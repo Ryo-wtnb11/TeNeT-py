@@ -25,7 +25,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
 
-from tenet.symmetry.base import FusionProvider, Sector, _HashMemo
+from tenet.symmetry.base import FusionRules, Sector, _HashMemo
 
 __all__ = ["FusionTree", "coupled_sectors", "fusion_trees"]
 
@@ -77,7 +77,7 @@ class FusionTree(_HashMemo):
             zip(spine[:-1], self.uncoupled[1:], spine[1:], self.multiplicities, strict=True)
         )
 
-    def validate(self, provider: FusionProvider) -> None:
+    def validate(self, provider: FusionRules) -> None:
         """Raise if the tree is not a valid basis label for ``provider``."""
         if self.rank == 0:
             if self.coupled != provider.unit:
@@ -101,7 +101,7 @@ class FusionTree(_HashMemo):
 
 
 def fusion_trees(
-    provider: FusionProvider,
+    provider: FusionRules,
     uncoupled: Sequence[Sector],
     coupled: Sector,
 ) -> tuple[FusionTree, ...]:
@@ -115,7 +115,7 @@ def fusion_trees(
 
 
 def coupled_sectors(
-    provider: FusionProvider,
+    provider: FusionRules,
     uncoupled: Sequence[Sector],
 ) -> tuple[Sector, ...]:
     """Every sector reachable from ``uncoupled``, canonically sorted."""
@@ -125,7 +125,7 @@ def coupled_sectors(
 
 @cache
 def _fusion_trees(
-    provider: FusionProvider, uncoupled: tuple[Sector, ...], coupled: Sector
+    provider: FusionRules, uncoupled: tuple[Sector, ...], coupled: Sector
 ) -> tuple[FusionTree, ...]:
     # hashable by provider contract; see the ignore rationale at fusion_trees
     trees = _all_trees(provider, uncoupled)  # ty: ignore[invalid-argument-type]
@@ -133,14 +133,14 @@ def _fusion_trees(
 
 
 @cache
-def _coupled_sectors(provider: FusionProvider, uncoupled: tuple[Sector, ...]) -> tuple[Sector, ...]:
+def _coupled_sectors(provider: FusionRules, uncoupled: tuple[Sector, ...]) -> tuple[Sector, ...]:
     # hashable by provider contract; see the ignore rationale at fusion_trees
     trees = _all_trees(provider, uncoupled)  # ty: ignore[invalid-argument-type]
     return tuple(sorted({t.coupled for t in trees}))
 
 
 @cache
-def _all_trees(provider: FusionProvider, uncoupled: tuple[Sector, ...]) -> tuple[FusionTree, ...]:
+def _all_trees(provider: FusionRules, uncoupled: tuple[Sector, ...]) -> tuple[FusionTree, ...]:
     """Every tree over ``uncoupled``, any coupled sector, sorted."""
     if not uncoupled:
         return (FusionTree((), (), (), provider.unit),)

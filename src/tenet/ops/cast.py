@@ -35,9 +35,9 @@ from tenet.space import GradedSpace
 from tenet.symmetry.base import (
     CapabilityError,
     ClebschGordanData,
-    FusionProvider,
     Sector,
     SymmetryCast,
+    _DualFusionRules,
     requires,
 )
 
@@ -48,7 +48,7 @@ __all__ = ["cast"]
 
 
 def cast(
-    t: "SymmetricTensor", target: FusionProvider, *, atol: float | None = None
+    t: "SymmetricTensor", target: _DualFusionRules, *, atol: float | None = None
 ) -> "SymmetricTensor":
     """Restrict ``t`` to the smaller symmetry ``target``, in the dense basis.
 
@@ -58,7 +58,7 @@ def cast(
         The tensor to restrict. Its provider must implement
         [SymmetryCast][tenet.symmetry.SymmetryCast] (and ``ClebschGordanData``, plus
         ``DualBasis`` for a ``dual`` leg, through ``to_dense``).
-    target : FusionProvider
+    target : FusionRules
         The smaller symmetry to restrict to. Must implement ``ClebschGordanData``
         and have one-dimensional irreps (i.e. be abelian).
     atol : float or None, optional
@@ -118,7 +118,7 @@ def cast(
     return from_dense(dense, legs, atol=atol)
 
 
-def _cast_leg(leg: Leg, target: FusionProvider) -> tuple[Leg, list[int]]:
+def _cast_leg(leg: Leg, target: _DualFusionRules) -> tuple[Leg, list[int]]:
     """The new leg, and the per-axis gather that reorders the dense basis.
 
     The source dense index enumerates ``(a, alpha, k)`` in that nesting

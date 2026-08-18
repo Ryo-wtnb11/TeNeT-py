@@ -33,12 +33,13 @@ from tenet.symmetry.base import (
     AssociatorData,
     BraidingData,
     DaggerData,
-    FusionProvider,
+    FusionRules,
     PivotalData,
     QuantumDimensionData,
     RMatrixData,
     Sector,
     TwistData,
+    _DualFusionRules,
     supports,
 )
 
@@ -73,7 +74,7 @@ def _channels(provider, a, b):
     return provider.fusion(a, b)
 
 
-def validate_pentagon(provider: FusionProvider, sectors: Sectors, *, atol: float = 1e-12) -> int:
+def validate_pentagon(provider: FusionRules, sectors: Sectors, *, atol: float = 1e-12) -> int:
     """Check the pentagon identity of ``f_symbol`` over ``sectors``.
 
     ``[F^{fcd}_e]_{g,l} [F^{abl}_e]_{f,k} = sum_h [F^{abc}_g]_{f,h}
@@ -84,7 +85,7 @@ def validate_pentagon(provider: FusionProvider, sectors: Sectors, *, atol: float
 
     Parameters
     ----------
-    provider : FusionProvider
+    provider : FusionRules
         The provider whose associator is checked.
     sectors : tuple of Sector
         The budget the four outer labels are drawn from.
@@ -128,7 +129,7 @@ def validate_pentagon(provider: FusionProvider, sectors: Sectors, *, atol: float
     return checked
 
 
-def validate_hexagon(provider: FusionProvider, sectors: Sectors, *, atol: float = 1e-12) -> int:
+def validate_hexagon(provider: FusionRules, sectors: Sectors, *, atol: float = 1e-12) -> int:
     """Check the (R-move) hexagon identity of ``f_symbol``/``r_symbol``.
 
     ``R^{ca}_e [F^{acb}_d]_{e,g} R^{cb}_g = sum_f [F^{cab}_d]_{e,f} R^{cf}_d
@@ -139,7 +140,7 @@ def validate_hexagon(provider: FusionProvider, sectors: Sectors, *, atol: float 
 
     Parameters
     ----------
-    provider : FusionProvider
+    provider : FusionRules
         The provider whose braiding is checked against its associator.
     sectors : tuple of Sector
         The budget ``a, b, c, d`` are drawn from.
@@ -180,7 +181,7 @@ def validate_hexagon(provider: FusionProvider, sectors: Sectors, *, atol: float 
     return checked
 
 
-def validate_snake(provider: FusionProvider, sectors: Sectors, *, atol: float = 1e-12) -> int:
+def validate_snake(provider: _DualFusionRules, sectors: Sectors, *, atol: float = 1e-12) -> int:
     """Check the zig-zag (snake) consistency of ``b_symbol`` with F and qdim.
 
     ``B^{ab}_c == sqrt(qdim(a) qdim(b) / qdim(c)) [F^{a b dual(b)}_a]_{c, 1}``
@@ -191,7 +192,7 @@ def validate_snake(provider: FusionProvider, sectors: Sectors, *, atol: float = 
 
     Parameters
     ----------
-    provider : FusionProvider
+    provider : FusionRules
         The provider whose bend coefficients are checked.
     sectors : tuple of Sector
         The budget ``a, b`` are drawn from; ``c`` runs over their fusion.
@@ -224,7 +225,7 @@ def validate_snake(provider: FusionProvider, sectors: Sectors, *, atol: float = 
     return checked
 
 
-def validate_spherical(provider: FusionProvider, sectors: Sectors, *, atol: float = 0.0) -> int:
+def validate_spherical(provider: _DualFusionRules, sectors: Sectors, *, atol: float = 0.0) -> int:
     """Check sphericality: left and right traces agree, ``qdim(a) == qdim(dual(a))``.
 
     Exact by default — every provider's quantum dimensions come from exact
@@ -233,7 +234,7 @@ def validate_spherical(provider: FusionProvider, sectors: Sectors, *, atol: floa
 
     Parameters
     ----------
-    provider : FusionProvider
+    provider : FusionRules
         The provider whose pivotal structure is checked.
     sectors : tuple of Sector
         The sectors checked.
@@ -261,7 +262,7 @@ def validate_spherical(provider: FusionProvider, sectors: Sectors, *, atol: floa
     return checked
 
 
-def validate_unitary(provider: FusionProvider, sectors: Sectors, *, atol: float = 1e-13) -> int:
+def validate_unitary(provider: FusionRules, sectors: Sectors, *, atol: float = 1e-13) -> int:
     """Check unitarity of the recoupling data: F-matrices unitary, ``|R| == 1``.
 
     For every ``a, b, c, d`` in ``sectors`` the matrix ``[F^{abc}_d]_{e,f}``
@@ -272,7 +273,7 @@ def validate_unitary(provider: FusionProvider, sectors: Sectors, *, atol: float 
 
     Parameters
     ----------
-    provider : FusionProvider
+    provider : FusionRules
         The provider whose gauge is checked.
     sectors : tuple of Sector
         The budget ``a, b, c, d`` are drawn from.
@@ -322,7 +323,7 @@ def validate_unitary(provider: FusionProvider, sectors: Sectors, *, atol: float 
 
 
 def validate_non_degenerate_braiding(
-    provider: FusionProvider, sectors: Sectors, *, atol: float = 1e-10
+    provider: _DualFusionRules, sectors: Sectors, *, atol: float = 1e-10
 ) -> int:
     """Check that the (unnormalized) S-matrix over ``sectors`` is invertible.
 
@@ -335,7 +336,7 @@ def validate_non_degenerate_braiding(
 
     Parameters
     ----------
-    provider : FusionProvider
+    provider : FusionRules
         The provider whose braiding is checked.
     sectors : tuple of Sector
         The complete sector set of the (finite) theory.
@@ -377,7 +378,7 @@ def validate_non_degenerate_braiding(
 
 
 @cache
-def symmetric_braiding(provider: FusionProvider, sectors: Sectors) -> bool:
+def symmetric_braiding(provider: FusionRules, sectors: Sectors) -> bool:
     """``True`` iff ``R == R**-1`` on every fusion channel over ``sectors``.
 
     The property ``transpose`` gates on beside
@@ -413,7 +414,7 @@ class CategoricalProperties:
 
 
 @cache
-def properties(provider: FusionProvider, sectors: Sectors | None = None) -> CategoricalProperties:
+def properties(provider: _DualFusionRules, sectors: Sectors | None = None) -> CategoricalProperties:
     """The derived categorical properties of ``provider``, cached.
 
     A free function, not a provider attribute: providers stay frozen, hashable,
@@ -424,7 +425,7 @@ def properties(provider: FusionProvider, sectors: Sectors | None = None) -> Cate
 
     Parameters
     ----------
-    provider : FusionProvider
+    provider : FusionRules
         The provider classified.
     sectors : tuple of Sector or None, optional
         The sector budget the checks run over.

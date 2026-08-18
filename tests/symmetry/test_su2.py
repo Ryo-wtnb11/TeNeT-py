@@ -9,14 +9,14 @@ from math import sqrt
 import numpy as np
 import pytest
 
-from tenet.symmetry import SU2, ClebschGordan, FusionProvider, QuantumDimension, SU2Sector
+from tenet.symmetry import SU2, ClebschGordanData, FusionRules, QuantumDimensionData, SU2Sector
 from tenet.symmetry._su2_coeff import value, w6j
 from tenet.symmetry.su2 import _SU2_GAUGE, SU2Provider
 
 # static conformance: fails type checking if SU2Provider drifts from the protocols
-_fusion: FusionProvider = SU2
-_qdim: QuantumDimension = SU2
-_cgc: ClebschGordan = SU2
+_fusion: FusionRules = SU2
+_qdim: QuantumDimensionData = SU2
+_cgc: ClebschGordanData = SU2
 
 SECTORS = [SU2Sector(two_j) for two_j in range(7)]
 

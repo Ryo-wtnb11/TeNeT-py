@@ -13,11 +13,14 @@ from _fibonacci_fixture import ONE, PHI, TAU, Fib
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.symmetry import (
+    AssociatorData,
+    BraidingData,
     CapabilityError,
     ClebschGordanData,
     DualBasis,
+    DualityData,
+    FSIndicatorData,
     QuantumDimensionData,
-    RecouplingData,
     TwistData,
     supports,
 )
@@ -42,7 +45,8 @@ def tau_tau() -> SymmetricTensor:
 
 
 def test_capability_profile():
-    assert supports(Fib, RecouplingData)
+    for capability in (AssociatorData, BraidingData, DualityData, FSIndicatorData):
+        assert supports(Fib, capability)
     assert supports(Fib, QuantumDimensionData)
     assert supports(Fib, TwistData)
     assert not supports(Fib, ClebschGordanData)

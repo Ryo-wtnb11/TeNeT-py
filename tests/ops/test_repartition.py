@@ -92,7 +92,7 @@ def restore(ndim: int, axis: int) -> tuple[int, ...]:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class FusionOnly:
-    """FusionProvider + QuantumDimension, nothing else — no bending capability."""
+    """FusionRules + QuantumDimensionData, nothing else — no bending capability."""
 
     name: str = "FusionOnly"
 

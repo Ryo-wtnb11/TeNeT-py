@@ -22,9 +22,14 @@ from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.fusion_tree import coupled_sectors, fusion_trees
 from tenet.symmetry import (
     U1,
+    AssociatorData,
+    BMatrixData,
+    BraidingData,
     CapabilityError,
-    MultiplicityRecoupling,
-    RecouplingData,
+    DualityData,
+    FMatrixData,
+    FSIndicatorData,
+    RMatrixData,
     U1Sector,
     bend_braided,
 )
@@ -76,9 +81,11 @@ def test_fixture_header_names_racah_as_oracle(name: str) -> None:
 # --- the capability ----------------------------------------------------------
 
 
-def test_provider_supplies_both_recoupling_capabilities() -> None:
-    assert isinstance(SU3, MultiplicityRecoupling)
-    assert isinstance(SU3, RecouplingData)
+def test_provider_supplies_both_recoupling_capability_families() -> None:
+    for capability in (FMatrixData, RMatrixData, BMatrixData):
+        assert isinstance(SU3, capability)
+    for capability in (AssociatorData, BraidingData, DualityData, FSIndicatorData):
+        assert isinstance(SU3, capability)
 
 
 def test_eight_times_eight_has_multiplicity_two() -> None:
@@ -205,13 +212,13 @@ def test_bend_is_multi_term_at_a_multiplicity_vertex() -> None:
 
 
 def test_bend_still_refuses_a_scalar_only_provider() -> None:
-    """Without :class:`MultiplicityRecoupling` the old ``CapabilityError`` stands."""
+    """Without :class:`BMatrixData` the old ``CapabilityError`` stands."""
     from tenet.structure import FusionBlockKey
 
     src = next(t for t in fusion_trees(SU3, (EIGHT, EIGHT, EIGHT), EIGHT) if t.inner == (EIGHT,))
     dst = fusion_trees(SU3, (EIGHT,), EIGHT)[0]
     scalar = _ScalarOnly()
-    assert not isinstance(scalar, MultiplicityRecoupling)
+    assert not isinstance(scalar, BMatrixData)
     with pytest.raises(CapabilityError, match="matrix-valued B-symbols"):
         bend_braided(scalar, FusionBlockKey(src, dst), right=True, dual=False)
 

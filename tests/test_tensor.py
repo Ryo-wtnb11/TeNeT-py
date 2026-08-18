@@ -164,7 +164,7 @@ def test_to_dense_requires_clebsch_gordan():
 
     space = GradedSpace.new(Bare(), {TrivialSector(): 2})
     t = SymmetricTensor.zeros((Leg(space, OUT), Leg(space, IN)))
-    with pytest.raises(CapabilityError, match="ClebschGordan"):
+    with pytest.raises(CapabilityError, match="ClebschGordanData"):
         t.to_dense()
 
 

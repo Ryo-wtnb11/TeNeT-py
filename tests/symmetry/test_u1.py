@@ -8,30 +8,30 @@ import pytest
 
 from tenet.symmetry import (
     U1,
-    ClebschGordan,
-    FusionProvider,
-    QuantumDimension,
+    ClebschGordanData,
+    FusionRules,
+    QuantumDimensionData,
     U1Provider,
     U1Sector,
     requires,
 )
 
 # static conformance check: fails type checking if U1Provider drifts from the protocols
-_fusion: FusionProvider = U1
-_qdim: QuantumDimension = U1
-_cgc: ClebschGordan = U1
+_fusion: FusionRules = U1
+_qdim: QuantumDimensionData = U1
+_cgc: ClebschGordanData = U1
 
 CHARGES = [-3, -2, -1, 0, 1, 2, 5]
 
 
-# --- criterion 1: U1 satisfies FusionProvider, QuantumDimension, ClebschGordan ---
+# --- criterion 1: U1 satisfies FusionRules, QuantumDimensionData, ClebschGordanData ---
 
 
 def test_u1_satisfies_capabilities():
-    assert isinstance(U1, QuantumDimension)
-    assert isinstance(U1, ClebschGordan)
-    assert requires(U1, QuantumDimension) is None
-    assert requires(U1, ClebschGordan) is None
+    assert isinstance(U1, QuantumDimensionData)
+    assert isinstance(U1, ClebschGordanData)
+    assert requires(U1, QuantumDimensionData) is None
+    assert requires(U1, ClebschGordanData) is None
     assert U1.name == "U1"
     assert hash(U1) == hash(U1Provider())
     for f in fields(U1):

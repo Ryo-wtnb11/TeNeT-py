@@ -28,7 +28,7 @@ BLOCK_FREE_LEGS = (
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class Bare:
-    """A provider with fusion data but no ClebschGordan capability."""
+    """A provider with fusion data but no ClebschGordanData capability."""
 
     name: str = "Bare"
 
@@ -72,7 +72,7 @@ def test_abelian_shape_equals_reduced_shape(legs):
 def test_shape_requires_clebsch_gordan_but_reduced_shape_does_not():
     space = GradedSpace.new(Bare(), {TrivialSector(): 2})
     t = SymmetricTensor.zeros((Leg(space, OUT), Leg(space, IN)))
-    with pytest.raises(CapabilityError, match="Bare.*ClebschGordan"):
+    with pytest.raises(CapabilityError, match="Bare.*ClebschGordanData"):
         _ = t.shape
     assert t.reduced_shape == (2, 2)
 

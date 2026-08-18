@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from math import prod
 from typing import TYPE_CHECKING
 
-from tenet.symmetry.base import ClebschGordanData, FusionProvider, Sector, _HashMemo, requires
+from tenet.symmetry.base import ClebschGordanData, Sector, _DualFusionRules, _HashMemo, requires
 
 if TYPE_CHECKING:
     from tenet.leg import Leg
@@ -30,7 +30,7 @@ class GradedSpace(_HashMemo):
     already-canonical tuple and does not validate.
     """
 
-    provider: FusionProvider
+    provider: _DualFusionRules
     sectors: tuple[tuple[Sector, int], ...]
 
     def __post_init__(self) -> None:
@@ -42,13 +42,13 @@ class GradedSpace(_HashMemo):
     @classmethod
     def new(
         cls,
-        provider: FusionProvider,
+        provider: _DualFusionRules,
         sectors: Mapping[Sector, int] | Iterable[tuple[Sector, int]],
     ) -> "GradedSpace":
         """Normalizing constructor: sorts, rejects duplicates and ``m <= 0``.
 
         All sectors must share one type, and that type must be the provider's
-        own sector type (taken as ``type(provider.unit)``) — the ``FusionProvider``
+        own sector type (taken as ``type(provider.unit)``) — the provider
         protocol exposes no sector-type attribute, so ``unit`` is the proxy.
         """
         pairs = list(sectors.items() if isinstance(sectors, Mapping) else sectors)
@@ -156,7 +156,7 @@ class ProductSpace:
     legs: tuple["Leg", ...]
 
     @property
-    def provider(self) -> FusionProvider:
+    def provider(self) -> _DualFusionRules:
         if not self.legs:
             raise ValueError("an empty ProductSpace has no provider")
         return self.legs[0].provider

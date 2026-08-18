@@ -27,7 +27,7 @@ BLOCK_FREE = (Leg(EMPTY, OUT), Leg(EMPTY, IN))
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class Bare:
-    """Neither QuantumDimension nor ClebschGordan — ``test_basic.py``'s provider."""
+    """Neither QuantumDimensionData nor ClebschGordanData — ``test_basic.py``'s provider."""
 
     name: str = "Bare"
 
@@ -102,7 +102,7 @@ def test_a_same_side_pair_is_refused_where_it_used_to_return_a_number():
 def test_full_trace_without_quantum_dimension_raises():
     space = GradedSpace.new(Bare(), {TrivialSector(): 2})
     t = SymmetricTensor.zeros((Leg(space, OUT), Leg(space, IN)))
-    with pytest.raises(CapabilityError, match="QuantumDimension"):
+    with pytest.raises(CapabilityError, match="QuantumDimensionData"):
         tenet.full_trace(t)
 
 

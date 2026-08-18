@@ -45,7 +45,7 @@ def use_jax():
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class QdimOnly:
-    """Fusion + quantum dimension, but no ClebschGordan (no dense expansion)."""
+    """Fusion + quantum dimension, but no ClebschGordanData (no dense expansion)."""
 
     name: str = "QdimOnly"
 
@@ -68,7 +68,7 @@ class QdimOnly:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class Bare:
-    """Neither QuantumDimension nor ClebschGordan."""
+    """Neither QuantumDimensionData nor ClebschGordanData."""
 
     name: str = "Bare"
 
@@ -268,13 +268,13 @@ def test_norm_needs_only_quantum_dimension():
     unweighted = np.sqrt(sum(float(np.sum(np.abs(b) ** 2)) for b in a.blocks))
     assert tenet.norm(a) == pytest.approx(np.sqrt(2.5) * unweighted)
     with pytest.raises(CapabilityError):
-        _ = a.shape  # no ClebschGordan, so no dense expansion at all
+        _ = a.shape  # no ClebschGordanData, so no dense expansion at all
 
 
 def test_norm_without_quantum_dimension_raises():
     space = GradedSpace.new(Bare(), {TrivialSector(): 2})
     a = SymmetricTensor.zeros((Leg(space, OUT), Leg(space, IN)))
-    with pytest.raises(CapabilityError, match="QuantumDimension"):
+    with pytest.raises(CapabilityError, match="QuantumDimensionData"):
         _ = tenet.norm(a)
 
 

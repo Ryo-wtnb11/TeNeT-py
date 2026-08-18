@@ -439,8 +439,8 @@ def _flip_refuse(structure: TensorStructure) -> None:
                 f"flip: toggling a leg's dual flag re-expresses the leg through the "
                 f"V_a -> V_a^* isomorphism, and provider {provider.name} does not implement "
                 f"{capability.__name__}. The scalar is chi_a * theta_a — the Frobenius-Schur "
-                "indicator (FSIndicatorData) times the twist (TwistData), the two factors "
-                "FlipPhase used to bundle — per flipped leg per fusion tree (both 1 for a "
+                "indicator (FSIndicatorData) times the twist (TwistData) — per flipped leg "
+                "per fusion tree (both 1 for a "
                 "bosonic Abelian symmetry, twist (-1)^parity for fermion parity, chi the FS "
                 "phase for SU(2)/SU(N)). Faking it would give correct shapes, correct "
                 "sector bookkeeping and a wrong sign."
@@ -578,7 +578,7 @@ def flip(
             tree = key.output_tree if out else key.input_tree
             # the leaf is invariant under the flip, so old key and new key agree.
             # flip() ran requires(provider, FSIndicatorData/TwistData) before this
-            # plan; chi * theta is bit-identical to the old bundled flip_phase.
+            # plan; chi * theta is the flip scalar, per flipped leg per tree.
             a = tree.uncoupled[tree_pos[ax]]
             base = complex(provider.frobenius_schur(a) * provider.twist(a))  # ty: ignore[unresolved-attribute]
             if not out:  # the input tree enters the pairing conjugated

@@ -66,7 +66,7 @@ def use_jax():
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class FusionOnly:
-    """FusionProvider + QuantumDimension, nothing else — no permutation capability."""
+    """FusionRules + QuantumDimensionData, nothing else — no permutation capability."""
 
     name: str = "FusionOnly"
 

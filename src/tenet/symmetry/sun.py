@@ -8,7 +8,8 @@ silently.
 
 SU(3) is the first symmetry tenet ships with ``N^c_ab > 1`` (``8 x 8 -> 8`` has
 ``N = 2``) and the first where ``dual(a) != a`` on an irrep of dimension ``> 1``.
-Both are served through :class:`~tenet.symmetry.base.MultiplicityRecoupling` and
+Both are served through the matrix-valued :class:`~tenet.symmetry.base.FMatrixData`
+/ :class:`~tenet.symmetry.base.RMatrixData` / :class:`~tenet.symmetry.base.BMatrixData` and
 :class:`~tenet.symmetry.base.DualBasis`, so ``transpose``, ``repartition`` and
 ``to_dense`` are total for SU(N).
 
@@ -125,7 +126,7 @@ class SUNProvider:
             raise ValueError(f"{c} does not appear in the fusion of {a} and {b}")
         return _sun_coeff.cgc(da, db, dc)
 
-    # --- MultiplicityRecoupling -------------------------------------------------
+    # --- FMatrixData / RMatrixData / BMatrixData --------------------------------
 
     def f_matrix(
         self,
@@ -147,7 +148,7 @@ class SUNProvider:
         """``B^{ab}_c``, shape ``(N^c_ab, N^a_{c,dual(b)})``."""
         return _sun_coeff.b_matrix(self._d(a), self._d(b), self._d(c))
 
-    # --- RecouplingData ---------------------------------------------------------
+    # --- scalar F/R/B and the FS indicator --------------------------------------
 
     def f_symbol(
         self,
@@ -177,10 +178,6 @@ class SUNProvider:
         """``theta_a = 1``: SU(N) braiding is symmetric, so the twist is trivial."""
         self._d(a)
         return 1
-
-    def flip_phase(self, a: SUNSector) -> int:
-        """``chi_a * theta_a = chi_a``: SU(N) braiding is symmetric, so the twist is 1."""
-        return self.frobenius_schur(a)
 
     # --- DualBasis --------------------------------------------------------------
 
@@ -223,6 +220,6 @@ def _scalar(block: np.ndarray, which: str) -> float:
     if block.size != 1:
         raise ValueError(
             f"SUN: {which}-symbol is scalar-valued but this vertex has multiplicity "
-            f"{block.shape}; use the matrix-valued MultiplicityRecoupling method instead"
+            f"{block.shape}; use the matrix-valued f_matrix/r_matrix/b_matrix method instead"
         )
     return float(block.reshape(()))

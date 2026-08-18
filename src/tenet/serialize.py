@@ -32,7 +32,13 @@ import numpy as np
 from tenet.leg import Leg, Side
 from tenet.space import GradedSpace
 from tenet.structure import TensorStructure
-from tenet.symmetry.base import FusionProvider, Sector, TrivialProvider, TrivialSector
+from tenet.symmetry.base import (
+    FusionRules,
+    Sector,
+    TrivialProvider,
+    TrivialSector,
+    _DualFusionRules,
+)
 from tenet.symmetry.fz2 import _FZ2_GAUGE, FZ2Provider, FZ2Sector
 from tenet.symmetry.product import ProductProvider, ProductSector
 from tenet.symmetry.su2 import _SU2_GAUGE, SU2Provider, SU2Sector
@@ -95,7 +101,7 @@ else:
 # --- header encoding ---------------------------------------------------------
 
 
-def _kind(provider: FusionProvider) -> str:
+def _kind(provider: FusionRules) -> str:
     try:
         return _KINDS[type(provider)]
     except KeyError:
@@ -105,7 +111,7 @@ def _kind(provider: FusionProvider) -> str:
         ) from None
 
 
-def _encode_provider(provider: FusionProvider) -> dict[str, Any]:
+def _encode_provider(provider: FusionRules) -> dict[str, Any]:
     kind = _kind(provider)
     if kind == "Product":
         # kind == "Product" pins the concrete ProductProvider, which has factors
@@ -120,7 +126,7 @@ def _encode_provider(provider: FusionProvider) -> dict[str, Any]:
     return {"kind": kind, **fields}
 
 
-def _decode_provider(d: Any) -> FusionProvider:
+def _decode_provider(d: Any) -> _DualFusionRules:
     kind = d["kind"]
     if kind == "Product":
         return ProductProvider(tuple(_decode_provider(f) for f in d["factors"]))
@@ -136,7 +142,7 @@ def _encode_sector(a: Sector) -> list[Any]:
     return [getattr(a, f.name) for f in dataclasses.fields(a)]
 
 
-def _decode_sector(provider: FusionProvider, args: list[Any]) -> Sector:
+def _decode_sector(provider: FusionRules, args: list[Any]) -> Sector:
     kind = _kind(provider)
     if kind == "Product":
         return ProductSector(
@@ -177,7 +183,7 @@ def _decode_leg(d: Any) -> Leg:
     return Leg(space, Side(d["side"]), bool(d["dual"]), d["name"])
 
 
-def _gauges(providers: "Iterable[FusionProvider]") -> dict[str, str]:
+def _gauges(providers: "Iterable[FusionRules]") -> dict[str, str]:
     """The gauge fingerprint of every kind present that has one, product factors included."""
     out: dict[str, str] = {}
     stack = list(providers)

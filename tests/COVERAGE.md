@@ -14,7 +14,7 @@ this file is review discipline.
 ## Columns: the providers
 
 The canonical list is the suite's only all-eight parametrization,
-`tests/symmetry/test_flip_phase.py:34`:
+`tests/symmetry/test_flip_scalar.py:34`:
 
 `Trivial, U1, Z2, fZ2, SU2, SUNProvider(3), ProductProvider((U1, SU2)), SU3`
 
@@ -43,7 +43,7 @@ in CI**; every empty cell is a decision, not a constraint.
 | 5 | `compose` / `tensordot` / `einsum` | `{trivial, u1, su2, fz2, product}`; `einsum_multi` drops product | `tests/ops/test_einsum.py:75`; `tests/ops/test_einsum_multi.py:82`; `tests/ops/test_contraction.py:61` |
 | 6 | `full_trace` / `inner` | `{su2, u1}` (+ torch row below) | `tests/ops/test_full_trace.py:20-23` |
 | 7 | linalg (`svd`/`qr`/`lq`/`polar`/`eigh`/`eig`/`expm`/`*_null`/`svd_truncated`) | `{trivial, u1, su2, fz2}` | `tests/ops/test_linalg.py:52-62`; `tests/ops/test_svd_truncated.py:15-24` imports that same `PROVIDERS` — the reuse pattern the budget rule mandates |
-| 8 | `flip` (#142) | capability on all 8; numerically `{u1, fz2, su2, su3}` (+ Z2/product spaces) | `tests/symmetry/test_flip_phase.py:34`; `tests/ops/test_flip.py` |
+| 8 | `flip` (#142) | capability on all 8; numerically `{u1, fz2, su2, su3}` (+ Z2/product spaces) | `tests/symmetry/test_flip_scalar.py:34`; `tests/ops/test_flip.py` |
 | 9 | `embed` / `restrict` / `direct_sum` / `isometry` | `{trivial, u1, su2, fz2, product}` | `tests/ops/test_embed.py:57`; `tests/ops/test_isometry.py:45-61` |
 | 10 | `cast` | bounded by `SymmetryCast`: targets `{SU2, Trivial, fZ2, U1×U1}`; U1-as-source is the refusal | `tests/ops/test_cast.py:97`, `:386-408` |
 | 11 | `save` / `load` | `{trivial, u1, z2, su2, fz2, product, nested}` + SU(N) — all seven registered providers round-trip | `tests/test_serialize.py:36-57`; `tests/symmetry/test_z2.py:390-419`; `tests/symmetry/test_sun.py:451-501` |
@@ -117,7 +117,8 @@ contract** (with the refusal test), **(d) blocked** (with what blocks it).
   new. Adopted as the row rule.
 - **b4. grad × Trivial / Z2 / ProductProvider.** Coefficient-1 providers add no
   term to a VJP that fZ2 and SU(2) do not already carry;
-  `MultiplicityRecoupling` is the one capability that does — which is why a5
+  the matrix-valued `FMatrixData`/`RMatrixData`/`BMatrixData` are the
+  capabilities that do — which is why a5
   was (a) and these are (b).
 - **b5. `embed`/`restrict`/`direct_sum` × SU(3).** Those act on degeneracy
   multiplicities inside a coupled sector; a fusion-vertex multiplicity is a row

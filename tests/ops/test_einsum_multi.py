@@ -503,11 +503,11 @@ def test_a_cotengra_optimizer_is_accepted_as_it_is():
     )
 
 
-# --- a provider without ClebschGordan ---------------------------------------------------------
+# --- a provider without ClebschGordanData ---------------------------------------------------------
 
 
 class Bare:
-    """U(1) fusion without ``irrep_dim``: no physical ``shape``, so no ``ClebschGordan``.
+    """U(1) fusion without ``irrep_dim``: no physical ``shape``, so no ``ClebschGordanData``.
 
     Mirrors ``tests/test_space.py``'s ``_NoCGCProvider``; the point here is that
     the path finder falls back to ``reduced_shape`` instead of raising.
@@ -543,7 +543,7 @@ def test_a_provider_without_clebsch_gordan_still_plans(monkeypatch, n):
     b2 = GradedSpace.new(bare, {U1Sector(0): 1, U1Sector(-1): 2})
     equation, legs = matrix_chain((b1, b2, b1, b2), n)
     tensors = build(equation, legs, seed=3)
-    with pytest.raises(CapabilityError, match="ClebschGordan"):
+    with pytest.raises(CapabilityError, match="ClebschGordanData"):
         _ = tensors[0].shape
     got = tenet.einsum(equation, *tensors, optimize=chain_path(n))
     assert shapes == [tuple(t.reduced_shape for t in tensors)]

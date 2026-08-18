@@ -145,7 +145,7 @@ class SU3FixtureProvider:
         out.flags.writeable = False
         return out
 
-    # --- MultiplicityRecoupling ------------------------------------------
+    # --- FMatrixData / RMatrixData / BMatrixData -------------------------
 
     def f_matrix(
         self,
@@ -173,7 +173,7 @@ class SU3FixtureProvider:
         scale = sqrt(_dim(a.dynkin) * _dim(b.dynkin) / _dim(c.dynkin))
         return scale * block[:, :, 0, 0]
 
-    # --- RecouplingData (scalar shadows, valid where every vertex is N == 1) ---
+    # --- scalar F/R/B shadows (valid where every vertex is N == 1) -------
 
     def f_symbol(
         self,
@@ -200,10 +200,6 @@ class SU3FixtureProvider:
     def twist(self, a: SU3Sector) -> int:
         """``theta_a = 1``: SU(3) braiding is symmetric, so the twist is trivial."""
         return 1
-
-    def flip_phase(self, a: SU3Sector) -> int:
-        """``chi_a * theta_a = chi_a``: SU(3) braiding is symmetric, so the twist is 1."""
-        return self.frobenius_schur(a)
 
     # --- the capabilities under test -------------------------------------
 
