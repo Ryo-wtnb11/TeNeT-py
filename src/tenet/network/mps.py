@@ -1,12 +1,14 @@
-"""The containers: :class:`MPS` and :class:`MPO`.
+"""The containers: [MPS][tenet.network.MPS] and [MPO][tenet.network.MPO].
 
 Promoted from ``examples/toy_codes/dmrg.py`` (#110) with no arithmetic change: ``random_mps``
-:266-274, ``_as_site`` :277-286 (now the :meth:`MPS.__setitem__` write barrier),
-``canonicalize`` :289-306 (now :meth:`MPS.canonize_`) and ``mpo`` :220-240 (now
-:meth:`MPO.from_w`). ``scalar``, ``inner`` and ``spectrum`` lived here until #114 moved
-them to :mod:`tenet.network.common`, where ``network/ctmrg.py`` can reach them without
+:266-274, ``_as_site`` :277-286 (now the ``MPS.__setitem__`` write barrier),
+``canonicalize`` :289-306 (now [MPS.canonize_][tenet.network.MPS.canonize_]) and ``mpo`` :220-240
+(now
+[MPO.from_w][tenet.network.MPO.from_w]). ``scalar``, ``inner`` and ``spectrum`` lived here until
+#114 moved
+them to ``tenet.network.common``, where ``network/ctmrg.py`` can reach them without
 importing a driver it shares no concept with; #126 then promoted the first two out of the
-driver layer entirely, as :func:`tenet.full_trace` and :func:`tenet.inner`.
+driver layer entirely, as [tenet.full_trace][] and [tenet.inner][].
 
 Every two-operand ``tenet.einsum`` in this module follows the package's composition rule
 -- operand 1 supplies ``IN`` on every shared wire; stated once in
@@ -37,7 +39,8 @@ __all__ = [
     "spectrum",
 ]
 
-#: Version of the :meth:`MPS.save` *directory* layout -- ``mps.json`` plus the ``NNN.npz``
+#: Version of the [MPS.save][tenet.network.MPS.save] *directory* layout -- ``mps.json`` plus
+#: the ``NNN.npz``
 #: naming. Distinct from ``tenet.serialize.FORMAT_VERSION``, which versions the per-tensor
 #: ``.npz`` header: two formats, two owners, so bumping one is not a lie about the other.
 MPS_FORMAT_VERSION = 1
@@ -49,6 +52,29 @@ MPS_FORMAT_VERSION = 1
 class MPS:
     """A finite open-boundary MPS: a mutable list of frozen ``SymmetricTensor``s.
 
+    Parameters
+    ----------
+    sites : Iterable of SymmetricTensor
+        The site tensors, each passed through the ``__setitem__`` write
+        barrier onto ``(l OUT, p OUT | r IN)``.
+    center : int or None, optional
+        The orthogonality centre; ``None`` (the default) means "no claim
+        made".
+
+    Examples
+    --------
+    >>> from tenet import GradedSpace
+    >>> from tenet.network import MPS
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1), U1Sector(1)])
+    >>> len(psi)
+    3
+    >>> round(psi.norm(), 6)
+    1.0
+
+    Notes
+    -----
     **Site convention**, pinned here once and enforced on every write::
 
         A_n : (left bond OUT, physical OUT, right bond IN)
@@ -99,7 +125,7 @@ class MPS:
 
         Every factorization in ``tenet.linalg`` lowers its input to a *map* first, so a
         rank-3 factor comes back on the map's partition -- a physical leg that was OUT in
-        the codomain returns IN-dual in the domain. One :func:`tenet.repartition` to
+        the codomain returns IN-dual in the domain. One [tenet.repartition][] to
         ``((0, 1), (2,))`` puts it back, and doing it *here* is what lets a factor from
         ``lq``, ``qr`` or ``svd_truncated`` be stored directly: no caller ever writes the
         bend out again, and forgetting it is no longer a silent structure mismatch.
@@ -117,7 +143,14 @@ class MPS:
         return iter(self.sites)
 
     def copy(self) -> "MPS":
-        """A new container over the same frozen tensors."""
+        """A new container over the same frozen tensors.
+
+        Returns
+        -------
+        MPS
+            A fresh [MPS][tenet.network.MPS] holding the same tensors and
+            ``center``.
+        """
         return MPS(self.sites, self.center)
 
     # --- constructors ---------------------------------------------------------------
@@ -126,6 +159,22 @@ class MPS:
     def random(cls, phys: GradedSpace, bonds: Sequence[GradedSpace], *, seed: int = 0) -> "MPS":
         """A random MPS on ``len(bonds) - 1`` sites over the given bond spaces.
 
+        Parameters
+        ----------
+        phys : GradedSpace
+            The physical space of every site.
+        bonds : Sequence of GradedSpace
+            The ``n_sites + 1`` virtual spaces, both ends included.
+        seed : int, optional
+            Site ``i`` draws with ``seed + i``. Default ``0``. Keyword-only.
+
+        Returns
+        -------
+        MPS
+            A random state with ``center=None``.
+
+        Notes
+        -----
         The library takes bond *spaces*; deciding which are reachable for a given
         symmetry and target charge is physics and stays in the caller
         (``examples/toy_codes/dmrg.py::bond_spaces``).
@@ -141,6 +190,42 @@ class MPS:
     def product(cls, phys: GradedSpace, states: Sequence[Sector]) -> "MPS":
         """A product state: one physical sector per site, bonds derived rather than declared.
 
+        Parameters
+        ----------
+        phys : GradedSpace
+            The physical space of every site.
+        states : Sequence of Sector
+            One sector of ``phys`` per site, each at degeneracy 1, naming the
+            basis vector that site carries.
+
+        Returns
+        -------
+        MPS
+            A norm-1 product state whose bond 0 carries the total charge.
+
+        Raises
+        ------
+        ValueError
+            If a sector is not in ``phys``; if a sector has degeneracy > 1 in
+            ``phys`` (this constructor has no slot for the degeneracy index);
+            or if a fusion along the backwards bond derivation has more than
+            one channel -- the constructor is Abelian-only and refuses rather
+            than picking a channel.
+
+        Examples
+        --------
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPS
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(1)])
+        >>> psi[0].legs[0].space.sectors  # bond 0 carries the total charge
+        ((U1Sector(charge=2), 1),)
+        >>> round(psi.norm(), 6)
+        1.0
+
+        Notes
+        -----
         ``states[n]`` names the basis vector site ``n`` carries -- a sector of ``phys``
         at degeneracy 1 -- and the bond spaces fall out of the charges: bond
         ``len(states)`` is the unit sector and the loop runs backwards through the
@@ -155,7 +240,8 @@ class MPS:
         Abelian-only, by construction and permanently: when a fusion has more than one
         channel the bonds are not determined -- a single sector is not a non-Abelian
         multiplet -- and the constructor refuses rather than picking a channel. To target
-        a sector under a non-Abelian symmetry, seed with :meth:`MPS.random` and put the
+        a sector under a non-Abelian symmetry, seed with [MPS.random][tenet.network.MPS.random] and
+        put the
         target on a charged ``D=1`` boundary leg of bond 0.
         """
         states = list(states)
@@ -204,7 +290,18 @@ class MPS:
 
     @classmethod
     def from_tensors(cls, tensors: Iterable[SymmetricTensor]) -> "MPS":
-        """An MPS over already-built site tensors, each through the write barrier."""
+        """An MPS over already-built site tensors, each through the write barrier.
+
+        Parameters
+        ----------
+        tensors : Iterable of SymmetricTensor
+            The rank-3 site tensors, left to right.
+
+        Returns
+        -------
+        MPS
+            The state, with ``center=None``.
+        """
         return cls(tensors)
 
     # --- state machine --------------------------------------------------------------
@@ -212,6 +309,24 @@ class MPS:
     def canonize_(self, to: int = 0) -> "MPS":
         """Right-canonicalize in place and return ``self`` -- YASTN ``canonize_(to='first')``.
 
+        Parameters
+        ----------
+        to : int, optional
+            The target centre. Only ``0`` (fully right-canonical) is
+            supported. Default ``0``.
+
+        Returns
+        -------
+        MPS
+            ``self``, normalized, with ``center = to``.
+
+        Raises
+        ------
+        NotImplementedError
+            If ``to`` is not ``0``.
+
+        Notes
+        -----
         One ``tenet.linalg.lq`` per site from the right, mirroring ``orthogonalize_site_``
         (``_mps_obc.py``:245-300): ``A_n = L . Q`` with ``Q`` on the MPS convention and
         ``L`` absorbed into ``A_{n-1}``. ``lq`` rather than ``qr`` because ``qr`` would put
@@ -219,9 +334,6 @@ class MPS:
 
         Setup only: a two-site sweep leaves the state canonical by construction on the
         side it came from, which is precisely what an ``int`` centre records.
-
-        Only ``to=0`` (fully right-canonical) is supported; any other ``to`` raises
-        :exc:`NotImplementedError`.
         """
         # Simplification: only ``to=0``, because that is the one form the sweep's setup
         # wants. Ceiling: a general ``to`` is the same loop run from both ends, and YASTN's
@@ -237,10 +349,18 @@ class MPS:
         return self
 
     def norm(self) -> float:
-        """``sqrt(<psi|psi>)`` by one bra-ket transfer pass, closed with :func:`tenet.full_trace`.
+        """``sqrt(<psi|psi>)`` by one bra-ket transfer pass, closed with [tenet.full_trace][].
 
+        Returns
+        -------
+        float
+            The 2-norm of the state.
+
+        Notes
+        -----
         No dense expansion and no environment object: two ``tenet.einsum`` calls per site,
-        the same pairwise shape :meth:`Env.update_` uses with the MPO row removed.
+        the same pairwise shape [Env.update_][tenet.network.Env.update_] uses with the MPO row
+        removed.
         """
         t = tenet.einsum("apR,apr->Rr", tenet.adjoint(self[0]), self[0])
         for n in range(1, len(self)):
@@ -251,6 +371,13 @@ class MPS:
     def to_dense(self) -> Any:
         """The full ``d**N`` amplitude array, ``D=1`` boundaries dropped.
 
+        Returns
+        -------
+        array
+            The backend's dense amplitude array of shape ``(d,) * N``.
+
+        Notes
+        -----
         Exponential in ``N``: an oracle exit for tests, and nothing an algorithm calls.
         """
         out = self[0]
@@ -262,14 +389,32 @@ class MPS:
     def compress_(self, *, chi: int, cutoff: float = 0.0) -> float:
         """Truncate to bond ``chi`` in place; return the **total** discarded weight.
 
-        :meth:`canonize_` then one left-to-right ``svd_truncated`` sweep -- the per-bond
-        body of :func:`~tenet.network.sweep_` with the eigensolver removed -- leaving
+        Parameters
+        ----------
+        chi : int
+            The bond-dimension cap handed to
+            [svd_truncated][tenet.ops.linalg.svd_truncated] at every bond.
+            Keyword-only.
+        cutoff : float, optional
+            The singular-value cutoff handed to the same SVD. Default ``0.0``.
+            Keyword-only.
+
+        Returns
+        -------
+        float
+            ``sqrt(sum_bond dw)``, the total discarded weight of the sweep.
+
+        Notes
+        -----
+        [canonize_][tenet.network.MPS.canonize_] then one left-to-right ``svd_truncated`` sweep --
+        the per-bond
+        body of [sweep_][tenet.network.sweep_] with the eigensolver removed -- leaving
         ``center = len(self) - 1``. YASTN's ``truncate_`` (``_mps_obc.py``:379-413)
         instead *assumes* a canonical input and takes ``to=``; canonizing here costs an
         ``lq`` pass the caller usually needs anyway and removes the silently-wrong result
         on a non-canonical state.
 
-        **The returned convention differs from** :func:`~tenet.network.sweep_`'s **on
+        **The returned convention differs from** [sweep_][tenet.network.sweep_]'s **on
         purpose.** ``sweep_`` returns the per-bond *maximum*, because it feeds a per-sweep
         convergence report where the worst bond is the diagnostic; this returns
         ``sqrt(sum_bond dw)`` (YASTN's "norm of the truncated elements normalized by the
@@ -294,13 +439,26 @@ class MPS:
     def save(self, path: str | pathlib.Path) -> None:
         """Write a **directory**: one ``NNN.npz`` per site plus ``mps.json``.
 
-        Per-tensor through :func:`tenet.save`, and that is the whole reason for the shape:
-        :func:`tenet.load` *verifies* the SU(2) and fermionic-parity coefficient gauges
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The destination directory; created if absent.
+
+        Raises
+        ------
+        FileExistsError
+            If ``path`` exists and is not empty -- refused **before anything
+            is written** (see Notes for why).
+
+        Notes
+        -----
+        Per-tensor through [tenet.save][], and that is the whole reason for the shape:
+        [tenet.load][] *verifies* the SU(2) and fermionic-parity coefficient gauges
         (``serialize.py``:196-206), so a serializer that bypassed it would be the one place
         gauge-mismatched coefficients could enter silently. A directory rather than a
         zip-of-npz because ``np.load`` refuses nesting.
 
-        ``mps.json`` carries exactly ``format`` (:data:`MPS_FORMAT_VERSION`), ``n_sites``
+        ``mps.json`` carries exactly ``format`` (``MPS_FORMAT_VERSION``), ``n_sites``
         and ``center``; ``center=None`` is JSON ``null``. Blocks save as NumPy whatever the
         backend, so ``MPS.load(...)`` then ``to_backend("jax")`` per site is the restore --
         a device placement is not a property of a tensor.
@@ -321,17 +479,38 @@ class MPS:
 
     @classmethod
     def load(cls, path: str | pathlib.Path) -> "MPS":
-        """Read a directory written by :meth:`save`. NumPy blocks; structures exactly equal.
+        """Read a directory written by [save][tenet.network.MPS.save]. NumPy blocks; structures
+        exactly equal.
 
-        Per-tensor version, gauge, block-count and member checks stay :func:`tenet.load`'s
+        Parameters
+        ----------
+        path : str or pathlib.Path
+            The MPS directory.
+
+        Returns
+        -------
+        MPS
+            The restored state, ``center`` included.
+
+        Raises
+        ------
+        ValueError
+            If ``mps.json`` is missing or names a newer format than this
+            tenet's ``MPS_FORMAT_VERSION``; if the file set does not match
+            ``n_sites``; if ``center`` is neither null nor in range; or if two
+            consecutive sites' bond spaces disagree -- a corrupt directory.
+
+        Notes
+        -----
+        Per-tensor version, gauge, block-count and member checks stay [tenet.load][]'s
         job, unmodified. Only what the directory owns is added here: a present and
         readable ``mps.json``, an exact file set, an in-range ``center``, and consecutive
         sites whose bond spaces agree.
 
         **The neighbour-bond check lives here and deliberately not in**
-        :meth:`__setitem__`. A half-written directory is a corrupt file and this is the
+        ``__setitem__``. A half-written directory is a corrupt file and this is the
         trust boundary; a sweeping MPS is transiently inconsistent *by construction* --
-        :func:`~tenet.network.sweep_` writes ``psi[n + 1] = vh`` before ``psi[n] = u``
+        [sweep_][tenet.network.sweep_] writes ``psi[n + 1] = vh`` before ``psi[n] = u``
         (``dmrg.py``:120-127) -- so the same check in the write barrier would fire on
         correct code. It is not to be "fixed" upward.
         """
@@ -389,7 +568,8 @@ def _as_site(t: SymmetricTensor) -> SymmetricTensor:
 
 
 def _braket(bra: Sequence[SymmetricTensor], ket: Sequence[SymmetricTensor]) -> Any:
-    """``<bra|ket>`` by one transfer pass -- :meth:`MPS.norm`'s body with two lists.
+    """``<bra|ket>`` by one transfer pass -- [MPS.norm][tenet.network.MPS.norm]'s body with two
+    lists.
 
     The two chains may carry *different* bond spaces: the transfer tensor holds one index
     from each, which is what lets an operator-applied ket close against a plain bra.
@@ -411,10 +591,45 @@ def _check(psi: MPS, o: SymmetricTensor, n: int, ndim: int, last: int) -> None:
 def expectation_1site(psi: MPS, o: SymmetricTensor, n: int) -> float:
     """``<psi|o_n|psi> / <psi|psi>``, with ``o`` rank 2 on ``(phys OUT, phys IN)``.
 
+    Parameters
+    ----------
+    psi : MPS
+        The state; any gauge, any norm.
+    o : SymmetricTensor
+        The operator, rank 2 on ``(phys OUT, phys IN)`` --
+        [local_op][tenet.network.local_op]'s invariant one-site form.
+    n : int
+        The site, ``0 <= n <= len(psi) - 1``.
+
+    Returns
+    -------
+    float
+        The normalized expectation value.
+
+    Raises
+    ------
+    ValueError
+        If ``n`` is out of range, or if ``o`` is not rank 2.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tenet import GradedSpace
+    >>> from tenet.network import MPS, expectation_1site, local_op
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1)])
+    >>> sz = local_op(np.diag([-0.5, 0.5]), phys=phys)
+    >>> round(expectation_1site(psi, sz, 0), 6)
+    0.5
+
+    Notes
+    -----
     **Divided by the norm, and the name carries that.** YASTN spells the pair
     ``measure_1site``/``measure_2site`` and does *not* divide; tenpy spells it
     ``expectation_value`` and does. The references disagree, so conformance decides
-    nothing: in a package whose :meth:`Env.measure` also returns ``<psi|H|psi>`` undivided,
+    nothing: in a package whose [Env.measure][tenet.network.Env.measure] also returns
+    ``<psi|H|psi>`` undivided,
     a second ``measure_*`` that quietly did the same would make one verb mean two things.
     No ``normalize=`` opt-out -- a config for a value that never changes.
     """
@@ -427,12 +642,48 @@ def expectation_1site(psi: MPS, o: SymmetricTensor, n: int) -> float:
 def expectation_2site(psi: MPS, o: SymmetricTensor, n: int) -> float:
     """``<psi|o_{n,n+1}|psi> / <psi|psi>``, ``o`` rank 4 on ``(p OUT, p OUT, p IN, p IN)``.
 
-    Divided by ``<psi|psi>`` for :func:`expectation_1site`'s reason, stated there.
+    Parameters
+    ----------
+    psi : MPS
+        The state; any gauge, any norm.
+    o : SymmetricTensor
+        The two-site operator, rank 4 --
+        [local_op][tenet.network.local_op]'s invariant form on ``np.kron(a, b)``.
+    n : int
+        The pair's left site, ``0 <= n <= len(psi) - 2``.
+
+    Returns
+    -------
+    float
+        The normalized expectation value on the adjacent pair.
+
+    Raises
+    ------
+    ValueError
+        If ``n`` is out of range, or if ``o`` is not rank 4.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tenet import GradedSpace
+    >>> from tenet.network import MPS, expectation_2site, local_op
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1)])
+    >>> sz = np.diag([-0.5, 0.5])
+    >>> szsz = local_op(np.kron(sz, sz), phys=phys)
+    >>> round(expectation_2site(psi, szsz, 0), 6)
+    -0.25
+
+    Notes
+    -----
+    Divided by ``<psi|psi>`` for [expectation_1site][tenet.network.expectation_1site]'s reason,
+    stated there.
     Adjacent sites only: at arbitrary separation this becomes a transfer-matrix walk with
     a caching strategy (YASTN's ``measure_2site(bonds=)``, a 75-line body; tenpy's
     ``correlation_function``), and every Hamiltonian here is nearest-neighbour. The
     operator-applied pair is split by the exact ``tenet.linalg.svd`` purely to hand
-    :func:`_braket` two rank-3 sites again.
+    ``_braket`` two rank-3 sites again.
     """
     _check(psi, o, n, 4, len(psi) - 2)
     ket = list(psi)
@@ -449,6 +700,47 @@ def expectation_2site(psi: MPS, o: SymmetricTensor, n: int) -> float:
 def local_op(dense: Any, *, phys: GradedSpace, charge: Sector | None = None) -> SymmetricTensor:
     """A dense operator as a term operator: rank 3 with a charge leg, or invariant on *k* sites.
 
+    Parameters
+    ----------
+    dense : array_like
+        The operator's dense matrix: ``(d, d)`` with ``charge``, or
+        ``(d**k, d**k)`` / ``(d,) * 2k`` without one, ``k`` inferred.
+    phys : GradedSpace
+        The physical space (``d = phys.dim``). Keyword-only.
+    charge : Sector or None, optional
+        The sector the operator emits onto its MPO bond; ``None`` (the
+        default) builds the invariant *k*-site form. Keyword-only.
+
+    Returns
+    -------
+    SymmetricTensor
+        Rank 3 on ``(phys OUT, phys IN, charge OUT)`` with ``charge``, rank
+        2*k* on ``(phys OUT)*k`` then ``(phys IN)*k`` without.
+
+    Raises
+    ------
+    ValueError
+        With ``charge``, if the array is not ``(d, d)`` on this ``phys``; with
+        ``charge=None``, if no integer *k* makes the shape ``(d**k, d**k)`` or
+        ``(d,) * 2k``. A symmetry-forbidden array *raises* inside
+        ``from_dense`` rather than being projected (see Notes).
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tenet import GradedSpace
+    >>> from tenet.network import local_op
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> sp = np.array([[0.0, 0.0], [1.0, 0.0]])  # S^+ raises 2 S^z by 2
+    >>> local_op(sp, phys=phys, charge=U1Sector(-2)).ndim  # the charge-leg form
+    3
+    >>> sz = np.diag([-0.5, 0.5])
+    >>> local_op(np.kron(sz, sz), phys=phys).ndim  # one invariant 2-site term
+    4
+
+    Notes
+    -----
     With ``charge``, a ``(d, d)`` array becomes rank 3 on ``(phys OUT, phys IN, charge
     OUT)``. The third leg is why that form exists: ``S^+`` raises ``2 S^z`` by 2, so as a
     rank-2 tensor it is symmetry-forbidden and ``from_dense`` refuses it, correctly; the
@@ -461,7 +753,8 @@ def local_op(dense: Any, *, phys: GradedSpace, charge: Sector | None = None) -> 
     auxiliary leg at all. A term is a scalar under the symmetry, so this form **cannot
     express a symmetry-breaking term**: on SU(2) legs ``Sz (x) Sz`` alone raises and
     ``S.S`` builds. A non-Abelian term's coupling lives inside the array's own blocks,
-    which is why it needs no coupling-tree argument; :meth:`MPO.from_terms` splits it with
+    which is why it needs no coupling-tree argument; [MPO.from_terms][tenet.network.MPO.from_terms]
+    splits it with
     ``svd_truncated`` and the MPO bond comes out of that SVD.
 
     Both forms are built at ``from_dense``'s **default** relative ``atol``, so an array
@@ -491,7 +784,7 @@ def local_op(dense: Any, *, phys: GradedSpace, charge: Sector | None = None) -> 
 def _as_w(t: SymmetricTensor) -> SymmetricTensor:
     """Put a rank-4 tensor on the MPO partition ``(wl IN, p OUT, p IN, wr OUT)``.
 
-    :meth:`MPS.__setitem__`'s job for sites, as a function: ``svd_truncated`` lowers its
+    ``MPS.__setitem__``'s job for sites, as a function: ``svd_truncated`` lowers its
     input to a map, so its factors come back bent and one ``repartition`` puts them back.
     Deliberately **not** ``MPO.__setitem__`` -- one internal compression sweep is not a
     reason to grow the class a mutation API with a single caller.
@@ -579,7 +872,7 @@ def _identity_w(aux: Leg, phys: GradedSpace) -> SymmetricTensor:
     through the sites the term does not touch -- which is what makes a non-adjacent term
     work, and what the old ``np.eye`` spectator could not do. ``id(aux)``'s legs are
     ``(OUT, IN)``, so the subscripts put its IN on the left of the ``W`` and its OUT on
-    the right; ``aux`` is a whole :class:`~tenet.Leg` because the derived bond's ``dual``
+    the right; ``aux`` is a whole [Leg][tenet.Leg] because the derived bond's ``dual``
     flag would be dropped by a space alone.
     """
     return _as_w(
@@ -634,7 +927,7 @@ def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
 # a term has placed so far — its open left-partial-string. Terms sharing an opening share
 # a state; the closing edge carries the coefficient. Each state carries its **own**
 # ``GradedSpace``: the running fused charge for rank-3 operators, or the ``Leg``
-# :func:`_split`'s ``svd_truncated`` derived for a rank-2k operator mid-split. The bond
+# ``_split``'s ``svd_truncated`` derived for a rank-2k operator mid-split. The bond
 # space at a cut is the direct sum, over that cut's states, of the states' spaces — no
 # charge solver anywhere (MPSKit's ``mpohamiltonian.jl``:479-492 is the precedent).
 # Simplification: operator identity is object identity (``id(op)``) — two equal-valued but
@@ -661,7 +954,8 @@ def _embedding(
     ``starts[a]`` is the dense row offset of the state's sector ``a`` inside ``bond``.
     Built through ``from_dense`` at its **default** relative ``atol``: a state space that
     disagrees with the slot it is placed into makes construction *raise* rather than
-    project — the same proof-by-refusal :meth:`MPO.from_w` claims for its grading.
+    project — the same proof-by-refusal [MPO.from_w][tenet.network.MPO.from_w] claims for its
+    grading.
     """
     dense = np.zeros((bond.dim, state.dim))
     for a, _, o, ext in _slabs(state):
@@ -677,7 +971,7 @@ def _merge(sym, keys, states):
 
     The bond space at a cut and every group subspace inside it are the same construction:
     per state, per sector, one slab whose dense offset is recorded so that
-    :func:`_embedding` can place it. Allocation order is the caller's ``keys`` order.
+    ``_embedding`` can place it. Allocation order is the caller's ``keys`` order.
     """
     merged: dict = {}
     for k in keys:
@@ -698,7 +992,7 @@ def _merge(sym, keys, states):
 def _group_embedding(bond, bond_starts, group, group_starts, keys, states, *, left, dual, dual_b):
     """The 0/1 isometry between one *group* of states and its slots of the full bond.
 
-    :func:`_embedding` for a set of states at once: the ``left`` orientation reads
+    ``_embedding`` for a set of states at once: the ``left`` orientation reads
     ``(bond IN, group OUT)`` and slices a left environment down to the group; the other
     reads ``(group IN, bond OUT)`` and does the same to a right environment, or embeds a
     group-resolved environment back into the full bond. ``dual_b`` is the bond side's
@@ -728,7 +1022,8 @@ class JordanBlocks(NamedTuple):
     bond legs (``IdL`` / open / ``IdR`` subspaces), and the six embeddings connect those
     groups to the full instantiated bond: ``*_l`` slice the site's left cut as
     ``(bond IN, group OUT)``, ``*_r`` its right cut as ``(group IN, bond OUT)``; a missing
-    group is ``None``. :meth:`Env.heff2` folds environments into these blocks once per
+    group is ``None``. [Env.heff2][tenet.network.Env.heff2] folds environments into these blocks
+    once per
     bond, which is the whole reason the table survives instantiation.
 
     Three derived views serve the matvec's term merging: ``idmap`` is the rank-2 0/1 map
@@ -740,7 +1035,8 @@ class JordanBlocks(NamedTuple):
     identity tensor interleaves the bond line with the two physical lines, and for a
     state that braids with signs that crossing is the Jordan-Wigner string -- it lives
     in the rank-4 tensor and in nothing cheaper, so such a state is classified into
-    ``a_real_op`` instead, where :meth:`Env.heff2`'s open-to-open chain contracts the
+    ``a_real_op`` instead, where [Env.heff2][tenet.network.Env.heff2]'s open-to-open chain contracts
+    the
     full tensor. For every sign-free provider the classification is what it always was,
     at the cost it always had.
     """
@@ -888,11 +1184,11 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
     block2's zero-propagation doing the same job in their own spellings. The bond space
     at a cut is the direct sum of the surviving states' spaces, in allocation order with
     the identities at the two ends; each edge lands via
-    ``einsum("ax,xpqy,yb->apqb", e_l, w, e_r)`` with :func:`_embedding` isometries, and a
+    ``einsum("ax,xpqy,yb->apqb", e_l, w, e_r)`` with ``_embedding`` isometries, and a
     site is the plain sum of its placed edges.
 
     With ``table=True`` the surviving edges are *also* returned as one
-    :class:`JordanBlocks` per site — the same pruned graph, in the Jordan partition the
+    ``JordanBlocks`` per site — the same pruned graph, in the Jordan partition the
     two-site matvec consumes — instead of being discarded once the dense sites exist.
     """
     sym = phys.provider
@@ -1108,21 +1404,33 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
 class MPO:
     """A finite MPO: one rank-4 ``SymmetricTensor`` per site, ``(wl IN, p OUT, p IN, wr OUT)``.
 
+    Parameters
+    ----------
+    sites : Iterable of SymmetricTensor
+        The rank-4 site tensors, left to right.
+    jordan : Sequence of JordanBlocks or None, optional
+        The per-site block table [from_terms][tenet.network.MPO.from_terms]
+        keeps at ``cutoff=None``; ``None`` (the default) for every other MPO.
+
+    Notes
+    -----
     Invariance reads ``q(p_out) + q(wr) = q(wl) + q(p_in)``. The first and last sites
     carry a ``D=1`` boundary MPO bond, which is what makes *every* ``W_n`` rank 4 and
     removes the boundary-vector special case.
 
-    **A separate class from :class:`MPS`, with no shape flag.** YASTN unifies the two
+    **A separate class from [MPS][tenet.network.MPS], with no shape flag.** YASTN unifies the two
     behind ``_nr_phys in {1, 2}`` (``_mps_obc.py``:223-225) and pays a runtime branch on
     that flag at :284, :291, :438, :443 and :90-100 -- inside the code whose whole job is
     structural bookkeeping, which is the pattern tenet is typed to avoid. TenPy agrees for
     its own reason (``mpo.py``:16-18: "unlike for an MPS, this doesn't simplify
     calculations. Thus, an MPO has no ``form``"). Two classes, no branch.
 
-    :meth:`jordan` is the one read-only accessor beyond the container protocol: the
-    per-site :class:`JordanBlocks` table when :meth:`from_terms` kept its finite-state
+    [jordan][tenet.network.MPO.jordan] is the one read-only accessor beyond the container protocol:
+    the
+    per-site ``JordanBlocks`` table when [from_terms][tenet.network.MPO.from_terms] kept its
+    finite-state
     machine (``cutoff=None``), ``None`` for every other MPO. It exists so that
-    :class:`~tenet.network.Env` can reach the symbolic edge structure without touching a
+    [Env][tenet.network.Env] can reach the symbolic edge structure without touching a
     private name -- #138 refused public exposure of the symbolic layer "if a caller ever
     needs to inspect it, that is a separate issue with an argument attached", and the
     prepared two-site matvec is that caller and that argument (#141).
@@ -1146,13 +1454,25 @@ class MPO:
         return iter(self.sites)
 
     def jordan(self, n: int) -> JordanBlocks | None:
-        """Site ``n``'s :class:`JordanBlocks`, or ``None`` when no table survived.
+        """Site ``n``'s ``JordanBlocks``, or ``None`` when no table survived.
 
+        Parameters
+        ----------
+        n : int
+            The site.
+
+        Returns
+        -------
+        JordanBlocks or None
+            The site's block table, or ``None`` when the MPO carries none.
+
+        Notes
+        -----
         Only ``from_terms(..., cutoff=None)`` carries a table: the compressing sweep's
         SVD gauge mixes the FSM states, so a compressed ``W`` *has* no edge structure to
         recover -- measured in #141, the sweep leaves zero identity edges on every model
-        -- and :meth:`from_w` never had one. ``None`` therefore also routes
-        :meth:`Env.heff2` onto its dense path.
+        -- and [from_w][tenet.network.MPO.from_w] never had one. ``None`` therefore also routes
+        [Env.heff2][tenet.network.Env.heff2] onto its dense path.
         """
         return None if self._jordan is None else self._jordan[n]
 
@@ -1170,6 +1490,36 @@ class MPO:
     ) -> "MPO":
         """One dense bulk ``W`` plus a graded MPO bond -> first / bulk / last.
 
+        Parameters
+        ----------
+        w : array_like
+            The dense bulk tensor, indexed ``[wl, p_out, p_in, wr]``.
+        n_sites : int
+            Chain length.
+        phys : GradedSpace
+            The physical space. Keyword-only, as are all the following.
+        bond : GradedSpace
+            The graded MPO bond of the bulk.
+        boundary : GradedSpace
+            The ``D=1`` space of the two boundary legs.
+        start : int
+            The row of ``w`` the first site keeps.
+        end : int
+            The column of ``w`` the last site keeps.
+
+        Returns
+        -------
+        MPO
+            ``[first, bulk * (n_sites - 2), last]``, no Jordan table.
+
+        Raises
+        ------
+        ValueError
+            From ``from_dense`` at its **default** relative ``atol``: a wrong
+            grading *raises* rather than projecting (see Notes).
+
+        Notes
+        -----
         ``w`` is indexed ``[wl, p_out, p_in, wr]``. The first site keeps only row
         ``start`` and the last only column ``end``, each on a ``D=1`` ``boundary`` MPO leg.
 
@@ -1179,7 +1529,8 @@ class MPO:
         passing ``allclose`` is not.
 
         The builder that shows what an MPO *is*, and the one a reader needs before they
-        can debug one. :meth:`from_terms` is the other route (#133 reversed this
+        can debug one. [from_terms][tenet.network.MPO.from_terms] is the other route (#133 reversed
+        this
         docstring's refusal of it, on a direct request rather than on new evidence); it is
         not a replacement, and neither is deprecated or aliased to the other.
         """
@@ -1197,13 +1548,70 @@ class MPO:
     def from_terms(cls, n_sites: int, terms: Iterable, *, cutoff: float | None = 1e-13) -> "MPO":
         """A term list ``[(coeff, [(op, sites), ...]), ...]`` as a graded MPO.
 
-        Each ``op`` comes from :func:`local_op` in one of its two forms, and ``sites`` is
-        an ``int`` or a tuple of that many site indices -- ``i`` and ``(i,)`` are the same
-        thing. The dispatch is on ``op.ndim`` alone:
+        Parameters
+        ----------
+        n_sites : int
+            Chain length.
+        terms : Iterable
+            ``[(coeff, [(op, sites), ...]), ...]``: each ``op`` comes from
+            [local_op][tenet.network.local_op] in one of its two forms, and
+            ``sites`` is an ``int`` or a tuple of that many site indices --
+            ``i`` and ``(i,)`` are the same thing.
+        cutoff : float or None, optional
+            The two compressing SVD sweeps' cutoff. ``0.0`` keeps every
+            singular value; ``None`` skips both sweeps entirely and keeps the
+            finite-state machine's block table (see Notes for the three-way
+            behaviour and what ``None`` does *not* affect). Default ``1e-13``.
+            Keyword-only.
+
+        Returns
+        -------
+        MPO
+            The assembled operator; with ``cutoff=None`` it carries the
+            per-site [jordan][tenet.network.MPO.jordan] table.
+
+        Raises
+        ------
+        ValueError
+            If ``terms`` is empty (the physical space is read off an
+            operator); if an operator is neither rank 3 nor rank 2k, sits on
+            the wrong number of sites, leaves ``range(n_sites)``, or shares a
+            site with another operator of its term; if the operators disagree
+            about the physical space; if two k-site operators of one term
+            interleave; if a term's operator charges do not sum to the unit
+            sector (both MPO boundaries are the trivial ``D=1`` leg, so a
+            charged term has nowhere to end); if a charge leg carries more
+            than one sector at degeneracy 1; or if a non-Abelian term is
+            spelled as a *list* of charge-leg operators -- the DSL has no slot
+            for a coupling tree, and the message says to hand the whole term
+            over as one invariant k-site operator instead.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPO, local_op
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> sp = np.array([[0.0, 0.0], [1.0, 0.0]])
+        >>> opp = local_op(sp, phys=phys, charge=U1Sector(-2))
+        >>> opm = local_op(sp.T, phys=phys, charge=U1Sector(2))
+        >>> terms = []  # the 3-site XY chain
+        >>> for i in range(2):
+        ...     terms.append((0.5, [(opp, i), (opm, i + 1)]))
+        ...     terms.append((0.5, [(opm, i), (opp, i + 1)]))
+        >>> h = MPO.from_terms(3, terms)
+        >>> len(h), h.to_dense().shape
+        (3, (8, 8))
+
+        Notes
+        -----
+        The dispatch is on ``op.ndim`` alone:
 
         * **rank 3**, the charge-leg form, one site, Abelian only;
         * **rank 2k**, an invariant *k*-site term on ``k`` sites, any symmetry.
-          :func:`tenet.linalg.svd_truncated` peels it into ``k`` MPO tensors and **the aux
+          [tenet.linalg.svd_truncated][tenet.ops.linalg.svd_truncated] peels it into ``k`` MPO
+          tensors and **the aux
           bond it runs through is the one the SVD found**, so a non-Abelian term needs no
           coupling tree and no multiplicity label: both live inside the operator's own
           blocks. The sites need not be adjacent -- the derived bond, graded or not, runs
@@ -1220,7 +1628,8 @@ class MPO:
         state per open string — never one channel per term.
 
         **The MPO bond spaces are derived, never declared.** Charges enter once, as
-        :func:`local_op`'s ``charge``; from there every FSM state carries its own space —
+        [local_op][tenet.network.local_op]'s ``charge``; from there every FSM state carries its own
+        space —
         the running fused charge of the rank-3 operators to its left, or the graded
         ``Leg`` a k-site operator's internal SVD produced — and the bond at each cut is
         the direct sum of its states' spaces. There is no place left to write a wrong
@@ -1241,10 +1650,12 @@ class MPO:
         width-6/width-10 cylinders, 5 stays 5, 14 stays 14, 20 stays 20, 32 stays 32 --
         while the SVD gauge mixes the FSM states, turning 38 sparse edges into 302 dense
         pairs on the width-10 cylinder and erasing every identity edge on every model
-        measured (#141). Only ``cutoff=None`` keeps the block table that :meth:`jordan`
-        exposes and that routes :meth:`Env.heff2` onto its prepared per-bond operator.
+        measured (#141). Only ``cutoff=None`` keeps the block table that
+        [jordan][tenet.network.MPO.jordan]
+        exposes and that routes [Env.heff2][tenet.network.Env.heff2] onto its prepared per-bond
+        operator.
         **Whether that trade wins depends on the backend**: with a ``compile=`` callable
-        injected into :class:`~tenet.network.Env` the prepared matvec measured ~20x
+        injected into [Env][tenet.network.Env] the prepared matvec measured ~20x
         faster than the dense path, but on the plain numpy backend at small bond
         dimension the prepared path pays a per-call dispatch premium and a full sweep
         measured 1.5-2.6x *slower* (#141's own tables) -- there the default cutoff is the
@@ -1269,7 +1680,7 @@ class MPO:
         Non-Abelian terms spelled as a *list* of charge-leg operators are refused with
         a message rather than accepted. Outside
         ``jit``/``grad`` like the rest of this module, because the assembly decides
-        :class:`~tenet.GradedSpace`\\ s.
+        [GradedSpace][tenet.GradedSpace]\\ s.
         """
         phys = None
         strings = []
@@ -1348,7 +1759,15 @@ class MPO:
     def to_dense(self) -> Any:
         """The full ``d**N x d**N`` operator, ``D=1`` boundaries dropped.
 
-        :meth:`MPS.to_dense`'s twin, with its warning: exponential in ``N``, an oracle exit
+        Returns
+        -------
+        array
+            The backend's dense matrix of shape ``(d**N, d**N)``.
+
+        Notes
+        -----
+        [MPS.to_dense][tenet.network.MPS.to_dense]'s twin, with its warning: exponential in ``N``,
+        an oracle exit
         for tests, and nothing an algorithm calls.
         """
         out = self[0]

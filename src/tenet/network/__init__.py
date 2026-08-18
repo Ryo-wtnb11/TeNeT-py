@@ -28,27 +28,37 @@ so it is written where it holds:
 
 * ``mps.py``, ``env.py``, ``dmrg.py`` -- **outside** ``jit``/``grad`` by construction, and
   they make no differentiability claim. ``tenet.linalg.svd_truncated`` re-decides a bond
-  :class:`~tenet.GradedSpace` at every bond of every sweep, :func:`lanczos`'s happy
-  breakdown tests a norm against ``tol``, and :func:`dmrg_`'s loop exits on a measured
-  energy change, and M11c's :meth:`MPS.save` / :meth:`MPS.load`, :meth:`MPS.compress_`
-  and :func:`expectation_1site` / :func:`expectation_2site` are outside for the same
+  [GradedSpace][tenet.GradedSpace] at every bond of every sweep, [lanczos][tenet.network.lanczos]'s
+  happy
+  breakdown tests a norm against ``tol``, and [dmrg_][tenet.network.dmrg_]'s loop exits on a
+  measured
+  energy change, and M11c's [MPS.save][tenet.network.MPS.save] / [MPS.load][tenet.network.MPS.load],
+  [MPS.compress_][tenet.network.MPS.compress_]
+  and [expectation_1site][tenet.network.expectation_1site] /
+  [expectation_2site][tenet.network.expectation_2site] are outside for the same
   reasons -- filesystem I/O, a re-decided bond space, and a truncating split, and M13's
-  :meth:`MPO.from_terms` joins them because its compression sweep is ``svd_truncated``,
-  as do M14's :class:`Sweep` and :meth:`MPS.product` with the rest of ``mps.py`` /
+  [MPO.from_terms][tenet.network.MPO.from_terms] joins them because its compression sweep is
+  ``svd_truncated``,
+  as do M14's [Sweep][tenet.network.Sweep] and [MPS.product][tenet.network.MPS.product] with the
+  rest of ``mps.py`` /
   ``dmrg.py`` -- a schedule only re-parameterizes the sweeps above, and a product state's
   bonds are decided sector by sector. One carve-out inside ``env.py`` (M16): the prepared
-  two-site matvec is **structure-preserving and traceable** -- :meth:`Env.heff2` returns
+  two-site matvec is **structure-preserving and traceable** -- [Env.heff2][tenet.network.Env.heff2]
+  returns
   a tensor with its input's structure exactly, so the apply is a pure fixed-structure
   function that an injected ``compile=`` may trace, keyed by structure exactly as the
-  rule at the end of this list demands -- while :func:`sweep_` around it stays outside,
+  rule at the end of this list demands -- while [sweep_][tenet.network.sweep_] around it stays
+  outside,
   because ``svd_truncated`` re-decides the bond spaces between one matvec and the next;
-* ``common.py`` -- **trace-neutral**; :func:`spectrum` is nonetheless only ever called
+* ``common.py`` -- **trace-neutral**; [spectrum][tenet.network.spectrum] is nonetheless only ever
+  called
   outside a trace, its ``sorted`` Python list being driver output rather than a tensor;
-* ``ctmrg.py`` -- **both**, stated per function in its own docstrings. :func:`ctmrg`
+* ``ctmrg.py`` -- **both**, stated per function in its own docstrings. ``ctmrg``
   reads singular values and a corner spectrum, so it raises under any trace;
-  :func:`ctmrg_unrolled` and ``move(bond=B)`` are shape-static and differentiable; and
-  :func:`move` is the boundary itself, ``chi=`` outside and ``bond=`` inside. The frozen
-  :class:`~tenet.GradedSpace` is the **only** object that crosses between them, and it
+  [ctmrg_unrolled][tenet.network.ctmrg_unrolled] and ``move(bond=B)`` are shape-static
+  and differentiable; and [move][tenet.network.move] is the boundary itself, ``chi=``
+  outside and ``bond=`` inside. The frozen
+  [GradedSpace][tenet.GradedSpace] is the **only** object that crosses between them, and it
   crosses as a jit cache key, never as a jit argument.
 
 That is the complement of docs/design.md invariant 9, not an exception to it: invariant 9 says
@@ -56,42 +66,60 @@ structure-changing operations live outside compile boundaries and the library ne
 the distinction; this package is where data-dependent control flow is *allowed to live*,
 and ``ctmrg.py`` is where the two sides meet and are named.
 
-Contents. M11a: :class:`MPS`, :class:`MPO`, :class:`Env`, :func:`lanczos`, :func:`sweep_`,
-:func:`dmrg_`. M11b: :class:`CTMEnv`, :class:`Absorb`, :func:`single_layer`,
-:func:`layers`, :func:`double_layer`, :func:`single_layer_ctm`, :func:`double_layer_ctm`,
-:func:`init_env`, :func:`move`, :func:`ctmrg`, :func:`ctmrg_unrolled`, :func:`normalized`
-and :func:`ring`. M11c: :meth:`MPS.save` / :meth:`MPS.load` and :meth:`MPS.compress_`,
-the two measurements :func:`expectation_1site` and :func:`expectation_2site`, and
-:class:`CTMRG_out` -- :func:`ctmrg`'s return, which was a bare ``(CTMEnv, history)``
-tuple. M13: :func:`local_op` and :meth:`MPO.from_terms`, the term-list MPO builder whose
-bond spaces are derived rather than declared, with :meth:`MPO.to_dense` as its oracle exit.
-M13b: no new name -- :func:`local_op` grew an optional ``charge=None`` giving the
-symmetry-**invariant** *k*-site form, and :meth:`MPO.from_terms` takes a tuple of sites
+Contents. M11a: [MPS][tenet.network.MPS], [MPO][tenet.network.MPO], [Env][tenet.network.Env],
+[lanczos][tenet.network.lanczos], [sweep_][tenet.network.sweep_],
+[dmrg_][tenet.network.dmrg_]. M11b: [CTMEnv][tenet.network.CTMEnv], [Absorb][tenet.network.Absorb],
+[single_layer][tenet.network.single_layer],
+[layers][tenet.network.layers], [double_layer][tenet.network.double_layer],
+[single_layer_ctm][tenet.network.single_layer_ctm],
+[double_layer_ctm][tenet.network.double_layer_ctm],
+[init_env][tenet.network.init_env], [move][tenet.network.move], ``ctmrg``,
+[ctmrg_unrolled][tenet.network.ctmrg_unrolled], [normalized][tenet.network.normalized]
+and [ring][tenet.network.ring]. M11c: [MPS.save][tenet.network.MPS.save] /
+[MPS.load][tenet.network.MPS.load] and [MPS.compress_][tenet.network.MPS.compress_],
+the two measurements [expectation_1site][tenet.network.expectation_1site] and
+[expectation_2site][tenet.network.expectation_2site], and
+[CTMRG_out][tenet.network.CTMRG_out] -- ``ctmrg``'s return, which was a bare
+``(CTMEnv, history)``
+tuple. M13: [local_op][tenet.network.local_op] and [MPO.from_terms][tenet.network.MPO.from_terms],
+the term-list MPO builder whose
+bond spaces are derived rather than declared, with [MPO.to_dense][tenet.network.MPO.to_dense] as its
+oracle exit.
+M13b: no new name -- [local_op][tenet.network.local_op] grew an optional ``charge=None`` giving the
+symmetry-**invariant** *k*-site form, and [MPO.from_terms][tenet.network.MPO.from_terms] takes a
+tuple of sites
 for it and splits it with ``svd_truncated``, so it is **no longer Abelian-only**: a
 non-Abelian term is one invariant operator whose coupling lives in its own blocks, and the
 aux bond it runs through, multiplicities and all, is derived from the SVD.
-M14: :class:`Sweep` and :meth:`MPS.product` -- :func:`dmrg_` takes a per-sweep
-``schedule`` whose last entry repeats, :func:`sweep_` takes a wavefunction ``noise``, a
-per-sweep ``callback`` reports while the run happens, and :class:`DMRG_out` records the
-realized schedule; :meth:`MPS.product` builds a product state whose bonds are derived
+M14: [Sweep][tenet.network.Sweep] and [MPS.product][tenet.network.MPS.product] --
+[dmrg_][tenet.network.dmrg_] takes a per-sweep
+``schedule`` whose last entry repeats, [sweep_][tenet.network.sweep_] takes a wavefunction
+``noise``, a per-sweep ``callback`` reports while the run happens, and
+[DMRG_out][tenet.network.DMRG_out] records the
+realized schedule; [MPS.product][tenet.network.MPS.product] builds a product state whose
+bonds are derived
 backwards from the site sectors, putting the total charge on bond 0.
-M16: :meth:`MPO.jordan` -- ``from_terms(cutoff=None)`` keeps its finite-state machine as
-a per-site block table, :meth:`Env.heff2` and :meth:`Env.update_` fold environments into
-those blocks once per bond instead of contracting a dense ``W``, and :class:`Env` takes
+M16: [MPO.jordan][tenet.network.MPO.jordan] -- ``from_terms(cutoff=None)`` keeps its
+finite-state machine as
+a per-site block table, [Env.heff2][tenet.network.Env.heff2] and
+[Env.update_][tenet.network.Env.update_] fold environments into
+those blocks once per bond instead of contracting a dense ``W``, and [Env][tenet.network.Env] takes
 an optional ``compile=`` callable applied to the fixed-structure matvec -- injected by
 the caller, so this layer still names no accelerator.
-Shared: the bond spectrum :func:`spectrum` and the :func:`ones` seed -- the two
+Shared: the bond spectrum [spectrum][tenet.network.spectrum] and the [ones][tenet.network.ones] seed
+-- the two
 scalar exits that sat beside them left for ``tenet.ops`` in #126, as
-:func:`tenet.full_trace` and :func:`tenet.inner`. Promoted verbatim from
+[tenet.full_trace][] and [tenet.inner][]. Promoted verbatim from
 ``examples/toy_codes/dmrg.py`` (#110) and ``examples/toy_codes/ctmrg.py``
 (#102/#104/#105/#107) under the rule that no number may move.
 
 Uses **public ``tenet`` API only**: no ``jax``/``torch``/``scipy``/``quimb``/
 ``opt_einsum``, no ``_``-prefixed reach into other modules, no numerical use of
 ``t.blocks``. The one named exception is reading ``t.provider`` and the provider's
-``qdim``, ``unit``, ``fusion``, ``dual`` and ``permute_tree``: :func:`spectrum`'s
+``qdim``, ``unit``, ``fusion``, ``dual`` and ``permute_tree``: [spectrum][tenet.network.spectrum]'s
 ``sqrt(qdim)`` diagonal weight, ``ctmrg.py``'s unit sector, ``mps.py``'s charge
-accumulation (:meth:`MPO.from_terms`), :meth:`MPS.product`'s backwards bond derivation
+accumulation ([MPO.from_terms][tenet.network.MPO.from_terms]),
+[MPS.product][tenet.network.MPS.product]'s backwards bond derivation
 through ``fusion`` and ``dual``, and the braiding probe behind the fermionic refusal.
 Every one is symmetry-generic metadata, not a provider branch.
 ``tests/network/test_hygiene.py`` enforces both halves, including reads through a local

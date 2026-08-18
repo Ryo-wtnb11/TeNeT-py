@@ -6,9 +6,10 @@ the observables -- and this module keeps the environment machinery.
 
 **This is the first module in ``src/tenet/`` that lives on both sides of a trace**, so
 every public function below opens by saying which. The pairing is #77's:
-:func:`ctmrg` runs ``svd_truncated`` **outside** ``jax.grad`` (it decides a bond
-:class:`~tenet.GradedSpace` from singular *values*, so it raises
-``tenet.StructureChangingError`` under any trace), and :func:`ctmrg_unrolled` runs
+``ctmrg`` runs ``svd_truncated`` **outside** ``jax.grad`` (it decides a bond
+[GradedSpace][tenet.GradedSpace] from singular *values*, so it raises
+``tenet.StructureChangingError`` under any trace), and
+[ctmrg_unrolled][tenet.network.ctmrg_unrolled] runs
 ``svd(bond=)`` **inside** it at exactly that frozen bond -- shape-static, one trace,
 differentiable. The ``GradedSpace`` is the only thing that crosses the boundary, and it
 is metadata: frozen, hashable, array-free, a legitimate jit *cache key* and never a jit
@@ -28,19 +29,20 @@ is metadata: frozen, hashable, array-free, a legitimate jit *cache key* and neve
   Both edges are oriented maps on the environment space, so the boundary ring closes as
   ``c -> e -> ... -> adjoint(c) -> adjoint(e) -> ...``: the far corners and edges of the
   ring are the ``tenet.adjoint`` of the near ones, which for a real environment is what
-  "the same tensor seen from the other side" means -- see :func:`ring`;
+  "the same tensor seen from the other side" means -- see [ring][tenet.network.ring];
 * the enlarged corner is a *bilinear form*, not a map -- its two index groups are
   related by the diagonal mirror, so they sit on the same side -- and the single leg
   bend that ``svd(axes=...)`` performs to make it a map is exactly that mirror. It is
   why the projector ``u`` contracts the *incoming* group of an enlarged edge while
   ``adjoint(u)`` contracts the *outgoing* one. The groups are the tensor's two halves,
-  which is why :func:`move` partitions at ``ndim // 2`` rather than branching on the
+  which is why [move][tenet.network.move] partitions at ``ndim // 2`` rather than branching on the
   model: rank 4 for a single layer, rank 6 for a double one.
 
 **One C4v move, not four directional ones**, and no multi-site unit cell: one corner and
 one edge describe the whole environment only for a mirror-symmetric bulk on a 1x1 cell.
 That restriction is a documented *precondition* on the caller's tensor (see
-:func:`double_layer_ctm`), never a symmetrization this module performs. The upgrade path
+[double_layer_ctm][tenet.network.double_layer_ctm]), never a symmetrization this module performs.
+The upgrade path
 is named and not started: YASTN's ``EnvCTM`` (a ``Peps`` subclass with eight tensors per
 site and four ``update_`` moves), and froSTspin's four ``contract_*`` wrappers over one
 ``contract_enlarged_corner``.
@@ -90,12 +92,24 @@ __all__ = [
 class CTMEnv(NamedTuple):
     """A C4v environment and the frozen bond that crosses into the trace.
 
+    Attributes
+    ----------
+    c : SymmetricTensor
+        The corner, ``(X OUT, X IN)``.
+    e : SymmetricTensor
+        The edge -- rank 3 for a single layer, rank 4 for a double one.
+    bond : GradedSpace
+        The frozen environment bond the last [move][tenet.network.move] decided.
+
+    Notes
+    -----
     This is the *outside* container, and it unpacks positionally, so
     ``c, e, bond = move(...)`` reads exactly as it did before the type existed.
 
-    :func:`ctmrg_unrolled` deliberately does **not** take one. A ``NamedTuple`` is a registered
+    [ctmrg_unrolled][tenet.network.ctmrg_unrolled] deliberately does **not** take one. A
+    ``NamedTuple`` is a registered
     pytree, so handing this object to ``jax.jit`` would try to flatten ``bond`` -- a
-    :class:`~tenet.GradedSpace` -- into a leaf. ``bond`` is metadata: frozen, hashable,
+    [GradedSpace][tenet.GradedSpace] -- into a leaf. ``bond`` is metadata: frozen, hashable,
     array-free, a jit *cache key* (``static_argnums``) and never a jit *argument*. The
     inside therefore takes ``c``, ``e`` and ``bond`` as three separate arguments, and that
     asymmetry is the #77 boundary written into the types instead of described in prose.
@@ -109,14 +123,25 @@ class CTMEnv(NamedTuple):
 class Absorb(NamedTuple):
     """How one model grows an environment: ``corner(c, e)`` and ``edge(e, p)``.
 
+    Attributes
+    ----------
+    corner : Callable[[SymmetricTensor, SymmetricTensor], SymmetricTensor]
+        ``corner(c, e) -> big_c``: the enlarged corner, a bilinear form of
+        rank ``2n``.
+    edge : Callable[[SymmetricTensor, SymmetricTensor], SymmetricTensor]
+        ``edge(e, p) -> new_e``: one absorption step, projected onto ``p``'s
+        new bond.
+
+    Notes
+    -----
     The two callable contracts, pinned here because they are now public:
 
     * ``corner(c, e) -> big_c`` of rank ``2n``, whose two index groups are the diagonal
       mirror of each other -- a bilinear form, not a map -- which is what licenses
-      :func:`move` partitioning at ``ndim // 2``;
+      [move][tenet.network.move] partitioning at ``ndim // 2``;
     * ``edge(e, p) -> new_e`` at the same rank as ``e``, on the projector's new bond.
 
-    Write those two and a third model needs nothing from :func:`move`'s body.
+    Write those two and a third model needs nothing from [move][tenet.network.move]'s body.
 
     A ``Protocol`` or an ABC is **refused, not deferred**, for three reasons. (i) There
     are two real implementations of three ``tenet.einsum`` calls each; a ``Protocol``
@@ -136,8 +161,20 @@ class Absorb(NamedTuple):
 def normalized(t: SymmetricTensor) -> SymmetricTensor:
     """**Inside** ``jax.jit(jax.grad(...))``. ``t / ||t||``, after every move.
 
+    Parameters
+    ----------
+    t : SymmetricTensor
+        Any tensor with a nonzero norm.
+
+    Returns
+    -------
+    SymmetricTensor
+        ``t / tenet.norm(t)``.
+
+    Notes
+    -----
     This is a division by ``tenet.norm``, not the renormalization -- the projector
-    truncation :func:`move` performs -- that the R in CTMRG names.
+    truncation [move][tenet.network.move] performs -- that the R in CTMRG names.
 
     Not cosmetic: ``tenet.ad``'s Lorentzian ``epsilon`` is in units of sigma squared and
     the PRX default ``1e-12`` assumes an ``O(1)``-normalized spectrum. A CTMRG that does
@@ -150,6 +187,21 @@ def normalized(t: SymmetricTensor) -> SymmetricTensor:
 def ring(c: SymmetricTensor, e: SymmetricTensor) -> tuple[SymmetricTensor, ...]:
     """**Inside** ``jax.jit(jax.grad(...))``. ``(c, adjoint(c), e, adjoint(e))``.
 
+    Parameters
+    ----------
+    c : SymmetricTensor
+        The corner.
+    e : SymmetricTensor
+        The edge.
+
+    Returns
+    -------
+    tuple of SymmetricTensor
+        ``(c, adjoint(c), e, adjoint(e))`` -- the near and far sides of the
+        boundary ring.
+
+    Notes
+    -----
     One line, and it is here for the convention rather than for the line: the far side of
     a C4v boundary ring is the ``tenet.adjoint`` of the near side, which is the module
     docstring's leg conventions in code, next to the code that assumes them.
@@ -158,8 +210,20 @@ def ring(c: SymmetricTensor, e: SymmetricTensor) -> tuple[SymmetricTensor, ...]:
 
 
 def single_layer(bulk: SymmetricTensor) -> Absorb:
-    """**Inside** ``jax.jit(jax.grad(...))``. An :class:`Absorb` for any rank-4 bulk.
+    """**Inside** ``jax.jit(jax.grad(...))``. An [Absorb][tenet.network.Absorb] for any rank-4 bulk.
 
+    Parameters
+    ----------
+    bulk : SymmetricTensor
+        The single-layer transfer tensor, ``(l OUT, u OUT, r IN, d IN)``.
+
+    Returns
+    -------
+    Absorb
+        The pair of absorption closures over ``bulk``.
+
+    Notes
+    -----
     ``bulk`` is ``(l OUT, u OUT, r IN, d IN)`` and nothing here knows which model produced
     it -- an Ising Boltzmann tensor, a six-vertex weight, any single-layer transfer
     tensor. There is no bra and no ket, so there is no pair to fuse and nothing hiding a
@@ -187,6 +251,20 @@ def single_layer(bulk: SymmetricTensor) -> Absorb:
 def layers(ket: SymmetricTensor) -> tuple[SymmetricTensor, SymmetricTensor]:
     """**Inside** ``jax.jit(jax.grad(...))``. ``(ket, bra)`` for a rank-5 iPEPS ket.
 
+    Parameters
+    ----------
+    ket : SymmetricTensor
+        The iPEPS site tensor, ``(P OUT, l OUT, u OUT, r IN, d IN)``.
+
+    Returns
+    -------
+    ket : SymmetricTensor
+        The input, untouched.
+    bra : SymmetricTensor
+        ``repartition(adjoint(ket), (1, 2), (0, 3, 4))``.
+
+    Notes
+    -----
     * ket ``(P OUT, l OUT, u OUT, r IN, d IN)``, returned untouched;
     * bra ``repartition(adjoint(ket), (1, 2), (0, 3, 4))``, legs
       ``(L OUT dual, U OUT dual, s IN, R IN dual, D IN dual)``.
@@ -201,9 +279,24 @@ def layers(ket: SymmetricTensor) -> tuple[SymmetricTensor, SymmetricTensor]:
 
 
 def double_layer(ket: SymmetricTensor, bra: SymmetricTensor) -> Absorb:
-    """**Inside** ``jax.jit(jax.grad(...))``. An :class:`Absorb` for any rank-5 iPEPS ket:
+    """**Inside** ``jax.jit(jax.grad(...))``. An [Absorb][tenet.network.Absorb] for any rank-5 iPEPS
+    ket:
     **environment first, then the ket, then the bra**.
 
+    Parameters
+    ----------
+    ket : SymmetricTensor
+        The iPEPS site tensor, ``(P OUT, l OUT, u OUT, r IN, d IN)``.
+    bra : SymmetricTensor
+        Its bent adjoint, as [layers][tenet.network.layers] returns it.
+
+    Returns
+    -------
+    Absorb
+        The pair of absorption closures over the two layers.
+
+    Notes
+    -----
     That is froSTspin's ``contract_enlarged_corner`` order (``ctmrg/ctm_contract.py``:42,
     :53, which closes the physical legs at the moment the bra enters) and YASTN's,
     mirrored (``fpeps/envs/_env_contractions.py``:221-224). YASTN *can* materialize the
@@ -240,11 +333,30 @@ def init_env(site: SymmetricTensor, *bonds: Leg) -> tuple[SymmetricTensor, Symme
     """**Outside** ``jit``/``grad``. Corner ``c`` and edge ``e`` on a *one-dimensional*
     environment space.
 
+    Parameters
+    ----------
+    site : SymmetricTensor
+        Supplies only the provider, the dtype and the backend.
+    *bonds : Leg
+        The edge's virtual legs: one for a single-layer bulk, two -- the ket
+        bond and its dual bra partner -- for a double layer.
+
+    Returns
+    -------
+    c : SymmetricTensor
+        The identity corner on the unit sector.
+    e : SymmetricTensor
+        The all-ones edge -- YASTN's free boundary.
+
+    Notes
+    -----
     ``bonds`` are the edge's virtual legs: one for a single-layer bulk, two -- the ket
     bond and its dual bra partner -- for a double layer. ``site`` supplies only the
     provider, the dtype and the backend. It is a free function taking ``*bonds`` rather
-    than a :class:`CTMEnv` constructor because there *is* no frozen bond until the first
-    :func:`move` decides one, and a third model with neither bond pattern can still use it.
+    than a [CTMEnv][tenet.network.CTMEnv] constructor because there *is* no frozen bond until the
+    first
+    [move][tenet.network.move] decides one, and a third model with neither bond pattern can still
+    use it.
 
     The environment then grows one bulk leg per move -- ``X -> X (x) V`` truncated to
     ``chi`` -- which is the original "grow the lattice out of a corner" reading of CTMRG
@@ -270,6 +382,22 @@ def init_env(site: SymmetricTensor, *bonds: Leg) -> tuple[SymmetricTensor, Symme
 def single_layer_ctm(bulk: SymmetricTensor) -> tuple[Absorb, SymmetricTensor, SymmetricTensor]:
     """**Outside** ``jit``/``grad``. ``(absorber, c, e)`` for a rank-4 bulk tensor.
 
+    Parameters
+    ----------
+    bulk : SymmetricTensor
+        The single-layer transfer tensor, ``(l OUT, u OUT, r IN, d IN)``.
+
+    Returns
+    -------
+    absorber : Absorb
+        [single_layer][tenet.network.single_layer]'s closures over ``bulk``.
+    c : SymmetricTensor
+        The seed corner from [init_env][tenet.network.init_env].
+    e : SymmetricTensor
+        The seed edge from [init_env][tenet.network.init_env].
+
+    Notes
+    -----
     One virtual bond per edge, so ``ctmrg(*single_layer_ctm(bulk), chi=16)`` is the
     whole call.
     """
@@ -279,6 +407,23 @@ def single_layer_ctm(bulk: SymmetricTensor) -> tuple[Absorb, SymmetricTensor, Sy
 def double_layer_ctm(ket: SymmetricTensor) -> tuple[Absorb, SymmetricTensor, SymmetricTensor]:
     """**Outside** ``jit``/``grad``. ``(absorber, c, e)`` for a single-site iPEPS ket.
 
+    Parameters
+    ----------
+    ket : SymmetricTensor
+        The iPEPS site tensor, ``(P OUT, l OUT, u OUT, r IN, d IN)``; must be
+        invariant under the diagonal mirror (see Notes).
+
+    Returns
+    -------
+    absorber : Absorb
+        [double_layer][tenet.network.double_layer]'s closures over the two layers.
+    c : SymmetricTensor
+        The seed corner from [init_env][tenet.network.init_env].
+    e : SymmetricTensor
+        The seed edge from [init_env][tenet.network.init_env], rank 4.
+
+    Notes
+    -----
     **Precondition, not policy:** ``ket`` must already be invariant under the diagonal
     mirror ``tenet.transpose(ket, (0, 2, 1, 4, 3))``, or one corner and one edge do not
     describe the environment. This module does not symmetrize it -- that would silently
@@ -308,6 +453,35 @@ def move(
 ) -> CTMEnv:
     """One C4v move, and the only function here that is on **both** sides of the trace.
 
+    Parameters
+    ----------
+    c : SymmetricTensor
+        The corner.
+    e : SymmetricTensor
+        The edge.
+    absorb : Absorb
+        The model's absorption closures.
+    bond : GradedSpace or None, optional
+        A frozen environment bond: the **inside** spelling, shape-static and
+        differentiable. Default ``None``. Keyword-only, exclusive with ``chi``.
+    chi : int or None, optional
+        A bond-dimension cap: the **outside** spelling, deciding a new bond
+        from singular values. Default ``None``. Keyword-only.
+
+    Returns
+    -------
+    CTMEnv
+        The moved ``(c, e, bond)``, both tensors normalized.
+
+    Raises
+    ------
+    StructureChangingError
+        With ``chi=`` under ``jax.jit``/``jax.grad``:
+        [svd_truncated][tenet.ops.linalg.svd_truncated] reads singular values
+        to decide the surviving sectors, which no trace allows.
+
+    Notes
+    -----
     **Outside** ``jit``/``grad`` with ``chi=``: the projector comes from
     ``tenet.linalg.svd_truncated``, which reads the singular *values* to decide which
     sectors survive and therefore raises ``tenet.StructureChangingError`` under
@@ -357,15 +531,30 @@ def _spectrum_change(old: list[float], new: list[float]) -> float:
 
 
 class CTMRG_out(NamedTuple):
-    """:class:`~tenet.network.DMRG_out`'s twin, with YASTN's names (``_env_ctm.py``:32-36).
+    """[DMRG_out][tenet.network.DMRG_out]'s twin, with YASTN's names (``_env_ctm.py``:32-36).
 
+    Attributes
+    ----------
+    sweeps : int
+        ``len(history)``.
+    max_dsv : float
+        The last sweep's corner-spectrum change.
+    converged : bool
+        Whether ``history[-1] < tol`` held when the loop stopped.
+    env : CTMEnv
+        The converged environment, its ``bond`` frozen.
+    history : list of float
+        The per-sweep corner-spectrum change.
+
+    Notes
+    -----
     ``sweeps`` is ``len(history)``, ``max_dsv`` its last entry and ``converged`` the
     ``history[-1] < tol`` the loop already evaluates -- stored instead of discarded,
     because two test files were re-deriving it from the tail. ``history`` stays a field,
     so no caller loses information.
 
     YASTN's ``max_D`` is deliberately absent: tenet's ``chi`` is an *input*, and the
-    realized environment bond is :attr:`CTMEnv.bond`.
+    realized environment bond is ``CTMEnv.bond``.
     """
 
     sweeps: int
@@ -385,17 +574,64 @@ def ctmrg(
 ) -> CTMRG_out:
     """**Outside** ``jit``/``grad``, and it cannot be otherwise. Sweep to a fixed spectrum.
 
+    Parameters
+    ----------
+    absorb : Absorb
+        The model's absorption closures.
+    c : SymmetricTensor
+        The seed corner.
+    e : SymmetricTensor
+        The seed edge.
+    chi : int, optional
+        The environment bond-dimension cap. Default ``16``.
+    tol : float, optional
+        Convergence threshold on the corner-spectrum change. Default ``1e-10``.
+    max_sweeps : int, optional
+        Sweep budget. Default ``100``.
+
+    Returns
+    -------
+    CTMRG_out
+        The run's record; ``converged`` is the assertion already made.
+
+    Raises
+    ------
+    StructureChangingError
+        Under ``jax.jit``/``jax.grad``, before it ever reaches an SVD: this
+        half decides bond structures and reads spectra.
+
+    Examples
+    --------
+    >>> import math
+    >>> import numpy as np
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.network import ctmrg, single_layer_ctm
+    >>> from tenet.symmetry import Z2, Z2Sector
+    >>> beta = 0.3  # classical 2D Ising, disordered phase
+    >>> c, s = math.sqrt(math.cosh(beta)), math.sqrt(math.sinh(beta))
+    >>> w = np.array([[c, s], [c, -s]])  # the parity-basis Boltzmann split
+    >>> block = np.einsum("sl,su,sr,sd->lurd", w, w, w, w)
+    >>> V = GradedSpace.new(Z2, {Z2Sector(0): 1, Z2Sector(1): 1})
+    >>> legs = (Leg(V, OUT), Leg(V, OUT), Leg(V, IN), Leg(V, IN))
+    >>> bulk = SymmetricTensor.from_dense(block, legs)
+    >>> out = ctmrg(*single_layer_ctm(bulk), chi=8, tol=1e-8)
+    >>> out.converged
+    True
+
+    Notes
+    -----
     It reads singular values to decide a bond and a corner spectrum to decide when to
     stop; a data-dependent loop exit is not a tracing edge case, it is the thing the
     outside/inside split exists to keep outside. Under ``jax.jit`` this raises before it
     ever reaches an SVD.
 
-    Takes the ``(absorber, c, e)`` triple :func:`single_layer_ctm` /
-    :func:`double_layer_ctm` return, so ``ctmrg(*single_layer_ctm(bulk), chi=16)`` is
-    the whole call.
+    Takes the ``(absorber, c, e)`` triple [single_layer_ctm][tenet.network.single_layer_ctm] /
+    [double_layer_ctm][tenet.network.double_layer_ctm] return, so
+    ``ctmrg(*single_layer_ctm(bulk), chi=16)`` is the whole call.
 
-    Returns a :class:`CTMRG_out`. Its ``env`` is a :class:`CTMEnv` whose ``bond`` is the
-    frozen environment :class:`~tenet.GradedSpace` -- the one and only thing that crosses
+    Returns a [CTMRG_out][tenet.network.CTMRG_out]. Its ``env`` is a [CTMEnv][tenet.network.CTMEnv]
+    whose ``bond`` is the
+    frozen environment [GradedSpace][tenet.GradedSpace] -- the one and only thing that crosses
     into the differentiated region -- and its ``history`` the per-sweep corner-spectrum
     change, so a caller can *assert* convergence rather than assume it; ``converged`` is
     that assertion already made.
@@ -426,9 +662,31 @@ def ctmrg_unrolled(
 ) -> tuple[SymmetricTensor, SymmetricTensor]:
     """**Inside** ``jax.jit(jax.grad(...))``. Exactly ``k`` fixed-structure moves.
 
-    Takes ``c``, ``e`` and ``bond`` separately rather than a :class:`CTMEnv`, because
+    Parameters
+    ----------
+    c : SymmetricTensor
+        The corner.
+    e : SymmetricTensor
+        The edge.
+    absorb : Absorb
+        The model's absorption closures.
+    bond : GradedSpace
+        The frozen environment bond every move reuses.
+    k : int, optional
+        Number of unrolled moves. Default ``4``.
+
+    Returns
+    -------
+    c : SymmetricTensor
+        The moved corner.
+    e : SymmetricTensor
+        The moved edge.
+
+    Notes
+    -----
+    Takes ``c``, ``e`` and ``bond`` separately rather than a [CTMEnv][tenet.network.CTMEnv], because
     ``bond`` is a ``static_argnums`` cache key here and a pytree leaf if handed in as part
-    of a ``NamedTuple`` -- see :class:`CTMEnv`.
+    of a ``NamedTuple`` -- see [CTMEnv][tenet.network.CTMEnv].
 
     A static Python loop: at ``k = 4`` there is nothing for ``jax.lax.scan`` to buy, and
     the loop being static is what makes the whole region one trace.

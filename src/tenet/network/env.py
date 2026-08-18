@@ -2,7 +2,8 @@
 
 Promoted from ``examples/toy_codes/dmrg.py`` (#110) with no arithmetic change: ``boundary_envs``
 :318-331, ``update_env`` :334-349, ``invalidate`` :352-360, ``setup_envs`` :363-368 and
-``heff2`` :374-390. :meth:`Env.measure` is the one genuinely new capability in M11a.
+``heff2`` :374-390. [Env.measure][tenet.network.Env.measure] is the one genuinely new
+capability in M11a.
 """
 
 from collections.abc import Callable
@@ -26,7 +27,7 @@ class _Prepared(NamedTuple):
     cases, so the apply is few, large contractions rather than ten small ones:
 
     * ``grt``/``gl`` -- every identity-through path (``II``, ``EE`` and the sign-free
-      spectator part of ``AA``, per :class:`~tenet.network.mps.JordanBlocks`'s
+      spectator part of ``AA``, per ``JordanBlocks``'s
       classification) as *one* rank-2 channel map folded into the right environment,
       closed by the untouched left environment; exact for any state;
     * ``caf`` -- every ``IdL``-anchored path (``IC``, ``ID``, ``CB``, ``CA``) summed
@@ -41,7 +42,7 @@ class _Prepared(NamedTuple):
       exactly as MPSKit's own ``AA`` (:93): folding an environment into an open-channel
       block would cost ``chi^2 d^2 D_w`` memory.
 
-    ``None`` fields cost nothing in :func:`_apply2` -- MPSKit's ``ismissing`` guards
+    ``None`` fields cost nothing in ``_apply2`` -- MPSKit's ``ismissing`` guards
     (:485-500) -- and they are where the structural zeros go.
     """
 
@@ -66,7 +67,7 @@ def _composed(
     diagram -- one that runs through an environment's cap -- cannot meet that rule as
     drawn, and letting ``einsum`` bend it implicitly would leave the cap direction to
     operand order, which is #147's gate-1 sign. So the bend is spelled: both ends of
-    each named wire are moved to the other side with :func:`tenet.repartition`, which
+    each named wire are moved to the other side with [tenet.repartition][], which
     pays the categorical bend coefficient by construction, and the einsum that follows
     is a plain composition again. Every call site below states its bent wires
     explicitly; a call with ``bend=""`` is a straight composition and could as well be
@@ -141,7 +142,7 @@ class _Cores(NamedTuple):
     Everything here is a function of the two sites' block tables alone -- MPSKit's
     merged cores with the group embeddings already folded back onto the full bonds --
     so ``Env`` computes it on the bond's first visit and every later
-    :func:`_build2` is three environment folds.
+    ``_build2`` is three environment folds.
     """
 
     thru: SymmetricTensor | None  # composed identity channels, bond_n -> bond_{n+2}
@@ -161,11 +162,11 @@ def _cores2(t1, t2, eye_p: SymmetricTensor) -> _Cores:
     ``AB = A1 . B2`` -- followed by its ``prepare_operator!!`` merging: the
     one-site-identity fields are padded with ``eye_p`` into the two-site fields that
     share their closure, the two corner channels are one composed rank-2 map, and each
-    merged core's group leg is re-embedded onto the full bond so that :func:`_build2`
+    merged core's group leg is re-embedded onto the full bond so that ``_build2``
     folds one whole environment per family. ``None`` stands for every absent piece.
 
     ``idmap``/``spec_op`` already exclude any spectator whose state braids with signs
-    (:class:`~tenet.network.mps.JordanBlocks`): its string crossing lives in the
+    (``JordanBlocks``): its string crossing lives in the
     rank-4 blocks, so it reaches the matvec through the ``AA`` chains below instead of
     the phys-free ``thru`` ride (#160).
     """
@@ -225,7 +226,7 @@ def _build2(cores: _Cores, gl: SymmetricTensor, gr: SymmetricTensor) -> _Prepare
     """Fold the two environments into the bond's static cores, once per Krylov solve.
 
     MPSKit's ``AC2_hamiltonian`` moment: everything block-sized was merged ahead of time
-    by :func:`_cores2`, so this is one whole-environment contraction per populated
+    by ``_cores2``, so this is one whole-environment contraction per populated
     family -- paid once and used for all of ``lanczos``'s matvecs at the bond.
     """
     grt = None
@@ -259,7 +260,8 @@ def _apply2(p: _Prepared, aa: SymmetricTensor) -> SymmetricTensor:
 
     A pure function of ``(prepared operator, aa)`` with fixed contraction structure --
     every branch is decided by which fields are ``None``, which is part of the structure
-    key -- so it is traceable and is what :meth:`Env.heff2` hands to ``compile=``. Four
+    key -- so it is traceable and is what [Env.heff2][tenet.network.Env.heff2] hands to
+    ``compile=``. Four
     contractions for a string-built Hamiltonian -- the identity-through pair plus one
     one-sided field per anchor -- against the dense path's four over the full
     ``D_w``-wide ``W`` pair, and only the first pair still carries an MPO-bond leg.
@@ -267,8 +269,8 @@ def _apply2(p: _Prepared, aa: SymmetricTensor) -> SymmetricTensor:
     The one-sided ``caf``/``abf`` terms use the two-site sweep's mixed-canonical gauge,
     exactly as MPSKit's matvec does: sites left of the bond left-orthonormal, sites
     right of it right-orthonormal, so the ``IdL``/``IdR`` environment channels are
-    identities nobody contracts. :func:`~tenet.network.sweep_` maintains that gauge at
-    every bond it visits; :meth:`Env.heff2`'s docstring states the precondition.
+    identities nobody contracts. [sweep_][tenet.network.sweep_] maintains that gauge at
+    every bond it visits; [Env.heff2][tenet.network.Env.heff2]'s docstring states the precondition.
     """
     y = None
 
@@ -344,15 +346,15 @@ def _fold_last(
 def _fold_first(
     t: JordanBlocks, f: SymmetricTensor, a: SymmetricTensor, bra: SymmetricTensor
 ) -> SymmetricTensor:
-    """One prepared right-to-left environment step -- :func:`_fold_last` mirrored.
+    """One prepared right-to-left environment step -- ``_fold_last`` mirrored.
 
     Mirrored in the cap sense, not only in the loop direction: a right-directed
     environment is built from the right boundary inward, so in the intended planar
     diagram every bond rail -- the ket bond ``r``, the MPO bond ``y``/``w``/``v``, the
     bra bond ``s`` -- runs through the right cap and turns around, while the physical
     wires compose straight. Each contraction therefore bends its bond-rail wire
-    explicitly (:func:`_composed`) and composes the rest; the dense Jordan-Wigner
-    oracle fixes every one of these choices (#160), and :func:`_fold_last`, whose
+    explicitly (``_composed``) and composes the rest; the dense Jordan-Wigner
+    oracle fixes every one of these choices (#160), and ``_fold_last``, whose
     rails run *out* of the left cap, needs no bend at all.
     """
     t1 = _composed("rys,apr->apys", f, a, bend="r")
@@ -390,10 +392,24 @@ def _fold_first(
 class Env:
     """``<psi|H|psi>`` partial contractions for one ``(psi, h)`` pair.
 
+    Parameters
+    ----------
+    psi : MPS
+        The state; the cache holds views into its current tensors.
+    h : MPO
+        The Hamiltonian.
+    compile : Callable or None, optional
+        Wraps the prepared matvec once per structure key -- ``jax.jit`` at the
+        application level; this layer names no accelerator and ``None`` (the
+        default) runs the plain Python function. Keyword-only.
+
+    Notes
+    -----
     ``F[(n, n + 1)]``: ``(ket IN, mpo OUT, bra OUT)``, built from sites ``<= n``;
     ``F[(n, n - 1)]``: ``(ket OUT, mpo IN, bra IN)``, built from sites ``>= n``.
 
-    The two orientations make every contraction in :meth:`update_` and :meth:`heff2`
+    The two orientations make every contraction in [update_][tenet.network.Env.update_] and
+    [heff2][tenet.network.Env.heff2]
     meet IN against OUT -- and that condition is **not enough**, because it is
     symmetric: it fixes contractibility only, while the cap sign depends on *which
     operand supplies which end* (the composition rule, ``network/__init__.py``).
@@ -404,14 +420,15 @@ class Env:
     therefore a composition with operand 1 supplying IN, and the wires that genuinely
     bend -- the MPS bond arrow and the MPO bond arrow cross the two-site cell in
     opposite directions, so closing either cap turns one rail around -- are bent
-    explicitly through :func:`_composed`, each choice pinned by the dense
+    explicitly through ``_composed``, each choice pinned by the dense
     Jordan-Wigner oracle (#160).
 
     A plain ``dict`` keyed by *directed* bond, exactly YASTN's ``Env``
     (``yastn/tn/mps/_env.py``:94-125). A list-of-left / list-of-right would hide the
     invalidation discipline, which is the entire correctness content of an environment
     cache -- a stale ``F[(n, n+1)]`` after site ``n`` changed gives an energy that is
-    *plausible and wrong*, the worst failure mode a DMRG has. :meth:`clear_` therefore
+    *plausible and wrong*, the worst failure mode a DMRG has. [clear_][tenet.network.Env.clear_]
+    therefore
     pops **both** directed bonds per site, and it runs *before* the replacement is
     written, so a missed update is a ``KeyError`` rather than a wrong number.
 
@@ -461,6 +478,23 @@ class Env:
     def setup_(self, to: int = 0) -> "Env":
         """Build every environment directed towards site ``to``, and return ``self``.
 
+        Parameters
+        ----------
+        to : int, optional
+            The target site. Only ``0`` is implemented. Default ``0``.
+
+        Returns
+        -------
+        Env
+            ``self``, its right-directed environments built.
+
+        Raises
+        ------
+        NotImplementedError
+            If ``to`` is not ``0``; ``MPS.canonize_`` has the same note.
+
+        Notes
+        -----
         ``to=0`` is YASTN's ``setup_(to='first')`` (``_env.py``:104-125): for a
         right-canonical ``psi`` this is every right-directed environment, and it is the
         state a left-to-right sweep starts from.
@@ -474,13 +508,25 @@ class Env:
     def update_(self, n: int, *, to: str) -> None:
         """Write one directed-bond entry from its neighbour -- YASTN ``_env.py``:152-168.
 
+        Parameters
+        ----------
+        n : int
+            The site whose directed-bond entry is written.
+        to : str
+            The direction: ``'last'`` writes ``F[(n, n+1)]`` from
+            ``F[(n-1, n)]``, ``'first'`` writes ``F[(n, n-1)]`` from
+            ``F[(n+1, n)]``. Keyword-only.
+
+        Notes
+        -----
         ``to='last'`` writes ``F[(n, n+1)]`` from ``F[(n-1, n)]``; ``to='first'`` writes
         ``F[(n, n-1)]`` from ``F[(n+1, n)]``. Dense path: three pairwise ``tenet.einsum``
         calls each -- environment first, then the ket, then the MPO, then the bra. With a
         Jordan block table present the step goes edge-aware instead
-        (:func:`_fold_last` / :func:`_fold_first`): the identity channels ride ``idmap``
+        (``_fold_last`` / ``_fold_first``): the identity channels ride ``idmap``
         with no ``W`` contraction, only the operator-carrying blocks pay one, and unlike
-        :meth:`heff2` this path is **exact for any state** -- no gauge assumption.
+        [heff2][tenet.network.Env.heff2] this path is **exact for any state** -- no gauge
+        assumption.
         """
         a, bra = self.psi[n], tenet.adjoint(self.psi[n])
         blocks = self.h.jordan(n)
@@ -500,7 +546,13 @@ class Env:
             self.F[n, n - 1] = _composed("axPs,BPs->axB", t, bra, bend="P")
 
     def clear_(self, *sites: int) -> None:
-        """Pop **both** directed bonds touching each changed site -- YASTN ``clear_site_``."""
+        """Pop **both** directed bonds touching each changed site -- YASTN ``clear_site_``.
+
+        Parameters
+        ----------
+        *sites : int
+            The sites whose tensors changed.
+        """
         for n in sites:
             self.F.pop((n, n - 1), None)
             self.F.pop((n, n + 1), None)
@@ -508,17 +560,31 @@ class Env:
     def heff2(self, n: int, aa: SymmetricTensor) -> SymmetricTensor:
         """``H_eff`` on the two-site tensor at bond ``(n, n+1)``. Two paths, one output.
 
+        Parameters
+        ----------
+        n : int
+            The bond's left site.
+        aa : SymmetricTensor
+            The two-site tensor, ``(left bond OUT, p OUT, q OUT, right bond IN)``.
+
+        Returns
+        -------
+        SymmetricTensor
+            ``H_eff @ aa``, with ``aa``'s structure exactly.
+
+        Notes
+        -----
         **Prepared path**, taken when ``self.h`` carries a Jordan block table -- which
         requires ``MPO.from_terms(..., cutoff=None)``, the precondition, because a
         compressed or ``from_w`` MPO has no edge structure left to prepare. The two
-        environments are folded into the site blocks **once per bond** (:func:`_build2`,
+        environments are folded into the site blocks **once per bond** (``_build2``,
         MPSKit's ``AC2_hamiltonian``) and cached against the environment tensors'
         identity, so one ``lanczos`` solve at ``ncv=3`` pays the fold once and applies
-        :func:`_apply2` three times; absent fields are ``None`` and are skipped, which is
+        ``_apply2`` three times; absent fields are ``None`` and are skipped, which is
         where the structural zeros go. Like MPSKit's matvec, the ``IdL``/``IdR``-anchored
         terms are one-sided: they use the sweep's **mixed-canonical gauge** -- sites left
         of the bond left-orthonormal, sites right of it right-orthonormal, which
-        :func:`~tenet.network.sweep_` maintains at every bond -- as the second
+        [sweep_][tenet.network.sweep_] maintains at every bond -- as the second
         precondition; environments built from a differently-gauged state belong to the
         dense path. The apply itself is compiled through ``compile=`` once per structure
         key -- the tuple of ``aa``'s legs plus the prepared operator's identity -- and
@@ -533,7 +599,7 @@ class Env:
         they agree to solver precision, never bitwise. In and out on ``(left bond OUT, p
         OUT, q OUT, right bond IN)``: the *bra* legs of the two environments become the
         output's bonds while the *ket* legs close against the input's, which is why the
-        result has ``aa``'s structure exactly and :func:`~tenet.network.lanczos` can add
+        result has ``aa``'s structure exactly and [lanczos][tenet.network.lanczos] can add
         the two.
         """
         if self.h.jordan(n) is not None:
@@ -554,9 +620,10 @@ class Env:
         """The bond's prepared operator, rebuilt only when either environment moved.
 
         Cached one per bond against the ``F`` entries *by identity*: environments are
-        frozen tensors replaced on every :meth:`update_`, so holding the two used to
+        frozen tensors replaced on every [update_][tenet.network.Env.update_], so holding the two
+        used to
         build is both the invalidation test and the guarantee a stale operator can
-        never be served -- the discipline :attr:`F` itself uses, one level up.
+        never be served -- the discipline ``F`` itself uses, one level up.
         """
         fl, fr = self.F[n - 1, n], self.F[n + 2, n + 1]
         hit = self._prepared.get(n)
@@ -574,10 +641,18 @@ class Env:
     def measure(self) -> float:
         """``<psi|H|psi>`` without the eigensolver, on a private left-to-right pass.
 
+        Returns
+        -------
+        float
+            ``<psi|H|psi>``, **not** divided by ``<psi|psi>``.
+
+        Notes
+        -----
         The first thing in this repository that measures a converged energy independently
         of the ``lanczos`` Rayleigh quotient that produced it. YASTN's ``measure`` is the
         same closing contraction one level down (``_env.py``:462-468, ``vdot(vecL,
-        vecR)``); the pass is built in a fresh :class:`Env` so a measurement never writes
+        vecR)``); the pass is built in a fresh [Env][tenet.network.Env] so a measurement never
+        writes
         into a sweep's cache.
         """
         n = len(self.psi)
