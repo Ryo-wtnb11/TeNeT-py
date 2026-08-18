@@ -1,4 +1,4 @@
-"""Opt-in stabilized VJPs for ``svd``/``eigh`` on the JAX backend. Call :func:`install`.
+"""Opt-in stabilized VJPs for ``svd``/``eigh`` on the JAX backend. Call [install][tenet.ad.install].
 
 The problem this solves is not an edge case here, it is the generic situation: a
 symmetric fixed point has degenerate singular values *inside* a coupled sector by
@@ -29,7 +29,7 @@ Three things a caller must know:
   -- quimb's included -- gets the broadened VJP. That is the honest cost of using the
   library's documented seam instead of threading a hook through ``ops/linalg.py``, and
   it is why installation is an explicit **function call** rather than an import side
-  effect, unlike :mod:`tenet.pytree`: mutating another library's dispatch table is an
+  effect, unlike [tenet.pytree][]: mutating another library's dispatch table is an
   act the user performs, not something that happens because a module got imported.
   ``uninstall()`` restores autoray's stock bindings.
 
@@ -201,9 +201,9 @@ def _eigh_bwd(
     res: tuple[jax.Array, jax.Array], ct: tuple[jax.Array, jax.Array]
 ) -> tuple[jax.Array]:
     """PRX 9, 031041 Eq. (3) with ``1/x -> safe_inverse(x)``. ``F``'s diagonal is zero
-    for free (see :func:`_safe_inverse`), and the result is Hermitian by construction:
+    for free (see ``_safe_inverse``), and the result is Hermitian by construction:
     ``F`` is antisymmetric and ``aV`` antihermitian. Same cotangent-convention ``conj``
-    as :func:`_svd_bwd`."""
+    as ``_svd_bwd``."""
     w, v = res
     dw, dv = jnp.real(ct[0]), jnp.conj(ct[1])
     f = _safe_inverse(w[None, :] - w[:, None], _EPSILON)
@@ -217,7 +217,7 @@ _eigh.defvjp(_eigh_fwd, _eigh_bwd)
 
 
 def _svd_dispatch(b: jax.Array, full_matrices: bool = True, **kwargs: Any):
-    """What ``ar.do("linalg.svd", jax_array, ...)`` resolves to after :func:`install`.
+    """What ``ar.do("linalg.svd", jax_array, ...)`` resolves to after [install][tenet.ad.install].
 
     Anything but the compact factorization is handed straight back to JAX with its stock
     VJP: ``full_matrices=True`` returns different shapes than the rule above assumes, and
@@ -230,16 +230,24 @@ def _svd_dispatch(b: jax.Array, full_matrices: bool = True, **kwargs: Any):
 
 
 def _eigh_dispatch(b: jax.Array, **kwargs: Any):
-    """As :func:`_svd_dispatch`: a non-default ``UPLO`` goes back to JAX untouched."""
+    """As ``_svd_dispatch``: a non-default ``UPLO`` goes back to JAX untouched."""
     return jnp.linalg.eigh(b, **kwargs) if kwargs else _eigh(b)
 
 
 def install(*, epsilon: float = 1e-12) -> None:
     """Swap JAX's stock ``linalg.svd``/``linalg.eigh`` VJPs for broadened ones.
 
+    Parameters
+    ----------
+    epsilon : float, optional
+        The Lorentzian broadening, in units of sigma squared; the default is
+        the PRX value and assumes an ``O(1)``-normalized spectrum. Read at
+        trace time, so set it before the hot loop.
+
+    Notes
+    -----
     Process-global for the JAX backend, by design -- see the module docstring.
-    Idempotent. ``epsilon`` is the Lorentzian broadening, in units of sigma squared;
-    the default is the PRX value and assumes an ``O(1)``-normalized spectrum.
+    Idempotent.
     """
     global _EPSILON
     _EPSILON = epsilon

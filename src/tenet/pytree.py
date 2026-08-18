@@ -1,6 +1,6 @@
 """Opt-in JAX PyTree registration. ``import tenet.pytree``; core never imports this.
 
-The contract: the leaves of a :class:`~tenet.SymmetricTensor` are its ``blocks``, in
+The contract: the leaves of a [SymmetricTensor][tenet.SymmetricTensor] are its ``blocks``, in
 ``structure.block_order``; the aux data (the treedef) is its ``structure``, which is
 frozen, hashable and array-free (invariant 8) and therefore a sound JIT cache key.
 ``_unflatten`` deliberately does **not** validate — JAX routinely calls it with

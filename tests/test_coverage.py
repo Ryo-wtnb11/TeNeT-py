@@ -54,12 +54,21 @@ def test_e2_the_ad_suite_carries_a_multiplicity_bearing_provider():
         assert isinstance(SU3, capability)
 
 
-# E3 (#167): the docstring standard's mechanical half. Scoped to stages 1+2+3 —
+# E3 (#167): the docstring standard's mechanical half. Scoped to stages 1+2+3+4 —
 # every class in tenet.__all__, the tenet.__all__ functions defined in the
-# converted modules (ops, fusion_tree, map_view), tenet.linalg.__all__, plus all
-# of tenet.network.__all__ — and it ratchets: each of #167's stages adds its
-# names to _documented_names() (tenet.save/tenet.load join with tenet.serialize
-# in stage 4).
+# converted modules (ops, fusion_tree, map_view), tenet.linalg.__all__, all of
+# tenet.network.__all__, and (stage 4) tenet.symmetry.__all__,
+# tenet.serialize.__all__ and tenet.ad's install/uninstall.
+# Stage-4 decisions, recorded:
+# - A capability *protocol* has no constructor, so the class itself is not
+#   checked for Parameters; its public method stubs ARE — they are the provider
+#   contract, documented once here and inherited by every provider whose method
+#   carries no docstring of its own.
+# - Concrete provider classes whose only field is the identity label ``name``
+#   enter NO_PARAMS: users take the module singleton, never the constructor.
+# - tenet.pytree exports nothing public (empty __all__; registration is the
+#   import's side effect), so it adds no names — and importing it here would
+#   register the pytree node as a test side effect, so it is not imported.
 # A NamedTuple documents its fields in an Attributes section, not a Parameters
 # one — griffe warns (fatal under mkdocs --strict) on a Parameters entry absent
 # from the signature, and it does not synthesize a NamedTuple __init__ — so
@@ -94,15 +103,49 @@ NO_PARAMS: dict[str, str] = {
         "Attributes section, which griffe accepts where a Parameters section "
         "on a synthesized signature is a --strict failure"
     ),
+    "tenet.symmetry.CapabilityError": (
+        "an exception raised by the library; it has no introspectable signature "
+        "and users never construct it"
+    ),
+    "tenet.symmetry.StructureChangingError": (
+        "an exception raised by the library; it has no introspectable signature "
+        "and users never construct it"
+    ),
+    "tenet.symmetry.Sector": "a field-less marker base; subclasses add the label fields",
+    "tenet.symmetry.TrivialSector": (
+        "the single field-less sector of the trivial symmetry; nothing to parameterize"
+    ),
+    "tenet.symmetry.TrivialProvider": (
+        "constructed once as the module singleton Trivial; the `name` field is an "
+        "identity label that participates in equality, not a configuration knob"
+    ),
+    "tenet.symmetry.U1Provider": (
+        "constructed once as the module singleton U1; the `name` field is an "
+        "identity label that participates in equality, not a configuration knob"
+    ),
+    "tenet.symmetry.Z2Provider": (
+        "constructed once as the module singleton Z2; the `name` field is an "
+        "identity label that participates in equality, not a configuration knob"
+    ),
+    "tenet.symmetry.FZ2Provider": (
+        "constructed once as the module singleton fZ2; the `name` field is an "
+        "identity label that participates in equality, not a configuration knob"
+    ),
+    "tenet.symmetry.SU2Provider": (
+        "constructed once as the module singleton SU2; the `name` field is an "
+        "identity label that participates in equality, not a configuration knob"
+    ),
+    "tenet.ad.uninstall": "takes no arguments; restores autoray's stock JAX bindings",
 }
 
 
 def _documented_names():
-    from tenet import linalg, network  # noqa: PLC0415  # scoped with the guard that uses it
+    # scoped with the guard that uses them
+    from tenet import ad, linalg, network, serialize, symmetry  # noqa: PLC0415
 
     for name in tenet.__all__:
         obj = getattr(tenet, name)
-        converted = ("tenet.ops", "tenet.fusion_tree", "tenet.map_view")
+        converted = ("tenet.ops", "tenet.fusion_tree", "tenet.map_view", "tenet.serialize")
         if inspect.isclass(obj) or (
             inspect.isfunction(obj) and obj.__module__.startswith(converted)
         ):
@@ -113,6 +156,22 @@ def _documented_names():
         obj = getattr(network, name)
         if inspect.isclass(obj) or inspect.isfunction(obj):
             yield f"tenet.network.{name}", obj
+    for name in symmetry.__all__:
+        obj = getattr(symmetry, name)
+        if inspect.isclass(obj) and getattr(obj, "_is_protocol", False):
+            # A Protocol has no constructor; its public method stubs ARE the
+            # provider contract, so each one is held to the Parameters standard.
+            for attr, member in vars(obj).items():
+                if not attr.startswith("_") and inspect.isfunction(member):
+                    yield f"tenet.symmetry.{name}.{attr}", member
+        elif inspect.isclass(obj) or inspect.isfunction(obj):
+            yield f"tenet.symmetry.{name}", obj
+    for name in serialize.__all__:
+        obj = getattr(serialize, name)
+        if inspect.isclass(obj) or inspect.isfunction(obj):
+            yield f"tenet.serialize.{name}", obj
+    yield "tenet.ad.install", ad.install
+    yield "tenet.ad.uninstall", ad.uninstall
 
 
 def test_e3_every_documented_name_parameterizes_its_docstring():
@@ -136,7 +195,9 @@ def test_e3_every_documented_name_parameterizes_its_docstring():
             f"to NO_PARAMS with a reason (#167)"
         )
         for p in params:
-            assert re.search(rf"^\s*\*{{0,2}}{p}\b", section.group(1), re.M), (
+            # numpy style allows grouped entries ("a, b : Sector"), so the name
+            # may sit after other comma-separated names on the entry line
+            assert re.search(rf"^\s*(?:\*{{0,2}}\w+, *)*\*{{0,2}}{p}\b", section.group(1), re.M), (
                 f"{qualname}'s Parameters section does not name its parameter {p!r}"
             )
     stale = set(NO_PARAMS) - seen

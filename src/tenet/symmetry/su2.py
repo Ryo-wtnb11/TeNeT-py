@@ -6,13 +6,14 @@ Sectors are labelled by the doubled spin ``two_j`` so labels stay exact integers
 ``dual(a) == a`` because SU(2) is self-dual as a *label* map. The Z-isomorphism
 ``V_j -> V_j^*`` carrying the Frobenius-Schur sign ``(-1)^(2j)`` is **not** the
 identity, so ``leg.dual`` must never be treated as a no-op (invariant 2). It is
-now available in the dense basis through :meth:`SU2Provider.z_matrix` (the
-:class:`~tenet.symmetry.base.DualBasis` capability), so ``to_dense`` works on
+now available in the dense basis through
+[z_matrix][tenet.symmetry.SU2Provider.z_matrix] (the
+[DualBasis][tenet.symmetry.DualBasis] capability), so ``to_dense`` works on
 dual SU(2) legs.
 
 F-, R- and B-symbols and Frobenius-Schur signs are available through the
-:class:`~tenet.symmetry.base.AssociatorData` / :class:`~tenet.symmetry.base.BraidingData`
-/ :class:`~tenet.symmetry.base.DualityData` / :class:`~tenet.symmetry.base.FSIndicatorData`
+[AssociatorData][tenet.symmetry.AssociatorData] / [BraidingData][tenet.symmetry.BraidingData]
+/ [DualityData][tenet.symmetry.DualityData] / [FSIndicatorData][tenet.symmetry.FSIndicatorData]
 capabilities; their gauge is pinned to
 the vendored TensorKitSectors fixtures (see ``_SU2_GAUGE``). ``permute_tree`` is
 built on them, so ``transpose`` is total for SU(2), and ``bend_right`` /
@@ -48,7 +49,7 @@ _SU2_GAUGE = "3j=condon-shortley;cg=condon-shortley;f=tks-su2irrep;r=tks-su2irre
 Keys: ``3j``/``cg`` — the 3j and Clebsch-Gordan phase convention (Condon-Shortley,
 magnetic indices descending); ``f``/``r``/``fs`` — F-symbols, R-symbols and
 Frobenius-Schur signs, all matching TensorKitSectors' ``SU2Irrep``. Written into a saved
-file's header by :func:`tenet.save` and compared on :func:`tenet.load`, which refuses a
+file's header by [tenet.save][] and compared on [tenet.load][], which refuses a
 file recorded under a different convention.
 
 Cross-validated against froSTspin (2026-08-14; sympy Condon-Shortley lineage,
@@ -74,7 +75,21 @@ round-trips our ``to_dense`` output at exactly 0.0.
 
 @dataclass(frozen=True, slots=True, order=True)
 class SU2Sector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deliberate, see Sector
-    """An SU(2) irrep labelled by ``two_j = 2j >= 0``."""
+    """An SU(2) irrep labelled by ``two_j = 2j >= 0``.
+
+    Parameters
+    ----------
+    two_j : int
+        The doubled spin, so labels stay exact integers: ``0`` is the singlet,
+        ``1`` spin-1/2, ``2`` spin-1.
+
+    Raises
+    ------
+    TypeError
+        If ``two_j`` is not an ``int`` (``bool`` included).
+    ValueError
+        If ``two_j`` is negative.
+    """
 
     two_j: int
 
@@ -87,7 +102,25 @@ class SU2Sector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deli
 
 @dataclass(frozen=True, slots=True)
 class SU2Provider:
-    """SU(2) provider. Array-free and hashable; CG arrays live in a module-level cache."""
+    """SU(2) provider. Array-free and hashable; CG arrays live in a module-level cache.
+
+    Use the module-level singleton [SU2][tenet.symmetry.SU2] rather than
+    constructing one; ``name`` is an identity label that participates in
+    equality, not a configuration knob. The capability contract of every
+    method is documented once, on the protocols in ``tenet.symmetry`` —
+    only behaviour that *differs* from a protocol carries a docstring here.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import SU2, SU2Sector
+    >>> half = SU2Sector(1)                    # two_j = 1 is spin-1/2
+    >>> SU2.fusion(half, half)                 # singlet and triplet
+    (SU2Sector(two_j=0), SU2Sector(two_j=2))
+    >>> SU2.irrep_dim(SU2Sector(2))
+    3
+    >>> int(SU2.frobenius_schur(half))         # half-integer spin: chi = -1
+    -1
+    """
 
     name: str = "SU2"
 
@@ -150,7 +183,8 @@ class SU2Provider:
         return _su2_coeff.r_symbol(a.two_j, b.two_j, c.two_j)
 
     def b_symbol(self, a: SU2Sector, b: SU2Sector, c: SU2Sector) -> float:
-        """``B^{ab}_c``, derived from :meth:`f_symbol`; real, of unit modulus."""
+        """``B^{ab}_c``, derived from
+        [f_symbol][tenet.symmetry.SU2Provider.f_symbol]; real, of unit modulus."""
         return _su2_coeff.b_symbol(a.two_j, b.two_j, c.two_j)
 
     def permute_tree(
@@ -187,8 +221,9 @@ class SU2Provider:
     def z_matrix(self, a: SU2Sector) -> np.ndarray:
         """``Z_a: V_a -> V_a^*``, shape ``(d_a, d_dual(a)) == (d_a, d_a)``; read-only.
 
-        ``Z[i, d_a - 1 - i] = (-1)**i`` in the descending-m basis of :meth:`cgc`;
-        see :func:`tenet.symmetry._su2_coeff.z_matrix`. Not the identity for
+        ``Z[i, d_a - 1 - i] = (-1)**i`` in the descending-m basis of
+        [cgc][tenet.symmetry.SU2Provider.cgc];
+        see ``tenet.symmetry._su2_coeff.z_matrix``. Not the identity for
         ``two_j >= 1``, even though ``dual(a) == a``.
         """
         if not isinstance(a, SU2Sector):
@@ -198,11 +233,13 @@ class SU2Provider:
     def branch(self, target: FusionRules, a: SU2Sector) -> tuple[Sector, ...]:
         """SU(2) -> U(1): the magnetic quantum numbers, doubled, descending.
 
-        :meth:`cgc`'s magnetic indices run descending, so index ``k`` of ``V_j``
+        [cgc][tenet.symmetry.SU2Provider.cgc]'s magnetic indices run
+        descending, so index ``k`` of ``V_j``
         carries ``S_z = j - k`` and charge ``2 S_z = two_j - 2 k``. Identical to
         froSTspin's ``np.arange(irr - 1, -irr - 1, -2)``.
 
-        Dual-agnostic: on a ``dual`` leg ``to_dense`` applies :meth:`z_matrix`,
+        Dual-agnostic: on a ``dual`` leg ``to_dense`` applies
+        [z_matrix][tenet.symmetry.SU2Provider.z_matrix],
         an antidiagonal ``±1`` signed permutation, so reversing the magnetic
         order and negating the weight are the same operation and cancel.
         """

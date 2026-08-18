@@ -4,9 +4,10 @@ Two sectors, XOR fusion, self-dual labels, ``qdim == irrep_dim == 1``, all-ones
 CGC, ``F ≡ 1``, ``B = N``, ``FS = +1``. Every one of those is shared verbatim with
 ``fz2.py``, the fermion-parity provider sitting one file over; the *only* thing
 that differs is the braiding, and therefore the only method body that differs is
-:meth:`Z2Provider.permute_tree`.
+[Z2Provider.permute_tree][tenet.symmetry.Z2Provider.permute_tree].
 
-**Why :func:`permute_unique_tree` is permitted here.** Its docstring carries a
+**Why [permute_unique_tree][tenet.symmetry.permute_unique_tree] is permitted
+here.** Its docstring carries a
 standing warning: a provider must opt in by defining ``permute_tree``, because
 fermion parity has the identical unique multiplicity-free fusion rule and still
 carries a Koszul sign — *uniqueness of fusion is never permission* (#21). This
@@ -50,7 +51,22 @@ __all__ = ["Z2", "Z2Provider", "Z2Sector"]
 
 @dataclass(frozen=True, slots=True, order=True)
 class Z2Sector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deliberate, see Sector
-    """A Z2 charge: ``parity in {0, 1}``. 0 is even (the unit), 1 is odd."""
+    """A Z2 charge: ``parity in {0, 1}``. 0 is even (the unit), 1 is odd.
+
+    Parameters
+    ----------
+    parity : int
+        ``0`` or ``1``. A ``bool`` is refused even though it is an ``int``
+        subclass, so ``Z2Sector(True) != Z2Sector(1)`` can never become a live
+        question.
+
+    Raises
+    ------
+    TypeError
+        If ``parity`` is not an ``int`` (``bool`` included).
+    ValueError
+        If ``parity`` is not ``0`` or ``1``.
+    """
 
     parity: int
 
@@ -65,7 +81,22 @@ class Z2Sector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # delib
 
 @dataclass(frozen=True, slots=True)
 class Z2Provider:
-    """Z2 with *bosonic* braiding: Vect_Z2. Abelian, multiplicity-free, d = 1, R = +1."""
+    """Z2 with *bosonic* braiding: Vect_Z2. Abelian, multiplicity-free, d = 1, R = +1.
+
+    Use the module-level singleton [Z2][tenet.symmetry.Z2] rather than
+    constructing one; ``name`` is an identity label that participates in
+    equality, not a configuration knob. The capability contract of every
+    method is documented once, on the protocols in ``tenet.symmetry`` —
+    only behaviour that *differs* from a protocol carries a docstring here.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import Z2, Z2Sector
+    >>> Z2.fusion(Z2Sector(1), Z2Sector(1))
+    (Z2Sector(parity=0),)
+    >>> int(Z2.twist(Z2Sector(1)))  # bosonic: no sign, unlike fermion parity
+    1
+    """
 
     name: str = "Z2"
 
