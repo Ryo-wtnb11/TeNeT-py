@@ -164,6 +164,41 @@ Python ML execution ecosystem
 
 ---
 
+# Which reference governs which part
+
+Influence is not uniform: each area of the library follows one reference, and the
+others are read but not copied.
+
+| Area | Reference | Evidence in this repository |
+| --- | --- | --- |
+| 2D methods — CTMRG, PEPS | YASTN | `examples/ctmrg.py` was written against YASTN's design and M11b (#114) promoted it into `tenet.network`; the API-naming survey (#120) took `CTMEnv`, `ctmrg`, `Absorb` from that family |
+| 1D interfaces and API shape | tenpy, YASTN | the trailing-underscore in-place convention (`dmrg_`, `sweep_`, `canonize_`) and the two-criteria convergence, energy plus Schmidt values, are YASTN's (#112); the one-record-per-sweep schedule shape came from SUNDMRG (#136) |
+| Algorithm cores at quantum-chemistry scale | block2 | per-sweep schedule semantics and the guard requiring noise to be zero before convergence (#136); the prepared-operator idea (#141), which MPSKit's `JordanMPO_AC2` shares |
+| Coefficients | racah | racah-py is a core dependency and the sole gauge source (M28); TensorKitSectors remains the SU(2) oracle of record and SUNRepresentations.jl the SU(N) one, consulted through racah rather than directly |
+| The categorical model | TensorKit | as stated above, with a deliberate divergence: the M24 capability lattice (#158) uses capability protocols and a data/property split instead of TensorKit's space-carried dual flag and type hierarchy |
+
+Where YASTN goes further than `tenet` — two-site unit cells, other CTM move
+patterns, fPEPS — that is the direction to take when a caller needs it, not a
+reason to invent a different design.
+
+block2 is deliberately not the interface reference. Its `dmrg()` takes roughly
+forty arguments with print levels and configuration dictionaries; #136 measured
+most of that surface as unused by any caller here and refused it. What `tenet`
+does take from block2 is the algorithmic core, and the remaining piece — keeping
+the Hamiltonian symbolic through a sweep with complementary operators assembled
+per cut — is what M30 designs.
+
+Three things block2 offers are out of reach by construction, each for a stated
+reason. Density-matrix and perturbative noise need a reduced density matrix and
+an eigendecomposition per variant, while `tenet` splits with `svd_truncated`;
+giving that up means giving up the quantum-dimension-weighted sector budget, and
+#136 argued this against three references that agreed. MPI five-level
+parallelism and disk-backed scratch are production HPC concerns, and there is no
+distribution story here. The C++ execution model is not available to a library
+that dispatches through `autoray` over backends.
+
+---
+
 # The central tensor type
 
 The primary owning type is
