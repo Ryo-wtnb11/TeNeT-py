@@ -35,7 +35,11 @@ into ``network/common.py`` with their bodies unchanged, and #126 finished the jo
 promoting the qdim-weighted trace to ``tenet.full_trace`` (and ``inner`` to
 ``tenet.inner``) in ``tenet.ops``, next to ``trace``. There is now a public spelling, so
 ``scalar`` is deleted rather than allowed, and ``spectrum`` alone owns the ``qdim``
-allowance above.
+allowance above. #183 then wrote a local ``scalar``/``inner``/``spectrum`` back into
+``examples/toy_codes/dmrg.py`` **on purpose**: the teaching lane's rule is that a toy code
+writes out how a tensor network produces a number, and it may not import
+``tenet.network``. That is a copy in a file this scan does not cover and never should --
+it is the lesson, not the debt.
 """
 
 import ast

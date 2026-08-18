@@ -37,6 +37,7 @@ nav:
   - Examples:
       - examples/index.md
       - Heisenberg, U(1): examples/heisenberg.md
+      - Heisenberg, U(1) walkthrough: examples/heisenberg-walkthrough.md
       - Heisenberg, SU(2): examples/su2-heisenberg.md
       - 2D Ising CTMRG: examples/ising2d.md
       - Toy DMRG: examples/toy-dmrg.md

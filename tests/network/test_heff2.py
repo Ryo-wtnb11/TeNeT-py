@@ -10,7 +10,7 @@ import ast
 import pathlib
 import sys
 
-import dmrg as example  # noqa: E402  (see conftest.py)
+import heisenberg_walkthrough as example  # noqa: E402  (see conftest.py)
 import pytest
 
 import tenet

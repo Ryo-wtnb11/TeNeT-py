@@ -3,7 +3,7 @@
 import pathlib
 import sys
 
-import dmrg as example  # noqa: E402  (see conftest.py)
+import heisenberg_walkthrough as example  # noqa: E402  (see conftest.py)
 import numpy as np
 import pytest
 
@@ -642,8 +642,8 @@ def test_casting_the_su2_sites_to_u1_gives_the_same_operator():
 
     Still not a cross-builder comparison: an MPO bond is fixed only up to a gauge and the
     sector order inside it is ``GradedSpace``'s, so comparing ``cast(SU2_W, U1)`` against
-    the hand-graded ``W`` of ``examples/toy_codes/dmrg.py`` per site would fail on a *correct*
-    implementation -- which is why ``MPO.cast`` does not exist. ``MPO`` over a list
+    the hand-graded ``W`` of ``examples/heisenberg_walkthrough.py`` per site would fail on a
+    *correct* implementation -- which is why ``MPO.cast`` does not exist. ``MPO`` over a list
     comprehension is all the container-level cast anyone needed.
     """
     h = su2_heisenberg(6)

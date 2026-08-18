@@ -5,7 +5,7 @@ missed ``clear_`` after a site changed gives an energy that is *plausible and wr
 which is the worst failure mode a DMRG has.
 """
 
-import dmrg as example  # noqa: E402  (see conftest.py)
+import heisenberg_walkthrough as example  # noqa: E402  (see conftest.py)
 import numpy as np
 import pytest
 
