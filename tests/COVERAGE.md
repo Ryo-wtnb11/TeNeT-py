@@ -28,7 +28,7 @@ braiding), exercised only in `tests/symmetry/test_fibonacci.py` — build, bend,
 (pentagon/hexagon/snake/spherical/non-degeneracy, which SU(2) also runs in
 `test_su2_recoupling.py`), and the two named refusals (`transpose` on a chiral
 braid, `to_dense` without `ClebschGordanData`). It joins no row below by
-design; the capability lattice, not this fixture, is what those rows cover. `racah-py` and JAX sit in the default dev group
+design; the capability lattice, not this fixture, is what those rows cover. `racah-py` is a core dependency and JAX sits in the default dev group
 (`pyproject.toml`), torch has its own CI step — **no cell below is unreachable
 in CI**; every empty cell is a decision, not a constraint.
 
@@ -142,9 +142,9 @@ contract** (with the refusal test), **(d) blocked** (with what blocks it).
 
 ### (d) blocked on infrastructure
 
-None — stated because it was the natural suspicion. `racah-py` and JAX are
-default dev-group dependencies, torch has its own CI step; every cell is
-reachable in CI today.
+None — stated because it was the natural suspicion. `racah-py` is a core
+dependency and JAX is a default dev-group one, torch has its own CI step; every
+cell is reachable in CI today.
 
 ## The standing rule
 

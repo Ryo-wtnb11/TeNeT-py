@@ -1153,10 +1153,18 @@ wheels = [
 
 [[package]]
 name = "racah-py"
-version = "0.1.0"
-source = { git = "https://github.com/Ryo-wtnb11/racah?subdirectory=racah-py#f303cf7274075ca9c11849bba8a8ff58a57fadc8" }
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/20/c1/19ec9b309bb0a58385c2871d0ac82a31925ddb653676f1b943ca7eb02376/racah_py-0.1.1.tar.gz", hash = "sha256:9cc444f4c0ff4d0cb8ca1b30e353177438b565fd96ce5b2bf3e1cb1810fd2736", size = 3773870, upload-time = "2026-08-18T12:51:06.183Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b6/e9/62fb163ae5c23ceac079d8a3ab4fe232bc98349deb9e3bcb673781587bec/racah_py-0.1.1-cp312-abi3-macosx_10_12_x86_64.whl", hash = "sha256:bd0f406dc55626d0dcdf5a6a18e5c743492ef08a1dd8e5d377ed9e49ef20a745", size = 14545115, upload-time = "2026-08-18T12:50:55.811Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/31/6cf40cd28b3dd55015029f89c85b35d92d4c025e39dec55bbffe24e6376f/racah_py-0.1.1-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:e50d8924eeca08208bf99d8129d106760fdd0c4847a6448c15a1f0f9fe88ecbb", size = 12713734, upload-time = "2026-08-18T12:50:58.144Z" },
+    { url = "https://files.pythonhosted.org/packages/73/1f/dbe8a959bfd2f0761541d6f33f18c0eca69b3b8ffd63eadc430faf586b57/racah_py-0.1.1-cp312-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:abb44fb8a7b93580d5e55c3182d4c4cfa9e04ba67f2afd7974ecd9c5a6bd41ee", size = 12127684, upload-time = "2026-08-18T12:51:00.298Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/96/45fb04405bfd3943e60e18bc693ee82499bdd52e860579b27172b49830bd/racah_py-0.1.1-cp312-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:42159742da2f9b98128fb4dc7b94fa89d31af14482e21da2adc98ac5e1c1fd10", size = 13304778, upload-time = "2026-08-18T12:51:02.308Z" },
+    { url = "https://files.pythonhosted.org/packages/43/64/d13f932f203412af68b3062e8e12f9da4132a27665fa2fc0982781b150ef/racah_py-0.1.1-cp312-abi3-win_amd64.whl", hash = "sha256:0048e0eed3eac2ab56de7dc4b8f0f95b65f3485cb954e03cbf12cc8225e73daa", size = 14959384, upload-time = "2026-08-18T12:51:04.283Z" },
 ]
 
 [[package]]
@@ -1288,14 +1296,12 @@ dependencies = [
     { name = "autoray" },
     { name = "numpy" },
     { name = "opt-einsum" },
+    { name = "racah-py" },
 ]
 
 [package.optional-dependencies]
 jax = [
     { name = "jax" },
-]
-sun = [
-    { name = "racah-py" },
 ]
 torch = [
     { name = "torch", version = "2.13.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
@@ -1308,7 +1314,6 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "quimb" },
-    { name = "racah-py" },
     { name = "ruff" },
     { name = "scipy" },
 ]
@@ -1323,11 +1328,11 @@ requires-dist = [
     { name = "jax", marker = "extra == 'jax'", specifier = ">=0.10" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "opt-einsum", specifier = ">=3.4.0" },
-    { name = "racah-py", marker = "extra == 'sun'" },
+    { name = "racah-py", specifier = ">=0.1.1" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'torch'", specifier = ">=2.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "sys_platform != 'linux' and extra == 'torch'", specifier = ">=2.0" },
 ]
-provides-extras = ["jax", "sun", "torch"]
+provides-extras = ["jax", "torch"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1335,7 +1340,6 @@ dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=6.0" },
     { name = "quimb", specifier = ">=1.11" },
-    { name = "racah-py", git = "https://github.com/Ryo-wtnb11/racah?subdirectory=racah-py" },
     { name = "ruff", specifier = ">=0.8" },
     { name = "scipy", specifier = ">=1.11" },
 ]

@@ -104,7 +104,6 @@ def test_chi_and_theta_values_are_pinned(provider):
 
 
 def test_sun_isinstance_identity():
-    racah = pytest.importorskip("racah")  # noqa: F841  # the optional SU(N) wheel
     from tenet.symmetry.sun import SUNProvider, SUNSector
 
     su3 = SUNProvider(3)

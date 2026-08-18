@@ -42,6 +42,7 @@ from tenet.symmetry.base import (
 from tenet.symmetry.fz2 import _FZ2_GAUGE, FZ2Provider, FZ2Sector
 from tenet.symmetry.product import ProductProvider, ProductSector
 from tenet.symmetry.su2 import _SU2_GAUGE, SU2Provider, SU2Sector
+from tenet.symmetry.sun import _SUN_GAUGE, SUNProvider, SUNSector
 from tenet.symmetry.u1 import U1Provider, U1Sector
 from tenet.symmetry.z2 import Z2Provider, Z2Sector
 
@@ -83,19 +84,11 @@ _KINDS: dict[type, str] = {
 }
 _GAUGES: dict[str, str] = {"SU2": _SU2_GAUGE, "fZ2": _FZ2_GAUGE}
 
-# SU(N) is registered only when the optional racah backend is installed: importing
-# ``tenet.symmetry.sun`` without it raises by design, and ``import tenet`` must not.
-# An SU(N) file therefore fails to load with "unknown provider kind 'SUN'" on a build
-# that could not have produced it anyway.
-try:
-    from tenet.symmetry.sun import _SUN_GAUGE, SUNProvider, SUNSector
-except ImportError:  # pragma: no cover - exercised by tests/symmetry/test_sun.py
-    pass
-else:
-    _PROVIDERS["SUN"] = SUNProvider
-    _SECTORS["SUN"] = SUNSector
-    _KINDS[SUNProvider] = "SUN"
-    _GAUGES["SUN"] = _SUN_GAUGE
+# racah is a core dependency since #180, so SU(N) registers unconditionally.
+_PROVIDERS["SUN"] = SUNProvider
+_SECTORS["SUN"] = SUNSector
+_KINDS[SUNProvider] = "SUN"
+_GAUGES["SUN"] = _SUN_GAUGE
 
 
 # --- header encoding ---------------------------------------------------------
@@ -289,9 +282,7 @@ def load(path: str | os.PathLike) -> "SymmetricTensor":
         version, a header block count that contradicts the structure, or a
         member set that is not exactly the header plus ``b0..b{n-1}``.
     KeyError
-        For an unknown provider kind — including an SU(N) file on a build
-        without the optional ``racah-py`` wheel, which could not have produced
-        it anyway.
+        For an unknown provider kind.
 
     Examples
     --------

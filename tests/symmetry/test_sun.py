@@ -1,4 +1,4 @@
-"""M12c: ``SUNProvider``, SU(3) first, behind ``tenet-py[sun]`` — issue #127.
+"""M12c: ``SUNProvider``, SU(3) first — issue #127.
 
 Two oracles run side by side here. The vendored ``tests/fixtures/su3_*.txt`` are
 the *specification* (M12a pinned them, wheel-free); the installed ``racah`` wheel
@@ -10,81 +10,68 @@ the provider produces over the fixture sector set must be in the fixture.
 SU(3) is also the first provider with ``dual(a) != a`` *and* ``d_a > 1``, so the
 cup/cap section is the SU(3) counterpart of ``test_su2_dual.py``.
 
-Everything except the packaging test skips cleanly without ``racah-py``.
+``racah-py`` is a core dependency since #180, so nothing here is conditional.
 """
 
 import dataclasses
 import itertools
 import json
-import subprocess
-import sys
-import textwrap
 from math import sqrt
 
+import _su3_fixture as fx
 import numpy as np
 import pytest
+import racah
 
-try:
-    import racah
-except ImportError:  # the packaging test below is the one that must still run
-    racah = None
-
-needs_racah = pytest.mark.skipif(
-    racah is None, reason="SU(N) needs racah-py: pip install 'tenet-py[sun]'"
+import tenet
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet.symmetry.base import (
+    AssociatorData,
+    BendingCoefficients,
+    BMatrixData,
+    BraidingData,
+    ClebschGordanData,
+    DualBasis,
+    DualityData,
+    FMatrixData,
+    FSIndicatorData,
+    FusionRules,
+    PermutationCoefficients,
+    QuantumDimensionData,
+    RMatrixData,
 )
+from tenet.symmetry.sun import _SUN_GAUGE, SUNProvider, SUNSector
 
-if racah is not None:
-    import _su3_fixture as fx
+SU3 = SUNProvider(3)
+ONE = SUNSector((0, 0))
+THREE = SUNSector((1, 0))
+THREEBAR = SUNSector((0, 1))
+SIX = SUNSector((2, 0))
+EIGHT = SUNSector((1, 1))
+TEN = SUNSector((3, 0))
+TENBAR = SUNSector((0, 3))
+TWENTYSEVEN = SUNSector((2, 2))
 
-    import tenet
-    from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-    from tenet.symmetry.base import (
-        AssociatorData,
-        BendingCoefficients,
-        BMatrixData,
-        BraidingData,
-        ClebschGordanData,
-        DualBasis,
-        DualityData,
-        FMatrixData,
-        FSIndicatorData,
-        FusionRules,
-        PermutationCoefficients,
-        QuantumDimensionData,
-        RMatrixData,
-    )
-    from tenet.symmetry.sun import _SUN_GAUGE, SUNProvider, SUNSector
+# The five sectors the backward fixture sweeps run over; the fixtures cover eleven,
+# and 11**6 sextuples is a sweep nobody needs to pay for on every run. Inner lines are
+# filtered against the vendored set rather than against this one, because the set is
+# not fusion-closed (``6 x 6`` reaches ``15' = (4, 0)``, which the fixtures omit).
+SUB = (ONE, THREE, THREEBAR, SIX, EIGHT)
+VENDORED = {a for labels in fx._N for a in labels}
 
-    SU3 = SUNProvider(3)
-    ONE = SUNSector((0, 0))
-    THREE = SUNSector((1, 0))
-    THREEBAR = SUNSector((0, 1))
-    SIX = SUNSector((2, 0))
-    EIGHT = SUNSector((1, 1))
-    TEN = SUNSector((3, 0))
-    TENBAR = SUNSector((0, 3))
-    TWENTYSEVEN = SUNSector((2, 2))
+E = GradedSpace.new(SU3, {EIGHT: 1})
+V = GradedSpace.new(SU3, {THREE: 1})
+W = GradedSpace.new(SU3, {THREEBAR: 1})
 
-    # The five sectors the backward fixture sweeps run over; the fixtures cover eleven,
-    # and 11**6 sextuples is a sweep nobody needs to pay for on every run. Inner lines are
-    # filtered against the vendored set rather than against this one, because the set is
-    # not fusion-closed (``6 x 6`` reaches ``15' = (4, 0)``, which the fixtures omit).
-    SUB = (ONE, THREE, THREEBAR, SIX, EIGHT)
-    VENDORED = {a for labels in fx._N for a in labels}
-
-    E = GradedSpace.new(SU3, {EIGHT: 1})
-    V = GradedSpace.new(SU3, {THREE: 1})
-    W = GradedSpace.new(SU3, {THREEBAR: 1})
-
-    # Three adjoints on the OUT side, so the block set contains the N = 2 vertex.
-    LEGS = (Leg(E, OUT), Leg(E, OUT), Leg(E, OUT), Leg(E, IN))
-    # Non-self-dual legs, interleaved sides, one dual flag set.
-    MIXED = (Leg(E, OUT), Leg(V, IN), Leg(E, OUT), Leg(W, IN))
-    DUALED = (Leg(E, OUT), Leg(V, IN, dual=True), Leg(E, OUT), Leg(W, IN))
+# Three adjoints on the OUT side, so the block set contains the N = 2 vertex.
+LEGS = (Leg(E, OUT), Leg(E, OUT), Leg(E, OUT), Leg(E, IN))
+# Non-self-dual legs, interleaved sides, one dual flag set.
+MIXED = (Leg(E, OUT), Leg(V, IN), Leg(E, OUT), Leg(W, IN))
+DUALED = (Leg(E, OUT), Leg(V, IN, dual=True), Leg(E, OUT), Leg(W, IN))
 
 
-# Parametrization runs at collection time, so anything a decorator touches has to exist
-# without racah. Sectors are therefore passed by *name* and resolved through globals().
+# Parametrization runs at collection time; sectors are passed by *name* and resolved
+# through globals(), which is how they were written when racah was optional (#180).
 SPLITS = (((0, 1, 2), (3,)), ((0, 1), (2, 3)), ((0,), (1, 2, 3)), ((0, 1, 2, 3), ()))
 SMALL = ("ONE", "THREE", "THREEBAR", "EIGHT")
 
@@ -93,42 +80,9 @@ def su3(legs=None, seed=11):
     return SymmetricTensor.random(LEGS if legs is None else legs, seed=seed)
 
 
-# --- packaging ----------------------------------------------------------------
-
-
-def test_import_error_without_racah_names_the_extra():
-    """Simulate a racah-less environment with a meta-path blocker, in a subprocess."""
-    script = textwrap.dedent("""
-        import importlib.abc, sys
-
-        class Blocker(importlib.abc.MetaPathFinder):
-            def find_spec(self, name, path, target=None):
-                if name == "racah" or name.startswith("racah."):
-                    raise ModuleNotFoundError(f"No module named {name!r}")
-                return None
-
-        sys.meta_path.insert(0, Blocker())
-        import tenet                      # core must survive a racah-less environment
-        assert "racah" not in sys.modules
-        try:
-            import tenet.symmetry.sun
-        except ImportError as exc:
-            msg = str(exc)
-            assert "tenet-py[sun]" in msg, msg
-            assert "no pure-Python fallback" in msg, msg
-            assert "second gauge" in msg, msg
-        else:
-            raise AssertionError("tenet.symmetry.sun imported without racah")
-        print("OK")
-    """)
-    out = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=True)
-    assert out.stdout.strip() == "OK"
-
-
 # --- sector and provider hygiene ----------------------------------------------
 
 
-@needs_racah
 def test_provider_supplies_every_capability_m12c_claims():
     for capability in (
         QuantumDimensionData,
@@ -148,7 +102,6 @@ def test_provider_supplies_every_capability_m12c_claims():
     _: FusionRules = SU3  # static conformance
 
 
-@needs_racah
 def test_provider_is_frozen_hashable_and_array_free():
     assert hash(SU3) == hash(SUNProvider(3))
     assert SUNProvider(3) != SUNProvider(4)
@@ -157,7 +110,6 @@ def test_provider_is_frozen_hashable_and_array_free():
         SU3.n = 4
 
 
-@needs_racah
 def test_sector_is_ordered_validated_and_tuple_normalized():
     assert sorted([EIGHT, ONE, THREE]) == [ONE, THREE, EIGHT]
     assert SUNSector([1, 1]) == EIGHT and SUNSector([1, 1]).dynkin == (1, 1)
@@ -169,7 +121,6 @@ def test_sector_is_ordered_validated_and_tuple_normalized():
         SUNSector((1.0, 0))
 
 
-@needs_racah
 @pytest.mark.parametrize("method", ["dual", "qdim", "irrep_dim"])
 def test_wrong_rank_sector_fails_at_the_first_query(method):
     """``ProductProvider._split``'s type check cannot tell SU(3) from SU(4); this can."""
@@ -182,7 +133,6 @@ def test_wrong_rank_sector_fails_at_the_first_query(method):
 # --- fusion -------------------------------------------------------------------
 
 
-@needs_racah
 def test_known_su3_decompositions():
     assert SU3.fusion(THREE, THREEBAR) == (ONE, EIGHT)
     assert SU3.fusion(THREE, THREE) == (THREEBAR, SIX)
@@ -193,7 +143,6 @@ def test_known_su3_decompositions():
     assert sum(n * SU3.irrep_dim(c) for c, n in multiplicities.items()) == 64
 
 
-@needs_racah
 def test_duality_and_dimensions():
     assert SU3.unit == ONE
     assert SU3.dual(THREE) == THREEBAR and SU3.dual(THREEBAR) == THREE
@@ -205,7 +154,6 @@ def test_duality_and_dimensions():
 # --- Clebsch-Gordan -----------------------------------------------------------
 
 
-@needs_racah
 @pytest.mark.parametrize("a_name", ["THREE", "THREEBAR", "SIX", "EIGHT"])
 @pytest.mark.parametrize("b_name", ["THREE", "THREEBAR", "EIGHT"])
 def test_cgc_orthogonality(a_name, b_name):
@@ -223,7 +171,6 @@ def test_cgc_orthogonality(a_name, b_name):
     np.testing.assert_allclose(m @ m.T, np.eye(len(rows)), rtol=0.0, atol=1e-10)
 
 
-@needs_racah
 def test_cgc_is_read_only_and_refuses_a_forbidden_triple():
     assert not SU3.cgc(THREE, THREEBAR, EIGHT).flags.writeable
     with pytest.raises(ValueError, match="does not appear in the fusion"):
@@ -233,7 +180,6 @@ def test_cgc_is_read_only_and_refuses_a_forbidden_triple():
 # --- fixture agreement, both directions ---------------------------------------
 
 
-@needs_racah
 def test_every_fixture_f_row_comes_back_from_the_provider():
     """The fixture is the spec: 14767 F blocks, pinned wheel-free in M12a."""
     assert len(fx._F) > 10_000
@@ -244,7 +190,6 @@ def test_every_fixture_f_row_comes_back_from_the_provider():
         np.testing.assert_allclose(got, want, rtol=0.0, atol=1e-12, err_msg=str(labels))
 
 
-@needs_racah
 def test_every_fixture_r_row_comes_back_from_the_provider():
     assert len(fx._R) > 200
     for labels in fx._R:
@@ -252,7 +197,6 @@ def test_every_fixture_r_row_comes_back_from_the_provider():
         np.testing.assert_allclose(got, fx._r_block(labels), rtol=0.0, atol=1e-12)
 
 
-@needs_racah
 def test_every_provider_symbol_over_the_sector_subset_is_in_the_fixture():
     """The other direction: the wheel may not invent a coefficient the spec lacks."""
     seen = 0
@@ -281,7 +225,6 @@ def test_every_provider_symbol_over_the_sector_subset_is_in_the_fixture():
             )
 
 
-@needs_racah
 def test_derived_symbols_agree_with_the_fixture_provider():
     """``b_matrix``, ``frobenius_schur`` and ``z_matrix`` are derivations, not table reads."""
     for a, b in itertools.product(SUB, repeat=2):
@@ -305,7 +248,6 @@ def test_derived_symbols_agree_with_the_fixture_provider():
 # --- the categorical identities, from racah's own checks -----------------------
 
 
-@needs_racah
 @pytest.mark.parametrize("quad", list(itertools.product(SMALL, repeat=4)))
 def test_pentagon_and_f_unitarity(quad):
     irreps = [racah.Irrep(globals()[name].dynkin) for name in quad]
@@ -313,7 +255,6 @@ def test_pentagon_and_f_unitarity(quad):
     racah.check_f_unitarity(*irreps)
 
 
-@needs_racah
 @pytest.mark.parametrize("triple", list(itertools.product(SMALL, repeat=3)))
 def test_hexagon(triple):
     racah.check_hexagon(*(racah.Irrep(globals()[name].dynkin) for name in triple))
@@ -322,7 +263,6 @@ def test_hexagon(triple):
 # --- tensor level: transpose / repartition / to_dense --------------------------
 
 
-@needs_racah
 def test_block_set_contains_a_multiplicity_two_vertex():
     t = su3()
     assert any(
@@ -334,7 +274,6 @@ def test_block_set_contains_a_multiplicity_two_vertex():
     assert any(k.output_tree.multiplicities[-1] == 1 for k in t.structure.block_order)
 
 
-@needs_racah
 @pytest.mark.parametrize("legs_name", ["LEGS", "MIXED", "DUALED"])
 @pytest.mark.parametrize("perm", [(0, 2, 1, 3), (1, 0, 2, 3), (2, 1, 0, 3), (0, 1, 3, 2)])
 def test_transpose_matches_the_dense_oracle(legs_name, perm):
@@ -343,7 +282,6 @@ def test_transpose_matches_the_dense_oracle(legs_name, perm):
     np.testing.assert_allclose(got, np.transpose(np.asarray(t.to_dense()), perm), atol=1e-10)
 
 
-@needs_racah
 @pytest.mark.parametrize("perm", [(0, 2, 1, 3), (2, 1, 0, 3), (1, 2, 0, 3)])
 def test_transpose_round_trips(perm):
     t = su3()
@@ -354,7 +292,6 @@ def test_transpose_round_trips(perm):
         np.testing.assert_allclose(np.asarray(got), np.asarray(want), atol=1e-10)
 
 
-@needs_racah
 @pytest.mark.parametrize("legs_name", ["LEGS", "MIXED"])
 @pytest.mark.parametrize("split", SPLITS)
 def test_repartition_matches_the_dense_oracle(legs_name, split):
@@ -365,7 +302,6 @@ def test_repartition_matches_the_dense_oracle(legs_name, split):
     np.testing.assert_allclose(got, want, atol=1e-10)
 
 
-@needs_racah
 @pytest.mark.parametrize("split", SPLITS)
 def test_repartition_round_trips(split):
     outputs, inputs = split
@@ -376,7 +312,6 @@ def test_repartition_round_trips(split):
         np.testing.assert_allclose(np.asarray(got), np.asarray(want), atol=1e-10)
 
 
-@needs_racah
 def test_bend_is_multi_term_at_a_multiplicity_vertex():
     from tenet.fusion_tree import fusion_trees
     from tenet.structure import FusionBlockKey
@@ -394,12 +329,10 @@ def test_bend_is_multi_term_at_a_multiplicity_vertex():
 # --- DualBasis: the first provider with dual(a) != a AND d_a > 1 ---------------
 
 
-@needs_racah
 def test_three_is_the_case_su2_and_u1_could_not_reach():
     assert SU3.dual(THREE) != THREE and SU3.irrep_dim(THREE) > 1
 
 
-@needs_racah
 @pytest.mark.parametrize("a_name", ["THREE", "THREEBAR", "SIX", "EIGHT"])
 def test_z_matrix_shape_unitarity_and_frobenius_schur(a_name):
     a = globals()[a_name]
@@ -422,7 +355,6 @@ def cup(out_space, partner, *, dual):
     return np.asarray(SymmetricTensor.from_legs(legs, blocks).to_dense())
 
 
-@needs_racah
 @pytest.mark.parametrize("a_name", ["THREE", "THREEBAR", "SIX"])
 def test_cup_on_two_direct_legs_is_z(a_name):
     """``V_a (x) V_dual(a)``: the two legs carry *different* labels, unlike SU(2)."""
@@ -433,7 +365,6 @@ def test_cup_on_two_direct_legs_is_z(a_name):
     np.testing.assert_allclose(c * sqrt(SU3.irrep_dim(a)), SU3.z_matrix(a), atol=1e-12)
 
 
-@needs_racah
 @pytest.mark.parametrize("a_name", ["THREE", "THREEBAR", "SIX", "EIGHT"])
 def test_cup_with_a_dual_leg_is_the_evaluation_map(a_name):
     """``V_a (x) V_a^* -> 1``: the Z insertion turns the cup into the identity."""
@@ -443,7 +374,6 @@ def test_cup_with_a_dual_leg_is_the_evaluation_map(a_name):
     np.testing.assert_allclose(cup(space, space, dual=True) * sqrt(d), np.eye(d), atol=1e-12)
 
 
-@needs_racah
 @pytest.mark.parametrize("a_name", ["THREE", "SIX"])
 def test_cap_against_cup_gives_the_identity_with_the_fs_sign(a_name):
     a = globals()[a_name]
@@ -457,7 +387,6 @@ def test_cap_against_cup_gives_the_identity_with_the_fs_sign(a_name):
 # --- save / load ---------------------------------------------------------------
 
 
-@needs_racah
 def test_gauge_embeds_the_racah_fingerprint():
     assert racah.sun_authority_fingerprint() in _SUN_GAUGE
     from tenet.serialize import _GAUGES
@@ -465,7 +394,6 @@ def test_gauge_embeds_the_racah_fingerprint():
     assert _GAUGES["SUN"] == _SUN_GAUGE
 
 
-@needs_racah
 def test_save_load_round_trips_an_su3_tensor(tmp_path):
     t = su3(MIXED)
     tenet.save(t, tmp_path / "t.npz")
@@ -487,7 +415,6 @@ def rewrite_header(path, header: dict) -> None:
     np.savez(path, header=np.array(json.dumps(header)), **arrays)
 
 
-@needs_racah
 def test_doctored_gauge_is_refused_with_the_fingerprint_in_the_message(tmp_path):
     path = tmp_path / "t.npz"
     tenet.save(su3(MIXED), path)
@@ -501,7 +428,6 @@ def test_doctored_gauge_is_refused_with_the_fingerprint_in_the_message(tmp_path)
     assert "epoch=2" in str(exc.value)
 
 
-@needs_racah
 def test_json_header_holds_the_dynkin_label_as_a_list(tmp_path):
     """``SUNSector`` normalizes back to a tuple, which is what makes the round trip exact."""
     path = tmp_path / "t.npz"
