@@ -24,17 +24,19 @@ from tenet.serialize import load, save
 from tenet.symmetry import (
     U1,
     Z2,
+    AssociatorData,
     BendingCoefficients,
+    BraidingData,
     CapabilityError,
-    ClebschGordan,
+    ClebschGordanData,
     DualBasis,
-    FusionProvider,
+    DualityData,
+    FusionRules,
     FZ2Sector,
     PermutationCoefficients,
     ProductProvider,
     ProductSector,
-    QuantumDimension,
-    RecouplingData,
+    QuantumDimensionData,
     Sector,
     SymmetryCast,
     U1Sector,
@@ -45,9 +47,9 @@ from tenet.symmetry import (
 )
 
 # static conformance check: fails type checking if Z2Provider drifts from the protocols
-_fusion: FusionProvider = Z2
-_qdim: QuantumDimension = Z2
-_cgc: ClebschGordan = Z2
+_fusion: FusionRules = Z2
+_qdim: QuantumDimensionData = Z2
+_cgc: ClebschGordanData = Z2
 _perm: PermutationCoefficients = Z2
 _bend: BendingCoefficients = Z2
 _dual: DualBasis = Z2
@@ -127,8 +129,8 @@ def test_a_bosonic_sector_is_not_a_fermionic_one():
 
 def test_z2_satisfies_exactly_the_u1_capability_set():
     for capability in (
-        QuantumDimension,
-        ClebschGordan,
+        QuantumDimensionData,
+        ClebschGordanData,
         PermutationCoefficients,
         BendingCoefficients,
         DualBasis,
@@ -137,8 +139,8 @@ def test_z2_satisfies_exactly_the_u1_capability_set():
         assert isinstance(U1, capability)  # the identical set, stated as the reference
         assert requires(Z2, capability) is None
     assert not isinstance(Z2, SymmetryCast)
-    assert not isinstance(Z2, RecouplingData)
-    for capability in (SymmetryCast, RecouplingData):
+    for capability in (SymmetryCast, AssociatorData, BraidingData, DualityData):
+        assert not isinstance(Z2, capability)
         with pytest.raises(CapabilityError):
             requires(Z2, capability)
 

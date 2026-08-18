@@ -34,21 +34,21 @@ from tenet.structure import FusionBlockKey
 from tenet.symmetry import (
     SU2,
     BendingCoefficients,
-    ClebschGordan,
+    ClebschGordanData,
     DualBasis,
-    FusionProvider,
+    FusionRules,
     FZ2Provider,
     FZ2Sector,
     PermutationCoefficients,
-    QuantumDimension,
+    QuantumDimensionData,
     fZ2,
 )
 from tenet.symmetry.fz2 import _FZ2_GAUGE, koszul_sign
 
 # static conformance check: fails type checking if FZ2Provider drifts from the protocols
-_fusion: FusionProvider = fZ2
-_qdim: QuantumDimension = fZ2
-_cgc: ClebschGordan = fZ2
+_fusion: FusionRules = fZ2
+_qdim: QuantumDimensionData = fZ2
+_cgc: ClebschGordanData = fZ2
 
 EVEN, ODD = FZ2Sector(0), FZ2Sector(1)
 SECTORS = (EVEN, ODD)
@@ -184,8 +184,8 @@ def test_provider_is_frozen_hashable_and_array_free():
 
 def test_capabilities():
     assert isinstance(fZ2, PermutationCoefficients)
-    assert isinstance(fZ2, QuantumDimension)
-    assert isinstance(fZ2, ClebschGordan)
+    assert isinstance(fZ2, QuantumDimensionData)
+    assert isinstance(fZ2, ClebschGordanData)
     assert isinstance(fZ2, BendingCoefficients)
     assert isinstance(fZ2, DualBasis)
 

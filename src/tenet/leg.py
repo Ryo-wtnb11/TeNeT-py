@@ -14,7 +14,7 @@ from collections.abc import Hashable
 from dataclasses import dataclass, replace
 
 from tenet.space import GradedSpace
-from tenet.symmetry.base import FusionProvider, Sector, _HashMemo
+from tenet.symmetry.base import Sector, _DualFusionRules, _HashMemo
 
 __all__ = ["IN", "OUT", "Leg", "Side"]
 
@@ -49,7 +49,7 @@ class Leg(_HashMemo):
         return self._hash
 
     @property
-    def provider(self) -> FusionProvider:
+    def provider(self) -> _DualFusionRules:
         return self.space.provider
 
     @property

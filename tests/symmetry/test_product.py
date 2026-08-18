@@ -32,13 +32,13 @@ from tenet.symmetry import (
     SU2,
     U1,
     CapabilityError,
-    ClebschGordan,
-    FusionProvider,
+    ClebschGordanData,
+    FusionRules,
     FZ2Sector,
     PermutationCoefficients,
     ProductProvider,
     ProductSector,
-    QuantumDimension,
+    QuantumDimensionData,
     SU2Sector,
     U1Sector,
     fZ2,
@@ -47,9 +47,9 @@ from tenet.symmetry.base import Sector, permute_unique_tree
 from tenet.symmetry.product import assemble, mu_decode, mu_encode, project
 
 # static conformance: fails type checking if ProductProvider drifts from the protocols
-_fusion: FusionProvider = ProductProvider((U1, U1))
-_qdim: QuantumDimension = ProductProvider((U1, U1))
-_cgc: ClebschGordan = ProductProvider((U1, U1))
+_fusion: FusionRules = ProductProvider((U1, U1))
+_qdim: QuantumDimensionData = ProductProvider((U1, U1))
+_cgc: ClebschGordanData = ProductProvider((U1, U1))
 
 UU = ProductProvider((U1, U1))
 UF = ProductProvider((U1, fZ2))

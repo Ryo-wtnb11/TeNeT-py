@@ -18,23 +18,17 @@ __all__ = [
     "BendingCoefficients",
     "BraidingData",
     "CapabilityError",
-    "ClebschGordan",
     "ClebschGordanData",
     "DaggerData",
     "DualBasis",
     "DualityData",
     "FMatrixData",
     "FSIndicatorData",
-    "FlipPhase",
-    "FusionProvider",
     "FusionRules",
-    "MultiplicityRecoupling",
     "PermutationCoefficients",
     "PivotalData",
-    "QuantumDimension",
     "QuantumDimensionData",
     "RMatrixData",
-    "RecouplingData",
     "Sector",
     "StructureChangingError",
     "SymmetryCast",
@@ -99,7 +93,7 @@ class FusionRules(Protocol):
     rules with different associators are genuinely different categories
     (``Vec_G`` versus ``Vec_G^omega``). ``dual`` is duality data and lives on
     :class:`DualityData`; the label-level ``dual`` map every provider carries
-    stays on :class:`FusionProvider` for annotation compatibility.
+    is annotated through :class:`_DualFusionRules` where it is actually read.
 
     Notes
     -----
@@ -122,15 +116,16 @@ class FusionRules(Protocol):
         ...
 
 
-class FusionProvider(FusionRules, Protocol):
-    """:class:`FusionRules` plus the ``dual`` label map — the historical bundle.
+class _DualFusionRules(FusionRules, Protocol):
+    """:class:`FusionRules` plus the label-level ``dual`` map.
 
-    Composition alias kept for the ~40 annotation sites that predate the
-    capability decomposition (M24a); it is deliberately **not** the full
-    :class:`DualityData` (which also carries ``b_symbol``), because every
-    provider — Abelian ones included — satisfies this annotation while only
-    braided/rigid ones supply B-symbols. Not ``runtime_checkable``, as before:
-    it is an annotation, never an ``isinstance`` gate.
+    The honest annotation for the sites that store a provider and relabel
+    sectors through ``dual`` (``GradedSpace``, ``Leg``, ``flip``, the bend
+    helpers). Deliberately **not** the full :class:`DualityData` (which also
+    carries ``b_symbol``), because every provider — Abelian ones included —
+    satisfies this annotation while only braided/rigid ones supply B-symbols.
+    Not ``runtime_checkable``: it is an annotation, never an ``isinstance``
+    gate.
     """
 
     def dual(self, a: Sector) -> Sector: ...
@@ -147,10 +142,6 @@ class QuantumDimensionData(Protocol):
     """
 
     def qdim(self, a: Sector) -> float: ...
-
-
-QuantumDimension = QuantumDimensionData
-"""Deprecated alias of :class:`QuantumDimensionData` (M24a; removed in M24b)."""
 
 
 @runtime_checkable
@@ -170,10 +161,6 @@ class ClebschGordanData(Protocol):
     def cgc(self, a: Sector, b: Sector, c: Sector) -> np.ndarray:
         """Shape ``(d_a, d_b, d_c, N^c_ab)``; last axis is the multiplicity label mu."""
         ...
-
-
-ClebschGordan = ClebschGordanData
-"""Deprecated alias of :class:`ClebschGordanData` (M24a; removed in M24b)."""
 
 
 @runtime_checkable
@@ -216,21 +203,6 @@ class BendingCoefficients(Protocol):
 
 
 @runtime_checkable
-class FlipPhase(Protocol):
-    """Providers that can pay for toggling one leg's dual flag in place.
-
-    ``tenet.flip`` relabels a leg's space through ``dual`` and toggles the flag,
-    which leaves every fusion-tree leaf invariant — the whole numerical content
-    is one scalar per flipped leg per tree, supplied here.
-    """
-
-    def flip_phase(self, a: Sector) -> complex:
-        """``chi_a * theta_a`` — the scalar a dual line pays for the ``V_a -> V_a^*``
-        isomorphism: the Frobenius-Schur phase times the twist of ``a``."""
-        ...
-
-
-@runtime_checkable
 class DualBasis(Protocol):
     """Providers whose ``V_a -> V_a^*`` isomorphism is available in the dense basis."""
 
@@ -243,7 +215,7 @@ class DualBasis(Protocol):
 class SymmetryCast(Protocol):
     """Providers that can be restricted to a smaller symmetry in the dense basis."""
 
-    def branch(self, target: FusionProvider, a: Sector) -> tuple[Sector, ...]:
+    def branch(self, target: FusionRules, a: Sector) -> tuple[Sector, ...]:
         """The ``target`` sector of each of ``a``'s ``d_a`` dense basis vectors.
 
         Length is exactly ``irrep_dim(a)``, in the provider's **own** dense
@@ -322,7 +294,7 @@ class TwistData(Protocol):
 
     Notes
     -----
-    Split out of :class:`FlipPhase`'s ``chi * theta`` product on the criterion
+    Split out of the old bundled ``chi * theta`` flip product on the criterion
     #142 wrote down: closed loops (``trace``, ``adjoint``, any fermion loop) need
     the *bare* twist. ``1`` for every symmetric bosonic category, ``(-1)^parity``
     for fermion parity, ``e^{4 pi i / 5}`` on Fibonacci's ``tau``.
@@ -401,33 +373,11 @@ class BMatrixData(Protocol):
         ...
 
 
-@runtime_checkable
-class RecouplingData(AssociatorData, BraidingData, DualityData, FSIndicatorData, Protocol):
-    """Deprecated composition alias: F + R + duality + FS in one bundle (M24a).
-
-    The four are different pieces of structure with different existence
-    conditions (a braided-but-not-rigid provider has ``R`` and no ``B``);
-    consumers should ask for :class:`AssociatorData` / :class:`BraidingData` /
-    :class:`DualityData` / :class:`FSIndicatorData` individually. ``isinstance``
-    answers are identical to the pre-decomposition bundle for every provider.
-    Removed in M24b.
-    """
-
-
-@runtime_checkable
-class MultiplicityRecoupling(FMatrixData, RMatrixData, BMatrixData, Protocol):
-    """Deprecated composition alias of the three array-valued siblings (M24a).
-
-    ``frobenius_schur`` and ``qdim`` are unaffected by multiplicity — they are
-    keyed on a single sector. Removed in M24b.
-    """
-
-
 class _TreeBraider(FusionRules, AssociatorData, BraidingData, Protocol):
     """What :func:`permute_braided_tree` / :func:`_artin_braid` actually read:
     fusion data (``fusion``/``n_symbol``/``unit``/``name``) plus the scalar F-
     and R-symbols. They never read ``b_symbol``, ``frobenius_schur`` or
-    ``qdim`` — the old ``RecouplingData`` annotation over-asked."""
+    ``qdim`` — the pre-M24 bundled annotation over-asked."""
 
 
 class _TreeBender(
@@ -436,8 +386,15 @@ class _TreeBender(
     """What :func:`bend_braided` actually reads: fusion data plus ``dual``,
     ``b_symbol``, ``frobenius_schur`` and ``qdim`` (under the hardcoded pivotal
     convention). It never reads ``f_symbol`` or ``r_symbol`` — and ``qdim``,
-    which the old ``RecouplingData`` annotation did not declare, is now
+    which the pre-M24 bundled annotation did not declare, is
     declared by :class:`QuantumDimensionData`."""
+
+
+@runtime_checkable
+class _FRMatrices(FMatrixData, RMatrixData, Protocol):
+    """What :func:`_artin_braid`'s array-valued path reads: ``f_matrix`` and
+    ``r_matrix`` together (one F-R-F move mixes both). ``b_matrix`` is owned by
+    :func:`bend_braided`, which gates on :class:`BMatrixData` alone."""
 
 
 class CapabilityError(TypeError):
@@ -472,7 +429,7 @@ def supports(provider: object, capability: type) -> bool:
 
 
 def permute_unique_tree(
-    provider: FusionProvider, tree: "FusionTree", perm: tuple[int, ...]
+    provider: FusionRules, tree: "FusionTree", perm: tuple[int, ...]
 ) -> tuple[tuple["FusionTree", complex], ...]:
     """``permute_tree`` for providers whose fusion is unique and whose F/R are 1.
 
@@ -560,8 +517,8 @@ def _artin_braid(
     which is a genuine expansion over the admissible ``e' in fusion(a, c)``.
     Every other spine entry is unchanged.
 
-    A provider that also implements :class:`MultiplicityRecoupling` takes the
-    array-valued path: the two vertex labels the move touches (``mu_{i-1}`` on
+    A provider that also implements :class:`FMatrixData` and :class:`RMatrixData`
+    takes the array-valued path: the two vertex labels the move touches (``mu_{i-1}`` on
     ``a x b -> e`` and ``mu_i`` on ``e x c -> f``) are expanded over too, since an
     F-move mixes ``(e, mu)`` with ``(f, mu')``. Every *other* multiplicity label
     is unchanged. Providers without it keep the scalar path exactly, and a
@@ -572,7 +529,7 @@ def _artin_braid(
     u = tree.uncoupled
     spine = tree.lines()
     new_u = (*u[:i], u[i + 1], u[i], *u[i + 2 :])
-    matrices = provider if isinstance(provider, MultiplicityRecoupling) else None
+    matrices = provider if isinstance(provider, _FRMatrices) else None
     if i == 0:
         if matrices is None:
             swapped = FusionTree(new_u, tree.inner, tree.multiplicities, tree.coupled)
@@ -644,7 +601,7 @@ def _artin_braid(
 
 
 def bend_unique(
-    provider: FusionProvider, key: "FusionBlockKey", *, right: bool, dual: bool
+    provider: _DualFusionRules, key: "FusionBlockKey", *, right: bool, dual: bool
 ) -> tuple[tuple["FusionBlockKey", complex], ...]:
     """``bend_right``/``bend_left`` for providers whose fusion is unique and B is 1.
 
@@ -717,7 +674,7 @@ def bend_braided(
 
     Single-term because the provider is multiplicity-free: one key in, one key
     out. ``n_symbol > 1`` needs matrix-valued coefficients, which a provider
-    supplies by also implementing :class:`MultiplicityRecoupling`; then the
+    supplies by also implementing :class:`BMatrixData`; then the
     destination's new vertex label is expanded over ``B``'s second axis instead
     of being pinned to ``0``, and the result is genuinely multi-term. Without
     that capability the existing :class:`CapabilityError` still fires.
@@ -740,7 +697,7 @@ def bend_braided(
     # test stubs that the pre-M24 behavior accepts.
     b, c = src.uncoupled[-1], src.coupled
     a = src.lines()[-2] if src.rank >= 2 else provider.unit
-    matrices = provider if isinstance(provider, MultiplicityRecoupling) else None
+    matrices = provider if isinstance(provider, BMatrixData) else None
     if matrices is None and provider.n_symbol(a, b, c) > 1:
         raise CapabilityError(
             f"{provider.name}: N^{c!r}_{{{a!r},{b!r}}} > 1; bending a vertex with "
@@ -773,7 +730,7 @@ def bend_braided(
 
 
 def _unique_tree(
-    provider: FusionProvider, uncoupled: tuple[Sector, ...], coupled: Sector
+    provider: FusionRules, uncoupled: tuple[Sector, ...], coupled: Sector
 ) -> "FusionTree":
     from tenet.fusion_tree import fusion_trees
 
@@ -846,10 +803,6 @@ class TrivialProvider:
 
     def twist(self, a: Sector) -> float:
         """``theta_a = 1``: one sector, everything trivial."""
-        return 1.0
-
-    def flip_phase(self, a: Sector) -> float:
-        """``chi_a * theta_a = 1``: one sector, everything trivial."""
         return 1.0
 
 

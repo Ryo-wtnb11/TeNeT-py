@@ -7,9 +7,9 @@ import pytest
 
 from tenet.symmetry import (
     CapabilityError,
-    ClebschGordan,
-    FusionProvider,
-    QuantumDimension,
+    ClebschGordanData,
+    FusionRules,
+    QuantumDimensionData,
     Sector,
     Trivial,
     TrivialProvider,
@@ -18,9 +18,9 @@ from tenet.symmetry import (
 )
 
 # static conformance check: fails type checking if TrivialProvider drifts from the protocols
-_fusion: FusionProvider = Trivial
-_qdim: QuantumDimension = Trivial
-_cgc: ClebschGordan = Trivial
+_fusion: FusionRules = Trivial
+_qdim: QuantumDimensionData = Trivial
+_cgc: ClebschGordanData = Trivial
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -88,26 +88,25 @@ def test_comparing_different_sector_types_raises():
 
 
 def test_capabilities_are_runtime_checkable_and_trivial_satisfies_them():
-    assert isinstance(Trivial, QuantumDimension)
-    assert isinstance(Trivial, ClebschGordan)
+    assert isinstance(Trivial, QuantumDimensionData)
+    assert isinstance(Trivial, ClebschGordanData)
 
 
-def test_fusion_provider_is_a_protocol():
-    assert FusionProvider._is_protocol
-    assert QuantumDimension._is_protocol
-    assert ClebschGordan._is_protocol
-    assert set(FusionProvider.__protocol_attrs__) == {
+def test_fusion_rules_is_a_protocol():
+    assert FusionRules._is_protocol
+    assert QuantumDimensionData._is_protocol
+    assert ClebschGordanData._is_protocol
+    assert set(FusionRules.__protocol_attrs__) == {
         "name",
         "unit",
-        "dual",
         "fusion",
         "n_symbol",
     }
 
 
 def test_provider_lacking_a_capability_is_not_an_instance():
-    assert isinstance(_NoCGCProvider(), QuantumDimension)
-    assert not isinstance(_NoCGCProvider(), ClebschGordan)
+    assert isinstance(_NoCGCProvider(), QuantumDimensionData)
+    assert not isinstance(_NoCGCProvider(), ClebschGordanData)
 
 
 # --- criterion 3: Trivial values ---
@@ -139,16 +138,16 @@ def test_provider_is_hashable_and_array_free():
 
 
 def test_requires_passes_for_supported_capability():
-    assert requires(Trivial, ClebschGordan) is None
-    assert requires(Trivial, QuantumDimension) is None
+    assert requires(Trivial, ClebschGordanData) is None
+    assert requires(Trivial, QuantumDimensionData) is None
 
 
 def test_requires_raises_naming_provider_and_capability():
     with pytest.raises(CapabilityError) as excinfo:
-        requires(_NoCGCProvider(), ClebschGordan)
+        requires(_NoCGCProvider(), ClebschGordanData)
     message = str(excinfo.value)
     assert "_NoCGCProvider" in message
-    assert "ClebschGordan" in message
+    assert "ClebschGordanData" in message
 
 
 # --- criterion 6: no provider-identity branching in base.py ---

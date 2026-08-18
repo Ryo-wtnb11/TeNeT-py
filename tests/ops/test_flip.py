@@ -139,8 +139,8 @@ def test_double_flip_sign(space, sign, axis):
 def test_fz2_double_flip_sign_comes_from_the_twist():
     """chi is +1 for fZ2 (fz2.py pins the TensorKitSectors source), so this sign
     is the twist and nothing else — a frobenius_schur-only stub would return +t."""
-    assert fZ2.flip_phase(ODD) == -1.0
-    assert fZ2.flip_phase(EVEN) == 1.0
+    assert fZ2.frobenius_schur(ODD) * fZ2.twist(ODD) == -1.0
+    assert fZ2.frobenius_schur(EVEN) * fZ2.twist(EVEN) == 1.0
     space = GradedSpace.new(fZ2, {ODD: 3})
     t = SymmetricTensor.random((Leg(space, OUT), Leg(space, IN)), seed=6)
     assert tenet.allclose(flip(flip(t, 0), 0), tenet.negative(t))
@@ -218,9 +218,9 @@ def test_dense_oracle(provider, space):
     assert np.max(np.abs(dense(flipped) - hand)) <= 1e-12
 
 
-def test_flip_needs_flip_phase_not_dual_basis():
+def test_flip_needs_only_the_phase_capabilities_not_dual_basis():
     """A ProductProvider has no z_matrix, so ``to_dense`` refuses its dual leg —
-    ``flip`` needs only ``FlipPhase`` and works anyway."""
+    ``flip`` needs only ``FSIndicatorData`` + ``TwistData`` and works anyway."""
     t = SymmetricTensor.random((Leg(PROD_SPACE, OUT, dual=True), Leg(PROD_SPACE, IN)), seed=10)
     with pytest.raises(CapabilityError, match="DualBasis"):
         t.to_dense()
@@ -233,7 +233,7 @@ def test_flip_needs_flip_phase_not_dual_basis():
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class FusionOnly:
-    """FusionProvider and nothing else — no flip phase."""
+    """Fusion rules and the dual map, nothing else — no flip scalar."""
 
     name: str = "FusionOnly"
 
@@ -251,13 +251,13 @@ class FusionOnly:
         return 1
 
 
-def test_flip_refuses_a_provider_without_flip_phase():
+def test_flip_refuses_a_provider_without_the_flip_capabilities():
     space = GradedSpace.new(FusionOnly(), {TrivialSector(): 2})
     t = SymmetricTensor.zeros((Leg(space, OUT), Leg(space, IN)))
     with pytest.raises(CapabilityError) as err:
         flip(t, 0)
     message = str(err.value)
-    assert "FlipPhase" in message
+    assert "FSIndicatorData" in message
     assert "chi_a * theta_a" in message
     assert "wrong sign" in message
 

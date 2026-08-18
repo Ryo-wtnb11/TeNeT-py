@@ -39,14 +39,19 @@ if racah is not None:
     import tenet
     from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
     from tenet.symmetry.base import (
+        AssociatorData,
         BendingCoefficients,
-        ClebschGordan,
+        BMatrixData,
+        BraidingData,
+        ClebschGordanData,
         DualBasis,
-        FusionProvider,
-        MultiplicityRecoupling,
+        DualityData,
+        FMatrixData,
+        FSIndicatorData,
+        FusionRules,
         PermutationCoefficients,
-        QuantumDimension,
-        RecouplingData,
+        QuantumDimensionData,
+        RMatrixData,
     )
     from tenet.symmetry.sun import _SUN_GAUGE, SUNProvider, SUNSector
 
@@ -126,16 +131,21 @@ def test_import_error_without_racah_names_the_extra():
 @needs_racah
 def test_provider_supplies_every_capability_m12c_claims():
     for capability in (
-        QuantumDimension,
-        ClebschGordan,
+        QuantumDimensionData,
+        ClebschGordanData,
         DualBasis,
-        MultiplicityRecoupling,
-        RecouplingData,
+        FMatrixData,
+        RMatrixData,
+        BMatrixData,
+        AssociatorData,
+        BraidingData,
+        DualityData,
+        FSIndicatorData,
         PermutationCoefficients,
         BendingCoefficients,
     ):
         assert isinstance(SU3, capability), capability.__name__
-    _: FusionProvider = SU3  # static conformance
+    _: FusionRules = SU3  # static conformance
 
 
 @needs_racah

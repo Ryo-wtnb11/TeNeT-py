@@ -31,7 +31,7 @@ from itertools import product
 
 from tenet.fusion_tree import FusionTree, coupled_sectors, fusion_trees
 from tenet.leg import OUT, Leg
-from tenet.symmetry.base import FusionProvider, Sector, _HashMemo
+from tenet.symmetry.base import Sector, _DualFusionRules, _HashMemo
 
 __all__ = ["FusionBlockKey", "TensorStructure"]
 
@@ -78,7 +78,7 @@ class TensorStructure(_HashMemo):
         return self._hash
 
     @property
-    def provider(self) -> FusionProvider:
+    def provider(self) -> _DualFusionRules:
         """The shared provider. ``validate()`` is what checks the legs agree."""
         return self.legs[0].provider
 

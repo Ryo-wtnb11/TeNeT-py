@@ -24,7 +24,7 @@ import numpy as np
 
 from tenet.leg import OUT, Leg
 from tenet.structure import FusionBlockKey, TensorStructure
-from tenet.symmetry.base import FusionProvider
+from tenet.symmetry.base import _DualFusionRules
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -103,7 +103,7 @@ class SymmetricTensor:
         return self.structure.ndim
 
     @property
-    def provider(self) -> FusionProvider:
+    def provider(self) -> _DualFusionRules:
         return self.structure.provider
 
     @property
@@ -385,7 +385,7 @@ class SymmetricTensor:
 
         return embed(self, legs)
 
-    def cast(self, target: FusionProvider, *, atol: float | None = None) -> "SymmetricTensor":
+    def cast(self, target: _DualFusionRules, *, atol: float | None = None) -> "SymmetricTensor":
         """Restrict to a smaller symmetry, e.g. SU(2) -> U(1). See :func:`tenet.cast`."""
         from tenet.ops.cast import cast
 

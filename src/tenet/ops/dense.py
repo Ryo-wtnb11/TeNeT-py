@@ -55,8 +55,8 @@ from tenet.symmetry.base import (
     CapabilityError,
     ClebschGordanData,
     DualBasis,
-    FusionProvider,
     Sector,
+    _DualFusionRules,
     requires,
 )
 
@@ -125,7 +125,7 @@ class DensePlan:
         return {c.sectors: c for c in self.cells}
 
 
-def _refuse_dual(provider: FusionProvider, axis: int) -> None:
+def _refuse_dual(provider: _DualFusionRules, axis: int) -> None:
     """Turn the bare ``DualBasis`` failure into a message a user can act on."""
     try:
         requires(provider, DualBasis)
@@ -139,7 +139,7 @@ def _refuse_dual(provider: FusionProvider, axis: int) -> None:
         ) from exc
 
 
-class _DenseCapable(FusionProvider, ClebschGordanData, DualBasis, Protocol):
+class _DenseCapable(_DualFusionRules, ClebschGordanData, DualBasis, Protocol):
     """What :func:`_tree_cgt` actually calls: fusion data plus CG tensors plus
     the Z-isomorphism. ``ClebschGordanData`` alone understated it — the dual-leg
     branch reads ``dual`` and ``z_matrix`` (runtime-guarded by

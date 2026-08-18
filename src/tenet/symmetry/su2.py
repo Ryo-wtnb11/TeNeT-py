@@ -11,7 +11,9 @@ now available in the dense basis through :meth:`SU2Provider.z_matrix` (the
 dual SU(2) legs.
 
 F-, R- and B-symbols and Frobenius-Schur signs are available through the
-:class:`~tenet.symmetry.base.RecouplingData` capability; their gauge is pinned to
+:class:`~tenet.symmetry.base.AssociatorData` / :class:`~tenet.symmetry.base.BraidingData`
+/ :class:`~tenet.symmetry.base.DualityData` / :class:`~tenet.symmetry.base.FSIndicatorData`
+capabilities; their gauge is pinned to
 the vendored TensorKitSectors fixtures (see ``_SU2_GAUGE``). ``permute_tree`` is
 built on them, so ``transpose`` is total for SU(2), and ``bend_right`` /
 ``bend_left`` are built on the B-symbol and the Frobenius-Schur sign, so
@@ -27,7 +29,7 @@ from tenet.symmetry import _su2_coeff
 from tenet.symmetry._su2_coeff import cg_tensor, triangle
 from tenet.symmetry.base import (
     CapabilityError,
-    FusionProvider,
+    FusionRules,
     Sector,
     bend_braided,
     permute_braided_tree,
@@ -182,10 +184,6 @@ class SU2Provider:
         """``theta_a = 1``: SU(2) braiding is symmetric, so the twist is trivial."""
         return 1
 
-    def flip_phase(self, a: SU2Sector) -> int:
-        """``chi_a * theta_a = chi_a``: SU(2) braiding is symmetric, so the twist is 1."""
-        return self.frobenius_schur(a)
-
     def z_matrix(self, a: SU2Sector) -> np.ndarray:
         """``Z_a: V_a -> V_a^*``, shape ``(d_a, d_dual(a)) == (d_a, d_a)``; read-only.
 
@@ -197,7 +195,7 @@ class SU2Provider:
             raise ValueError(f"{self.name}: {a!r} is not an SU(2) sector")
         return _su2_coeff.z_matrix(a.two_j)
 
-    def branch(self, target: FusionProvider, a: SU2Sector) -> tuple[Sector, ...]:
+    def branch(self, target: FusionRules, a: SU2Sector) -> tuple[Sector, ...]:
         """SU(2) -> U(1): the magnetic quantum numbers, doubled, descending.
 
         :meth:`cgc`'s magnetic indices run descending, so index ``k`` of ``V_j``

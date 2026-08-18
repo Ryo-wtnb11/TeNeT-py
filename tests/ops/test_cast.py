@@ -408,7 +408,7 @@ def test_a_target_sector_with_irrep_dim_above_one_is_refused():
 
 
 def test_a_provider_without_clebsch_gordan_is_refused_by_to_dense():
-    with pytest.raises(CapabilityError, match="does not provide capability ClebschGordan"):
+    with pytest.raises(CapabilityError, match="does not provide capability ClebschGordanData"):
         cast(_fake_tensor(_NoCGC()), U1)
 
 
