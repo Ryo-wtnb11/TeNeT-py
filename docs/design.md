@@ -188,6 +188,26 @@ does take from block2 is the algorithmic core, and the remaining piece — keepi
 the Hamiltonian symbolic through a sweep with complementary operators assembled
 per cut — is what M30 designs.
 
+That piece is no longer gated on "when a quantum-chemistry caller appears", and
+the gate is retired here because it was circular: #136, #138 and #141 each
+deferred the symbolic layer on that rule, but nobody writes a quantum-chemistry
+front end against a builder that will not build the Hamiltonian, so the condition
+could never fire from outside. **The measured criterion that replaces it is the
+phase split inside `from_terms`, not the bond order**, and
+`benchmarks/bench_qc_mpo.py` is where it is taken — real ab initio integrals
+(FCIDUMP, fetched not vendored) on spin-orbital fZ2 sites, the finite-state
+machine's bond per cut beside an independently computed minimum vertex cover of
+the same cut and beside what the two compressing SVD sweeps leave. At K=8
+(H8 STO-6G, 7 360 terms) the FSM bond is 1 148 against a cover of 122 — 9.4×,
+rising to 21× at K=32 and 41× at K=26 on C2 cc-pVDZ, which is #138's own named
+minimum-vertex-cover criterion firing. But the compressing sweeps reach that
+cover *exactly*, per cut, for 0.1 s of a 19.3 s call, and `_instantiate` is the
+other 18.9 s; from K=16 up `from_terms` stops finishing at either cutoff and it
+stops in `_instantiate` every time. So what breaks is the cost of materialising a
+bond the next step discards — not the bond order, which `svd_truncated` already
+recovers — `_instantiate` is where a mechanism has to land, and a second
+bond-basis algorithm is not what buys it.
+
 Three things block2 offers are out of reach by construction, each for a stated
 reason. Density-matrix and perturbative noise need a reduced density matrix and
 an eigendecomposition per variant, while `tenet` splits with `svd_truncated`;

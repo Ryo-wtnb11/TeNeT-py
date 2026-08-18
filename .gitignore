@@ -7,3 +7,4 @@ dist/
 site/
 .coverage
 coverage.xml
+benchmarks/.cache/
