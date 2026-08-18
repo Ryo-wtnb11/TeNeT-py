@@ -25,7 +25,11 @@ theme:
 
 nav:
   - Home: index.md
-  - Design: design.md
+  - Getting started: getting-started.md
+  - User guide:
+      - Tensors, legs and spaces: guide/tensors-legs-spaces.md
+      - Symmetries and providers: guide/symmetries-and-providers.md
+      - Contraction: guide/contraction.md
   - Tutorials:
       - DMRG: tutorials/dmrg.md
       - CTMRG: tutorials/ctmrg.md
@@ -46,6 +50,7 @@ nav:
       - tenet.ad: api/ad.md
       - tenet.pytree: api/pytree.md
       - tenet.serialize: api/serialize.md
+  - Design: design.md
 
 markdown_extensions:
   - admonition
