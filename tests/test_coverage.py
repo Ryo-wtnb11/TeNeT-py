@@ -54,11 +54,17 @@ def test_e2_the_ad_suite_carries_a_multiplicity_bearing_provider():
         assert isinstance(SU3, capability)
 
 
-# E3 (#167): the docstring standard's mechanical half. Scoped to stages 1+2 —
+# E3 (#167): the docstring standard's mechanical half. Scoped to stages 1+2+3 —
 # every class in tenet.__all__, the tenet.__all__ functions defined in the
-# converted modules (ops, fusion_tree, map_view), plus tenet.linalg.__all__ —
-# and it ratchets: each of #167's stages adds its names to _documented_names()
-# (tenet.save/tenet.load join with tenet.serialize in stage 4).
+# converted modules (ops, fusion_tree, map_view), tenet.linalg.__all__, plus all
+# of tenet.network.__all__ — and it ratchets: each of #167's stages adds its
+# names to _documented_names() (tenet.save/tenet.load join with tenet.serialize
+# in stage 4).
+# A NamedTuple documents its fields in an Attributes section, not a Parameters
+# one — griffe warns (fatal under mkdocs --strict) on a Parameters entry absent
+# from the signature, and it does not synthesize a NamedTuple __init__ — so
+# every NamedTuple in the guard enters NO_PARAMS below, with the section that
+# does carry its field docs named in the reason.
 # Public names that legitimately carry no Parameters section, with the reason.
 NO_PARAMS: dict[str, str] = {
     "tenet.Side": "an Enum; the members OUT/IN are the API, there is no constructor",
@@ -66,11 +72,33 @@ NO_PARAMS: dict[str, str] = {
         "an exception raised by the library; it has no introspectable signature "
         "and users never construct it"
     ),
+    "tenet.network.CTMEnv": (
+        "a result record built by move/ctmrg, never by users; its fields are "
+        "documented in the class docstring's Attributes section"
+    ),
+    "tenet.network.DMRG_out": (
+        "a result record built by dmrg_, never by users; its fields are "
+        "documented in the class docstring's Attributes section"
+    ),
+    "tenet.network.CTMRG_out": (
+        "a result record built by ctmrg, never by users; its fields are "
+        "documented in the class docstring's Attributes section"
+    ),
+    "tenet.network.Sweep": (
+        "a NamedTuple; its fields are documented in the class docstring's "
+        "Attributes section, which griffe accepts where a Parameters section "
+        "on a synthesized signature is a --strict failure"
+    ),
+    "tenet.network.Absorb": (
+        "a NamedTuple; its fields are documented in the class docstring's "
+        "Attributes section, which griffe accepts where a Parameters section "
+        "on a synthesized signature is a --strict failure"
+    ),
 }
 
 
 def _documented_names():
-    from tenet import linalg  # noqa: PLC0415  # scoped with the guard that uses it
+    from tenet import linalg, network  # noqa: PLC0415  # scoped with the guard that uses it
 
     for name in tenet.__all__:
         obj = getattr(tenet, name)
@@ -81,6 +109,10 @@ def _documented_names():
             yield f"tenet.{name}", obj
     for name in linalg.__all__:
         yield f"tenet.linalg.{name}", getattr(linalg, name)
+    for name in network.__all__:
+        obj = getattr(network, name)
+        if inspect.isclass(obj) or inspect.isfunction(obj):
+            yield f"tenet.network.{name}", obj
 
 
 def test_e3_every_documented_name_parameterizes_its_docstring():

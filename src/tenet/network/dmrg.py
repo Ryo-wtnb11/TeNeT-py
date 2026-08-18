@@ -7,7 +7,7 @@ not TenPy's ``Sweep``/``EffectiveH`` hierarchy -- M11a ships **one** sweep, and 
 class with one subclass is the interface-with-one-implementation the repo's own rules
 forbid.
 
-:func:`lanczos` lives here rather than in ``tenet.linalg`` for a sharp reason:
+[lanczos][tenet.network.lanczos] lives here rather than in ``tenet.linalg`` for a sharp reason:
 ``tenet.linalg`` is fixed-structure decompositions of a *tensor*, all traceable, and this
 takes a ``matvec`` **callable** and breaks out of its loop on a float comparison. It is
 not in a ``_krylov.py`` either: it is 45 lines whose only caller is the sweep below, and
@@ -32,15 +32,28 @@ __all__ = ["DMRG_out", "Sweep", "dmrg_", "lanczos", "sweep_"]
 class Sweep(NamedTuple):
     """One schedule entry: what a single sweep does.
 
-    ``chi`` and ``cutoff`` are handed to ``tenet.linalg.svd_truncated`` at every bond of
-    the sweep, and ``noise`` is the relative strength of the wavefunction perturbation
-    :func:`sweep_` adds before each split. The defaults equal :func:`dmrg_`'s flat
-    defaults, so ``Sweep()`` is today's sweep and ``schedule=[Sweep()]`` is the flat run.
+    Attributes
+    ----------
+    chi : int, optional
+        The bond-dimension cap handed to
+        [svd_truncated][tenet.ops.linalg.svd_truncated] at every bond of the
+        sweep. Default ``64``.
+    cutoff : float, optional
+        The singular-value cutoff handed to the same SVD. Default ``1e-14``.
+    noise : float, optional
+        Relative strength of the wavefunction perturbation
+        [sweep_][tenet.network.sweep_] adds before each split. Default ``0.0``
+        (no perturbation, and no random number drawn).
+
+    Notes
+    -----
+    The defaults equal [dmrg_][tenet.network.dmrg_]'s flat defaults, so ``Sweep()`` is
+    today's sweep and ``schedule=[Sweep()]`` is the flat run.
 
     One record per sweep rather than parallel per-knob lists (block2's ``bond_dims`` /
     ``noises`` / ``thrds``), so a wrong-length list is impossible to write. The loop
     tolerances (``energy_tol``, ``schmidt_tol``, ``max_sweeps``, ``ncv``) are properties
-    of :func:`dmrg_`'s loop, not of a sweep, and stay flat kwargs there.
+    of [dmrg_][tenet.network.dmrg_]'s loop, not of a sweep, and stay flat kwargs there.
     """
 
     chi: int = 64
@@ -57,6 +70,39 @@ def lanczos(
 ) -> tuple[float, SymmetricTensor]:
     """Ground eigenpair ``(value, vector)`` of a Hermitian ``matvec`` over SymmetricTensors.
 
+    Parameters
+    ----------
+    matvec : Callable[[SymmetricTensor], SymmetricTensor]
+        The Hermitian operator, as a function applying it to one vector.
+    v : SymmetricTensor
+        The starting vector; any tensor with ``matvec``'s input structure.
+    ncv : int, optional
+        Krylov-space dimension. Default ``3``, and meant to stay small (see
+        Notes). Keyword-only.
+    tol : float, optional
+        The happy-breakdown threshold on the recurrence norm ``beta``.
+        Default ``1e-13``. Keyword-only.
+
+    Returns
+    -------
+    value : float
+        The smallest ('SR') Ritz value.
+    vector : SymmetricTensor
+        The matching normalized Ritz vector, on ``v``'s structure.
+
+    Examples
+    --------
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.network import lanczos
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> v = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> value, vector = lanczos(lambda t: t * 2.0, v)  # matvec = 2 * identity
+    >>> round(value, 6)
+    2.0
+
+    Notes
+    -----
     YASTN's three-term recurrence (``yastn/tensor/_krylov.py``:34-42) and its happy
     breakdown (``H[(j+1,j)] < tol`` -> stop and drop the row, :39-43), then ``eigh`` of
     the ``(m, m)`` tridiagonal and one recombination (``yastn/krylov/_krylov.py``:226-239,
@@ -64,7 +110,7 @@ def lanczos(
     own DMRG defaults (``_dmrg.py``:151-152) and are not knobs this layer tunes.
 
     The only tensor operations are ``tenet.add``/``subtract``, scalar multiply/divide,
-    ``tenet.norm`` and :func:`tenet.inner` -- a Krylov solver needs a vector
+    ``tenet.norm`` and [tenet.inner][] -- a Krylov solver needs a vector
     space and nothing else, and a ``SymmetricTensor`` is one.
 
     This is an inner solver inside an outer sweep, not a standalone eigensolver: the
@@ -113,25 +159,64 @@ def sweep_(
 ) -> tuple[float, float]:
     """One left-to-right then right-to-left two-site sweep. ``psi`` and ``env`` mutate.
 
+    Parameters
+    ----------
+    psi : MPS
+        The state, mutated in place; expected mixed-canonical the way
+        [dmrg_][tenet.network.dmrg_] prepares it.
+    h : MPO
+        The Hamiltonian.
+    env : Env
+        The environment cache for ``(psi, h)``, mutated in place.
+    schmidt : dict[int, list[float]]
+        Per-bond Schmidt spectra, updated in place -- the second convergence
+        criterion's input.
+    chi : int
+        The bond-dimension cap handed to
+        [svd_truncated][tenet.ops.linalg.svd_truncated] at every bond.
+        Keyword-only.
+    cutoff : float
+        The singular-value cutoff handed to the same SVD. Keyword-only.
+    ncv : int, optional
+        Krylov-space dimension for [lanczos][tenet.network.lanczos].
+        Default ``3``. Keyword-only.
+    noise : float, optional
+        Relative strength of the wavefunction perturbation added after the
+        eigensolver and before each split; ``0.0`` (the default) draws no
+        random number and the sweep is bit-identical to a sweep without the
+        keyword. Keyword-only.
+    seed : int, optional
+        Makes the noise draw at bond ``n`` reproducible as ``seed + n``.
+        Default ``0``. Keyword-only.
+
+    Returns
+    -------
+    energy : float
+        The last ``lanczos`` Ritz value of the sweep.
+    max_discarded_weight : float
+        The **maximum** per-bond discarded weight (see Notes for why the
+        maximum rather than the total).
+
+    Notes
+    -----
     YASTN's ``_dmrg_sweep_2site_`` (``_dmrg.py``:222-249) and its
     ``(('last', 0), ('first', 1))`` two-direction loop, five steps per bond: merge,
     ``eigs``, split, ``clear_site_``, ``update_env_``.
 
-    ``svd_truncated`` decides the bond :class:`~tenet.GradedSpace` here, every bond and
+    ``svd_truncated`` decides the bond [GradedSpace][tenet.GradedSpace] here, every bond and
     every sweep, and the discarded weight is Pythagoras exactly as its docstring
     prescribes: ``U S Vh`` is isometric on both sides, so ``norm(U S Vh) = norm(S)`` and
     the dropped fraction of the (unit-norm) two-site tensor is ``1 - norm(S)**2``.
 
     ``vh`` comes back on the *map*'s partition and is stored straight into ``psi``: the
-    :meth:`MPS.__setitem__` write barrier is what puts it back on ``(l, p | r)``, which is
+    ``MPS.__setitem__`` write barrier is what puts it back on ``(l, p | r)``, which is
     why no caller in this package ever spells a ``repartition``.
 
-    Returns ``(energy, max_discarded_weight)``; ``schmidt`` is updated in place with the
-    per-bond Schmidt spectra, which is the second convergence criterion's input. The
-    discarded weight here is the **maximum** over bonds, because it feeds a per-sweep
+    The discarded weight here is the **maximum** over bonds, because it feeds a per-sweep
     convergence report where the worst bond is the diagnostic;
-    :meth:`~tenet.network.MPS.compress_` returns the **total** instead, because its caller
-    is asking how much of the state was thrown away. Two conventions, two names.
+    [MPS.compress_][tenet.network.MPS.compress_] returns the **total** instead, because
+    its caller is asking how much of the state was thrown away. Two conventions, two
+    names.
 
     With ``noise > 0`` a random symmetric tensor over the two-site tensor's own legs is
     added after the eigensolver and before the split, at relative strength ``noise``
@@ -145,9 +230,6 @@ def sweep_(
     nothing else in the sweep can create it. It cannot reach outside ``bond_l (x) phys``
     -- no wavefunction noise can, and neither can two-site DMRG itself. Noise is not
     variational: a noisy sweep's energy may sit above the same sweep at ``noise=0.0``.
-    ``seed`` makes the draw at bond ``n`` reproducible as ``seed + n``; with ``noise=0.0``
-    no random number is drawn and the sweep is bit-identical to a sweep without the
-    keyword.
     """
     # Simplification: wavefunction noise only, block2's cheapest (NoiseTypes::Wavefunction
     # = 1) and its own docs call the cheap end "not very effective". Every stronger mixer
@@ -208,12 +290,33 @@ def _schmidt_change(old: dict[int, list[float]], new: dict[int, list[float]]) ->
 class DMRG_out(NamedTuple):
     """YASTN's ``DMRG_out`` (``_dmrg.py``:33-39), plus the two things a test needs.
 
+    Attributes
+    ----------
+    sweeps : int
+        Number of sweeps run.
+    energy : float
+        The last sweep's energy.
+    denergy : float
+        The last sweep's energy change.
+    max_dSchmidt : float
+        The last sweep's worst-cut Schmidt change.
+    max_discarded_weight : float
+        The last sweep's maximum per-bond discarded weight.
+    history : list of tuple
+        One ``(energy, denergy, dSchmidt, discarded)`` tuple per sweep.
+    schedule : list of Sweep
+        The **realized** schedule, one [Sweep][tenet.network.Sweep] per sweep run.
+    psi : MPS
+        The converged state -- the same object the caller passed in.
+
+    Notes
+    -----
     ``history`` is one ``(energy, denergy, dSchmidt, discarded)`` tuple per sweep, and it
     says everything YASTN's ``iterator=True`` generator protocol says to a test without
-    the protocol. ``schedule`` is the **realized** schedule, one :class:`Sweep` per sweep
-    run -- ``zip(out.schedule, out.history)`` is exact, and ``out.schedule`` alone answers
-    whether a run actually reached its final ``chi`` or converged earlier. ``psi`` is the
-    converged :class:`MPS`.
+    the protocol. ``schedule`` is the **realized** schedule, one
+    [Sweep][tenet.network.Sweep] per sweep run -- ``zip(out.schedule, out.history)`` is
+    exact, and ``out.schedule`` alone answers whether a run actually reached its final
+    ``chi`` or converged earlier. ``psi`` is the converged [MPS][tenet.network.MPS].
     """
 
     sweeps: int
@@ -240,21 +343,87 @@ def dmrg_(
     seed: int = 0,
     callback: Callable[[DMRG_out], None] | None = None,
 ) -> DMRG_out:
-    """Sweep ``psi`` to the ground state of ``h`` in place and return a :class:`DMRG_out`.
+    """Sweep ``psi`` to the ground state of ``h`` in place and return a
+    [DMRG_out][tenet.network.DMRG_out].
 
-    ``psi`` is right-canonicalized first (:meth:`MPS.canonize_`), so a freshly seeded
-    random MPS is the expected input and a caller keeping the returned ``out.psi`` and the
-    one it passed in holds the same object.
+    Parameters
+    ----------
+    psi : MPS
+        The starting state, swept in place; a freshly seeded random MPS is the
+        expected input.
+    h : MPO
+        The Hamiltonian.
+    schedule : Sequence of Sweep or None, optional
+        Per-sweep settings; the **last entry repeats** until convergence or
+        ``max_sweeps``. Exclusive with ``chi``/``cutoff``. Default ``None``.
+        Keyword-only, as are all the following.
+    chi : int or None, optional
+        Flat bond-dimension cap for every sweep. Default ``None``, meaning 64.
+    cutoff : float or None, optional
+        Flat singular-value cutoff for every sweep. Default ``None``, meaning
+        ``1e-14``.
+    energy_tol : float, optional
+        Energy-change convergence threshold. Default ``1e-12``.
+    schmidt_tol : float, optional
+        Worst-cut Schmidt-change convergence threshold. Default ``1e-8``.
+    max_sweeps : int, optional
+        Sweep budget. Default ``40``.
+    ncv : int, optional
+        Krylov-space dimension for [lanczos][tenet.network.lanczos].
+        Default ``3``.
+    seed : int, optional
+        Feeds [sweep_][tenet.network.sweep_]'s noise draw, distinctly per
+        sweep; a schedule with ``noise=0.0`` everywhere draws nothing.
+        Default ``0``.
+    callback : Callable[[DMRG_out], None] or None, optional
+        Invoked once per sweep with that sweep's [DMRG_out][tenet.network.DMRG_out].
+        Default ``None``.
+
+    Returns
+    -------
+    DMRG_out
+        The last sweep's record; its ``psi`` is the object passed in.
+
+    Raises
+    ------
+    ValueError
+        If ``schedule`` is passed together with ``chi`` or ``cutoff`` --
+        silently letting one win is how a run reports a ``chi`` it did not use
+        -- or if ``schedule`` is empty.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tenet import GradedSpace
+    >>> from tenet.network import MPO, MPS, dmrg_, local_op
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})  # 2 S^z
+    >>> sz, sp = np.diag([-0.5, 0.5]), np.array([[0.0, 0.0], [1.0, 0.0]])
+    >>> op = {q: local_op(o, phys=phys, charge=U1Sector(q))
+    ...       for q, o in ((0, sz), (-2, sp), (2, sp.T))}
+    >>> terms = []
+    >>> for i in range(3):  # 4-site Heisenberg chain
+    ...     terms.append((1.0, [(op[0], i), (op[0], i + 1)]))
+    ...     terms.append((0.5, [(op[-2], i), (op[2], i + 1)]))
+    ...     terms.append((0.5, [(op[2], i), (op[-2], i + 1)]))
+    >>> h = MPO.from_terms(4, terms)
+    >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1)] * 2)  # Neel seed
+    >>> out = dmrg_(psi, h, chi=8)
+    >>> round(out.energy, 6)  # the exact open-chain ground energy, to 6 places
+    -1.616025
+
+    Notes
+    -----
+    ``psi`` is right-canonicalized first ([MPS.canonize_][tenet.network.MPS.canonize_]),
+    so a freshly seeded random MPS is the expected input and a caller keeping the
+    returned ``out.psi`` and the one it passed in holds the same object.
 
     Two spellings of what the sweeps do, exclusive: the flat ``chi`` / ``cutoff`` kwargs
-    (defaults 64 and 1e-14), or ``schedule``, a non-empty sequence of :class:`Sweep`
-    entries whose **last entry repeats** until convergence or ``max_sweeps`` -- so
-    ``schedule=[Sweep(chi=64)]`` is exactly the flat run, and
+    (defaults 64 and 1e-14), or ``schedule``, a non-empty sequence of
+    [Sweep][tenet.network.Sweep] entries whose **last entry repeats** until convergence
+    or ``max_sweeps`` -- so ``schedule=[Sweep(chi=64)]`` is exactly the flat run, and
     ``schedule=[Sweep(32, noise=1e-4)] * 4 + [Sweep(64)]`` is a ramp that cools down at
-    ``chi=64`` for as long as ``max_sweeps`` allows. Passing ``schedule`` together with
-    ``chi`` or ``cutoff`` raises, because silently letting one win is how a run reports a
-    ``chi`` it did not use. ``seed`` feeds :func:`sweep_`'s noise draw, distinctly per
-    sweep; a schedule with ``noise=0.0`` everywhere draws nothing.
+    ``chi=64`` for as long as ``max_sweeps`` allows.
 
     Convergence uses **both** of YASTN's criteria (``_dmrg.py``:180-195): the energy
     change ``|E_old - E| < energy_tol`` *and* the worst-cut Schmidt change
@@ -268,9 +437,10 @@ def dmrg_(
     noise at a ramp's intermediate ``chi`` has converged to the wrong thing, and reporting
     it as converged is worse than sweeping on.
 
-    ``callback``, if given, is invoked once per sweep with the :class:`DMRG_out` built for
-    that sweep, after ``history`` is appended, so it sees the sweep that just finished.
-    Its return value is ignored: there is no early-stop protocol.
+    ``callback``, if given, is invoked once per sweep with the
+    [DMRG_out][tenet.network.DMRG_out] built for that sweep, after ``history`` is
+    appended, so it sees the sweep that just finished. Its return value is ignored:
+    there is no early-stop protocol.
     """
     if schedule is not None:
         if chi is not None or cutoff is not None:
