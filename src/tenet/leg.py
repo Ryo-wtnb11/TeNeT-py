@@ -34,6 +34,30 @@ IN = Side.IN
 class Leg(_HashMemo):
     """One tensor axis: ``space``, ``side``, ``dual`` and an optional ``name``.
 
+    Parameters
+    ----------
+    space : GradedSpace
+        The graded representation space this axis carries.
+    side : Side
+        ``OUT`` (codomain) or ``IN`` (domain).
+    dual : bool, optional
+        Whether the axis carries ``V*`` rather than ``V``. Default ``False``.
+    name : Hashable or None, optional
+        User bookkeeping label. Default ``None``.
+
+    Examples
+    --------
+    >>> from tenet import OUT, GradedSpace, Leg
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> leg = Leg(V, OUT, name="p")
+    >>> leg.degeneracy(U1Sector(0))
+    2
+    >>> leg.dualized().fused_sector(U1Sector(1))
+    U1Sector(charge=-1)
+
+    Notes
+    -----
     Frozen and hashable; ``name`` participates in equality like any other field.
     """
 
@@ -50,33 +74,90 @@ class Leg(_HashMemo):
 
     @property
     def provider(self) -> _DualFusionRules:
+        """The space's symmetry provider.
+
+        Returns
+        -------
+        provider
+            ``self.space.provider``.
+        """
         return self.space.provider
 
     @property
     def sectors(self) -> tuple[Sector, ...]:
-        """Space sectors in the space's canonical order."""
+        """Space sectors in the space's canonical order.
+
+        Returns
+        -------
+        tuple of Sector
+            ``tuple(self.space)``.
+        """
         return tuple(self.space)
 
     def degeneracy(self, a: Sector) -> int:
         """``m_a`` for a **space** label ``a`` (not a fused label).
 
+        Parameters
+        ----------
+        a : Sector
+            A sector labelling the space, in the space's own convention.
+
+        Returns
+        -------
+        int
+            The degeneracy ``m_a``, or ``0`` if ``a`` is absent.
+
+        Notes
+        -----
         For a dual U(1) leg, ``fused_sector`` negates the charge, so feeding a
         fused label here would silently read the wrong degeneracy — use
-        :meth:`space_sector` first.
+        [space_sector][tenet.Leg.space_sector] first.
         """
         return self.space.degeneracy(a)
 
     def fused_sector(self, a: Sector) -> Sector:
-        """The sector this leg contributes to a fusion tree: ``dual(a)`` if dual."""
+        """The sector this leg contributes to a fusion tree: ``dual(a)`` if dual.
+
+        Parameters
+        ----------
+        a : Sector
+            A space sector of this leg.
+
+        Returns
+        -------
+        Sector
+            ``provider.dual(a)`` if the leg is dual, else ``a`` unchanged.
+        """
         return self.provider.dual(a) if self.dual else a
 
     def space_sector(self, u: Sector) -> Sector:
-        """Inverse of :meth:`fused_sector`; ``dual`` is an involution, so lossless."""
+        """Inverse of [fused_sector][tenet.Leg.fused_sector].
+
+        ``dual`` is an involution, so lossless.
+
+        Parameters
+        ----------
+        u : Sector
+            A fused (tree-side) sector label.
+
+        Returns
+        -------
+        Sector
+            The space label: ``provider.dual(u)`` if the leg is dual, else ``u``.
+        """
         return self.provider.dual(u) if self.dual else u
 
     def dualized(self) -> "Leg":
         """New leg with ``dual`` flipped — a relabelling of ``V ↔ V*`` only.
 
+        Returns
+        -------
+        Leg
+            A copy of this leg with ``dual`` negated; ``space``, ``side`` and
+            ``name`` are unchanged.
+
+        Notes
+        -----
         ``tenet.flip`` is the sanctioned numerical route for changing a leg's
         ``dual`` flag: it also relabels the space through ``provider.dual`` and
         pays the Z-isomorphism's scalar per fusion tree. ``repartition`` is the
@@ -91,4 +172,16 @@ class Leg(_HashMemo):
         return replace(self, dual=not self.dual)
 
     def renamed(self, name: Hashable | None) -> "Leg":
+        """New leg with ``name`` replaced; everything else unchanged.
+
+        Parameters
+        ----------
+        name : Hashable or None
+            The new name (``None`` clears it).
+
+        Returns
+        -------
+        Leg
+            A copy of this leg carrying ``name``.
+        """
         return replace(self, name=name)
