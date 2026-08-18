@@ -2,7 +2,7 @@
 
 Everything about fZ2 except the braiding is degenerate: two sectors, XOR fusion,
 self-dual labels, ``qdim == irrep_dim == 1``, all-ones CGC. The entire content of
-the provider is therefore one function, :func:`koszul_sign`, and the reason it is
+the provider is therefore one function, ``koszul_sign``, and the reason it is
 one function is that fZ2's F-symbols are identically ``1``:
 ``Fsymbol(a,b,c,d,e,f) = N(a,b,e)·N(e,c,d)·N(b,c,f)·N(a,f,d)``, never negative.
 The associator being trivial is what lets a general within-side permutation of a
@@ -20,8 +20,10 @@ the condition invariant 12 demands before an ndarray spelling is allowed; no
 else here). TensorKit keeps a *regular* trace with positive quantum dimensions
 and absorbs the parity endomorphism into the right-evaluation map, which is
 exactly why the Frobenius-Schur phase stays ``+1`` while the twist carries the
-sign. ``tenet.flip`` consumes it through :meth:`FZ2Provider.frobenius_schur` times
-:meth:`FZ2Provider.twist` (``chi * theta = (-1)^parity``); ``norm`` is qdim-weighted
+sign. ``tenet.flip`` consumes it through
+[frobenius_schur][tenet.symmetry.FZ2Provider.frobenius_schur] times
+[twist][tenet.symmetry.FZ2Provider.twist]
+(``chi * theta = (-1)^parity``); ``norm`` is qdim-weighted
 and every qdim is ``1``, so it remains unaffected.
 
 Source for every constant asserted above, TensorKitSectors ``src/fermions.jl`` at
@@ -58,7 +60,22 @@ which refuses a file recorded under a different convention.
 
 @dataclass(frozen=True, slots=True, order=True)
 class FZ2Sector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deliberate, see Sector
-    """A fermion-parity sector: ``parity in {0, 1}``. 0 is even (the unit), 1 is odd."""
+    """A fermion-parity sector: ``parity in {0, 1}``. 0 is even (the unit), 1 is odd.
+
+    Parameters
+    ----------
+    parity : int
+        ``0`` or ``1``. A ``bool`` is refused even though it is an ``int``
+        subclass, so ``FZ2Sector(True) != FZ2Sector(1)`` can never become a
+        live question.
+
+    Raises
+    ------
+    TypeError
+        If ``parity`` is not an ``int`` (``bool`` included).
+    ValueError
+        If ``parity`` is not ``0`` or ``1``.
+    """
 
     parity: int
 
@@ -74,10 +91,32 @@ class FZ2Sector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deli
 def koszul_sign(uncoupled: tuple[Sector, ...], perm: tuple[int, ...]) -> float:
     """``(-1)^(number of odd-odd inversions of perm)``.
 
-    ``perm[j]`` is the OLD uncoupled position that becomes position ``j``
-    (``permute_tree``'s convention). Restrict ``perm`` to the positions carrying
-    odd sectors and count that subsequence's inversions.
+    Parameters
+    ----------
+    uncoupled : tuple of Sector
+        The parity-graded sectors being permuted; each must carry ``.parity``.
+    perm : tuple of int
+        ``perm[j]`` is the OLD uncoupled position that becomes position ``j``
+        (``permute_tree``'s convention).
 
+    Returns
+    -------
+    float
+        ``+1.0`` or ``-1.0``: the parity of the number of inversions of
+        ``perm`` restricted to the positions carrying odd sectors.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import FZ2Sector
+    >>> from tenet.symmetry.fz2 import koszul_sign
+    >>> odd, even = FZ2Sector(1), FZ2Sector(0)
+    >>> int(koszul_sign((odd, odd), (1, 0)))   # two fermions swap
+    -1
+    >>> int(koszul_sign((odd, even), (1, 0)))  # a fermion past a boson
+    1
+
+    Notes
+    -----
     Direction-free: a permutation and its inverse have the same inversion count
     and restricting to odd positions commutes with inversion, so
     ``koszul_sign(u, perm) == koszul_sign(permuted(u, perm), inverse(perm))``.
@@ -93,7 +132,27 @@ def koszul_sign(uncoupled: tuple[Sector, ...], perm: tuple[int, ...]) -> float:
 
 @dataclass(frozen=True, slots=True)
 class FZ2Provider:
-    """Z2 fusion with *fermionic* braiding: SVect. Abelian, multiplicity-free, d = 1."""
+    """Z2 fusion with *fermionic* braiding: SVect. Abelian, multiplicity-free, d = 1.
+
+    Use the module-level singleton [fZ2][tenet.symmetry.fZ2] rather than
+    constructing one; ``name`` is an identity label that participates in
+    equality, not a configuration knob. The capability contract of every
+    method is documented once, on the protocols in ``tenet.symmetry`` —
+    only behaviour that *differs* from a protocol carries a docstring here,
+    and the whole fermionic content is the Koszul sign in
+    [permute_tree][tenet.symmetry.FZ2Provider.permute_tree] and the ``-1``
+    in [twist][tenet.symmetry.FZ2Provider.twist].
+
+    Examples
+    --------
+    >>> from tenet.symmetry import fZ2, FZ2Sector
+    >>> fZ2.fusion(FZ2Sector(1), FZ2Sector(1))
+    (FZ2Sector(parity=0),)
+    >>> int(fZ2.twist(FZ2Sector(1)))  # the sign a closed odd loop pays
+    -1
+    >>> int(fZ2.frobenius_schur(FZ2Sector(1)))  # the FS phase stays +1
+    1
+    """
 
     name: str = "fZ2"
 
@@ -173,7 +232,8 @@ class FZ2Provider:
 
     def frobenius_schur(self, a: FZ2Sector) -> float:
         """``chi_a = +1`` for both sectors: TensorKit keeps a regular trace and the
-        parity sign lives entirely in :meth:`twist` — see the module docstring."""
+        parity sign lives entirely in [twist][tenet.symmetry.FZ2Provider.twist]
+        — see the module docstring."""
         return 1.0
 
     def twist(self, a: FZ2Sector) -> float:

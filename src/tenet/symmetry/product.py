@@ -3,9 +3,10 @@
 Every categorical quantity of a product factorizes, so this module is mechanical:
 ``unit``, ``dual``, ``fusion``, ``n_symbol``, ``qdim``, ``irrep_dim`` and ``cgc``
 are componentwise, and each *optional* capability is forwarded iff **every**
-factor has it. The only non-mechanical piece is :meth:`ProductProvider.permute_tree`,
+factor has it. The only non-mechanical piece is
+[permute_tree][tenet.symmetry.ProductProvider.permute_tree],
 which is the distributed product over the factors' expansions (a factor may return
-more than one term), resting on the :func:`project` / :func:`assemble` bijection
+more than one term), resting on the ``project`` / ``assemble`` bijection
 
     {product trees}  <->  prod_i {factor-i trees}
 
@@ -14,7 +15,7 @@ which is the whole mathematical content here and is asserted, not assumed.
 Two conventions, stated once and used twice:
 
 * **``mu`` is mixed radix, first factor most significant** (C order):
-  ``mu = sum_i mu_i * prod_{j>i} n_j`` — :func:`mu_encode` / :func:`mu_decode`.
+  ``mu = sum_i mu_i * prod_{j>i} n_j`` — ``mu_encode`` / ``mu_decode``.
 * **``cgc`` flattens its irrep indices the same way**, because it is built as an
   iterated outer product followed by a single C-order ``reshape``, and a C-order
   ``reshape`` *is* mixed radix with the leading factor most significant. The two
@@ -81,7 +82,14 @@ _CGC_HINT = "A product's Clebsch-Gordan tensor is the outer product of the facto
 
 @dataclass(frozen=True, slots=True, order=True)
 class ProductSector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deliberate, see Sector
-    """One sector per factor, in factor order. Ordering is lexicographic by component."""
+    """One sector per factor, in factor order. Ordering is lexicographic by component.
+
+    Parameters
+    ----------
+    components : tuple of Sector
+        One sector per factor of the [ProductProvider][tenet.symmetry.ProductProvider],
+        in factor order.
+    """
 
     components: tuple[Sector, ...]
 
@@ -89,6 +97,28 @@ class ProductSector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # 
 def mu_encode(ns: tuple[int, ...], mus: tuple[int, ...]) -> int:
     """Mixed radix, first factor most significant: ``sum_i mu_i * prod_{j>i} n_j``.
 
+    Parameters
+    ----------
+    ns : tuple of int
+        The per-factor vertex multiplicities ``n_i``.
+    mus : tuple of int
+        The per-factor vertex labels, ``0 <= mu_i < n_i``.
+
+    Returns
+    -------
+    int
+        The product vertex label.
+
+    Examples
+    --------
+    >>> from tenet.symmetry.product import mu_encode, mu_decode
+    >>> mu_encode((2, 3), (1, 2))
+    5
+    >>> mu_decode((2, 3), 5)
+    (1, 2)
+
+    Notes
+    -----
     Every product of multiplicity-free factors is multiplicity-free, but a factor
     with ``n > 1`` reaches this, and the mixed radix is what keeps the product's
     ``mu`` a single integer. Covered by the ``n_symbol == 2`` stub in
@@ -102,7 +132,7 @@ def mu_encode(ns: tuple[int, ...], mus: tuple[int, ...]) -> int:
 
 
 def mu_decode(ns: tuple[int, ...], mu: int) -> tuple[int, ...]:
-    """Inverse of :func:`mu_encode` on ``range(prod(ns))``."""
+    """Inverse of ``mu_encode`` on ``range(prod(ns))``."""
     out = []
     for n in reversed(ns):
         out.append(mu % n)
@@ -114,6 +144,38 @@ def mu_decode(ns: tuple[int, ...], mu: int) -> tuple[int, ...]:
 class ProductProvider:
     """The Deligne product of two or more providers. Frozen, hashable, array-free.
 
+    Every core quantity (``unit``, ``dual``, ``fusion``, ``n_symbol``,
+    ``qdim``, ``irrep_dim``, ``cgc``, the phases) is componentwise, so the
+    capability contract stays the one documented on the protocols in
+    ``tenet.symmetry``; the methods here document only what forwarding adds.
+
+    Parameters
+    ----------
+    factors : tuple of provider
+        Two or more providers, in order; the order is the component order of
+        every [ProductSector][tenet.symmetry.ProductSector].
+
+    Raises
+    ------
+    ValueError
+        If fewer than two factors are given — a one-factor product is a
+        confusing no-op wrapper, not a feature.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import U1, U1Sector, Z2, Z2Sector
+    >>> from tenet.symmetry import ProductProvider, ProductSector
+    >>> p = ProductProvider((U1, Z2))
+    >>> p.name
+    'U1 x Z2'
+    >>> a = ProductSector((U1Sector(1), Z2Sector(1)))
+    >>> p.fusion(a, a)
+    (ProductSector(components=(U1Sector(charge=2), Z2Sector(parity=0))),)
+    >>> p.dual(a)
+    ProductSector(components=(U1Sector(charge=-1), Z2Sector(parity=1)))
+
+    Notes
+    -----
     Optional capabilities are forwarded iff *every* factor has them, and the
     forwarding methods are defined **unconditionally** so that the error can name
     the offending factor. The consequence is a real wart, handled by raising
@@ -152,7 +214,8 @@ class ProductProvider:
 
     def fusion(self, a: Sector, b: Sector) -> tuple[ProductSector, ...]:
         """Componentwise, and ascending: ``itertools.product`` is lexicographic and
-        :class:`ProductSector` compares lexicographically, so the canonical order
+        [ProductSector][tenet.symmetry.ProductSector] compares
+        lexicographically, so the canonical order
         of each factor's ``fusion`` survives (asserted by test, not assumed)."""
         return tuple(
             ProductSector(cs)
@@ -185,7 +248,7 @@ class ProductProvider:
     def cgc(self, a: Sector, b: Sector, c: Sector) -> np.ndarray:
         """Shape ``(prod d_a, prod d_b, prod d_c, prod n)``, the iterated outer
         product of the factors' ``cgc``s flattened in C order — which is exactly
-        the mixed radix of :func:`mu_encode`. Raises ``ValueError`` (from the
+        the mixed radix of ``mu_encode``. Raises ``ValueError`` (from the
         factor) on a fusion-forbidden triple."""
         self._require_all(ClebschGordanData, _CGC_HINT)
         out = None
@@ -278,9 +341,26 @@ class ProductProvider:
 def project(provider: ProductProvider, tree: "FusionTree", i: int) -> "FusionTree":
     """The factor-``i`` component of a product tree.
 
-    Componentwise uncoupled / inner / coupled, with each vertex's ``mu`` decoded
-    from mixed radix. The result is a valid left-associated tree for
-    ``provider.factors[i]`` of the same rank.
+    Parameters
+    ----------
+    provider : ProductProvider
+        The product the tree belongs to.
+    tree : FusionTree
+        A tree whose sectors are this product's ``ProductSector`` values.
+    i : int
+        The factor index.
+
+    Returns
+    -------
+    FusionTree
+        A valid left-associated tree for ``provider.factors[i]`` of the same
+        rank: componentwise uncoupled / inner / coupled, with each vertex's
+        ``mu`` decoded from mixed radix.
+
+    Raises
+    ------
+    IndexError
+        If ``i`` is out of range for the factors.
     """
     from tenet.fusion_tree import FusionTree
 
@@ -304,7 +384,27 @@ def project(provider: ProductProvider, tree: "FusionTree", i: int) -> "FusionTre
 
 
 def assemble(provider: ProductProvider, trees: tuple["FusionTree", ...]) -> "FusionTree":
-    """Inverse of :func:`project`: one tree per factor, same rank, into one product tree."""
+    """Inverse of ``project``: one tree per factor, same rank, into one product tree.
+
+    Parameters
+    ----------
+    provider : ProductProvider
+        The product the trees are assembled for.
+    trees : tuple of FusionTree
+        One tree per factor, all of the same rank, in factor order.
+
+    Returns
+    -------
+    FusionTree
+        The product tree whose components the inputs are; each vertex's ``mu``
+        is re-encoded in mixed radix.
+
+    Raises
+    ------
+    ValueError
+        If the number of trees does not match the factors, or their ranks
+        differ.
+    """
     from tenet.fusion_tree import FusionTree
 
     factors = provider.factors

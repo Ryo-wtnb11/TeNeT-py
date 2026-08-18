@@ -20,14 +20,45 @@ __all__ = ["U1", "U1Provider", "U1Sector"]
 
 @dataclass(frozen=True, slots=True, order=True)
 class U1Sector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deliberate, see Sector
-    """A U(1) irrep, labelled by its integer charge."""
+    """A U(1) irrep, labelled by its integer charge.
+
+    Parameters
+    ----------
+    charge : int
+        The conserved charge; negation is duality.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> U1.fusion(U1Sector(1), U1Sector(2))
+    (U1Sector(charge=3),)
+    >>> U1.dual(U1Sector(1))
+    U1Sector(charge=-1)
+    """
 
     charge: int
 
 
 @dataclass(frozen=True, slots=True)
 class U1Provider:
-    """U(1): abelian, multiplicity-free, one-dimensional irreps."""
+    """U(1): abelian, multiplicity-free, one-dimensional irreps.
+
+    Use the module-level singleton [U1][tenet.symmetry.U1] rather than
+    constructing one; ``name`` is an identity label that participates in
+    equality, not a configuration knob. The capability contract of every
+    method is documented once, on the protocols in ``tenet.symmetry`` —
+    only behaviour that *differs* from a protocol carries a docstring here.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> U1.fusion(U1Sector(-1), U1Sector(1))
+    (U1Sector(charge=0),)
+    >>> U1.n_symbol(U1Sector(1), U1Sector(1), U1Sector(2))
+    1
+    >>> U1.irrep_dim(U1Sector(5))
+    1
+    """
 
     name: str = "U1"
 

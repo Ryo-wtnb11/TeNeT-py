@@ -2,7 +2,7 @@
 
 Properties and coherence conditions — pentagon, hexagon, snake, sphericality,
 unitarity, non-degeneracy of the braiding — are **validators, not protocols**:
-a provider is data/capabilities (:mod:`tenet.symmetry.base`) plus validated
+a provider is data/capabilities (``tenet.symmetry.base``) plus validated
 properties (this module). Each validator takes a provider and an explicit
 sector budget, checks every instance of its identity that the budget reaches,
 raises ``ValueError`` on the first violation and returns the number of
@@ -62,7 +62,7 @@ Sectors = tuple[Sector, ...]
 class SectorEnumeration(Protocol):
     """Providers with finitely many sectors that can list them all.
 
-    Opt-in probe for :func:`properties` when no explicit sector budget is
+    Opt-in probe for ``properties`` when no explicit sector budget is
     given; an infinite-sector provider (U(1), SU(2)) cannot implement it and
     must be handed sectors explicitly for a meaningful answer.
     """
@@ -80,8 +80,8 @@ def validate_pentagon(provider: FusionRules, sectors: Sectors, *, atol: float = 
     ``[F^{fcd}_e]_{g,l} [F^{abl}_e]_{f,k} = sum_h [F^{abc}_g]_{f,h}
     [F^{ahd}_e]_{g,k} [F^{bcd}_k]_{h,l}`` for every admissible labelling with
     ``a, b, c, d`` drawn from ``sectors`` (inner lines follow fusion and may
-    leave the budget). Needs :class:`~tenet.symmetry.AssociatorData` and
-    :class:`~tenet.symmetry.FusionRules`.
+    leave the budget). Needs [AssociatorData][tenet.symmetry.AssociatorData] and
+    [FusionRules][tenet.symmetry.FusionRules].
 
     Parameters
     ----------
@@ -101,6 +101,13 @@ def validate_pentagon(provider: FusionRules, sectors: Sectors, *, atol: float = 
     ------
     ValueError
         On the first violated instance, naming its labels.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import SU2, SU2Sector
+    >>> from tenet.symmetry.coherence import validate_pentagon
+    >>> validate_pentagon(SU2, (SU2Sector(0), SU2Sector(1)))
+    48
     """
     F = provider.f_symbol  # ty: ignore[unresolved-attribute]  # AssociatorData, caller-gated
     checked = 0
@@ -135,8 +142,8 @@ def validate_hexagon(provider: FusionRules, sectors: Sectors, *, atol: float = 1
     ``R^{ca}_e [F^{acb}_d]_{e,g} R^{cb}_g = sum_f [F^{cab}_d]_{e,f} R^{cf}_d
     [F^{abc}_d]_{f,g}`` — braiding ``c`` leftward past ``a`` then ``b`` equals
     braiding it past ``a x b`` at once. Needs
-    :class:`~tenet.symmetry.AssociatorData` and
-    :class:`~tenet.symmetry.BraidingData`.
+    [AssociatorData][tenet.symmetry.AssociatorData] and
+    [BraidingData][tenet.symmetry.BraidingData].
 
     Parameters
     ----------
@@ -156,6 +163,13 @@ def validate_hexagon(provider: FusionRules, sectors: Sectors, *, atol: float = 1
     ------
     ValueError
         On the first violated instance, naming its labels.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import SU2, SU2Sector
+    >>> from tenet.symmetry.coherence import validate_hexagon
+    >>> validate_hexagon(SU2, (SU2Sector(0), SU2Sector(1)))
+    11
     """
     F = provider.f_symbol  # ty: ignore[unresolved-attribute]  # AssociatorData, caller-gated
     R = provider.r_symbol  # ty: ignore[unresolved-attribute]  # BraidingData, caller-gated
@@ -187,8 +201,8 @@ def validate_snake(provider: _DualFusionRules, sectors: Sectors, *, atol: float 
     ``B^{ab}_c == sqrt(qdim(a) qdim(b) / qdim(c)) [F^{a b dual(b)}_a]_{c, 1}``
     — the ``Bsymbol_from_Fsymbol`` relation that encodes evaluation followed by
     coevaluation being the identity. Needs
-    :class:`~tenet.symmetry.DualityData`, :class:`~tenet.symmetry.AssociatorData`
-    and :class:`~tenet.symmetry.QuantumDimensionData`.
+    [DualityData][tenet.symmetry.DualityData], [AssociatorData][tenet.symmetry.AssociatorData]
+    and [QuantumDimensionData][tenet.symmetry.QuantumDimensionData].
 
     Parameters
     ----------
@@ -208,6 +222,13 @@ def validate_snake(provider: _DualFusionRules, sectors: Sectors, *, atol: float 
     ------
     ValueError
         On the first violated instance, naming its labels.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import SU2, SU2Sector
+    >>> from tenet.symmetry.coherence import validate_snake
+    >>> validate_snake(SU2, (SU2Sector(0), SU2Sector(1), SU2Sector(2)))
+    14
     """
     checked = 0
     for a, b in product(sectors, repeat=2):
@@ -229,8 +250,8 @@ def validate_spherical(provider: _DualFusionRules, sectors: Sectors, *, atol: fl
     """Check sphericality: left and right traces agree, ``qdim(a) == qdim(dual(a))``.
 
     Exact by default — every provider's quantum dimensions come from exact
-    arithmetic. Needs :class:`~tenet.symmetry.PivotalData` (today a marker) and
-    :class:`~tenet.symmetry.QuantumDimensionData`.
+    arithmetic. Needs [PivotalData][tenet.symmetry.PivotalData] (today a marker) and
+    [QuantumDimensionData][tenet.symmetry.QuantumDimensionData].
 
     Parameters
     ----------
@@ -250,6 +271,13 @@ def validate_spherical(provider: _DualFusionRules, sectors: Sectors, *, atol: fl
     ------
     ValueError
         On the first sector whose two traces differ.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import SU2, SU2Sector
+    >>> from tenet.symmetry.coherence import validate_spherical
+    >>> validate_spherical(SU2, (SU2Sector(0), SU2Sector(1), SU2Sector(2)))
+    3
     """
     checked = 0
     for a in sectors:
@@ -267,9 +295,9 @@ def validate_unitary(provider: FusionRules, sectors: Sectors, *, atol: float = 1
 
     For every ``a, b, c, d`` in ``sectors`` the matrix ``[F^{abc}_d]_{e,f}``
     over admissible inner lines must be unitary, and every ``R^{ab}_c`` must
-    have unit modulus. Needs :class:`~tenet.symmetry.DaggerData` (today a
-    marker) plus :class:`~tenet.symmetry.AssociatorData`;
-    :class:`~tenet.symmetry.BraidingData` is checked when present.
+    have unit modulus. Needs [DaggerData][tenet.symmetry.DaggerData] (today a
+    marker) plus [AssociatorData][tenet.symmetry.AssociatorData];
+    [BraidingData][tenet.symmetry.BraidingData] is checked when present.
 
     Parameters
     ----------
@@ -289,6 +317,13 @@ def validate_unitary(provider: FusionRules, sectors: Sectors, *, atol: float = 1
     ------
     ValueError
         On the first non-unitary F-matrix or non-unimodular R.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import SU2, SU2Sector
+    >>> from tenet.symmetry.coherence import validate_unitary
+    >>> validate_unitary(SU2, (SU2Sector(0), SU2Sector(1)))
+    8
     """
     checked = 0
     for a, b, c, d in product(sectors, repeat=4):
@@ -329,8 +364,8 @@ def validate_non_degenerate_braiding(
 
     ``S_ab = sum_c N^c_{dual(a), b} (theta_c / (theta_a theta_b)) qdim(c)``;
     full rank over the given sectors is the modularity criterion. Needs
-    :class:`~tenet.symmetry.FusionRules`, :class:`~tenet.symmetry.TwistData`,
-    :class:`~tenet.symmetry.QuantumDimensionData` and the dual label map. Only
+    [FusionRules][tenet.symmetry.FusionRules], [TwistData][tenet.symmetry.TwistData],
+    [QuantumDimensionData][tenet.symmetry.QuantumDimensionData] and the dual label map. Only
     meaningful when ``sectors`` is the complete sector set (Fibonacci's two;
     any symmetric provider with more than one sector fails, as it must).
 
@@ -352,6 +387,23 @@ def validate_non_degenerate_braiding(
     ------
     ValueError
         If the S-matrix is singular over ``sectors``.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import SU2, SU2Sector
+    >>> from tenet.symmetry.coherence import validate_non_degenerate_braiding
+    >>> validate_non_degenerate_braiding(SU2, (SU2Sector(0),))
+    1
+
+    A *symmetric* braiding over more than one sector is degenerate, as it
+    must be:
+
+    >>> validate_non_degenerate_braiding(
+    ...     SU2, (SU2Sector(0), SU2Sector(1))
+    ... )  # doctest: +ELLIPSIS
+    Traceback (most recent call last):
+        ...
+    ValueError: SU2: the braiding is degenerate — the S-matrix over ... has rank 1 < 2
     """
     theta = provider.twist  # ty: ignore[unresolved-attribute]  # TwistData, caller-gated
     s = np.array(
@@ -381,10 +433,32 @@ def validate_non_degenerate_braiding(
 def symmetric_braiding(provider: FusionRules, sectors: Sectors) -> bool:
     """``True`` iff ``R == R**-1`` on every fusion channel over ``sectors``.
 
+    Parameters
+    ----------
+    provider : FusionRules
+        The provider classified; needs [BraidingData][tenet.symmetry.BraidingData]
+        or [RMatrixData][tenet.symmetry.RMatrixData].
+    sectors : tuple of Sector
+        The budget ``a, b`` are drawn from.
+
+    Returns
+    -------
+    bool
+        Whether the braiding is symmetric over the budget.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import SU2, SU2Sector
+    >>> from tenet.symmetry.coherence import symmetric_braiding
+    >>> symmetric_braiding(SU2, (SU2Sector(0), SU2Sector(1)))
+    True
+
+    Notes
+    -----
     The property ``transpose`` gates on beside
-    :class:`~tenet.symmetry.BraidingData`: a symmetric braiding is what makes
+    [BraidingData][tenet.symmetry.BraidingData]: a symmetric braiding is what makes
     ``axes`` alone determine the braid (invariant 12). Takes the array path for
-    a provider with :class:`~tenet.symmetry.RMatrixData`, so multiplicity-bearing
+    a provider with [RMatrixData][tenet.symmetry.RMatrixData], so multiplicity-bearing
     providers are classified too. Cached per ``(provider, sectors)``.
     """
     matrices = provider if isinstance(provider, RMatrixData) else None
@@ -404,7 +478,7 @@ def symmetric_braiding(provider: FusionRules, sectors: Sectors) -> bool:
 @dataclass(frozen=True, slots=True)
 class CategoricalProperties:
     """Derived properties of a provider over a sector budget — computed, never
-    declared. Returned by :func:`properties`."""
+    declared. Returned by ``properties``."""
 
     braided: bool
     symmetric: bool
@@ -420,7 +494,7 @@ def properties(provider: _DualFusionRules, sectors: Sectors | None = None) -> Ca
     A free function, not a provider attribute: providers stay frozen, hashable,
     array-free values with no new fields. With ``sectors=None`` the budget is
     the provider's own ``all_sectors()`` when it enumerates finitely
-    (:class:`SectorEnumeration`), else the unit alone — pass explicit sectors
+    (``SectorEnumeration``), else the unit alone — pass explicit sectors
     for a meaningful answer on an infinite-sector provider.
 
     Parameters
@@ -434,6 +508,21 @@ def properties(provider: _DualFusionRules, sectors: Sectors | None = None) -> Ca
     -------
     CategoricalProperties
         ``braided`` / ``symmetric`` / ``spherical`` / ``modular`` / ``unitary``.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import SU2, SU2Sector, Z2, Z2Sector
+    >>> from tenet.symmetry.coherence import properties
+    >>> p = properties(SU2, (SU2Sector(0), SU2Sector(1)))
+    >>> (p.braided, p.symmetric, p.spherical, p.modular, p.unitary)
+    (True, True, True, False, True)
+
+    A provider that carries its permutation coefficients directly (Z2's are
+    hardwired ``+1``; fermion parity's are the Koszul sign) has no
+    ``r_symbol``, so it classifies as unbraided here:
+
+    >>> properties(Z2, (Z2Sector(0), Z2Sector(1))).braided
+    False
     """
     if sectors is None:
         sectors = (

@@ -89,39 +89,75 @@ class FusionRules(Protocol):
 
     Deliberately *not* called a fusion category: fusion rules ``N^c_ab`` do not
     determine one — a fusion category is the rules plus an associator
-    (:class:`AssociatorData`) plus rigidity (:class:`DualityData`), and the same
+    ([AssociatorData][tenet.symmetry.AssociatorData]) plus rigidity
+    ([DualityData][tenet.symmetry.DualityData]), and the same
     rules with different associators are genuinely different categories
     (``Vec_G`` versus ``Vec_G^omega``). ``dual`` is duality data and lives on
-    :class:`DualityData`; the label-level ``dual`` map every provider carries
-    is annotated through :class:`_DualFusionRules` where it is actually read.
+    [DualityData][tenet.symmetry.DualityData]; the label-level ``dual`` map every
+    provider carries is annotated through ``_DualFusionRules`` where it is
+    actually read.
 
     Notes
     -----
     "Fusion category" is the name of a *combination* — ``FusionRules +
-    AssociatorData + DualityData`` with :func:`tenet.symmetry.coherence.validate_pentagon`
+    AssociatorData + DualityData`` with ``tenet.symmetry.coherence.validate_pentagon``
     and ``validate_snake`` passing — and it is a name in the docs, never a class
     here.
     """
 
     @property
-    def name(self) -> str: ...
+    def name(self) -> str:
+        """The provider's label, e.g. ``"U1"`` — a display string, never dispatched on."""
+        ...
 
     @property
-    def unit(self) -> Sector: ...
+    def unit(self) -> Sector:
+        """The unit (vacuum) sector: the identity of fusion, ``unit x a -> a``."""
+        ...
 
-    def fusion(self, a: Sector, b: Sector) -> tuple[Sector, ...]: ...
+    def fusion(self, a: Sector, b: Sector) -> tuple[Sector, ...]:
+        """The fusion channels of ``a x b``, in the provider's canonical order.
+
+        Parameters
+        ----------
+        a, b : Sector
+            The two sectors fused, in this provider's own sector type.
+
+        Returns
+        -------
+        tuple of Sector
+            Every ``c`` with ``N^c_ab > 0``, each listed **once** regardless of
+            its multiplicity, in a deterministic canonical (ascending) order —
+            block enumeration is derived from this order, so it must never
+            depend on dict iteration or insertion history.
+        """
+        ...
 
     def n_symbol(self, a: Sector, b: Sector, c: Sector) -> int:
-        """Multiplicity ``N^c_ab``. Multiplicity-free providers return 0 or 1."""
+        """Multiplicity ``N^c_ab``. Multiplicity-free providers return 0 or 1.
+
+        Parameters
+        ----------
+        a, b : Sector
+            The two sectors fused.
+        c : Sector
+            The candidate fusion channel.
+
+        Returns
+        -------
+        int
+            The number of independent vertices ``a x b -> c``; ``0`` when the
+            channel is forbidden.
+        """
         ...
 
 
 class _DualFusionRules(FusionRules, Protocol):
-    """:class:`FusionRules` plus the label-level ``dual`` map.
+    """``FusionRules`` plus the label-level ``dual`` map.
 
     The honest annotation for the sites that store a provider and relabel
     sectors through ``dual`` (``GradedSpace``, ``Leg``, ``flip``, the bend
-    helpers). Deliberately **not** the full :class:`DualityData` (which also
+    helpers). Deliberately **not** the full ``DualityData`` (which also
     carries ``b_symbol``), because every provider — Abelian ones included —
     satisfies this annotation while only braided/rigid ones supply B-symbols.
     Not ``runtime_checkable``: it is an annotation, never an ``isinstance``
@@ -138,10 +174,26 @@ class QuantumDimensionData(Protocol):
     Notes
     -----
     ``qdim`` need not be an integer (Fibonacci's ``tau`` has ``qdim == phi``)
-    and is independent of any dense expansion (:class:`ClebschGordanData`).
+    and is independent of any dense expansion
+    ([ClebschGordanData][tenet.symmetry.ClebschGordanData]).
     """
 
-    def qdim(self, a: Sector) -> float: ...
+    def qdim(self, a: Sector) -> float:
+        """The quantum dimension ``d_a``.
+
+        Parameters
+        ----------
+        a : Sector
+            The sector whose quantum dimension is asked.
+
+        Returns
+        -------
+        float
+            ``d_a > 0``. Equal to ``irrep_dim(a)`` whenever the provider also
+            has [ClebschGordanData][tenet.symmetry.ClebschGordanData], but not
+            an integer in general.
+        """
+        ...
 
 
 @runtime_checkable
@@ -153,13 +205,47 @@ class ClebschGordanData(Protocol):
     A dense-basis capability: it exists exactly when the sectors are
     representations of something. An anyonic provider (Fibonacci, Ising) has no
     ``cgc`` and no ``irrep_dim`` at all, which is why quantum dimensions live on
-    :class:`QuantumDimensionData` instead.
+    [QuantumDimensionData][tenet.symmetry.QuantumDimensionData] instead.
     """
 
-    def irrep_dim(self, a: Sector) -> int: ...
+    def irrep_dim(self, a: Sector) -> int:
+        """The dense dimension ``d_a`` of the irrep labelled ``a``.
+
+        Parameters
+        ----------
+        a : Sector
+            The sector whose irrep dimension is asked.
+
+        Returns
+        -------
+        int
+            ``d_a >= 1``, the length of each of ``cgc``'s first three axes.
+        """
+        ...
 
     def cgc(self, a: Sector, b: Sector, c: Sector) -> np.ndarray:
-        """Shape ``(d_a, d_b, d_c, N^c_ab)``; last axis is the multiplicity label mu."""
+        """Shape ``(d_a, d_b, d_c, N^c_ab)``; last axis is the multiplicity label mu.
+
+        Parameters
+        ----------
+        a, b : Sector
+            The two fused sectors.
+        c : Sector
+            The fusion channel selected.
+
+        Returns
+        -------
+        numpy.ndarray
+            The Clebsch-Gordan tensor of ``a x b -> c`` in the provider's own
+            dense basis, shape ``(d_a, d_b, d_c, N^c_ab)`` — the trailing axis
+            is the multiplicity label ``mu`` and is present even when it has
+            size 1.
+
+        Raises
+        ------
+        ValueError
+            If ``c`` is not a fusion channel of ``a x b``.
+        """
         ...
 
 
@@ -172,12 +258,26 @@ class PermutationCoefficients(Protocol):
     ) -> tuple[tuple["FusionTree", complex], ...]:
         """``((tree', coeff), ...)`` with the permuted tree equal to ``Σ coeff · tree'``.
 
-        ``perm[j]`` is the *old* uncoupled position that becomes position ``j``
-        (the same convention as ``transpose``'s ``axes``). Expansion is over
-        canonical left-associated trees. The coefficient stays **scalar** even
-        under ``n_symbol > 1``, because the multiplicity label lives inside the
-        tree: a matrix-valued F is still one number per ``(tree, tree')`` pair,
-        it just makes the expansion longer.
+        Parameters
+        ----------
+        tree : FusionTree
+            The left-associated tree whose uncoupled lines are permuted.
+        perm : tuple of int
+            ``perm[j]`` is the *old* uncoupled position that becomes position
+            ``j`` (the same convention as ``transpose``'s ``axes``).
+
+        Returns
+        -------
+        tuple of (FusionTree, complex)
+            The expansion of the permuted tree over canonical left-associated
+            trees with the same coupled sector.
+
+        Notes
+        -----
+        The coefficient stays **scalar** even under ``n_symbol > 1``, because
+        the multiplicity label lives inside the tree: a matrix-valued F is
+        still one number per ``(tree, tree')`` pair, it just makes the
+        expansion longer.
         """
         ...
 
@@ -190,15 +290,40 @@ class BendingCoefficients(Protocol):
         self, key: "FusionBlockKey", *, dual: bool
     ) -> tuple[tuple["FusionBlockKey", complex], ...]:
         """Move the LAST uncoupled line of ``output_tree`` onto the END of
-        ``input_tree``, dualized. ``dual`` is the moved leg's current flag (it
-        selects the Frobenius-Schur factor). Returns ``((key', coeff), ...)``.
+        ``input_tree``, dualized.
+
+        Parameters
+        ----------
+        key : FusionBlockKey
+            The block key whose output tree loses its last line.
+        dual : bool
+            The moved leg's *current* dual flag; it selects the
+            Frobenius-Schur factor.
+
+        Returns
+        -------
+        tuple of (FusionBlockKey, complex)
+            ``((key', coeff), ...)``, the expansion of the bent key.
         """
         ...
 
     def bend_left(
         self, key: "FusionBlockKey", *, dual: bool
     ) -> tuple[tuple["FusionBlockKey", complex], ...]:
-        """The inverse direction: last line of ``input_tree`` onto ``output_tree``."""
+        """The inverse direction: last line of ``input_tree`` onto ``output_tree``.
+
+        Parameters
+        ----------
+        key : FusionBlockKey
+            The block key whose input tree loses its last line.
+        dual : bool
+            The moved leg's *current* dual flag.
+
+        Returns
+        -------
+        tuple of (FusionBlockKey, complex)
+            ``((key', coeff), ...)``, the expansion of the bent key.
+        """
         ...
 
 
@@ -207,7 +332,18 @@ class DualBasis(Protocol):
     """Providers whose ``V_a -> V_a^*`` isomorphism is available in the dense basis."""
 
     def z_matrix(self, a: Sector) -> np.ndarray:
-        """``Z_a``, shape ``(d_a, d_dual(a))``, in the provider's own dense basis."""
+        """``Z_a``, shape ``(d_a, d_dual(a))``, in the provider's own dense basis.
+
+        Parameters
+        ----------
+        a : Sector
+            The sector whose ``V_a -> V_a^*`` isomorphism is asked.
+
+        Returns
+        -------
+        numpy.ndarray
+            ``Z_a``, shape ``(d_a, d_dual(a))``, in the same gauge as ``cgc``.
+        """
         ...
 
 
@@ -218,13 +354,32 @@ class SymmetryCast(Protocol):
     def branch(self, target: FusionRules, a: Sector) -> tuple[Sector, ...]:
         """The ``target`` sector of each of ``a``'s ``d_a`` dense basis vectors.
 
-        Length is exactly ``irrep_dim(a)``, in the provider's **own** dense
-        (magnetic) order — the same order ``cgc`` and ``z_matrix`` use, so this
-        composes with ``to_dense``'s ``alpha * d_a + m`` layout without a second
-        convention. Every returned sector must satisfy
-        ``target.irrep_dim(...) == 1``: one target label per basis vector is only
-        well-defined when the target's irreps are one-dimensional, i.e. when the
-        target is abelian. ``CapabilityError`` for an unsupported target.
+        Parameters
+        ----------
+        target : FusionRules
+            The smaller symmetry restricted to; must be abelian.
+        a : Sector
+            The sector of *this* provider being decomposed.
+
+        Returns
+        -------
+        tuple of Sector
+            One ``target`` sector per dense basis vector, length exactly
+            ``irrep_dim(a)``.
+
+        Raises
+        ------
+        CapabilityError
+            For a ``target`` this provider cannot restrict to.
+
+        Notes
+        -----
+        The order is the provider's **own** dense (magnetic) order — the same
+        order ``cgc`` and ``z_matrix`` use, so this composes with
+        ``to_dense``'s ``alpha * d_a + m`` layout without a second convention.
+        Every returned sector must satisfy ``target.irrep_dim(...) == 1``: one
+        target label per basis vector is only well-defined when the target's
+        irreps are one-dimensional, i.e. when the target is abelian.
         """
         ...
 
@@ -235,11 +390,35 @@ class AssociatorData(Protocol):
 
     Scalar-valued is a multiplicity-free assumption: a provider with
     ``n_symbol > 1`` must raise rather than truncate a matrix-valued symbol, and
-    supply :class:`FMatrixData` beside this protocol instead.
+    supply [FMatrixData][tenet.symmetry.FMatrixData] beside this protocol instead.
     """
 
     def f_symbol(self, a: Sector, b: Sector, c: Sector, d: Sector, e: Sector, f: Sector) -> complex:
-        """``[F^{abc}_d]_{e,f}``; ``e`` is the inner line of ``((ab)c)``, ``f`` of ``(a(bc))``."""
+        """``[F^{abc}_d]_{e,f}``; ``e`` is the inner line of ``((ab)c)``, ``f`` of ``(a(bc))``.
+
+        Parameters
+        ----------
+        a, b, c : Sector
+            The three fused sectors, in order.
+        d : Sector
+            The total (coupled) sector.
+        e : Sector
+            The inner line of the ``((ab)c)`` association.
+        f : Sector
+            The inner line of the ``(a(bc))`` association.
+
+        Returns
+        -------
+        complex
+            The recoupling coefficient; exactly ``0`` for a structurally
+            forbidden labelling.
+
+        Raises
+        ------
+        ValueError
+            If any vertex of the labelling has ``n_symbol > 1`` — the scalar
+            symbol must refuse rather than truncate a matrix-valued one.
+        """
         ...
 
 
@@ -252,12 +431,31 @@ class BraidingData(Protocol):
     Having ``R`` does not make the braiding symmetric: ``transpose`` gates on
     this protocol *plus* the symmetric-braiding property (``R == R**-1``), and a
     chiral provider is refused rather than handed one of two inequivalent
-    braids. Multiplicity-bearing providers supply :class:`RMatrixData` beside
-    this one.
+    braids. Multiplicity-bearing providers supply
+    [RMatrixData][tenet.symmetry.RMatrixData] beside this one.
     """
 
     def r_symbol(self, a: Sector, b: Sector, c: Sector) -> complex:
-        """``R^{ab}_c``, the coefficient of braiding ``a`` past ``b`` inside ``c``."""
+        """``R^{ab}_c``, the coefficient of braiding ``a`` past ``b`` inside ``c``.
+
+        Parameters
+        ----------
+        a, b : Sector
+            The two braided sectors, in order.
+        c : Sector
+            The fusion channel they are braided inside.
+
+        Returns
+        -------
+        complex
+            The braiding phase; unit modulus in a unitary gauge.
+
+        Raises
+        ------
+        ValueError
+            If ``N^c_ab > 1`` — a matrix-valued braiding must be served
+            through [RMatrixData][tenet.symmetry.RMatrixData], never truncated.
+        """
         ...
 
 
@@ -269,13 +467,47 @@ class DualityData(Protocol):
     -----
     ``dual`` alone (the label map every provider carries) is not rigidity; the
     B-symbol is what prices an evaluation/coevaluation bend. Multiplicity-bearing
-    providers supply :class:`BMatrixData` beside this one.
+    providers supply [BMatrixData][tenet.symmetry.BMatrixData] beside this one.
     """
 
-    def dual(self, a: Sector) -> Sector: ...
+    def dual(self, a: Sector) -> Sector:
+        """The dual (conjugate) label of ``a``.
+
+        Parameters
+        ----------
+        a : Sector
+            The sector dualized.
+
+        Returns
+        -------
+        Sector
+            ``dual(a)``, with ``dual(dual(a)) == a``. A self-dual *label*
+            (``dual(a) == a``) does not make the ``V_a -> V_a^*`` isomorphism
+            the identity — that is ``z_matrix``'s content.
+        """
+        ...
 
     def b_symbol(self, a: Sector, b: Sector, c: Sector) -> complex:
-        """``B^{ab}_c``, the duality coefficient bending ``b`` out of ``a x b -> c``."""
+        """``B^{ab}_c``, the duality coefficient bending ``b`` out of ``a x b -> c``.
+
+        Parameters
+        ----------
+        a, b : Sector
+            The vertex's two fused sectors; ``b`` is the line bent away.
+        c : Sector
+            The vertex's fusion channel.
+
+        Returns
+        -------
+        complex
+            The bend coefficient.
+
+        Raises
+        ------
+        ValueError
+            If any vertex of the labelling has ``n_symbol > 1`` — matrix-valued
+            bends are served through [BMatrixData][tenet.symmetry.BMatrixData].
+        """
         ...
 
 
@@ -284,7 +516,19 @@ class FSIndicatorData(Protocol):
     """Providers that supply the Frobenius-Schur indicator ``chi``."""
 
     def frobenius_schur(self, a: Sector) -> complex:
-        """``chi_a``, the Frobenius-Schur phase of the ``V_a -> V_a^*`` isomorphism."""
+        """``chi_a``, the Frobenius-Schur phase of the ``V_a -> V_a^*`` isomorphism.
+
+        Parameters
+        ----------
+        a : Sector
+            The sector whose indicator is asked.
+
+        Returns
+        -------
+        complex
+            ``chi_a``, a phase; ``+-1`` for every real-or-unitary gauge tenet
+            ships.
+        """
         ...
 
 
@@ -301,7 +545,19 @@ class TwistData(Protocol):
     """
 
     def twist(self, a: Sector) -> complex:
-        """``theta_a``, the ribbon twist of ``a``."""
+        """``theta_a``, the ribbon twist of ``a``.
+
+        Parameters
+        ----------
+        a : Sector
+            The sector whose twist is asked.
+
+        Returns
+        -------
+        complex
+            ``theta_a``, a phase; ``1`` for every symmetric bosonic category,
+            ``(-1)^parity`` for fermion parity.
+        """
         ...
 
 
@@ -311,7 +567,7 @@ class PivotalData(Protocol):
 
     The pivotal isomorphism today is one fixed choice — TensorKit's
     ``bendright``, the ``sqrt(qdim(c)/qdim(a))`` split of the bend's
-    normalization in :func:`bend_braided` — shared by every provider, so this
+    normalization in [bend_braided][tenet.symmetry.bend_braided] — shared by every provider, so this
     protocol carries no method yet and every provider satisfies it.
 
     Notes
@@ -338,10 +594,10 @@ class DaggerData(Protocol):
 class FMatrixData(Protocol):
     """Array-valued associator for providers with ``N^c_ab > 1``.
 
-    :class:`AssociatorData`'s array-valued sibling, a capability *beside* it:
-    the scalar symbol stays exactly as it is for every multiplicity-free
-    provider, and :func:`_artin_braid` takes the array path only when the
-    provider also implements the array-valued protocols.
+    [AssociatorData][tenet.symmetry.AssociatorData]'s array-valued sibling, a
+    capability *beside* it: the scalar symbol stays exactly as it is for every
+    multiplicity-free provider, and ``_artin_braid`` takes the array path only
+    when the provider also implements the array-valued protocols.
     """
 
     def f_matrix(
@@ -349,32 +605,77 @@ class FMatrixData(Protocol):
     ) -> np.ndarray:
         """``[F^{abc}_d]_{e,f}``, shape ``(N^e_ab, N^d_ec, N^f_bc, N^d_af)``.
 
-        The four axes are the four vertex labels of ``((ab)c)_d`` and
-        ``(a(bc))_d``, in that order.
+        Parameters
+        ----------
+        a, b, c : Sector
+            The three fused sectors, in order.
+        d : Sector
+            The total (coupled) sector.
+        e : Sector
+            The inner line of the ``((ab)c)`` association.
+        f : Sector
+            The inner line of the ``(a(bc))`` association.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(N^e_ab, N^d_ec, N^f_bc, N^d_af)``. The four axes are the
+            four vertex labels of ``((ab)c)_d`` and ``(a(bc))_d``, in that
+            order.
         """
         ...
 
 
 @runtime_checkable
 class RMatrixData(Protocol):
-    """Array-valued braiding — :class:`BraidingData`'s sibling for ``N^c_ab > 1``."""
+    """Array-valued braiding — [BraidingData][tenet.symmetry.BraidingData]'s
+    sibling for ``N^c_ab > 1``."""
 
     def r_matrix(self, a: Sector, b: Sector, c: Sector) -> np.ndarray:
-        """``R^{ab}_c``, shape ``(N^c_ab, N^c_ba)``."""
+        """``R^{ab}_c``, shape ``(N^c_ab, N^c_ba)``.
+
+        Parameters
+        ----------
+        a, b : Sector
+            The two braided sectors, in order.
+        c : Sector
+            The fusion channel they are braided inside.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(N^c_ab, N^c_ba)``: the vertex label before against the
+            vertex label after the braid.
+        """
         ...
 
 
 @runtime_checkable
 class BMatrixData(Protocol):
-    """Array-valued bend — :class:`DualityData`'s sibling for ``N^c_ab > 1``."""
+    """Array-valued bend — [DualityData][tenet.symmetry.DualityData]'s sibling
+    for ``N^c_ab > 1``."""
 
     def b_matrix(self, a: Sector, b: Sector, c: Sector) -> np.ndarray:
-        """``B^{ab}_c``, shape ``(N^c_ab, N^a_{c,dual(b)})``."""
+        """``B^{ab}_c``, shape ``(N^c_ab, N^a_{c,dual(b)})``.
+
+        Parameters
+        ----------
+        a, b : Sector
+            The vertex's two fused sectors; ``b`` is the line bent away.
+        c : Sector
+            The vertex's fusion channel.
+
+        Returns
+        -------
+        numpy.ndarray
+            Shape ``(N^c_ab, N^a_{c,dual(b)})``: the source vertex label
+            against the destination's new vertex label.
+        """
         ...
 
 
 class _TreeBraider(FusionRules, AssociatorData, BraidingData, Protocol):
-    """What :func:`permute_braided_tree` / :func:`_artin_braid` actually read:
+    """What ``permute_braided_tree`` / ``_artin_braid`` actually read:
     fusion data (``fusion``/``n_symbol``/``unit``/``name``) plus the scalar F-
     and R-symbols. They never read ``b_symbol``, ``frobenius_schur`` or
     ``qdim`` — the pre-M24 bundled annotation over-asked."""
@@ -383,18 +684,18 @@ class _TreeBraider(FusionRules, AssociatorData, BraidingData, Protocol):
 class _TreeBender(
     FusionRules, DualityData, FSIndicatorData, QuantumDimensionData, PivotalData, Protocol
 ):
-    """What :func:`bend_braided` actually reads: fusion data plus ``dual``,
+    """What ``bend_braided`` actually reads: fusion data plus ``dual``,
     ``b_symbol``, ``frobenius_schur`` and ``qdim`` (under the hardcoded pivotal
     convention). It never reads ``f_symbol`` or ``r_symbol`` — and ``qdim``,
     which the pre-M24 bundled annotation did not declare, is
-    declared by :class:`QuantumDimensionData`."""
+    declared by ``QuantumDimensionData``."""
 
 
 @runtime_checkable
 class _FRMatrices(FMatrixData, RMatrixData, Protocol):
-    """What :func:`_artin_braid`'s array-valued path reads: ``f_matrix`` and
+    """What ``_artin_braid``'s array-valued path reads: ``f_matrix`` and
     ``r_matrix`` together (one F-R-F move mixes both). ``b_matrix`` is owned by
-    :func:`bend_braided`, which gates on :class:`BMatrixData` alone."""
+    ``bend_braided``, which gates on ``BMatrixData`` alone."""
 
 
 class CapabilityError(TypeError):
@@ -414,7 +715,31 @@ class StructureChangingError(TypeError):
 
 
 def requires(provider: object, capability: type) -> None:
-    """Raise :class:`CapabilityError` unless ``provider`` implements ``capability``."""
+    """Raise [CapabilityError][tenet.symmetry.CapabilityError] unless
+    ``provider`` implements ``capability``.
+
+    Parameters
+    ----------
+    provider : object
+        The provider gated, usually read off a leg's space.
+    capability : type
+        One of the ``runtime_checkable`` capability protocols of
+        ``tenet.symmetry``.
+
+    Raises
+    ------
+    CapabilityError
+        If ``provider`` does not implement ``capability``, naming both.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import U1, Z2, ClebschGordanData, SymmetryCast, requires
+    >>> requires(U1, ClebschGordanData)  # U(1) has CG tensors: no raise
+    >>> requires(Z2, SymmetryCast)
+    Traceback (most recent call last):
+        ...
+    tenet.symmetry.base.CapabilityError: Z2Provider does not provide capability SymmetryCast
+    """
     if not isinstance(provider, capability):
         raise CapabilityError(
             f"{type(provider).__name__} does not provide capability {capability.__name__}"
@@ -422,9 +747,31 @@ def requires(provider: object, capability: type) -> None:
 
 
 def supports(provider: object, capability: type) -> bool:
-    """``True`` iff ``provider`` implements ``capability`` — :func:`requires`'
+    """``True`` iff ``provider`` implements ``capability`` — [requires][tenet.symmetry.requires]'
     non-raising sibling, so the capability graph is queryable without
-    ``try/except CapabilityError``."""
+    ``try/except CapabilityError``.
+
+    Parameters
+    ----------
+    provider : object
+        The provider queried.
+    capability : type
+        One of the ``runtime_checkable`` capability protocols of
+        ``tenet.symmetry``.
+
+    Returns
+    -------
+    bool
+        Whether ``provider`` implements ``capability``.
+
+    Examples
+    --------
+    >>> from tenet.symmetry import U1, Z2, ClebschGordanData, SymmetryCast, supports
+    >>> supports(U1, ClebschGordanData)
+    True
+    >>> supports(Z2, SymmetryCast)
+    False
+    """
     return isinstance(provider, capability)
 
 
@@ -433,6 +780,30 @@ def permute_unique_tree(
 ) -> tuple[tuple["FusionTree", complex], ...]:
     """``permute_tree`` for providers whose fusion is unique and whose F/R are 1.
 
+    Parameters
+    ----------
+    provider : FusionRules
+        The provider whose trees are permuted; it must have opted in by
+        defining ``permute_tree`` in terms of this helper.
+    tree : FusionTree
+        The left-associated tree whose uncoupled lines are permuted.
+    perm : tuple of int
+        ``perm[j]`` is the *old* uncoupled position that becomes position ``j``.
+
+    Returns
+    -------
+    tuple of (FusionTree, complex)
+        Exactly one term: the recomputed tree with coefficient ``1.0``.
+
+    Raises
+    ------
+    CapabilityError
+        If the permuted uncoupled labels admit anything other than exactly one
+        tree coupling to the same sector — this helper is only correct for
+        unique fusion.
+
+    Notes
+    -----
     Shared by Trivial and U(1): permuting the uncoupled labels leaves exactly one
     left-associated tree with the same coupled sector, so the whole expansion is
     that tree with coefficient 1. The spine is *recomputed* rather than permuted,
@@ -460,9 +831,34 @@ def permute_braided_tree(
 ) -> tuple[tuple["FusionTree", complex], ...]:
     """``permute_tree`` for any provider supplying F- and R-symbols.
 
+    Parameters
+    ----------
+    provider : FusionRules
+        A provider with [AssociatorData][tenet.symmetry.AssociatorData] and
+        [BraidingData][tenet.symmetry.BraidingData] (checked with
+        [requires][tenet.symmetry.requires] on entry).
+    tree : FusionTree
+        The left-associated tree whose uncoupled lines are permuted.
+    perm : tuple of int
+        ``perm[j]`` is the OLD uncoupled position that becomes position ``j``.
+
+    Returns
+    -------
+    tuple of (FusionTree, complex)
+        The accumulated ``{tree: coeff}`` expansion of the permuted tree.
+
+    Raises
+    ------
+    CapabilityError
+        If the provider lacks
+        [FusionRules][tenet.symmetry.FusionRules],
+        [AssociatorData][tenet.symmetry.AssociatorData] or
+        [BraidingData][tenet.symmetry.BraidingData].
+
+    Notes
+    -----
     Bubble-decomposes ``perm`` into adjacent transpositions (Artin generators) and
-    applies :func:`_artin_braid` to each, accumulating a ``{tree: coeff}`` expansion.
-    ``perm[j]`` is the OLD uncoupled position that becomes position ``j``.
+    applies ``_artin_braid`` to each, accumulating a ``{tree: coeff}`` expansion.
 
     Symmetric-category only: the caller gets no over/under choice, because
     ``R == R**-1`` for the providers this serves (invariant 12). A provider whose
@@ -517,7 +913,7 @@ def _artin_braid(
     which is a genuine expansion over the admissible ``e' in fusion(a, c)``.
     Every other spine entry is unchanged.
 
-    A provider that also implements :class:`FMatrixData` and :class:`RMatrixData`
+    A provider that also implements ``FMatrixData`` and ``RMatrixData``
     takes the array-valued path: the two vertex labels the move touches (``mu_{i-1}`` on
     ``a x b -> e`` and ``mu_i`` on ``e x c -> f``) are expanded over too, since an
     F-move mixes ``(e, mu)`` with ``(f, mu')``. Every *other* multiplicity label
@@ -605,7 +1001,38 @@ def bend_unique(
 ) -> tuple[tuple["FusionBlockKey", complex], ...]:
     """``bend_right``/``bend_left`` for providers whose fusion is unique and B is 1.
 
-    Shared by Trivial and U(1), exactly as :func:`permute_unique_tree` is. The
+    Parameters
+    ----------
+    provider : FusionRules
+        The provider whose keys are bent; it must have opted in by defining
+        ``bend_right``/``bend_left`` in terms of this helper.
+    key : FusionBlockKey
+        The block key one line is moved across.
+    right : bool
+        ``True`` moves the output tree's last line onto the input tree
+        (``bend_right``); ``False`` is the inverse direction.
+    dual : bool
+        The moved leg's *current* dual flag. Accepted and provably ignored
+        here — see Notes.
+
+    Returns
+    -------
+    tuple of (FusionBlockKey, complex)
+        Exactly one term: the recomputed key with coefficient ``1.0``.
+
+    Raises
+    ------
+    ValueError
+        If the source tree is empty (rank 0), so there is no line to bend.
+    CapabilityError
+        If dropping the moved line leaves uncoupled labels with anything other
+        than exactly one coupled sector, or more than one tree — this helper is
+        only correct for unique fusion.
+
+    Notes
+    -----
+    Shared by Trivial and U(1), exactly as
+    [permute_unique_tree][tenet.symmetry.permute_unique_tree] is. The
     source tree loses its last uncoupled line, the destination tree gains
     ``dual`` of it at the *end*, and the new coupled sector is the source tree's
     last inner line (the unit when the source had rank 1). Both spines are
@@ -652,6 +1079,40 @@ def bend_braided(
 ) -> tuple[tuple["FusionBlockKey", complex], ...]:
     """``bend_right``/``bend_left`` for any provider supplying B, FS and ``qdim``.
 
+    Parameters
+    ----------
+    provider : FusionRules
+        A provider with [DualityData][tenet.symmetry.DualityData],
+        [FSIndicatorData][tenet.symmetry.FSIndicatorData],
+        [QuantumDimensionData][tenet.symmetry.QuantumDimensionData] and
+        [PivotalData][tenet.symmetry.PivotalData] (the ``_TreeBender``
+        annotation — enforced by the type checker, not a runtime gate; see the
+        comment in the body).
+    key : FusionBlockKey
+        The block key one line is moved across.
+    right : bool
+        ``True`` moves the output tree's last line onto the input tree
+        (``bend_right``); ``False`` is the inverse direction.
+    dual : bool
+        The moved leg's *current* dual flag; it keys the Frobenius-Schur
+        factor.
+
+    Returns
+    -------
+    tuple of (FusionBlockKey, complex)
+        One term for a multiplicity-free provider; genuinely multi-term when
+        the provider supplies [BMatrixData][tenet.symmetry.BMatrixData].
+
+    Raises
+    ------
+    ValueError
+        If the source tree is empty (rank 0), so there is no line to bend.
+    CapabilityError
+        If the bent vertex has ``n_symbol > 1`` and the provider does not
+        supply [BMatrixData][tenet.symmetry.BMatrixData].
+
+    Notes
+    -----
     The source tree's last vertex is ``a x b -> c`` (``a`` the unit when the
     source has rank 1). The source loses ``b`` and re-couples to ``a``; the
     destination gains ``dual(b)`` at its **end** and couples to ``a`` too. Both
@@ -674,10 +1135,10 @@ def bend_braided(
 
     Single-term because the provider is multiplicity-free: one key in, one key
     out. ``n_symbol > 1`` needs matrix-valued coefficients, which a provider
-    supplies by also implementing :class:`BMatrixData`; then the
+    supplies by also implementing [BMatrixData][tenet.symmetry.BMatrixData]; then the
     destination's new vertex label is expanded over ``B``'s second axis instead
     of being pinned to ``0``, and the result is genuinely multi-term. Without
-    that capability the existing :class:`CapabilityError` still fires.
+    that capability the existing [CapabilityError][tenet.symmetry.CapabilityError] still fires.
     """
     from tenet.fusion_tree import FusionTree
     from tenet.structure import FusionBlockKey

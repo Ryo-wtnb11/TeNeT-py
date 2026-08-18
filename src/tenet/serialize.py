@@ -7,7 +7,7 @@ source of truth. ``num_blocks`` is in the header only as a *read count*, and it 
 checked against the freshly derived value.
 
 NumPy is correct here and only here for the same reason it is in
-:mod:`tenet.ops.dense`: the *file format* is NumPy's. Blocks arrive through
+``tenet.ops.dense``: the *file format* is NumPy's. Blocks arrive through
 ``ar.to_numpy`` and leave through the ordinary constructor, so no backend is ever
 imported and a JAX- or torch-backed tensor saves fine. ``load`` always returns
 NumPy blocks; ``load(path).to_backend("jax")`` is the documented restore, because
@@ -204,12 +204,44 @@ def _gauges(providers: "Iterable[FusionRules]") -> dict[str, str]:
 def save(t: "SymmetricTensor", path: str | os.PathLike, *, compress: bool = False) -> None:
     """Write ``t`` to ``path`` as a single ``.npz``: a JSON header plus one array per block.
 
-    Blocks are converted with ``ar.to_numpy``, so a JAX- or torch-backed tensor
-    saves fine and loads back as **NumPy** — ``load(...).to_backend("jax")`` is the
-    documented restore, because a device placement is not a property of the tensor.
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor written; any backend. Blocks are converted with
+        ``ar.to_numpy``, so a JAX- or torch-backed tensor saves fine.
+    path : str or os.PathLike
+        The destination file.
+    compress : bool, optional
+        ``False`` (the default) writes uncompressed; see Notes for why.
 
-    A ``Leg`` whose ``name`` is not ``None``, ``str`` or ``int`` is refused here,
-    before anything is written, with the public axis named.
+    Raises
+    ------
+    TypeError
+        If a ``Leg``'s ``name`` is not ``None``, ``str`` or ``int`` — refused
+        here, before anything is written, with the public axis named.
+    ValueError
+        If a leg's provider is not one of the serializable kinds.
+
+    Examples
+    --------
+    >>> import os, tempfile
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> with tempfile.TemporaryDirectory() as d:
+    ...     tenet.save(t, os.path.join(d, "t.npz"))
+    ...     t2 = tenet.load(os.path.join(d, "t.npz"))
+    >>> t2.structure == t.structure
+    True
+    >>> bool(tenet.allclose(t2, t))
+    True
+
+    Notes
+    -----
+    A saved tensor loads back as **NumPy** — ``load(...).to_backend("jax")`` is the
+    documented restore, because a device placement is not a property of the tensor.
 
     ``compress=False`` by default: reduced blocks are dense float arrays that do
     not compress well, so paying ``zlib`` on every checkpoint buys nothing. The
@@ -234,12 +266,41 @@ def save(t: "SymmetricTensor", path: str | os.PathLike, *, compress: bool = Fals
 
 
 def load(path: str | os.PathLike) -> "SymmetricTensor":
-    """Read a tensor written by :func:`save`. NumPy blocks; structure exactly equal.
+    """Read a tensor written by [save][tenet.save]. NumPy blocks; structure exactly equal.
 
-    Refuses a future ``format`` version, an unknown provider, a member set that is
-    not exactly the header plus ``b0..b{n-1}``, and — for SU(2), SU(N) and fZ2 — a
-    ``gauge`` string that is not the running one. Block count and per-block shape
-    are validated by ``SymmetricTensor.__post_init__``, unmodified.
+    Parameters
+    ----------
+    path : str or os.PathLike
+        The ``.npz`` file to read.
+
+    Returns
+    -------
+    SymmetricTensor
+        The saved tensor, blocks NumPy-backed; ``load(path).to_backend("jax")``
+        is the documented restore.
+
+    Raises
+    ------
+    ValueError
+        If — for SU(2), SU(N) or fZ2 — the file's gauge fingerprint is not the
+        running build's: block coefficients are only meaningful against the
+        CG / F / R conventions that produced them, so a gauge-mismatched file
+        is refused rather than silently misread. Also for a future ``format``
+        version, a header block count that contradicts the structure, or a
+        member set that is not exactly the header plus ``b0..b{n-1}``.
+    KeyError
+        For an unknown provider kind — including an SU(N) file on a build
+        without the optional ``racah-py`` wheel, which could not have produced
+        it anyway.
+
+    Examples
+    --------
+    See [save][tenet.save] for the round trip.
+
+    Notes
+    -----
+    Block count and per-block shape are validated by
+    ``SymmetricTensor.__post_init__``, unmodified.
     """
     from tenet.tensor import SymmetricTensor
 

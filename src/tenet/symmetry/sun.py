@@ -8,13 +8,13 @@ silently.
 
 SU(3) is the first symmetry tenet ships with ``N^c_ab > 1`` (``8 x 8 -> 8`` has
 ``N = 2``) and the first where ``dual(a) != a`` on an irrep of dimension ``> 1``.
-Both are served through the matrix-valued :class:`~tenet.symmetry.base.FMatrixData`
-/ :class:`~tenet.symmetry.base.RMatrixData` / :class:`~tenet.symmetry.base.BMatrixData` and
-:class:`~tenet.symmetry.base.DualBasis`, so ``transpose``, ``repartition`` and
+Both are served through the matrix-valued [FMatrixData][tenet.symmetry.FMatrixData]
+/ [RMatrixData][tenet.symmetry.RMatrixData] / [BMatrixData][tenet.symmetry.BMatrixData] and
+[DualBasis][tenet.symmetry.DualBasis], so ``transpose``, ``repartition`` and
 ``to_dense`` are total for SU(N).
 
 This module needs the optional ``racah-py`` wheel: ``pip install 'tenet-py[sun]'``.
-The refusal is categorical, not a fallback — see :mod:`tenet.symmetry._sun_coeff`.
+The refusal is categorical, not a fallback — see ``tenet.symmetry._sun_coeff``.
 """
 
 from dataclasses import dataclass
@@ -34,8 +34,8 @@ __all__ = ["SUNProvider", "SUNSector"]
 _SUN_GAUGE = _sun_coeff.GAUGE
 """Internal gauge fingerprint, taken verbatim from ``racah.sun_authority_fingerprint()``.
 
-Written into a saved file's header by :func:`tenet.save` and compared on
-:func:`tenet.load`, which refuses a file recorded under a different convention.
+Written into a saved file's header by [tenet.save][] and compared on
+[tenet.load][], which refuses a file recorded under a different convention.
 """
 
 # Unlike ``_SU2_GAUGE`` this is not a constant: it is whatever the installed racah build
@@ -49,8 +49,26 @@ Written into a saved file's header by :func:`tenet.save` and compared on
 class SUNSector(Sector):  # ty: ignore[subclass-of-dataclass-with-order]  # deliberate, see Sector
     """An SU(N) irrep labelled by its Dynkin label ``(a_1, ..., a_{N-1})``.
 
-    A list is accepted and stored as a tuple, so a sector survives a JSON round
-    trip through :func:`tenet.save` / :func:`tenet.load` unchanged.
+    Parameters
+    ----------
+    dynkin : tuple of int
+        The Dynkin label, one non-negative entry per node of the ``A_{N-1}``
+        diagram. A list is accepted and stored as a tuple, so a sector
+        survives a JSON round trip through [tenet.save][] / [tenet.load][]
+        unchanged.
+
+    Raises
+    ------
+    TypeError
+        If ``dynkin`` is not a sequence of ``int`` entries (``bool`` included).
+    ValueError
+        If ``dynkin`` is empty or carries a negative entry.
+
+    Examples
+    --------
+    >>> from tenet.symmetry.sun import SUNSector
+    >>> SUNSector((1, 0))       # the fundamental 3 of SU(3)
+    SUNSector(dynkin=(1, 0))
     """
 
     dynkin: tuple[int, ...]
@@ -77,6 +95,40 @@ class SUNProvider:
     ``SUNProvider(3)`` is SU(3). Every sector-taking method validates that the
     Dynkin label has ``n - 1`` entries, so feeding an SU(4) sector to an SU(3)
     provider fails at the first query rather than producing nonsense.
+
+    The capability contract of every method is documented once, on the
+    protocols in ``tenet.symmetry`` — only behaviour that *differs* from a
+    protocol carries a docstring here. Every coefficient (fusion, CG, F/R/B
+    matrices, FS) is delegated to the ``racah`` crate through
+    ``tenet.symmetry._sun_coeff``, whose fingerprint is the gauge.
+
+    Parameters
+    ----------
+    n : int
+        The ``N`` of SU(N); at least 2.
+    name : str, optional
+        An identity label that participates in equality, not a configuration
+        knob; leave it at the default.
+
+    Raises
+    ------
+    TypeError
+        If ``n`` is not an ``int`` (``bool`` included).
+    ValueError
+        If ``n < 2``.
+
+    Examples
+    --------
+    >>> from tenet.symmetry.sun import SUNProvider, SUNSector
+    >>> su3 = SUNProvider(3)
+    >>> f, fbar = SUNSector((1, 0)), SUNSector((0, 1))
+    >>> su3.fusion(f, fbar)                          # 3 x 3bar = 1 + 8
+    (SUNSector(dynkin=(0, 0)), SUNSector(dynkin=(1, 1)))
+    >>> adj = SUNSector((1, 1))
+    >>> su3.n_symbol(adj, adj, adj)                  # 8 x 8 -> 8 has multiplicity 2
+    2
+    >>> su3.dual(f)                                  # the conjugate irrep
+    SUNSector(dynkin=(0, 1))
     """
 
     n: int
@@ -185,7 +237,7 @@ class SUNProvider:
         """``Z_a: V_a -> V_a^*``, shape ``(d_a, d_dual(a))``; read-only.
 
         Derived from the CG singlet of ``V_a (x) V_dual(a)``, so it is in the same
-        gauge as :meth:`cgc` by construction. Never the identity for ``d_a > 1``,
+        gauge as ``cgc`` by construction. Never the identity for ``d_a > 1``,
         and its two axes index *different* sectors whenever ``dual(a) != a``.
         """
         return _sun_coeff.z_matrix(self._d(a))
