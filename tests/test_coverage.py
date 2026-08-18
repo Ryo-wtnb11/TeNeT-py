@@ -54,11 +54,19 @@ def test_e2_the_ad_suite_carries_a_multiplicity_bearing_provider():
         assert isinstance(SU3, capability)
 
 
-# E3 (#167): the docstring standard's mechanical half. Scoped to stage 1 — the
-# ops-defined functions of tenet.__all__ plus tenet.linalg.__all__ — and it
-# ratchets: each of #167's stages adds its names to _documented_names().
+# E3 (#167): the docstring standard's mechanical half. Scoped to stages 1+2 —
+# every class in tenet.__all__, the tenet.__all__ functions defined in the
+# converted modules (ops, fusion_tree, map_view), plus tenet.linalg.__all__ —
+# and it ratchets: each of #167's stages adds its names to _documented_names()
+# (tenet.save/tenet.load join with tenet.serialize in stage 4).
 # Public names that legitimately carry no Parameters section, with the reason.
-NO_PARAMS: dict[str, str] = {}
+NO_PARAMS: dict[str, str] = {
+    "tenet.Side": "an Enum; the members OUT/IN are the API, there is no constructor",
+    "tenet.StructureChangingError": (
+        "an exception raised by the library; it has no introspectable signature "
+        "and users never construct it"
+    ),
+}
 
 
 def _documented_names():
@@ -66,7 +74,10 @@ def _documented_names():
 
     for name in tenet.__all__:
         obj = getattr(tenet, name)
-        if inspect.isfunction(obj) and obj.__module__.startswith("tenet.ops"):
+        converted = ("tenet.ops", "tenet.fusion_tree", "tenet.map_view")
+        if inspect.isclass(obj) or (
+            inspect.isfunction(obj) and obj.__module__.startswith(converted)
+        ):
             yield f"tenet.{name}", obj
     for name in linalg.__all__:
         yield f"tenet.linalg.{name}", getattr(linalg, name)

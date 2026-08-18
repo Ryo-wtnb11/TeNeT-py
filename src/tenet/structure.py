@@ -1,14 +1,14 @@
 """Tensor-level structure: ordered legs, the fusion basis, and block shapes.
 
-A :class:`TensorStructure` owns *all* categorical metadata of a tensor and no
+A [TensorStructure][tenet.TensorStructure] owns *all* categorical metadata of a tensor and no
 numbers: it is frozen, hashable and array-free (invariant 8) so it can serve as
 a JAX treedef while the blocks are the leaves.
 
-A block is labelled by a :class:`FusionBlockKey` — a *pair* of fusion trees
+A block is labelled by a [FusionBlockKey][tenet.FusionBlockKey] — a *pair* of fusion trees
 (output side, input side) sharing one coupled sector. A tuple of one sector per
 axis is **not** enough: for SU(2) two distinct trees can carry identical
-external sectors (see :mod:`tenet.fusion_tree`). External sectors are recovered
-*from* a key via :meth:`TensorStructure.axis_sectors`, never the other way.
+external sectors (see ``tenet.fusion_tree``). External sectors are recovered
+*from* a key via [axis_sectors][tenet.TensorStructure.axis_sectors], never the other way.
 
 ``block_order`` is a sorted tuple and it is the storage contract: ``blocks[i]``
 belongs to ``block_order[i]``. It is a pure function of the structure, stable
@@ -20,7 +20,7 @@ D2)`` give shape ``(m_c1, m_d1, m_c2, m_d2)``, not the ``(out..., in...)``
 regrouping. ``out_axes``/``in_axes`` exist so the coupled-sector matrix
 lowering can be written later (Milestone 3) without touching storage.
 
-Derived values are cached by module-level :func:`functools.cache` functions
+Derived values are cached by module-level ``functools.cache`` functions
 keyed on the structure, not by ``cached_property``: the dataclass stays
 genuinely frozen and the cache is shared between equal structures.
 """
@@ -40,6 +40,15 @@ __all__ = ["FusionBlockKey", "TensorStructure"]
 class FusionBlockKey(_HashMemo):
     """An output/input fusion-tree pair with a shared coupled sector.
 
+    Parameters
+    ----------
+    output_tree : FusionTree
+        The tree over the OUT legs.
+    input_tree : FusionTree
+        The tree over the IN legs; must couple to the same sector.
+
+    Notes
+    -----
     Both trees list their uncoupled sectors in **public axis order** restricted
     to their side, already dual-resolved (``Leg.fused_sector``). Field order is
     load-bearing: it defines the canonical sort used by ``block_order``.
@@ -56,13 +65,44 @@ class FusionBlockKey(_HashMemo):
 
     @property
     def coupled(self) -> Sector:
-        """The shared coupled sector. Equality of the two is a ``validate`` check."""
+        """The shared coupled sector. Equality of the two is a ``validate`` check.
+
+        Returns
+        -------
+        Sector
+            ``output_tree.coupled``.
+        """
         return self.output_tree.coupled
 
 
 @dataclass(frozen=True)
 class TensorStructure(_HashMemo):
-    """Ordered legs plus everything derivable from them. Immutable and hashable."""
+    """Ordered legs plus everything derivable from them. Immutable and hashable.
+
+    Parameters
+    ----------
+    legs : tuple of Leg
+        The tensor's legs, in public axis order. At least one.
+
+    Raises
+    ------
+    ValueError
+        If ``legs`` is empty — a leg-less scalar has no provider to enumerate
+        against.
+
+    Examples
+    --------
+    >>> from tenet import IN, OUT, GradedSpace, Leg, TensorStructure
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> s = TensorStructure((Leg(V, OUT), Leg(V, IN)))
+    >>> s.ndim, s.num_blocks
+    (2, 2)
+    >>> s.out_axes, s.in_axes
+    ((0,), (1,))
+    >>> s.block_shape(s.block_order[0])
+    (2, 2)
+    """
 
     legs: tuple[Leg, ...]
 
@@ -79,51 +119,155 @@ class TensorStructure(_HashMemo):
 
     @property
     def provider(self) -> _DualFusionRules:
-        """The shared provider. ``validate()`` is what checks the legs agree."""
+        """The shared provider. ``validate()`` is what checks the legs agree.
+
+        Returns
+        -------
+        provider
+            The first leg's provider.
+        """
         return self.legs[0].provider
 
     @property
     def ndim(self) -> int:
+        """Number of legs.
+
+        Returns
+        -------
+        int
+            ``len(self.legs)``.
+        """
         return len(self.legs)
 
     @property
     def out_axes(self) -> tuple[int, ...]:
-        """Public axis indices with ``side is OUT``, ascending."""
+        """Public axis indices with ``side is OUT``, ascending.
+
+        Returns
+        -------
+        tuple of int
+            The OUT axes.
+        """
         return _axes(self)[0]
 
     @property
     def in_axes(self) -> tuple[int, ...]:
-        """Public axis indices with ``side is IN``, ascending."""
+        """Public axis indices with ``side is IN``, ascending.
+
+        Returns
+        -------
+        tuple of int
+            The IN axes.
+        """
         return _axes(self)[1]
 
     @property
     def block_order(self) -> tuple[FusionBlockKey, ...]:
-        """Every structurally allowed key, sorted. The storage contract."""
+        """Every structurally allowed key, sorted. The storage contract.
+
+        Returns
+        -------
+        tuple of FusionBlockKey
+            The canonical block order: ``blocks[i]`` belongs to
+            ``block_order[i]``.
+        """
         return _block_order(self)
 
     @property
     def num_blocks(self) -> int:
+        """Number of structurally allowed blocks.
+
+        Returns
+        -------
+        int
+            ``len(self.block_order)``.
+        """
         return len(_block_order(self))
 
     def index_of(self, key: FusionBlockKey) -> int:
-        """Position of ``key`` in :attr:`block_order`; ``KeyError`` if foreign."""
+        """Position of ``key`` in [block_order][tenet.TensorStructure.block_order].
+
+        Parameters
+        ----------
+        key : FusionBlockKey
+            A key of this structure.
+
+        Returns
+        -------
+        int
+            The index of ``key``.
+
+        Raises
+        ------
+        KeyError
+            If ``key`` is foreign to this structure.
+        """
         return _index_map(self)[key]
 
     def axis_sectors(self, key: FusionBlockKey) -> tuple[Sector, ...]:
         """One **space** sector per public axis, de-dualized via ``Leg.space_sector``.
 
+        Parameters
+        ----------
+        key : FusionBlockKey
+            A key of this structure.
+
+        Returns
+        -------
+        tuple of Sector
+            One space sector per public axis.
+
+        Raises
+        ------
+        KeyError
+            If ``key`` is foreign to this structure.
+
+        Notes
+        -----
         A lookup into the per-structure table built once by
-        :func:`_axis_sectors_table`; foreign keys raise ``KeyError`` as before.
+        ``_axis_sectors_table``; foreign keys raise ``KeyError`` as before.
         """
         return _axis_sectors_table(self)[self.index_of(key)]
 
     def block_shape(self, key: FusionBlockKey) -> tuple[int, ...]:
-        """Degeneracies in **public** axis order (invariant 7)."""
+        """Degeneracies in **public** axis order (invariant 7).
+
+        Parameters
+        ----------
+        key : FusionBlockKey
+            A key of this structure.
+
+        Returns
+        -------
+        tuple of int
+            The block's shape: one degeneracy per public axis.
+
+        Raises
+        ------
+        KeyError
+            If ``key`` is foreign to this structure.
+        """
         return _block_shape_table(self)[self.index_of(key)]
 
     def validate(self, key: FusionBlockKey | None = None) -> None:
         """Check the legs, and either every key in ``block_order`` or just ``key``.
 
+        Parameters
+        ----------
+        key : FusionBlockKey or None, optional
+            The single key to check; ``None`` (the default) checks every key in
+            ``block_order``.
+
+        Raises
+        ------
+        ValueError
+            If the legs disagree on the provider, a tree's rank does not match
+            its side's leg count, a tree fails ``FusionTree.validate``, an
+            uncoupled label does not map back into its leg's space, or the two
+            coupled sectors disagree.
+
+        Notes
+        -----
         Explicit and total (invariant 11): one provider for all legs; each tree's
         rank matches its side's leg count and passes ``FusionTree.validate``; every
         uncoupled label maps back into the corresponding leg's space; the two

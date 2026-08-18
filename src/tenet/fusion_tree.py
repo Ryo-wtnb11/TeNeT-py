@@ -2,7 +2,7 @@
 
 External sectors do **not** determine the fusion basis once the symmetry is
 non-Abelian: ``(1/2, 1/2, 1/2) -> 1/2`` has two independent trees, told apart by
-their internal line. A :class:`FusionTree` carries the uncoupled sectors, the
+their internal line. A [FusionTree][tenet.FusionTree] carries the uncoupled sectors, the
 internal lines, one multiplicity label per vertex, and the coupled sector.
 
 Conventions, stated once and enforced everywhere:
@@ -32,7 +32,38 @@ __all__ = ["FusionTree", "coupled_sectors", "fusion_trees"]
 
 @dataclass(frozen=True, slots=True, order=True)
 class FusionTree(_HashMemo):
-    """A left-associated fusion tree. Frozen, hashable, totally ordered."""
+    """A left-associated fusion tree. Frozen, hashable, totally ordered.
+
+    Parameters
+    ----------
+    uncoupled : tuple of Sector
+        The ``N`` external sectors, already dual-resolved.
+    inner : tuple of Sector
+        The ``max(N - 2, 0)`` internal lines ``(e_1, ..., e_{N-2})``.
+    multiplicities : tuple of int
+        One label per vertex, length ``max(N - 1, 0)`` — all ``0`` for a
+        multiplicity-free provider.
+    coupled : Sector
+        The total sector ``e_{N-1}`` the tree couples to.
+
+    Raises
+    ------
+    ValueError
+        If ``inner`` or ``multiplicities`` has the wrong length for the rank.
+
+    Examples
+    --------
+    >>> from tenet import fusion_trees
+    >>> from tenet.symmetry import SU2, SU2Sector
+    >>> half = SU2Sector(1)  # sectors are labelled by 2j
+    >>> trees = fusion_trees(SU2, (half, half, half), half)
+    >>> len(trees)  # two independent trees, told apart by the internal line
+    2
+    >>> trees[0].lines()
+    (SU2Sector(two_j=1), SU2Sector(two_j=0), SU2Sector(two_j=1))
+    >>> trees[0].rank
+    3
+    """
 
     uncoupled: tuple[Sector, ...]
     inner: tuple[Sector, ...]
@@ -59,11 +90,23 @@ class FusionTree(_HashMemo):
 
     @property
     def rank(self) -> int:
-        """``N``, the number of uncoupled sectors."""
+        """``N``, the number of uncoupled sectors.
+
+        Returns
+        -------
+        int
+            ``len(self.uncoupled)``.
+        """
         return len(self.uncoupled)
 
     def lines(self) -> tuple[Sector, ...]:
-        """The left spine ``(e_0, ..., e_{N-1})``; ``()`` for ``N == 0``."""
+        """The left spine ``(e_0, ..., e_{N-1})``; ``()`` for ``N == 0``.
+
+        Returns
+        -------
+        tuple of Sector
+            The spine sectors, ending in ``coupled``.
+        """
         if self.rank == 0:
             return ()
         if self.rank == 1:
@@ -71,14 +114,34 @@ class FusionTree(_HashMemo):
         return (self.uncoupled[0], *self.inner, self.coupled)
 
     def vertices(self) -> tuple[tuple[Sector, Sector, Sector, int], ...]:
-        """``((e_k, u_{k+1}, e_{k+1}, mu_k), ...)`` for ``k = 0 .. N-2``."""
+        """``((e_k, u_{k+1}, e_{k+1}, mu_k), ...)`` for ``k = 0 .. N-2``.
+
+        Returns
+        -------
+        tuple of (Sector, Sector, Sector, int)
+            One ``(left line, uncoupled, right line, multiplicity)`` entry per
+            vertex.
+        """
         spine = self.lines()
         return tuple(
             zip(spine[:-1], self.uncoupled[1:], spine[1:], self.multiplicities, strict=True)
         )
 
     def validate(self, provider: FusionRules) -> None:
-        """Raise if the tree is not a valid basis label for ``provider``."""
+        """Raise if the tree is not a valid basis label for ``provider``.
+
+        Parameters
+        ----------
+        provider : FusionRules
+            The provider whose fusion rules the tree must satisfy.
+
+        Raises
+        ------
+        ValueError
+            If a rank-0 tree does not couple to the unit, a rank-1 tree does
+            not couple to its own uncoupled sector, a vertex violates the
+            fusion rules, or a multiplicity label is out of range.
+        """
         if self.rank == 0:
             if self.coupled != provider.unit:
                 raise ValueError(
@@ -105,7 +168,33 @@ def fusion_trees(
     uncoupled: Sequence[Sector],
     coupled: Sector,
 ) -> tuple[FusionTree, ...]:
-    """All valid left-associated trees for ``uncoupled -> coupled``, sorted."""
+    """All valid left-associated trees for ``uncoupled -> coupled``, sorted.
+
+    Parameters
+    ----------
+    provider : FusionRules
+        The provider supplying fusion rules and ``n_symbol``.
+    uncoupled : sequence of Sector
+        The external sectors, already dual-resolved.
+    coupled : Sector
+        The total sector the trees must couple to.
+
+    Returns
+    -------
+    tuple of FusionTree
+        Every valid tree, in canonical sorted order; empty if ``coupled`` is
+        unreachable.
+
+    Examples
+    --------
+    >>> from tenet import fusion_trees
+    >>> from tenet.symmetry import SU2, SU2Sector
+    >>> half = SU2Sector(1)
+    >>> len(fusion_trees(SU2, (half, half), SU2Sector(0)))
+    1
+    >>> fusion_trees(SU2, (half, half), SU2Sector(1))
+    ()
+    """
     # The ignores in this module: providers are frozen dataclasses, hashable by
     # contract (symmetry.base module docstring); ``__hash__`` is deliberately
     # not a protocol member — the member set is pinned by
@@ -118,7 +207,27 @@ def coupled_sectors(
     provider: FusionRules,
     uncoupled: Sequence[Sector],
 ) -> tuple[Sector, ...]:
-    """Every sector reachable from ``uncoupled``, canonically sorted."""
+    """Every sector reachable from ``uncoupled``, canonically sorted.
+
+    Parameters
+    ----------
+    provider : FusionRules
+        The provider supplying the fusion rules.
+    uncoupled : sequence of Sector
+        The external sectors, already dual-resolved.
+
+    Returns
+    -------
+    tuple of Sector
+        The reachable coupled sectors, sorted.
+
+    Examples
+    --------
+    >>> from tenet import coupled_sectors
+    >>> from tenet.symmetry import SU2, SU2Sector
+    >>> coupled_sectors(SU2, (SU2Sector(1), SU2Sector(1)))
+    (SU2Sector(two_j=0), SU2Sector(two_j=2))
+    """
     # hashable by provider contract; see the ignore rationale at _fusion_trees
     return _coupled_sectors(provider, tuple(uncoupled))  # ty: ignore[invalid-argument-type]
 
