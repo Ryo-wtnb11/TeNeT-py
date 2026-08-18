@@ -103,21 +103,25 @@ print(g.legs == a.legs)
 ## Examples
 
 Two lanes, one rule: `examples/toy_codes/` **teaches what the library does not own** — it
-writes each algorithm out by hand, so its files are named for the *algorithm* — while
-`examples/` **uses what the library does own** — it calls `tenet.network`, so its files
-are named for the *model*. Every file in both lanes is executed by the test suite and
-checked against a named exact oracle; the SU(2) coefficient conventions themselves are
-pinned by vendored fixtures.
+writes each algorithm out on `tenet`'s *tensor* layer (`SymmetricTensor`, `tenet.einsum`,
+`tenet.linalg`) and **imports nothing from `tenet.network`**, so its files are named for
+the *algorithm* — while `examples/` **uses what the library does own** — it calls
+`tenet.network`, so its files are named for the *model*. The rule is a test
+(`tests/test_examples.py`), with one recorded exemption: `ctmrg.py`, which calls the CTMRG
+core #114 promoted out of it and is rewritten in #187. Every file in both lanes
+is executed by the test suite and checked against a named exact oracle; the SU(2)
+coefficient conventions themselves are pinned by vendored fixtures.
 
 | Teaching lane | What it does | Oracle |
 | --- | --- | --- |
-| [`examples/toy_codes/dmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/dmrg.py) | finite two-site DMRG, U(1) Heisenberg chain | exact diagonalization |
-| [`examples/toy_codes/ctmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/ctmrg.py) | differentiable CTMRG, then a U(1)/SU(2) iPEPS gradient | Onsager's closed-form free energy |
+| [`examples/toy_codes/dmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/dmrg.py) | finite two-site DMRG written out — MPS, canonical form, environment cache, Lanczos, sweep | exact diagonalization |
+| [`examples/toy_codes/ctmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/ctmrg.py) | differentiable CTMRG, then a U(1)/SU(2) iPEPS gradient (the recorded lane exemption — it still calls `tenet.network.ctmrg`) | Onsager's closed-form free energy |
 | [`examples/toy_codes/vmc_mps.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/vmc_mps.py) | symmetric MPS → pytree → `jax.grad` → SGD step | variational energy decrease |
 
 | Usage lane | What it does | Oracle |
 | --- | --- | --- |
 | [`examples/heisenberg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/heisenberg.py) | U(1) Heisenberg end to end — `MPO.from_terms`, `MPS.product`, `dmrg_` — no `W` matrix anywhere | the recorded N=20 ED energy |
+| [`examples/heisenberg_walkthrough.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/heisenberg_walkthrough.py) | the same chain with the symmetry input spelled out — the hand-graded `W` through `MPO.from_w`, the reachable-charge bond spaces, both MPO routes cross-checked | the recorded N=12 ED energy |
 | [`examples/su2_heisenberg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/su2_heisenberg.py) | the same chain under SU(2): one invariant term, multiplet compression printed | the U(1) run it computes alongside |
 | [`examples/ising2d.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/ising2d.py) | 2D classical Ising through `ctmrg()`, on a core install | Onsager's closed-form free energy |
 

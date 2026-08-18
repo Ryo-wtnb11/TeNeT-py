@@ -7,7 +7,9 @@ Run it standalone::
 What ``examples/toy_codes/dmrg.py`` writes out by hand -- the 5x5 ``W`` matrix, its
 channel table, the reachable bond spaces -- this file never mentions: the Hamiltonian is
 a term list, ``MPO.from_terms`` derives the graded MPO bond, and the Neel product state
-seeds the ``S^z_tot = 0`` sector by its own charges. The schedule below ramps ``chi``
+seeds the ``S^z_tot = 0`` sector by its own charges. ``examples/heisenberg_walkthrough.py``
+is the middle of the three: the same library calls, with the ``W`` and the bond spaces
+spelled out beside them. The schedule below ramps ``chi``
 with noise because writing one is what a user does; on this chain it buys nothing -- the
 flat ``chi=64`` run reaches the same energy, since a degeneracy-1 U(1) seed already
 ramps for free (see docs/tutorials/dmrg.md, "Schedules and noise", for when it pays).

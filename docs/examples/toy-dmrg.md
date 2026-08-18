@@ -2,8 +2,13 @@
 
 What to look at: the N=12 energy against the exact `-5.142090632840532` printed beside
 it, the sweep table's monotone `dE`, and the last line, where N=32 at `chi=64` sits just
-above the Bethe-ansatz `e_inf` with the discarded weight that explains the gap. The
-[DMRG tutorial](../tutorials/dmrg.md) walks through the file.
+above the Bethe-ansatz `e_inf` with the discarded weight that explains the gap. In the
+source, the thing to read is that there is no `tenet.network` import: the MPS list, the
+canonical form, the environment cache, the Lanczos step and the two-site sweep are all
+written out on `SymmetricTensor`. The [DMRG tutorial](../tutorials/dmrg.md) walks through
+the same physics through the library, and
+[Heisenberg, U(1) walkthrough](heisenberg-walkthrough.md) is this chain called rather than
+written.
 
 ## Source
 

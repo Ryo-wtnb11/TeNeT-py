@@ -6,8 +6,13 @@ oracles are independent of the examples — ``tests/integration/test_dmrg.py``'s
 N=20 ED energy, the U(1) run ``su2_heisenberg`` computes in the same process, and
 ``onsager(beta)``. The teaching lane keeps its own CI execution unchanged
 (``tests/integration/test_dmrg.py``, ``test_ctmrg.py``, ``test_vmc.py``).
+
+The **lane rule itself** is asserted here too (#183): a file in ``examples/toy_codes/``
+writes its algorithm on ``tenet``'s tensor layer and imports nothing from
+``tenet.network``, with one named exemption carrying its own issue.
 """
 
+import ast
 import contextlib
 import io
 import pathlib
@@ -20,6 +25,7 @@ EXAMPLES = pathlib.Path(__file__).parents[1] / "examples"
 sys.path.insert(0, str(EXAMPLES))
 
 import heisenberg  # noqa: E402
+import heisenberg_walkthrough  # noqa: E402
 import ising2d  # noqa: E402
 import su2_heisenberg  # noqa: E402
 
@@ -35,13 +41,19 @@ def _capture(name, call):
     return result
 
 
-# tests/integration/test_dmrg.py's recorded N=20 open-boundary ED energy (#110).
+# tests/integration/test_dmrg.py's recorded open-boundary ED energies (#110).
 E_N20 = -8.682473334398956
+E_OBC_12 = -5.142090632840532
 
 
 @pytest.fixture(scope="module")
 def heisenberg_run():
     return _capture("heisenberg", heisenberg.main)
+
+
+@pytest.fixture(scope="module")
+def walkthrough_run():
+    return _capture("heisenberg_walkthrough", heisenberg_walkthrough.main)
 
 
 @pytest.fixture(scope="module")
@@ -72,6 +84,31 @@ def test_heisenberg_sector_is_structural(heisenberg_run):
     assert all(abs(expectation_1site(out.psi, op_sz, n)) < 1e-10 for n in range(len(out.psi)))
 
 
+def test_walkthrough_routes_agree_on_the_ed_energy(walkthrough_run):
+    """The hand-graded ``W`` and the derived term list reach the same N=12 ground state.
+
+    The energy is ``tests/integration/test_dmrg.py``'s computed ED oracle; the point of
+    running both routes is that a hand-derived MPO bond grading and one the library
+    derives from the operators' own charges must agree as *operators*, and two independent
+    DMRG runs landing on the same twelve digits is that statement cashed end to end.
+    """
+    from_w, from_terms = walkthrough_run
+    assert abs(from_w.energy - E_OBC_12) < 1e-10
+    assert abs(from_w.energy - from_terms.energy) < 1e-10
+
+
+def test_walkthrough_bond_spaces_are_the_reachable_ones(walkthrough_run):
+    """The seed's bond ``i`` holds exactly the charges ``i`` spins can still bring to zero.
+
+    ``bond_spaces`` is the file's whole symmetry input, so it is asserted rather than
+    printed: dimension ``min(i, N - i) + 1`` at bond ``i``, and ``D=1`` at both ends,
+    which is the ``S^z_tot = 0`` statement.
+    """
+    n_sites = 12
+    dims = [space.dim for space in heisenberg_walkthrough.bond_spaces(n_sites)]
+    assert dims == [min(i, n_sites - i) + 1 for i in range(n_sites + 1)]
+
+
 def test_su2_agrees_with_the_u1_run_it_computes(su2_run):
     su2, u1, _ = su2_run
     assert abs(su2.energy - u1.energy) < 1e-10
@@ -99,12 +136,65 @@ def test_heisenberg_page_output_is_current(heisenberg_run):
     check_example_page("heisenberg.md", _STDOUT["heisenberg"])
 
 
+def test_heisenberg_walkthrough_page_output_is_current(walkthrough_run):
+    check_example_page("heisenberg-walkthrough.md", _STDOUT["heisenberg_walkthrough"])
+
+
 def test_su2_heisenberg_page_output_is_current(su2_run):
     check_example_page("su2-heisenberg.md", _STDOUT["su2_heisenberg"])
 
 
 def test_ising2d_page_output_is_current(ising_run):
     check_example_page("ising2d.md", _STDOUT["ising2d"])
+
+
+# The teaching lane's rule: a toy code writes its algorithm on tenet's *tensor* layer, so
+# it imports nothing from ``tenet.network``. ``ctmrg.py`` predates the rule -- #114
+# promoted its CTMRG core into the library and the file kept calling it -- and is exempted
+# by name until #187 rewrites it. The exemption is a one-entry ledger, and
+# ``test_the_lane_exemption_ledger_is_the_one_recorded_file`` is what stops it growing.
+_LANE_EXEMPT = {"ctmrg.py"}
+
+
+def _imports(path):
+    """Every module root ``path`` imports, by AST -- ``tests/network/test_hygiene.py``'s scan."""
+    roots = set()
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Import):
+            roots |= {alias.name for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            roots |= {f"{node.module}.{alias.name}" for alias in node.names}
+            roots.add(node.module)
+    return roots
+
+
+@pytest.mark.parametrize(
+    "path", sorted((EXAMPLES / "toy_codes").glob("*.py")), ids=lambda p: p.name
+)
+def test_a_toy_code_imports_nothing_from_the_network_layer(path):
+    """The teaching lane's rule, enforced (#183): the algorithm is written, not called.
+
+    A toy code may use ``tenet``'s tensor layer -- ``SymmetricTensor``, ``tenet.einsum``,
+    ``tenet.linalg`` -- because that is the library's *subject matter*, not the algorithm
+    being taught. ``tenet.network`` is the algorithm, so a file that imports it is a usage
+    example under the wrong name, which is what ``examples/toy_codes/dmrg.py`` had become
+    before #183.
+    """
+    offenders = sorted(name for name in _imports(path) if name.startswith("tenet.network"))
+    if path.name in _LANE_EXEMPT:
+        # The exemption is asserted in the *positive* direction on purpose: when #187
+        # rewrites this file the entry must be deleted, and a stale ledger fails loudly
+        # rather than quietly excusing a file that no longer needs excusing.
+        assert offenders, (
+            f"{path.name} no longer needs its exemption -- delete it from _LANE_EXEMPT"
+        )
+        return
+    assert not offenders, f"{path.name} imports {offenders} from the algorithm layer"
+
+
+def test_the_lane_exemption_ledger_is_the_one_recorded_file():
+    """One exemption, named, with #187 behind it. A second would be a silent lane leak."""
+    assert _LANE_EXEMPT == {"ctmrg.py"}
 
 
 def test_lane_basenames_are_disjoint():

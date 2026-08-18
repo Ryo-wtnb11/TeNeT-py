@@ -1,13 +1,17 @@
 # DMRG — a U(1) Heisenberg chain against exact diagonalization
 
-Source: [`examples/toy_codes/dmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/dmrg.py).
+Source: [`examples/heisenberg_walkthrough.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/heisenberg_walkthrough.py)
+— the library route, with the symmetry input spelled out. The same chain with the
+algorithm written out by hand instead of called is
+[`examples/toy_codes/dmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/dmrg.py),
+whose page is [Toy DMRG](../examples/toy-dmrg.md).
 **Oracle:** exact diagonalization of the same finite chain, plus the thermodynamic limit
 `1/4 - ln 2` (Bethe 1931; Hulthén 1938) that `main()` reports against. The file is
-executed by `tests/integration/test_dmrg.py`, so the code you read there is code that
-runs — read it in the repository rather than a copy pasted here.
+executed by `tests/test_examples.py` and `tests/integration/test_dmrg.py`, so the code you
+read there is code that runs — read it in the repository rather than a copy pasted here.
 
 ```sh
-uv run python examples/toy_codes/dmrg.py
+uv run python examples/heisenberg_walkthrough.py
 ```
 
 ## What the library owns, and what the example owns
@@ -219,7 +223,7 @@ import tenet
 from tenet import IN, OUT, Leg
 from tenet.network import MPS, expectation_1site
 
-out = dmrg(8, chi=32)  # examples/toy_codes/dmrg.py
+out = dmrg(8, chi=32)  # examples/heisenberg_walkthrough.py
 
 out.psi.save("ground-state")  # a directory: 000.npz .. 007.npz plus mps.json
 psi = MPS.load("ground-state")  # NumPy blocks; .to_backend("jax") per site to restore

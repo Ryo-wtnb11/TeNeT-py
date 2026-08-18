@@ -9,7 +9,7 @@ what say so.
 
 import json
 
-import dmrg as example  # noqa: E402  (see conftest.py)
+import heisenberg_walkthrough as example  # noqa: E402  (see conftest.py)
 import numpy as np
 import pytest
 
