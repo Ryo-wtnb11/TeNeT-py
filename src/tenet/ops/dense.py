@@ -19,7 +19,7 @@ all-zero block (invariant 9). Cells that carry no fusion channel are exact
 saving really lived.
 
 **NumPy.** This is the one module in ``ops/`` besides ``map.py``'s ``eye`` that
-imports NumPy, and correctly so: the :class:`~tenet.symmetry.base.ClebschGordan`
+imports NumPy, and correctly so: the :class:`~tenet.symmetry.base.ClebschGordanData`
 protocol *returns* ``np.ndarray`` (``cgc``, ``z_matrix``), so the coefficient
 data is NumPy by contract. The blocks never are — they are only ever touched by
 ``ar.do``, and the plan's arrays reach the backend per call through
@@ -53,7 +53,7 @@ from tenet.leg import Leg
 from tenet.structure import TensorStructure
 from tenet.symmetry.base import (
     CapabilityError,
-    ClebschGordan,
+    ClebschGordanData,
     DualBasis,
     FusionProvider,
     Sector,
@@ -139,9 +139,9 @@ def _refuse_dual(provider: FusionProvider, axis: int) -> None:
         ) from exc
 
 
-class _DenseCapable(FusionProvider, ClebschGordan, DualBasis, Protocol):
+class _DenseCapable(FusionProvider, ClebschGordanData, DualBasis, Protocol):
     """What :func:`_tree_cgt` actually calls: fusion data plus CG tensors plus
-    the Z-isomorphism. ``ClebschGordan`` alone understated it — the dual-leg
+    the Z-isomorphism. ``ClebschGordanData`` alone understated it — the dual-leg
     branch reads ``dual`` and ``z_matrix`` (runtime-guarded by
     ``_check_capabilities``/``_refuse_dual`` before any tree is expanded)."""
 
@@ -176,13 +176,13 @@ def _tree_cgt(provider: _DenseCapable, tree: FusionTree, duals: tuple[bool, ...]
 
 
 def _check_capabilities(structure: TensorStructure) -> None:
-    """``ClebschGordan`` for every provider, ``DualBasis`` for a ``dual`` leg.
+    """``ClebschGordanData`` for every provider, ``DualBasis`` for a ``dual`` leg.
 
     Raised before any block or dense element is read, and identically inside and
     outside ``jit``: these are questions about the legs, not about the numbers.
     """
     provider = structure.provider
-    requires(provider, ClebschGordan)
+    requires(provider, ClebschGordanData)
     for axis, leg in enumerate(structure.legs):
         if leg.dual:
             _refuse_dual(provider, axis)
@@ -217,7 +217,7 @@ def dense_plan(structure: TensorStructure) -> DensePlan:
 
     grouped: dict[tuple[Sector, ...], list[tuple[int, np.ndarray]]] = {}
     for i, key in enumerate(structure.block_order):
-        # _check_capabilities(structure) above proved ClebschGordan (and
+        # _check_capabilities(structure) above proved ClebschGordanData (and
         # DualBasis for any dual leg); a raise-based check does not narrow
         xout = _tree_cgt(provider, key.output_tree, tuple(duals[a] for a in out_axes))  # ty: ignore[invalid-argument-type]
         xin = _tree_cgt(provider, key.input_tree, tuple(duals[a] for a in in_axes))  # ty: ignore[invalid-argument-type]
@@ -267,7 +267,7 @@ def dense_plan(structure: TensorStructure) -> DensePlan:
 def to_dense(t: "SymmetricTensor") -> Array:
     """``T = Σ_τ A^(τ) ⊗ C^(τ)`` expanded into a plain dense array of ``t``'s backend.
 
-    Explicit by design (invariant 9). Requires ``ClebschGordan``; a leg with
+    Explicit by design (invariant 9). Requires ``ClebschGordanData``; a leg with
     ``dual=True`` additionally requires ``DualBasis``, the provider's
     ``V_a -> V_a^*`` isomorphism in the dense basis.
 

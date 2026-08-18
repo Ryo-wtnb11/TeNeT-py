@@ -72,7 +72,8 @@ from tenet.structure import TensorStructure
 from tenet.symmetry.base import (
     BendingCoefficients,
     CapabilityError,
-    QuantumDimension,
+    PivotalData,
+    QuantumDimensionData,
     requires,
 )
 
@@ -456,7 +457,10 @@ def full_trace(t: "SymmetricTensor") -> Any:
     ------
     CapabilityError
         If ``t``'s provider does not implement
-        [QuantumDimension][tenet.symmetry.QuantumDimension].
+        [QuantumDimensionData][tenet.symmetry.QuantumDimensionData] and
+        [PivotalData][tenet.symmetry.PivotalData], or is not *spherical*
+        (``qdim(c) != qdim(dual(c))`` on some traced sector — the left and
+        right traces would disagree and ``full_trace`` refuses to pick one).
     ValueError
         If the map is not square space-wise (``check_square``'s refusal).
 
@@ -489,13 +493,25 @@ def full_trace(t: "SymmetricTensor") -> Any:
     ``full_trace(t) == np.trace(t.to_dense())`` hold for a rank-2 map; dropping it is
     wrong for any non-Abelian provider.
     """
-    requires(t.provider, QuantumDimension)
+    requires(t.provider, QuantumDimensionData)
+    requires(t.provider, PivotalData)
     check_square(t, "full_trace")
     if not t.blocks:
         return 0.0
     # requires() above; raise-based check does not narrow
     qdim = t.provider.qdim  # ty: ignore[unresolved-attribute]
-    return sum(qdim(c) * ar.do("trace", m) for c, m in to_matrices(t).items())
+    dual = t.provider.dual
+    mats = to_matrices(t)
+    for c in mats:
+        # the spherical property, checked on the sectors actually traced (exact:
+        # quantum dimensions come from exact arithmetic on every provider)
+        if qdim(c) != qdim(dual(c)):
+            raise CapabilityError(
+                f"full_trace: provider {t.provider.name} is not spherical at {c!r} "
+                f"(qdim {qdim(c)!r} != dual's {qdim(dual(c))!r}); the left and right "
+                "traces disagree, so the qdim-weighted spherical trace is undefined"
+            )
+    return sum(qdim(c) * ar.do("trace", m) for c, m in mats.items())
 
 
 def inner(a: "SymmetricTensor", b: "SymmetricTensor") -> Any:
@@ -521,7 +537,7 @@ def inner(a: "SymmetricTensor", b: "SymmetricTensor") -> Any:
         chain when the structures do not match, or at rank 27 and above.
     CapabilityError
         If the provider does not implement
-        [QuantumDimension][tenet.symmetry.QuantumDimension] (through
+        [QuantumDimensionData][tenet.symmetry.QuantumDimensionData] (through
         [full_trace][tenet.full_trace]).
 
     Examples
@@ -642,7 +658,7 @@ def _plan_shape(t: "SymmetricTensor") -> tuple[int, ...]:
     """What the path finder is allowed to see: physical dimensions, ``Σ_a m_a d_a``.
 
     A planner asked to minimize FLOPs must see the physical extent of an axis
-    (#19), not its degeneracy count. A provider without ``ClebschGordan`` has no
+    (#19), not its degeneracy count. A provider without ``ClebschGordanData`` has no
     physical shape at all, and there ``reduced_shape`` is the only thing on
     offer; it can degrade *path quality*, never correctness, since the path only
     ever decides the order of contractions that are each individually checked.

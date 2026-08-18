@@ -13,15 +13,27 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import numpy as np
 
 __all__ = [
+    "AssociatorData",
+    "BMatrixData",
     "BendingCoefficients",
+    "BraidingData",
     "CapabilityError",
     "ClebschGordan",
+    "ClebschGordanData",
+    "DaggerData",
     "DualBasis",
+    "DualityData",
+    "FMatrixData",
+    "FSIndicatorData",
     "FlipPhase",
     "FusionProvider",
+    "FusionRules",
     "MultiplicityRecoupling",
     "PermutationCoefficients",
+    "PivotalData",
     "QuantumDimension",
+    "QuantumDimensionData",
+    "RMatrixData",
     "RecouplingData",
     "Sector",
     "StructureChangingError",
@@ -29,11 +41,13 @@ __all__ = [
     "Trivial",
     "TrivialProvider",
     "TrivialSector",
+    "TwistData",
     "bend_braided",
     "bend_unique",
     "permute_braided_tree",
     "permute_unique_tree",
     "requires",
+    "supports",
 ]
 
 if TYPE_CHECKING:
@@ -75,16 +89,31 @@ class Sector:
     """
 
 
-class FusionProvider(Protocol):
-    """Minimal fusion-category data every symmetry must supply."""
+@runtime_checkable
+class FusionRules(Protocol):
+    """The fusion ring: named sector labels, the unit, channels and multiplicities.
+
+    Deliberately *not* called a fusion category: fusion rules ``N^c_ab`` do not
+    determine one — a fusion category is the rules plus an associator
+    (:class:`AssociatorData`) plus rigidity (:class:`DualityData`), and the same
+    rules with different associators are genuinely different categories
+    (``Vec_G`` versus ``Vec_G^omega``). ``dual`` is duality data and lives on
+    :class:`DualityData`; the label-level ``dual`` map every provider carries
+    stays on :class:`FusionProvider` for annotation compatibility.
+
+    Notes
+    -----
+    "Fusion category" is the name of a *combination* — ``FusionRules +
+    AssociatorData + DualityData`` with :func:`tenet.symmetry.coherence.validate_pentagon`
+    and ``validate_snake`` passing — and it is a name in the docs, never a class
+    here.
+    """
 
     @property
     def name(self) -> str: ...
 
     @property
     def unit(self) -> Sector: ...
-
-    def dual(self, a: Sector) -> Sector: ...
 
     def fusion(self, a: Sector, b: Sector) -> tuple[Sector, ...]: ...
 
@@ -93,22 +122,58 @@ class FusionProvider(Protocol):
         ...
 
 
+class FusionProvider(FusionRules, Protocol):
+    """:class:`FusionRules` plus the ``dual`` label map — the historical bundle.
+
+    Composition alias kept for the ~40 annotation sites that predate the
+    capability decomposition (M24a); it is deliberately **not** the full
+    :class:`DualityData` (which also carries ``b_symbol``), because every
+    provider — Abelian ones included — satisfies this annotation while only
+    braided/rigid ones supply B-symbols. Not ``runtime_checkable``, as before:
+    it is an annotation, never an ``isinstance`` gate.
+    """
+
+    def dual(self, a: Sector) -> Sector: ...
+
+
 @runtime_checkable
-class QuantumDimension(Protocol):
-    """Providers that define a quantum dimension."""
+class QuantumDimensionData(Protocol):
+    """Providers that define a quantum dimension.
+
+    Notes
+    -----
+    ``qdim`` need not be an integer (Fibonacci's ``tau`` has ``qdim == phi``)
+    and is independent of any dense expansion (:class:`ClebschGordanData`).
+    """
 
     def qdim(self, a: Sector) -> float: ...
 
 
+QuantumDimension = QuantumDimensionData
+"""Deprecated alias of :class:`QuantumDimensionData` (M24a; removed in M24b)."""
+
+
 @runtime_checkable
-class ClebschGordan(Protocol):
-    """Providers that can supply explicit Clebsch-Gordan tensors."""
+class ClebschGordanData(Protocol):
+    """Providers that can supply explicit Clebsch-Gordan tensors.
+
+    Notes
+    -----
+    A dense-basis capability: it exists exactly when the sectors are
+    representations of something. An anyonic provider (Fibonacci, Ising) has no
+    ``cgc`` and no ``irrep_dim`` at all, which is why quantum dimensions live on
+    :class:`QuantumDimensionData` instead.
+    """
 
     def irrep_dim(self, a: Sector) -> int: ...
 
     def cgc(self, a: Sector, b: Sector, c: Sector) -> np.ndarray:
         """Shape ``(d_a, d_b, d_c, N^c_ab)``; last axis is the multiplicity label mu."""
         ...
+
+
+ClebschGordan = ClebschGordanData
+"""Deprecated alias of :class:`ClebschGordanData` (M24a; removed in M24b)."""
 
 
 @runtime_checkable
@@ -193,27 +258,58 @@ class SymmetryCast(Protocol):
 
 
 @runtime_checkable
-class RecouplingData(Protocol):
-    """Providers that supply associator, braiding and duality coefficients.
+class AssociatorData(Protocol):
+    """Providers that supply the associator ``F``, scalar-valued.
 
-    All four are **scalar**-valued, which is a multiplicity-free assumption: a
-    provider with ``n_symbol > 1`` must raise rather than truncate a matrix-valued
-    symbol, and supply :class:`MultiplicityRecoupling` beside this protocol
-    instead. Generic tree-braiding and tree-bending helpers dispatch on this
-    protocol and know nothing about any particular symmetry.
+    Scalar-valued is a multiplicity-free assumption: a provider with
+    ``n_symbol > 1`` must raise rather than truncate a matrix-valued symbol, and
+    supply :class:`FMatrixData` beside this protocol instead.
     """
 
     def f_symbol(self, a: Sector, b: Sector, c: Sector, d: Sector, e: Sector, f: Sector) -> complex:
         """``[F^{abc}_d]_{e,f}``; ``e`` is the inner line of ``((ab)c)``, ``f`` of ``(a(bc))``."""
         ...
 
+
+@runtime_checkable
+class BraidingData(Protocol):
+    """Providers that supply the braiding ``R``, scalar-valued.
+
+    Notes
+    -----
+    Having ``R`` does not make the braiding symmetric: ``transpose`` gates on
+    this protocol *plus* the symmetric-braiding property (``R == R**-1``), and a
+    chiral provider is refused rather than handed one of two inequivalent
+    braids. Multiplicity-bearing providers supply :class:`RMatrixData` beside
+    this one.
+    """
+
     def r_symbol(self, a: Sector, b: Sector, c: Sector) -> complex:
         """``R^{ab}_c``, the coefficient of braiding ``a`` past ``b`` inside ``c``."""
         ...
 
+
+@runtime_checkable
+class DualityData(Protocol):
+    """Providers that supply rigidity: the dual label map and the bend ``B``.
+
+    Notes
+    -----
+    ``dual`` alone (the label map every provider carries) is not rigidity; the
+    B-symbol is what prices an evaluation/coevaluation bend. Multiplicity-bearing
+    providers supply :class:`BMatrixData` beside this one.
+    """
+
+    def dual(self, a: Sector) -> Sector: ...
+
     def b_symbol(self, a: Sector, b: Sector, c: Sector) -> complex:
         """``B^{ab}_c``, the duality coefficient bending ``b`` out of ``a x b -> c``."""
         ...
+
+
+@runtime_checkable
+class FSIndicatorData(Protocol):
+    """Providers that supply the Frobenius-Schur indicator ``chi``."""
 
     def frobenius_schur(self, a: Sector) -> complex:
         """``chi_a``, the Frobenius-Schur phase of the ``V_a -> V_a^*`` isomorphism."""
@@ -221,15 +317,59 @@ class RecouplingData(Protocol):
 
 
 @runtime_checkable
-class MultiplicityRecoupling(Protocol):
-    """Array-valued F and R for providers with ``N^c_ab > 1``.
+class TwistData(Protocol):
+    """Providers that supply the ribbon twist ``theta``.
 
-    A capability *beside* :class:`RecouplingData`, not a widening of it: the four
-    scalar symbols stay exactly as they are for every multiplicity-free provider,
-    and :func:`_artin_braid` / :func:`bend_braided` take the array path only when
-    the provider also implements this protocol. ``frobenius_schur`` and ``qdim``
-    are unchanged — they are keyed on a single sector, so multiplicity never
-    reaches them.
+    Notes
+    -----
+    Split out of :class:`FlipPhase`'s ``chi * theta`` product on the criterion
+    #142 wrote down: closed loops (``trace``, ``adjoint``, any fermion loop) need
+    the *bare* twist. ``1`` for every symmetric bosonic category, ``(-1)^parity``
+    for fermion parity, ``e^{4 pi i / 5}`` on Fibonacci's ``tau``.
+    """
+
+    def twist(self, a: Sector) -> complex:
+        """``theta_a``, the ribbon twist of ``a``."""
+        ...
+
+
+@runtime_checkable
+class PivotalData(Protocol):
+    """Marker for the pivotal convention the bend helpers hardcode.
+
+    The pivotal isomorphism today is one fixed choice — TensorKit's
+    ``bendright``, the ``sqrt(qdim(c)/qdim(a))`` split of the bend's
+    normalization in :func:`bend_braided` — shared by every provider, so this
+    protocol carries no method yet and every provider satisfies it.
+
+    Notes
+    -----
+    It exists so the operations that *depend* on a pivotal structure
+    (``bend``, ``full_trace``) can name it in their contracts now; a
+    non-spherical pivotal provider is the trigger for giving it a real method
+    (the per-object pivotal phase) instead of the hardcoded expression.
+    """
+
+
+@runtime_checkable
+class DaggerData(Protocol):
+    """Marker for the dagger structure ``adjoint``/``conj`` rely on.
+
+    Every provider tenet ships is unitary in a real-or-unitary gauge, so the
+    dagger needs no per-provider data yet and every provider satisfies this
+    protocol. A provider with complex Clebsch-Gordan tensors or a non-unitary
+    F/R gauge is the trigger for making it a real capability gate.
+    """
+
+
+@runtime_checkable
+class FMatrixData(Protocol):
+    """Array-valued associator for providers with ``N^c_ab > 1``.
+
+    :class:`AssociatorData`'s array-valued sibling, a capability *beside* it:
+    the scalar symbol stays exactly as it is for every multiplicity-free
+    provider, and :func:`_artin_braid` takes the array path only when the
+    provider also implements the array-valued protocols.
     """
 
     def f_matrix(
@@ -242,21 +382,62 @@ class MultiplicityRecoupling(Protocol):
         """
         ...
 
+
+@runtime_checkable
+class RMatrixData(Protocol):
+    """Array-valued braiding — :class:`BraidingData`'s sibling for ``N^c_ab > 1``."""
+
     def r_matrix(self, a: Sector, b: Sector, c: Sector) -> np.ndarray:
         """``R^{ab}_c``, shape ``(N^c_ab, N^c_ba)``."""
         ...
+
+
+@runtime_checkable
+class BMatrixData(Protocol):
+    """Array-valued bend — :class:`DualityData`'s sibling for ``N^c_ab > 1``."""
 
     def b_matrix(self, a: Sector, b: Sector, c: Sector) -> np.ndarray:
         """``B^{ab}_c``, shape ``(N^c_ab, N^a_{c,dual(b)})``."""
         ...
 
 
-class _BraidedProvider(FusionProvider, RecouplingData, QuantumDimension, Protocol):
-    """What the braided tree helpers below actually call: fusion data
-    (``fusion``/``n_symbol``/``dual``/``unit``/``name``) plus the scalar
-    recoupling symbols plus ``qdim``. Annotating them ``RecouplingData`` alone
-    understated the requirement — every real caller (SU(2), SU(N)) is a full
-    provider, and the helpers read fusion data on the first line."""
+@runtime_checkable
+class RecouplingData(AssociatorData, BraidingData, DualityData, FSIndicatorData, Protocol):
+    """Deprecated composition alias: F + R + duality + FS in one bundle (M24a).
+
+    The four are different pieces of structure with different existence
+    conditions (a braided-but-not-rigid provider has ``R`` and no ``B``);
+    consumers should ask for :class:`AssociatorData` / :class:`BraidingData` /
+    :class:`DualityData` / :class:`FSIndicatorData` individually. ``isinstance``
+    answers are identical to the pre-decomposition bundle for every provider.
+    Removed in M24b.
+    """
+
+
+@runtime_checkable
+class MultiplicityRecoupling(FMatrixData, RMatrixData, BMatrixData, Protocol):
+    """Deprecated composition alias of the three array-valued siblings (M24a).
+
+    ``frobenius_schur`` and ``qdim`` are unaffected by multiplicity — they are
+    keyed on a single sector. Removed in M24b.
+    """
+
+
+class _TreeBraider(FusionRules, AssociatorData, BraidingData, Protocol):
+    """What :func:`permute_braided_tree` / :func:`_artin_braid` actually read:
+    fusion data (``fusion``/``n_symbol``/``unit``/``name``) plus the scalar F-
+    and R-symbols. They never read ``b_symbol``, ``frobenius_schur`` or
+    ``qdim`` — the old ``RecouplingData`` annotation over-asked."""
+
+
+class _TreeBender(
+    FusionRules, DualityData, FSIndicatorData, QuantumDimensionData, PivotalData, Protocol
+):
+    """What :func:`bend_braided` actually reads: fusion data plus ``dual``,
+    ``b_symbol``, ``frobenius_schur`` and ``qdim`` (under the hardcoded pivotal
+    convention). It never reads ``f_symbol`` or ``r_symbol`` — and ``qdim``,
+    which the old ``RecouplingData`` annotation did not declare, is now
+    declared by :class:`QuantumDimensionData`."""
 
 
 class CapabilityError(TypeError):
@@ -275,12 +456,19 @@ class StructureChangingError(TypeError):
     """
 
 
-def requires(provider: FusionProvider, capability: type) -> None:
+def requires(provider: object, capability: type) -> None:
     """Raise :class:`CapabilityError` unless ``provider`` implements ``capability``."""
     if not isinstance(provider, capability):
         raise CapabilityError(
             f"{type(provider).__name__} does not provide capability {capability.__name__}"
         )
+
+
+def supports(provider: object, capability: type) -> bool:
+    """``True`` iff ``provider`` implements ``capability`` — :func:`requires`'
+    non-raising sibling, so the capability graph is queryable without
+    ``try/except CapabilityError``."""
+    return isinstance(provider, capability)
 
 
 def permute_unique_tree(
@@ -311,7 +499,7 @@ def permute_unique_tree(
 
 @cache
 def permute_braided_tree(
-    provider: _BraidedProvider, tree: "FusionTree", perm: tuple[int, ...]
+    provider: _TreeBraider, tree: "FusionTree", perm: tuple[int, ...]
 ) -> tuple[tuple["FusionTree", complex], ...]:
     """``permute_tree`` for any provider supplying F- and R-symbols.
 
@@ -337,6 +525,8 @@ def permute_braided_tree(
     """
     # Simplification: the ceiling is term-list size for high-rank, high-spin trees; the
     # upgrade path is exact sqrt-rational accumulation, not a tolerance.
+    for capability in (FusionRules, AssociatorData, BraidingData):
+        requires(provider, capability)
     terms: dict[FusionTree, complex] = {tree: 1.0}
     current = list(range(tree.rank))  # old position now sitting at each slot
     for j, target in enumerate(perm):
@@ -354,7 +544,7 @@ def permute_braided_tree(
 
 @cache
 def _artin_braid(
-    provider: _BraidedProvider, tree: "FusionTree", i: int
+    provider: _TreeBraider, tree: "FusionTree", i: int
 ) -> tuple[tuple["FusionTree", complex], ...]:
     """Swap uncoupled lines ``i`` and ``i+1`` of a left-associated tree.
 
@@ -501,7 +691,7 @@ def bend_unique(
 
 
 def bend_braided(
-    provider: _BraidedProvider, key: "FusionBlockKey", *, right: bool, dual: bool
+    provider: _TreeBender, key: "FusionBlockKey", *, right: bool, dual: bool
 ) -> tuple[tuple["FusionBlockKey", complex], ...]:
     """``bend_right``/``bend_left`` for any provider supplying B, FS and ``qdim``.
 
@@ -543,6 +733,11 @@ def bend_braided(
             f"{'output' if right else 'input'} tree of {key}"
         )
 
+    # No runtime requires() here: the _TreeBender annotation names the honest
+    # capability set (DualityData + FSIndicatorData + QuantumDimensionData +
+    # PivotalData over FusionRules) and the type checker enforces it; a runtime
+    # isinstance gate would use getattr_static and refuse the __getattr__-forwarding
+    # test stubs that the pre-M24 behavior accepts.
     b, c = src.uncoupled[-1], src.coupled
     a = src.lines()[-2] if src.rank >= 2 else provider.unit
     matrices = provider if isinstance(provider, MultiplicityRecoupling) else None
@@ -644,6 +839,14 @@ class TrivialProvider:
     def z_matrix(self, a: Sector) -> np.ndarray:
         """``Z = [[1]]``, read-only: one-dimensional irrep, Frobenius-Schur phase 1."""
         return _Z
+
+    def frobenius_schur(self, a: Sector) -> float:
+        """``chi_a = 1``: one sector, everything trivial."""
+        return 1.0
+
+    def twist(self, a: Sector) -> float:
+        """``theta_a = 1``: one sector, everything trivial."""
+        return 1.0
 
     def flip_phase(self, a: Sector) -> float:
         """``chi_a * theta_a = 1``: one sector, everything trivial."""

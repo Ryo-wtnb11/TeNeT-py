@@ -178,6 +178,10 @@ class SU2Provider:
         """``chi_a = (-1)^(2j)``: ``+1`` for integer spin, ``-1`` for half-integer."""
         return _su2_coeff.frobenius_schur(a.two_j)
 
+    def twist(self, a: SU2Sector) -> int:
+        """``theta_a = 1``: SU(2) braiding is symmetric, so the twist is trivial."""
+        return 1
+
     def flip_phase(self, a: SU2Sector) -> int:
         """``chi_a * theta_a = chi_a``: SU(2) braiding is symmetric, so the twist is 1."""
         return self.frobenius_schur(a)

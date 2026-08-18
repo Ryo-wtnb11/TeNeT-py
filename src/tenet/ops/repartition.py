@@ -56,7 +56,13 @@ from tenet.leg import IN, OUT
 from tenet.ops.permutation import permutation_plan
 from tenet.space import GradedSpace
 from tenet.structure import TensorStructure
-from tenet.symmetry.base import BendingCoefficients, CapabilityError, FlipPhase, requires
+from tenet.symmetry.base import (
+    BendingCoefficients,
+    CapabilityError,
+    FSIndicatorData,
+    TwistData,
+    requires,
+)
 
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
@@ -425,18 +431,20 @@ def repartition(
 def _flip_refuse(structure: TensorStructure) -> None:
     """Turn the bare capability failure into a message a user can act on."""
     provider = structure.provider
-    try:
-        requires(provider, FlipPhase)
-    except CapabilityError as exc:
-        raise CapabilityError(
-            f"flip: toggling a leg's dual flag re-expresses the leg through the "
-            f"V_a -> V_a^* isomorphism, and provider {provider.name} does not implement "
-            "FlipPhase. The scalar is chi_a * theta_a — the Frobenius-Schur phase times "
-            "the twist — per flipped leg per fusion tree, so a provider must supply "
-            "flip_phase (1 for a bosonic Abelian symmetry, (-1)^parity for fermion "
-            "parity, the FS phase for SU(2)/SU(N)). Faking it would give correct "
-            "shapes, correct sector bookkeeping and a wrong sign."
-        ) from exc
+    for capability in (FSIndicatorData, TwistData):
+        try:
+            requires(provider, capability)
+        except CapabilityError as exc:
+            raise CapabilityError(
+                f"flip: toggling a leg's dual flag re-expresses the leg through the "
+                f"V_a -> V_a^* isomorphism, and provider {provider.name} does not implement "
+                f"{capability.__name__}. The scalar is chi_a * theta_a — the Frobenius-Schur "
+                "indicator (FSIndicatorData) times the twist (TwistData), the two factors "
+                "FlipPhase used to bundle — per flipped leg per fusion tree (both 1 for a "
+                "bosonic Abelian symmetry, twist (-1)^parity for fermion parity, chi the FS "
+                "phase for SU(2)/SU(N)). Faking it would give correct shapes, correct "
+                "sector bookkeeping and a wrong sign."
+            ) from exc
 
 
 def _flip_axes(structure: TensorStructure, axes: Any) -> tuple[int, ...]:
@@ -501,7 +509,8 @@ def flip(
         or if it matches more than one (use the axis index instead).
     CapabilityError
         If the provider does not implement
-        [FlipPhase][tenet.symmetry.FlipPhase] — the scalar is
+        [FSIndicatorData][tenet.symmetry.FSIndicatorData] and
+        [TwistData][tenet.symmetry.TwistData] — the scalar is
         ``chi_a * theta_a`` per flipped leg per fusion tree, and faking it
         would give correct shapes with a wrong sign.
 
@@ -567,9 +576,11 @@ def flip(
             leg = structure.legs[ax]
             out = leg.side is OUT
             tree = key.output_tree if out else key.input_tree
-            # the leaf is invariant under the flip, so old key and new key agree
-            # flip() ran requires(provider, FlipPhase) before building this plan
-            base = complex(provider.flip_phase(tree.uncoupled[tree_pos[ax]]))  # ty: ignore[unresolved-attribute]
+            # the leaf is invariant under the flip, so old key and new key agree.
+            # flip() ran requires(provider, FSIndicatorData/TwistData) before this
+            # plan; chi * theta is bit-identical to the old bundled flip_phase.
+            a = tree.uncoupled[tree_pos[ax]]
+            base = complex(provider.frobenius_schur(a) * provider.twist(a))  # ty: ignore[unresolved-attribute]
             if not out:  # the input tree enters the pairing conjugated
                 base = base.conjugate()
             if not inv:

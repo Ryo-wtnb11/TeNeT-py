@@ -20,6 +20,7 @@ from tenet.serialize import FORMAT_VERSION
 from tenet.symmetry import (
     SU2,
     U1,
+    Z2,
     FZ2Sector,
     ProductProvider,
     ProductSector,
@@ -28,6 +29,7 @@ from tenet.symmetry import (
     TrivialSector,
     U1Provider,
     U1Sector,
+    Z2Sector,
     fZ2,
 )
 from tenet.symmetry.fz2 import _FZ2_GAUGE
@@ -48,6 +50,7 @@ def nested(a: int, b: int, j: int) -> ProductSector:
 SPACES = {
     "trivial": GradedSpace.new(Trivial, {TrivialSector(): 3}),
     "u1": GradedSpace.new(U1, {U1Sector(-1): 2, U1Sector(0): 3, U1Sector(1): 1}),
+    "z2": GradedSpace.new(Z2, {Z2Sector(0): 2, Z2Sector(1): 3}),
     "su2": GradedSpace.new(SU2, {SU2Sector(0): 2, SU2Sector(1): 3}),
     "fz2": GradedSpace.new(fZ2, {FZ2Sector(0): 2, FZ2Sector(1): 3}),
     "product": GradedSpace.new(UU, {uu(0, 0): 2, uu(1, 0): 2, uu(0, 1): 1}),

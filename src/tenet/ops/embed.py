@@ -43,7 +43,7 @@ import autoray as ar
 import numpy as np
 
 from tenet.structure import TensorStructure
-from tenet.symmetry.base import QuantumDimension, requires
+from tenet.symmetry.base import QuantumDimensionData, requires
 
 if TYPE_CHECKING:
     from tenet.leg import Leg
@@ -251,7 +251,7 @@ def restrict(
         refuses to throw away data, naming the worst offending block.
     CapabilityError
         If the provider does not implement
-        [QuantumDimension][tenet.symmetry.QuantumDimension], which the
+        [QuantumDimensionData][tenet.symmetry.QuantumDimensionData], which the
         residual check needs (``atol=math.inf`` skips it).
 
     Examples
@@ -317,7 +317,7 @@ def _refuse_discarded(t: "SymmetricTensor", kept: "SymmetricTensor", atol: float
     path, which is untraceable anyway, so ``atol=math.inf`` pays nothing for it.
     """
     provider = t.provider
-    requires(provider, QuantumDimension)
+    requires(provider, QuantumDimensionData)
     index = {k: i for i, k in enumerate(kept.structure.block_order)}
     worst: tuple[float, Any] = (0.0, None)
     discarded_sq = total_sq = 0.0

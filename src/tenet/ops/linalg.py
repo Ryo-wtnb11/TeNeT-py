@@ -66,7 +66,7 @@ from tenet.map_view import MapLayout, check_square, from_matrices, map_layout, t
 from tenet.ops.repartition import repartition
 from tenet.space import GradedSpace
 from tenet.structure import TensorStructure
-from tenet.symmetry.base import QuantumDimension, Sector, StructureChangingError, requires
+from tenet.symmetry.base import QuantumDimensionData, Sector, StructureChangingError, requires
 
 if TYPE_CHECKING:
     from tenet.tensor import Array, SymmetricTensor
@@ -1179,7 +1179,7 @@ def svd_truncated(
         If ``renorm`` is not a bool (it is not quimb's p-norm power).
     CapabilityError
         If the provider does not implement
-        [QuantumDimension][tenet.symmetry.QuantumDimension], plus the
+        [QuantumDimensionData][tenet.symmetry.QuantumDimensionData], plus the
         lowering's refusals as in [svd][tenet.ops.linalg.svd].
 
     Examples
@@ -1262,7 +1262,7 @@ def svd_truncated(
     _validate(max_bond, cutoff, cutoff_mode, renorm)
     m, _, mats = _lower(t, axes)
     provider = m.provider
-    requires(provider, QuantumDimension)
+    requires(provider, QuantumDimensionData)
     # requires() above; raise-based check does not narrow
     qdim = provider.qdim  # ty: ignore[unresolved-attribute]
 

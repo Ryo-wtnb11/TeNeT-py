@@ -36,7 +36,7 @@ def spectrum(s: SymmetricTensor) -> list[float]:
     so this reads its diagonal; the ``sqrt(qdim)`` weight is the same one
     :func:`tenet.norm` carries, and it is 1 throughout for U(1).
     """
-    # QuantumDimension is checked by svd_truncated before ``s`` can exist
+    # QuantumDimensionData is checked by svd_truncated before ``s`` can exist
     qdim = s.provider.qdim  # ty: ignore[unresolved-attribute]
     out = [
         float(v)
