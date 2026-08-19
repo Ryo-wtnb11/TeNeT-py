@@ -303,6 +303,22 @@ def test_a_four_fermion_string_agrees_however_its_indices_are_ordered():
         assert _deviation(MPO.from_arrays(4, ops, blocks), MPO.from_terms(4, listed)) <= 1e-14
 
 
+def test_a_six_fermion_string_agrees_however_its_indices_are_ordered():
+    """The same gate one operator length up, where the inversion count has 15 pairs."""
+    ops, _terms, _blocks = spinless(6)
+    names = ("C", "C", "C", "c", "c", "c")
+    for idx in (
+        (0, 1, 2, 3, 4, 5),
+        (5, 4, 3, 2, 1, 0),
+        (2, 5, 0, 4, 1, 3),
+        (1, 3, 5, 0, 2, 4),
+        (4, 0, 3, 1, 5, 2),
+    ):
+        blocks = [("".join(names), np.array([idx]), np.array([0.6]))]
+        listed = [(0.6, [(ops[nm], site) for nm, site in zip(names, idx, strict=True)])]
+        assert _deviation(MPO.from_arrays(6, ops, blocks), MPO.from_terms(6, listed)) <= 1e-14
+
+
 def test_a_long_operator_name_needs_a_separator_and_a_bare_pattern_does_not():
     """block2's spelling rule: whitespace separates, otherwise one name per character."""
     ops, _terms, _blocks = heisenberg(4)

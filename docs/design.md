@@ -3155,8 +3155,7 @@ The split:
   paying the Koszul sign of each inversion of two sign-braiding operators,
   pre-multiplying coincident sites into one on-site operator, and fusing terms that agree
   on `(operator labels, sites)` all run over whole arrays, once per pattern rather than
-  once per term; what reaches `_term_edges` and `_instantiate` is the merged term set and
-  nothing about those two changes. Two consequences are the point rather than side
+  once per term. Two consequences are the point rather than side
   effects: the merge discharges the "two operators of one term sit on site N; multiply
   them first" burden `from_terms` puts on its caller, and it is the only position from
   which an exact cancellation is visible — a cancelled term never allocates a state, so
@@ -3173,6 +3172,27 @@ The split:
   symmetry kept implicit as a multiplicity factor — the eight images of `(ij|kl)` are
   eight different operator strings, so the caller expands and the merge removes the
   redundancy afterwards, which is block2's own order.
+
+  **The walk itself became array-driven, and there is exactly one of it.** `_term_edges`
+  used to take a Python term — a coefficient and a list of `(operator, sites)` pairs —
+  and redo that term's pattern work from scratch: a growing tuple rebuilt and rehashed
+  once per operator placed (so the prefix key cost was quadratic in the term length), one
+  charge fusion, one `GradedSpace`, one braiding probe and one dense round trip per
+  operator, one `multiply` and one `SymmetricTensor.__add__` per closing edge, and a
+  spectator span re-walked by every term through it. It now takes two integer rows —
+  slots and sites, both in site order — and a coefficient, with a state interned from
+  `(parent, slot, site)`, the rank-4 edge cached per `(slot, running charge)`, closing
+  coefficients summed before a single `multiply` per surviving edge, and the spectator
+  span bounded by a per-state high-water mark. `from_arrays` hands those rows over
+  directly; `from_terms` canonicalizes its list into the same rows first, so **both
+  builders share one walk** and the term-list route inherits the speedup. Measured on
+  40,000 four-operator fZ2 rows over 32 sites, input layer only: `from_arrays` 29.3 →
+  **5.9 µs/term**, `from_terms` 30.1 → **16.3 µs/term** — of which the walk is 5.2 and
+  the remaining 11.1 is building and sorting the term objects themselves, which is what
+  the list API *is* and the reason the array API exists. Both front ends produce the
+  identical machine, 19,272 states either way. `_edge_table`, `_place`, `_instantiate`,
+  `EdgeBlocks` and `network/env.py` are untouched: a state label is now an `int` where it
+  was a tuple or `"IdR"`, and nothing outside `mps.py` ever read a label's value.
 
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
