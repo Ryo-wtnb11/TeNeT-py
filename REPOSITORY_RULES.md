@@ -33,7 +33,9 @@ Process rules for `TeNeT-py`. Design rules live in `docs/design.md`
 - Structural/categorical types are immutable.
 - Dependencies: keep minimal. Core depends on `numpy`, `autoray` and
   `opt-einsum` only. JAX/PyTorch are optional extras (`tenet-py[jax]`), never
-  hard requirements; core never imports them.
+  hard requirements; core never imports them. `src/tenet/network/` is held to the
+  same rule plus `quimb` and `opt_einsum`: the driver layer is built on the public
+  `tenet` API only, enforced by `tests/network/test_hygiene.py`.
   - `opt-einsum` was added for M8 (#67), which needs a contraction-path finder
     for `einsum` over three or more operands. It is a 72 KB pure-Python wheel
     with zero runtime dependencies (it does not import NumPy), BSD-3, and

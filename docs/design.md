@@ -2009,6 +2009,42 @@ Thus:
 
 is computed by the backend AD system while the categorical labels \(\tau\) remain static.
 
+## Degenerate singular values
+
+Reverse-mode SVD and eigh VJPs carry `1/(σ_i − σ_j)` and `1/(w_i − w_j)` factors, which
+are `NaN` at exact degeneracy (jax-ml/jax#2311, #8732, #2329 — acknowledged upstream, not
+a bug awaiting a fix). Under a non-Abelian symmetry that is the generic situation rather
+than an edge case: a symmetric fixed point has degenerate singular values *inside* a
+coupled sector by construction, and a coupled sector of an SU(2) tensor is exactly where
+the members of a multiplet land. The failure is narrower than "JAX has no gradient" — a
+function of the singular *values* alone differentiates fine even at degeneracy, and so
+does the reconstruction `U S Vh` with a single exactly-zero singular value; two coincident
+values are what produces `NaN`.
+
+`tenet.ad` installs the fix the differentiable-tensor-network literature settled on:
+Lorentzian broadening of the `F` matrix, `1/x → x/(x² + ε)` (Liao, Liu, Wang, Xiang,
+PRX 9, 031041 (2019), Sec. III A; `safe_inverse` in tensorgrad's
+`tensornets/adlib/svd.py`). Broadening rather than a hard degeneracy tolerance **because
+the hard version cannot be jitted**: MatrixAlgebraKit's `inv_safe(x, atol)` zeroes below a
+tolerance and *warns* when the gauge-sensitive part is not small, and the warning — the
+part that makes the hard tolerance safe — is a data-dependent branch no traced region can
+run (invariant 9). Broadening is a smooth elementwise function with no branch, so it
+survives `jit`, `grad` and `vmap` unchanged. The price is the precondition `tenet.ad`
+documents at its installation point: the broadened gradient is correct exactly when the
+objective is gauge-invariant on each degenerate subspace, which is the same condition
+MatrixAlgebraKit enforces by warning and we cannot.
+
+The seam is `autoray.register_function("jax", "linalg.svd", ...)` — autoray's own
+extension point, hence process-global for the JAX backend — rather than a hook threaded
+through `ops/linalg.py`. That is the honest cost of using the documented seam, and it is
+why installation is an explicit function call rather than an import side effect.
+
+Nothing else needs a fix. `qr`/`lq` have no `1/(σ_i − σ_j)` anywhere — their only
+inversion is a triangular solve and their instability is rank deficiency of `R`, a
+different problem — and `polar` inherits this one for free because it calls
+`ar.do("linalg.svd")`. No custom JVP: forward mode has no caller here, since `jax.grad`,
+VMC and CTMRG are all reverse mode.
+
 ---
 
 # Structure-changing differentiation
@@ -2853,6 +2889,18 @@ contraction.
   `setup_`/`update_`/`clear_`, `heff2` and `measure()`;
 - `lanczos`, `sweep_`, `dmrg_()` and `DMRG_out`.
 
+Two container decisions, recorded here rather than on the classes. **`MPO` is a separate
+class from `MPS`, with no shape flag**: YASTN unifies the two behind `_nr_phys in {1, 2}`
+(`_mps_obc.py`:223-225) and pays a runtime branch on that flag at :284, :291, :438, :443
+and :90-100, inside the code whose whole job is structural bookkeeping — the pattern
+`tenet` is typed to avoid. TenPy agrees for its own reason (`mpo.py`:16-18: "unlike for an
+MPS, this doesn't simplify calculations. Thus, an MPO has no `form`"). Two classes, no
+branch. **`Env` is one class, not YASTN's factory over eight**: `yastn.tn.mps.Env` is a
+function dispatching into `Env2`, `Env_mps_mpo_mps`, `…_precompute`, `Env_mpo_mpo_mpo`,
+`Env_mps_mpopbc_mps`, `Env_sum` and `Env_project` (`_env.py`:26-89), and every one of those
+serves a feature M11a does not ship — MPO products, PBC, sums of Hamiltonians,
+excited-state penalties. The dispatch arrives if and when a second target does.
+
 `tenet.network` (M11b) adds the CTMRG half, promoted from `examples/ctmrg.py`:
 
 - `CTMEnv` — a `NamedTuple` `(c, e, bond)`, the *outside* container: `bond` is the frozen
@@ -2883,10 +2931,40 @@ It is reachable as `tenet.network` and listed in `tenet.__all__`, and it is deli
 dependency edge is one-way — `network` imports `ops`/`tensor`, never the reverse — in the
 shape `ops` already uses for `tensor`. Everything here is built on **public `tenet` API
 only**: no `jax`, `torch`, `scipy`, `quimb` or `opt_einsum`, no reach into another
-module's private names, and no numerical use of reduced blocks. The one named exception
-is reading `t.provider`, `provider.qdim` and `provider.unit`: two reads, one owner each —
-`spectrum`'s `sqrt(qdim)` Schmidt weight and `ctmrg.py`'s unit sector.
-`tests/network/test_hygiene.py` enforces all of it.
+module's private names, and no numerical use of reduced blocks. The one named exception is
+reading `t.provider` and a short allow-list of *symmetry-generic* provider metadata, each
+entry with a named owner. That list is not restated here, because a second copy goes
+stale: `tests/network/test_hygiene.py` both states it (its module docstring, one owner per
+attribute) and enforces it (`test_no_provider_branching`'s `allowed` set), and it catches
+reads through a local binding such as `sym = space.provider`.
+
+**The composition rule.** Every two-operand `tenet.einsum` in this package is a
+**composition**: operand 1 supplies the `IN` end of *every* shared wire and operand 2 the
+`OUT` end. For three or more operands the same rule applies pairwise in caller order,
+which `_contract_path` guarantees (`ops/contraction.py`:596-603).
+
+The rule exists because the two ends of a wire are not interchangeable for a fermionic
+provider — the cap `V*⊗V → 1` is not the cap `V⊗V* → 1` — so the operand order of every
+einsum that can contract an odd wire is load-bearing, and a per-call choice is exactly
+what produced the `(-1)^(j-i)` discrepancy M21/#147 measured at its gate 1, the
+cap-direction Koszul sign. Meeting `IN` against `OUT` is necessary and **not** sufficient:
+that condition is symmetric, so it fixes contractibility alone while the cap sign depends
+on which operand supplies which end. An earlier revision of `Env` argued exactly the
+symmetric reading — "IN against OUT with no leg bend anywhere in this module" — and gate 1
+measured it to be insufficient: the operand orders were individually well-formed and still
+paid one Koszul sign per odd wire capped in the wrong direction.
+
+A wire that genuinely turns around in the intended planar diagram is therefore **bent
+explicitly** with `tenet.repartition` before the einsum (`network/env.py::_composed`),
+never left to the einsum's implicit cap. In `env.py` the MPS bond arrow and the MPO bond
+arrow cross the two-site cell in opposite directions, so closing either cap turns one rail
+around, and each bend is pinned by the dense Jordan-Wigner oracle.
+
+`tests/network/test_hygiene.py::test_every_two_operand_einsum_is_a_composition` pins the
+rule at every call site a smoke over the MPS/MPO/DMRG modules reaches, with zero
+exemptions, and asserts that coverage rather than assuming it. `ctmrg.py` is deliberately
+outside the smoke: a 2D network has loops, where operand order is necessary but not
+sufficient (`ops/contraction.py`:575-587), and no fermionic PEPS caller exists.
 
 **Which side of a trace a module lives on is a per-module statement, and it is the
 complement of invariant 9 rather than an exception to it.** Invariant 9 says
@@ -2969,7 +3047,7 @@ The split:
   bond crossing a spectator's physical lines writes the `Z` with no swap gate and no
   explicit JW operator anywhere in the API — and the actual gap was the cap-direction
   convention, one Koszul sign per odd bond paid by operand order, fixed by M23's
-  network-wide composition rule. **Non-Abelian terms**: a *list* of
+  network-wide composition rule ("The composition rule" above). **Non-Abelian terms**: a *list* of
   operators does not determine a non-Abelian term — three tensor operators fuse through
   several channels and the DSL has no slot for a coupling tree.
 
@@ -3047,12 +3125,28 @@ The split:
   (spinful fermions, `S ≥ 3/2`, grouped sites), where the same experiment measures
   1.93×–2.78×; and recovering a table from a compressed MPO, because the SVD gauge
   mixes the states and leaves zero identity edges on every model measured.
+  What `cutoff=None` skips is `from_terms`'s two compressing sweeps, and for finite-range
+  models those reduce the bond dimension by exactly nothing — on nearest-neighbour
+  Heisenberg, an R=4 chain and width-6/width-10 cylinders, 5 stays 5, 14 stays 14, 20 stays
+  20, 32 stays 32 — while the SVD gauge turns 38 sparse edges into 302 dense pairs on the
+  width-10 cylinder (#141). Whether keeping the table wins is therefore a backend question:
+  with a `compile=` callable injected into `Env` the prepared matvec measured ~20× faster
+  than the dense path, while on the plain numpy backend at small bond dimension it pays a
+  per-call dispatch premium and a full sweep measured 1.5–2.6× *slower* (#141's tables).
+  The default `cutoff` stays `1e-13` for that reason and for power-law couplings, where the
+  sweep earns its keep — all-pairs `1/r²` at N=32 takes the bond 33 to 8. The per-site table
+  type was spelled `JordanBlocks` until M31/#185 renamed it `EdgeBlocks`: MPSKit's name for
+  the partition is the MPO's *Jordan form* and the citation stays, but in a package that
+  supports fermions "Jordan" already names the Jordan-Wigner string, and the Jordan normal
+  form is one import away from `tenet.linalg` — three meanings for one word, which no
+  docstring separates at a call site.
 
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
 and the gap M13's refusal guarded against was the cap-direction convention M23/#160
-fixed, not a missing gate.
+fixed with the composition rule stated in the Milestone 11 section above, not a missing
+gate.
 
 ---
 

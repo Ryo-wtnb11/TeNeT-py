@@ -22,8 +22,9 @@ braiding with ``permute_tree`` for spectator classification and the fermionic
 term dressing (M13b's refusal probe, repurposed by #160/#147). That is
 *symmetry-generic metadata*: ``provider.qdim(c)`` is fine, ``isinstance(provider,
 SU2Provider)`` is not, and the second is what the branch test below forbids. Since M14
-the metadata test also catches reads through a local binding (``sym = space.provider``),
-so the list enforced and the list ``network/__init__.py`` claims are the same list.
+the metadata test also catches reads through a local binding (``sym = space.provider``).
+This file is where the allow-list is *stated*, not merely checked: ``docs/design.md``
+"Milestone 11" points here rather than keeping a second copy that can go stale.
 
 **The duplicated-``scalar`` finding #112 recorded, corrected and closed (#114, #126).** It
 was recorded as *three* files writing the same five-line ``sum(qdim(c) * trace(m))``; it
@@ -167,7 +168,7 @@ def test_the_allowed_metadata_reads_stay_on_the_named_list():
 def test_every_two_operand_einsum_is_a_composition(monkeypatch):
     """The composition rule (#160), pinned: operand 1 supplies IN on every shared wire.
 
-    ``network/__init__.py`` states the rule once; this test is what makes it a
+    ``docs/design.md`` "Milestone 11" states the rule once; this test is what makes it a
     convention rather than a one-time cleanup. ``tenet.einsum`` is wrapped for one
     smoke over the MPS/MPO/DMRG modules -- ``from_terms`` at both cutoffs with a term
     list that populates every Jordan channel (a non-adjacent term over a spectator, a

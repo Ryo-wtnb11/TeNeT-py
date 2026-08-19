@@ -62,8 +62,8 @@ def _composed(
 ) -> SymmetricTensor:
     """A two-operand ``tenet.einsum`` with the wires named in ``bend`` bent first.
 
-    The composition rule (``network/__init__.py``) requires operand 1 to supply the
-    ``IN`` end of every shared wire. A wire that turns around in the intended planar
+    The composition rule (``docs/design.md`` "Milestone 11") requires operand 1 to supply
+    the ``IN`` end of every shared wire. A wire that turns around in the intended planar
     diagram -- one that runs through an environment's cap -- cannot meet that rule as
     drawn, and letting ``einsum`` bend it implicitly would leave the cap direction to
     operand order, which is #147's gate-1 sign. So the bend is spelled: both ends of
@@ -412,16 +412,13 @@ class Env:
     [heff2][tenet.network.Env.heff2]
     meet IN against OUT -- and that condition is **not enough**, because it is
     symmetric: it fixes contractibility only, while the cap sign depends on *which
-    operand supplies which end* (the composition rule, ``network/__init__.py``).
-    An earlier revision argued exactly the symmetric reading -- "IN against OUT with
-    no leg bend anywhere in this module" -- and #147's gate 1 measured it to be
-    insufficient: the operand orders were individually well-formed and still paid one
-    Koszul sign per odd wire capped in the wrong direction. Every contraction here is
-    therefore a composition with operand 1 supplying IN, and the wires that genuinely
-    bend -- the MPS bond arrow and the MPO bond arrow cross the two-site cell in
-    opposite directions, so closing either cap turns one rail around -- are bent
-    explicitly through ``_composed``, each choice pinned by the dense
-    Jordan-Wigner oracle (#160).
+    operand supplies which end*. Every contraction here is therefore a composition
+    with operand 1 supplying IN, and the wires that genuinely bend -- the MPS bond
+    arrow and the MPO bond arrow cross the two-site cell in opposite directions, so
+    closing either cap turns one rail around -- are bent explicitly through
+    ``_composed``, each choice pinned by the dense Jordan-Wigner oracle (#160). The
+    rule and why the symmetric reading is insufficient: ``docs/design.md``
+    "Milestone 11".
 
     A plain ``dict`` keyed by *directed* bond, exactly YASTN's ``Env``
     (``yastn/tn/mps/_env.py``:94-125). A list-of-left / list-of-right would hide the
@@ -432,12 +429,8 @@ class Env:
     pops **both** directed bonds per site, and it runs *before* the replacement is
     written, so a missed update is a ``KeyError`` rather than a wrong number.
 
-    **One class, not YASTN's factory over eight.** ``yastn.tn.mps.Env`` is a function
-    dispatching into ``Env2``, ``Env_mps_mpo_mps``, ``…_precompute``, ``Env_mpo_mpo_mpo``,
-    ``Env_mps_mpopbc_mps``, ``Env_sum``, ``Env_project`` (``_env.py``:26-89), and every
-    one of those serves a feature M11a does not ship -- MPO products, PBC, sums of
-    Hamiltonians, excited-state penalties. The dispatch arrives if and when a second
-    target does.
+    Why one class rather than YASTN's factory over eight: ``docs/design.md``
+    "Milestone 11".
     """
 
     F: dict[tuple[int, int], SymmetricTensor]

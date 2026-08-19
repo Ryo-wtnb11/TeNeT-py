@@ -1,4 +1,29 @@
-"""TeNeT-py: non-Abelian symmetric tensors with ndarray-style APIs."""
+"""TeNeT-py: non-Abelian symmetric tensors with ndarray-style APIs.
+
+[SymmetricTensor][tenet.SymmetricTensor] is the tensor type. Its categorical structure is
+[Leg][tenet.Leg] (``IN``/``OUT``, [Side][tenet.Side]),
+[GradedSpace][tenet.GradedSpace] / [ProductSpace][tenet.ProductSpace],
+[FusionTree][tenet.FusionTree] and [TensorStructure][tenet.TensorStructure], and
+[as_map][tenet.as_map] views it as a map from domain to codomain.
+
+The operations group by what a caller comes for: arithmetic and reductions
+([add][tenet.add], [multiply][tenet.multiply], [norm][tenet.norm], [trace][tenet.trace],
+[inner][tenet.inner], [allclose][tenet.allclose]); contraction ([einsum][tenet.einsum],
+[tensordot][tenet.tensordot], [compose][tenet.compose]); leg and axis moves
+([transpose][tenet.transpose], [repartition][tenet.SymmetricTensor.repartition], [bend][tenet.bend],
+[fuse][tenet.fuse] / [unfuse][tenet.unfuse], [conj][tenet.conj],
+[adjoint][tenet.adjoint]); construction ([identity][tenet.identity],
+[isometry][tenet.isometry], [from_matrices][tenet.from_matrices],
+[direct_sum][tenet.direct_sum], [embed][tenet.SymmetricTensor.embed],
+[to_symmetry][tenet.to_symmetry]); and block access ([to_matrices][tenet.to_matrices],
+[apply_blocks][tenet.apply_blocks]).
+[save][tenet.save] / [load][tenet.load] persist one tensor, and anything that would change
+block structure raises [StructureChangingError][tenet.StructureChangingError].
+
+Submodules with their own pages: ``tenet.linalg`` (decompositions), ``tenet.network``
+(DMRG and CTMRG), ``tenet.symmetry`` (providers and sector labels), and the opt-in JAX
+seams [tenet.pytree][] and [tenet.ad][].
+"""
 
 from tenet.fusion_tree import FusionTree, coupled_sectors, fusion_trees
 from tenet.leg import IN, OUT, Leg, Side

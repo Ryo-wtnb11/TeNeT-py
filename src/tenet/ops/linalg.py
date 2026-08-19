@@ -1,55 +1,33 @@
 """Fixed-structure blockwise decompositions — ``svd``, ``qr``, ``eigh``, ``polar``, ``lq``.
 
-Milestone 7. Every function here is the same lowering with a different backend
-call and a different set of output legs; ``_lower`` is shared verbatim.
+Each puts ``left`` into the codomain and ``right`` into the domain with
+[repartition][tenet.SymmetricTensor.repartition] — inheriting its refusals — then factorizes
+one dense matrix per coupled sector. The only new object is the **bond space**, a fresh
+[GradedSpace][tenet.GradedSpace] with degeneracy ``min(*layout.shape(c))`` at ``c``: static
+metadata, so every function here is shape-static and traceable.
 
-The lowering is the one docs/design.md "Linear algebra" draws, and every arrow of it is
-already built: [repartition][tenet.SymmetricTensor.repartition] puts the requested
-``left`` into the codomain and ``right`` into the domain, ``to_matrices``
-hands back one dense ``B_c`` per coupled sector, and the backend factorizes each
-``B_c`` on its own. Clebsch-Gordan orthonormality has already collapsed the
-coupled index into ``B_c`` (``ops.map`` module docstring), so a decomposition
-needs no F/R symbols of its own and this module introduces **no new capability
-protocol**: the refusals it can produce are ``transpose``'s and ``bend``'s,
-inherited whole through ``repartition`` and raised before any block moves.
-
-The only genuinely new object is the **bond space**: a fresh ``GradedSpace``
-whose degeneracy at ``c`` is ``min(*layout.shape(c))``, read straight off
-``MapLayout``. It is static metadata, so both functions are
-shape-static and traceable.
-
-Fixed-structure only (docs/design.md "Structure-changing differentiation", invariant
-10): this is the *compact* SVD/QR, with no truncation, no tolerance and no
-zero-sector elimination. A sector whose ``B_c`` happens to be rank-deficient
-keeps its full ``min`` bond degeneracy and carries zero singular values;
-dropping them is structure-changing and belongs outside the jit boundary.
-``svd(..., bond=B)`` is not an exception: ``B`` is a ``GradedSpace`` the caller
-decided *outside* the traced region, so it is static metadata like every other
-structure here, and the projection onto it is a per-sector prefix slice.
+**Fixed structure only** — the *compact* SVD/QR, no truncation, no tolerance, no
+zero-sector elimination, so a rank-deficient ``B_c`` keeps its full ``min`` bond degeneracy
+and carries zero singular values. Dropping them is structure-changing and belongs outside
+the jit boundary. ``svd(..., bond=B)`` is no exception: ``B`` is a ``GradedSpace`` decided
+*outside* the traced region.
 
 Conventions:
 
-* The bond leg is non-dual on both sides and differs only in ``side`` — exactly
-  ``identity``'s mirror convention. ``Leg.fused_sector`` is then the identity on
-  it, so the one-leg tree on the bond side is the trivial ``c → c`` coupling and
-  the coupled sectors of ``U``, ``S`` and ``Vh`` are literally
-  ``layout.sectors``. It is also the only choice ``compose`` accepts, since
-  ``_check_composable`` compares ``(space, dual, order)`` and ignores ``side``.
-* ``S`` is a diagonal operator ``SymmetricTensor`` on the bond space, not a dict
-  of vectors, so ``U @ S @ Vh`` is a plain [compose][tenet.compose] chain and no
-  ``absorb`` enum is needed. The raw singular values are
-  ``{c: ar.do("diagonal", m) for c, m in tenet.to_matrices(S).items()}``.
-  ``S`` is real even when ``U`` and ``Vh`` are complex.
-* Reconstruction is exact against ``repartition(t, left, right)``, not against
-  ``t``: the factors' public axis order is ``(*left, bond)`` and ``(bond,
-  *right)``, and no axis order could remember that ``t`` interleaved its sides.
-  ``repartition``/``transpose`` take the user back, exactly.
-* The gauge freedom (per-singular-value phases; the sign of ``R``'s diagonal) is
-  never fixed here. Callers wanting a stabilized ``QR`` do it themselves.
+* The bond leg is non-dual on both sides and differs only in ``side``, exactly
+  ``identity``'s mirror convention, so the coupled sectors of ``U``, ``S`` and ``Vh`` are
+  literally ``layout.sectors``.
+* ``S`` is a diagonal operator ``SymmetricTensor`` on the bond space, so ``U @ S @ Vh`` is
+  a plain [compose][tenet.compose] chain. Its raw values are
+  ``{c: ar.do("diagonal", m) for c, m in tenet.to_matrices(S).items()}``, real even when
+  ``U`` and ``Vh`` are complex.
+* Reconstruction is exact against ``repartition(t, left, right)``, not against ``t``: the
+  factors' axis order is ``(*left, bond)`` and ``(bond, *right)``.
+* The gauge freedom (per-singular-value phases; the sign of ``R``'s diagonal) is never
+  fixed here.
 
-No ``svd``/``qr`` registration in ``array/dispatch.py``: that list is closed and
-``ar.do("svd", ...)`` must keep raising (invariant 11). No NumPy, no
-``to_dense`` and no provider branching in this module.
+The lowering and its invariants: ``docs/design.md`` "Linear algebra" and invariant 10.
+``svd``/``qr`` are absent from ``array/dispatch.py``, whose docstring owns that closed list.
 """
 
 # Simplification: ``S`` stores a dense ``m_c × m_c`` block per sector where a vector would

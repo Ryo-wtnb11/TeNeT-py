@@ -1,59 +1,35 @@
 """Opt-in stabilized VJPs for ``svd``/``eigh`` on the JAX backend. Call [install][tenet.ad.install].
 
-The problem this solves is not an edge case here, it is the generic situation: a
-symmetric fixed point has degenerate singular values *inside* a coupled sector by
-construction, and a coupled sector of an SU(2) tensor is exactly where the members of a
-multiplet land. JAX's own SVD/eigh VJPs are perfectly good and perfectly standard, and
-their ``1/(sigma_i - sigma_j)`` / ``1/(w_i - w_j)`` factors are ``NaN`` at exact
-degeneracy (jax-ml/jax#2311, #8732, #2329 -- acknowledged upstream, not a bug awaiting a
-fix). The failure is narrower than "JAX has no gradient": a function of the singular
-*values* alone differentiates fine even at degeneracy, and so does the reconstruction
-``U S Vh`` with a single exactly-zero singular value; two coincident values are what
-produces ``NaN``.
-
-The fix is the one the differentiable-tensor-network literature settled on: Lorentzian
-broadening of the ``F`` matrix, ``1/x -> x/(x**2 + eps)`` (Liao, Liu, Wang, Xiang, PRX 9,
-031041 (2019), Sec. III A; ``safe_inverse`` in tensorgrad's ``tensornets/adlib/svd.py``).
-Broadening rather than a hard degeneracy tolerance **because the hard version cannot be
-jitted**: MatrixAlgebraKit's ``inv_safe(x, atol)`` zeroes below a tolerance and *warns*
-when the gauge-sensitive part is not small, and the warning -- the part that makes the
-hard tolerance safe -- is a data-dependent branch that no traced region can run
-(invariant 9). Broadening is a smooth elementwise function with no branch, so it
-survives ``jit``, ``grad`` and ``vmap`` unchanged.
+JAX's own SVD/eigh VJPs carry ``1/(sigma_i - sigma_j)`` / ``1/(w_i - w_j)`` factors that
+are ``NaN`` at exact degeneracy, and under a non-Abelian symmetry degeneracy inside a
+coupled sector is generic rather than an edge case. ``install()`` replaces them with the
+Lorentzian-broadened form, ``1/x -> x/(x**2 + eps)``; ``uninstall()`` restores autoray's
+stock bindings.
 
 Three things a caller must know:
 
 * **It is process-global for the JAX backend, by design.** The seam is
-  ``autoray.register_function("jax", "linalg.svd", ...)``, autoray's own extension
-  point, so after ``install()`` *any* ``ar.do("linalg.svd", jax_array)`` in the process
-  -- quimb's included -- gets the broadened VJP. That is the honest cost of using the
-  library's documented seam instead of threading a hook through ``ops/linalg.py``, and
-  it is why installation is an explicit **function call** rather than an import side
-  effect, unlike [tenet.pytree][]: mutating another library's dispatch table is an
-  act the user performs, not something that happens because a module got imported.
-  ``uninstall()`` restores autoray's stock bindings.
+  ``autoray.register_function("jax", "linalg.svd", ...)``, autoray's own extension point,
+  so after ``install()`` *any* ``ar.do("linalg.svd", jax_array)`` in the process --
+  quimb's included -- gets the broadened VJP. Installation is therefore an explicit
+  **function call**, not an import side effect like [tenet.pytree][]'s: mutating another
+  library's dispatch table is the user's act, not an import's.
 
 * **The broadened gradient is correct, not merely finite, exactly when the objective is
-  gauge-invariant on each degenerate subspace.** At exact degeneracy the singular
-  vectors within a multiplet are only defined up to a unitary, so ``dU/dA`` genuinely
-  does not exist; what exists is the derivative of gauge-invariant combinations such as
+  gauge-invariant on each degenerate subspace.** At exact degeneracy the singular vectors
+  within a multiplet are only defined up to a unitary, so ``dU/dA`` genuinely does not
+  exist; what exists is the derivative of gauge-invariant combinations such as
   ``U S Vh``, the singular values, or any projector onto the multiplet. Broadening
   returns the correct value for those and an ``eps``-suppressed arbitrary value for the
-  rest. This is a **precondition**, not a hidden approximation: it is the same one
-  MatrixAlgebraKit enforces by warning, and we cannot warn under a trace, so we
-  document it. A gauge-*dependent* objective gets an ``eps``-dependent answer, which is
-  to say a meaningless one.
+  rest. It is a **precondition**, not a hidden approximation: a gauge-*dependent*
+  objective gets an ``eps``-dependent answer, which is to say a meaningless one.
 
 * **``eps`` is in units of sigma squared** -- ``safe_inverse(x) = x/(x**2 + eps)`` with
-  ``x = sigma_j - sigma_i`` -- so the PRX value ``1e-12`` silently assumes an
-  ``O(1)``-normalized spectrum, which holds in their CTMRG only because it renormalizes
-  every step. Our tensors carry no such guarantee, hence the knob.
+  ``x = sigma_j - sigma_i`` -- so a default tuned for an ``O(1)``-normalized spectrum
+  assumes a normalization our tensors do not guarantee. Hence the knob.
 
-Everything else is deliberately untouched. ``qr``/``lq`` have no ``1/(sigma_i -
-sigma_j)`` anywhere -- their only inversion is a triangular solve, and their instability
-is rank deficiency of ``R``, a different problem -- and ``polar`` inherits this fix for
-free because it calls ``ar.do("linalg.svd")``. No custom JVP: forward mode has no caller
-here, since ``jax.grad``, VMC and CTMRG are all reverse mode.
+Why broadening rather than a hard tolerance, and why ``qr``/``lq``/``polar`` need nothing
+of their own: ``docs/design.md`` "Automatic differentiation".
 
 Usage::
 
@@ -63,7 +39,7 @@ Usage::
     tenet.ad.install()
 
     def objective(t):
-        u, s, vh = tenet.linalg.svd(t)   # per coupled sector, as ops/linalg.py already is
+        u, s, vh = tenet.linalg.svd(t)   # per coupled sector
         return tenet.norm(u @ s @ vh)
 
     g = jax.grad(objective)(t)

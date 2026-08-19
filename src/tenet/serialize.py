@@ -1,23 +1,21 @@
-"""``save`` / ``load`` over a single ``.npz`` — issue #94.
+"""``save`` / ``load`` a [SymmetricTensor][tenet.SymmetricTensor] over a single ``.npz``.
 
 The file is a JSON header describing the legs plus one ``.npy`` member per block.
-Nothing derived is written: ``block_order``, ``block_shape`` and every fusion tree
-are pure functions of ``legs``, so putting them on disk would create a second
-source of truth. ``num_blocks`` is in the header only as a *read count*, and it is
-checked against the freshly derived value.
+Nothing derived is written: ``block_order``, ``block_shape`` and every fusion tree are
+pure functions of ``legs``, so putting them on disk would create a second source of
+truth. ``num_blocks`` is in the header only as a *read count*, checked against the
+freshly derived value.
 
-NumPy is correct here and only here for the same reason it is in
-``tenet.ops.dense``: the *file format* is NumPy's. Blocks arrive through
-``ar.to_numpy`` and leave through the ordinary constructor, so no backend is ever
-imported and a JAX- or torch-backed tensor saves fine. ``load`` always returns
-NumPy blocks; ``load(path).to_backend("jax")`` is the documented restore, because
-a device placement is not a property of a tensor.
+NumPy is correct here and only here for the reason it is in ``tenet.ops.dense``: the
+*file format* is NumPy's. Blocks arrive through ``ar.to_numpy`` and leave through the
+ordinary constructor, so no backend is imported and a JAX- or torch-backed tensor saves
+fine. ``load`` always returns NumPy blocks; ``load(path).to_backend("jax")`` is the
+documented restore, because a device placement is not a property of a tensor.
 
-The SU(2), SU(N) and fZ2 gauge fingerprints are written and **verified** on load. Block
-coefficients are only meaningful against the CG / F / R conventions that produced
-them, and a file outlives the process in which provider identity pins those
-conventions; loading gauge-mismatched coefficients would be silently wrong in a
-way no shape check catches.
+The SU(2), SU(N) and fZ2 gauge fingerprints are written and **verified** on load: block
+coefficients are only meaningful against the CG / F / R conventions that produced them,
+and a file outlives the process whose provider identity pinned those conventions — a
+mismatch would be silently wrong in a way no shape check catches.
 """
 
 import dataclasses

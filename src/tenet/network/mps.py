@@ -11,8 +11,8 @@ importing a driver it shares no concept with; #126 then promoted the first two o
 driver layer entirely, as [tenet.full_trace][] and [tenet.inner][].
 
 Every two-operand ``tenet.einsum`` in this module follows the package's composition rule
--- operand 1 supplies ``IN`` on every shared wire; stated once in
-``network/__init__.py``, pinned by ``tests/network/test_hygiene.py`` (#160).
+-- operand 1 supplies ``IN`` on every shared wire; stated in ``docs/design.md``
+"Milestone 11", pinned by ``tests/network/test_hygiene.py`` (#160).
 """
 
 import json
@@ -848,7 +848,8 @@ def _check_op(op: SymmetricTensor, phys: GradedSpace | None) -> GradedSpace:
         )
     # ``space.dim`` is ``Σ m_a irrep_dim(a)`` and ``reduced_dim`` is ``Σ m_a``, so the two
     # differ exactly when some irrep is more than one-dimensional. Symmetry-generic
-    # metadata off the space, of the kind ``network/__init__.py`` names -- no provider read.
+    # metadata off the space, of the kind ``tests/network/test_hygiene.py`` allows -- no
+    # provider read.
     if got.dim != got.reduced_dim or emitted.dim != emitted.reduced_dim:
         raise ValueError(
             "from_terms is Abelian-only: this operator's charge leg has irrep_dim > 1, and "
@@ -1076,11 +1077,8 @@ class EdgeBlocks(NamedTuple):
     full tensor. For every sign-free provider the classification is what it always was,
     at the cost it always had.
 
-    MPSKit calls this partition the MPO's *Jordan form*, and the type was spelled
-    ``JordanBlocks`` until #185. The citation stays; the identifier does not. In a
-    package that supports fermions, "Jordan" already names the Jordan-Wigner string
-    two paragraphs up and the Jordan normal form one import away from ``tenet.linalg``
-    -- three meanings for one word, which no docstring can separate at a call site.
+    MPSKit calls this partition the MPO's *Jordan form*; why this type is not spelled
+    that way is in ``docs/design.md`` "Milestone 16".
     """
 
     a: dict
@@ -1556,12 +1554,8 @@ class MPO:
     carry a ``D=1`` boundary MPO bond, which is what makes *every* ``W_n`` rank 4 and
     removes the boundary-vector special case.
 
-    **A separate class from [MPS][tenet.network.MPS], with no shape flag.** YASTN unifies the two
-    behind ``_nr_phys in {1, 2}`` (``_mps_obc.py``:223-225) and pays a runtime branch on
-    that flag at :284, :291, :438, :443 and :90-100 -- inside the code whose whole job is
-    structural bookkeeping, which is the pattern tenet is typed to avoid. TenPy agrees for
-    its own reason (``mpo.py``:16-18: "unlike for an MPS, this doesn't simplify
-    calculations. Thus, an MPO has no ``form``"). Two classes, no branch.
+    **A separate class from [MPS][tenet.network.MPS], with no shape flag** -- the comparison
+    with YASTN's and TenPy's choices is in ``docs/design.md`` "Milestone 11".
 
     [edge_blocks][tenet.network.MPO.edge_blocks] is the one read-only accessor beyond
     the container protocol: the
@@ -1784,22 +1778,14 @@ class MPO:
         ``cutoff=None``; it runs at the default ``1e-13`` in that case.
 
         **For finite-range models the compressing sweeps reduce the bond dimension by
-        exactly nothing** -- on nearest-neighbour Heisenberg, an R=4 chain and
-        width-6/width-10 cylinders, 5 stays 5, 14 stays 14, 20 stays 20, 32 stays 32 --
-        while the SVD gauge mixes the FSM states, turning 38 sparse edges into 302 dense
-        pairs on the width-10 cylinder and erasing every identity edge on every model
-        measured (#141). Only ``cutoff=None`` keeps the block table that
-        [edge_blocks][tenet.network.MPO.edge_blocks]
-        exposes and that routes [Env.heff2][tenet.network.Env.heff2] onto its prepared per-bond
-        operator.
-        **Whether that trade wins depends on the backend**: with a ``compile=`` callable
-        injected into [Env][tenet.network.Env] the prepared matvec measured ~20x
-        faster than the dense path, but on the plain numpy backend at small bond
-        dimension the prepared path pays a per-call dispatch premium and a full sweep
-        measured 1.5-2.6x *slower* (#141's own tables) -- there the default cutoff is the
-        faster end-to-end choice. The default stays ``1e-13`` also because power-law
-        couplings are where the sweep earns its keep -- all-pairs ``1/r^2`` at N=32
-        takes the bond 33 to 8 -- and there the compressed MPO can win outright.
+        exactly nothing**, while the SVD gauge mixes the FSM states and erases the
+        identity edges, so only ``cutoff=None`` keeps the block table that
+        [edge_blocks][tenet.network.MPO.edge_blocks] exposes and that routes
+        [Env.heff2][tenet.network.Env.heff2] onto its prepared per-bond operator. Whether
+        that trade wins depends on the backend and the bond dimension, and the default
+        stays ``1e-13`` because power-law couplings are where the sweep earns its keep.
+        The measurements behind both statements are in ``docs/design.md``
+        "Milestone 16".
 
         **There is no** ``phys=`` **argument**: the operators carry the physical space and
         a second source of truth could disagree with them, which would surface as a
