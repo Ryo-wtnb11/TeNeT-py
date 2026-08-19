@@ -14,7 +14,7 @@ import numpy as np
 import tenet
 from tenet import IN, OUT, Leg, SymmetricTensor
 from tenet.network.common import ones
-from tenet.network.mps import MPO, MPS, EdgeBlocks
+from tenet.network.mps import MPO, MPS, EdgeBlocks, EdgeTable
 
 __all__ = ["Env"]
 
@@ -155,12 +155,20 @@ class _Cores(NamedTuple):
     open_r: SymmetricTensor | None
 
 
-def _cores2(t1, t2, eye_p: SymmetricTensor) -> _Cores:
-    """Merge the bond's edge blocks into MPSKit's prepared cores, environment-free.
+def _cores2(edges: EdgeTable, n: int, eye_p: SymmetricTensor) -> _Cores:
+    """Merge bond ``n``'s edge blocks into MPSKit's prepared cores, environment-free.
 
-    ``hamiltonian_derivatives.jl``:272-345 in ``tenet.einsum`` -- ``CB = C1 . B2``,
-    ``AB = A1 . B2`` -- followed by its ``prepare_operator!!`` merging: the
-    one-site-identity fields are padded with ``eye_p`` into the two-site fields that
+    Built from the MPO's **edge description**, not from its site tensors (#200): the two
+    sites' [EdgeBlocks][tenet.network.EdgeBlocks] are asked for here, which places their
+    operators against the group slot maps and builds the group embeddings the merge
+    needs, so nothing on this path is ever a full-width rank-4 ``W``. That is the
+    instantiation boundary #184 staged as candidate (a), and it is where the next stage's
+    per-cut assembler plugs in: this function's contract is "give me bond ``n``'s cores",
+    and how the description answers is the assembler's business.
+
+    The merge itself is ``hamiltonian_derivatives.jl``:272-345 in ``tenet.einsum`` --
+    ``CB = C1 . B2``, ``AB = A1 . B2`` -- followed by its ``prepare_operator!!`` merging:
+    the one-site-identity fields are padded with ``eye_p`` into the two-site fields that
     share their closure, the two corner channels are one composed rank-2 map, and each
     merged core's group leg is re-embedded onto the full bond so that ``_build2``
     folds one whole environment per family. ``None`` stands for every absent piece.
@@ -170,6 +178,7 @@ def _cores2(t1, t2, eye_p: SymmetricTensor) -> _Cores:
     rank-4 blocks, so it reaches the matvec through the ``AA`` chains below instead of
     the phys-free ``thru`` ride (#160).
     """
+    t1, t2 = edges.edge_blocks(n), edges.edge_blocks(n + 1)
     thru = None
     if t1.idmap is not None and t2.idmap is not None:
         thru = tenet.einsum("yz,xy->xz", t2.idmap, t1.idmap)
@@ -448,7 +457,11 @@ class Env:
         self._eye_p: SymmetricTensor | None = None  # the physical identity, for field padding
         n = len(psi)
         kl, kr = psi[0].legs[0], psi[n - 1].legs[2]
-        wl, wr = h[0].legs[0], h[n - 1].legs[3]
+        # Read them off the description where there is one: asking ``h[0]`` for its leg
+        # would materialise a site, which is what the deferred path exists to avoid.
+        wl, wr = (
+            h.edges.boundary_legs() if h.edges is not None else (h[0].legs[0], h[n - 1].legs[3])
+        )
         # The boundary legs carry the state's and the operator's own ``dual`` flags, so
         # a dual boundary bond contracts instead of refusing about the wrong wire.
         self.F = {
@@ -597,7 +610,7 @@ class Env:
         result has ``aa``'s structure exactly and [lanczos][tenet.network.lanczos] can add
         the two.
         """
-        if self.h.edge_blocks(n) is not None:
+        if self.h.edges is not None:
             p = self._prepare2(n)
             key = tuple(aa.legs)
             hit = self._compiled.get(n)
@@ -624,12 +637,17 @@ class Env:
         hit = self._prepared.get(n)
         if hit is not None and hit[0] is fl and hit[1] is fr:
             return hit[2]
-        t1, t2 = self.h.edge_blocks(n), self.h.edge_blocks(n + 1)
+        # The per-line ignores below: ``_prepare2`` is reached only through ``heff2``'s
+        # edge-description branch, so ``edges`` is not ``None`` here -- a cross-method
+        # invariant no checker narrows.
+        edges = self.h.edges
         if n not in self._cores:  # environment-free, so never invalidated
             if self._eye_p is None:
                 self._eye_p = tenet.identity((self.psi[0].legs[1],))
-            self._cores[n] = _cores2(t1, t2, self._eye_p)
+            self._cores[n] = _cores2(edges, n, self._eye_p)  # ty: ignore[invalid-argument-type]
         p = _build2(self._cores[n], fl, fr)
+        t1 = edges.edge_blocks(n)  # ty: ignore[unresolved-attribute]
+        t2 = edges.edge_blocks(n + 1)  # ty: ignore[unresolved-attribute]
         self._prepared[n] = (fl, fr, p, _present(t1, t2))
         return p
 

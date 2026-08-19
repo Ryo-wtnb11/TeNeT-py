@@ -493,7 +493,7 @@ class Phases:
     """
 
     def __init__(self):
-        self.t = dict.fromkeys(("term_edges", "instantiate", "braids"), 0.0)
+        self.t = dict.fromkeys(("term_edges", "edge_table", "instantiate", "braids"), 0.0)
         self.braid_calls = 0
         self.t_instantiate_end = None
         self.t_sweep1_start = None
@@ -503,6 +503,7 @@ class Phases:
     def __enter__(self):
         self._saved = {
             "_term_edges": mps._term_edges,
+            "_edge_table": mps._edge_table,
             "_instantiate": mps._instantiate,
             "_braids_with_signs": mps._braids_with_signs,
             "svd": tenet.linalg.svd_truncated,
@@ -547,6 +548,7 @@ class Phases:
             return timed("instantiate", self._saved["_instantiate"], mark_instantiate)(*a, **kw)
 
         mps._term_edges = timed("term_edges", self._saved["_term_edges"])
+        mps._edge_table = timed("edge_table", self._saved["_edge_table"])
         mps._instantiate = instantiate
         mps._braids_with_signs = count_braids
         tenet.linalg.svd_truncated = svd
@@ -554,6 +556,7 @@ class Phases:
 
     def __exit__(self, *exc):
         mps._term_edges = self._saved["_term_edges"]
+        mps._edge_table = self._saved["_edge_table"]
         mps._instantiate = self._saved["_instantiate"]
         mps._braids_with_signs = self._saved["_braids_with_signs"]
         tenet.linalg.svd_truncated = self._saved["svd"]
@@ -561,7 +564,16 @@ class Phases:
 
 
 def bond_widths(h):
-    """The MPO's bond dimension at every cut, boundaries included."""
+    """The MPO's bond dimension at every cut, boundaries included.
+
+    Off the edge description where there is one (#200): asking ``h[n]`` for its leg would
+    materialise the very site tensor the deferred path exists not to build, which would
+    make this reporting line the thing that decides the measurement. Both spellings give
+    the same numbers; the fallback is what runs against the base commit.
+    """
+    edges = getattr(h, "edges", None)
+    if edges is not None:
+        return [space.dim for space in edges.bonds]
     return [h[n].legs[0].space.dim for n in range(len(h))] + [h[len(h) - 1].legs[3].space.dim]
 
 
@@ -590,6 +602,22 @@ def measure(name, cutoff):
         t1 = time.perf_counter()
         h = MPO.from_terms(n_sites, terms, cutoff=cutoff)
         t2 = time.perf_counter()
+    note(
+        event="phase", name=name, cutoff=cutoff, phase="from_terms", status="done",
+        t=t2 - t1, rss=rss_gib(),
+    )  # fmt: skip
+    extra = {}
+    if cutoff is None:
+        # The consumer of the description, and what makes the ``cutoff=None`` row a
+        # like-for-like comparison across #200: before it, ``from_terms`` built every
+        # site *and* every block table; after it, it builds neither and this is where the
+        # block tables the sweep actually needs get built. On the base commit the loop
+        # hands back the tables ``_instantiate`` already made and costs nothing.
+        note(event="phase", name=name, cutoff=cutoff, phase="edge_blocks", status="start")
+        t3 = time.perf_counter()
+        for site in range(n_sites):
+            h.edge_blocks(site)
+        extra = {"t_edge_blocks": time.perf_counter() - t3}
     sweeps = {}
     if cutoff is not None and ph.t_sweep1_start and ph.t_sweep2_start:
         sweeps = {
@@ -599,8 +627,9 @@ def measure(name, cutoff):
     note(
         event="measure", name=name, k=norb, cutoff=cutoff, sites=n_sites, terms=len(terms),
         refused=refused, t_terms=t_terms, t_total=t2 - t1, t_term_edges=ph.t["term_edges"],
-        t_instantiate=ph.t["instantiate"], t_braids=ph.t["braids"], braid_calls=ph.braid_calls,
-        rss=rss_gib(), widths=bond_widths(h), **sweeps,
+        t_instantiate=ph.t["instantiate"], t_edge_table=ph.t["edge_table"],
+        t_braids=ph.t["braids"], braid_calls=ph.braid_calls,
+        rss=rss_gib(), widths=bond_widths(h), **sweeps, **extra,
     )  # fmt: skip
 
 
@@ -734,9 +763,12 @@ def main():
             sw = ""
             if "t_sweep1" in m:
                 sw = f" sweep1 {m['t_sweep1']:.1f} sweep2 {m['t_sweep2']:.1f}"
+            if "t_edge_blocks" in m:
+                sw = f" edge_blocks {m['t_edge_blocks']:.1f}"
             print(
                 f"   cutoff={cutoff:<5} widest {max(m['widths']):<6} {m['t_total']:>7.1f} s "
                 f"(terms {m['t_terms']:.1f} _term_edges {m['t_term_edges']:.1f} "
+                f"_edge_table {m.get('t_edge_table', 0.0):.1f} "
                 f"_instantiate {m['t_instantiate']:.1f}{sw})   peak RSS {m['rss']:.2f} GiB   "
                 f"_braids_with_signs {m['t_braids']:.2f} s / {m['braid_calls']} calls "
                 f"({100 * m['t_braids'] / max(m['t_total'], 1e-9):.1f}%)"
