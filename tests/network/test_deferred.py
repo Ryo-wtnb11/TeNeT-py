@@ -16,11 +16,13 @@ import pytest
 
 import tenet
 from tenet import GradedSpace
-from tenet.network import MPO, MPS, Env, local_op
+from tenet.network import MPO, MPS, Env, common, dmrg_, local_op, sweep_
+from tenet.network import env as env_module
 from tenet.network import mps as mps_module
 from tenet.symmetry import U1, FZ2Sector, U1Sector, fZ2
 
 MPS_PY = pathlib.Path(mps_module.__file__)
+ENV_PY = pathlib.Path(env_module.__file__)
 
 # --- the three models -----------------------------------------------------------------
 
@@ -255,3 +257,141 @@ def test_the_deferred_and_numeric_heff2_paths_agree(model, chi):
     yp, yd = env.heff2(bond, aa), ref.heff2(bond, aa)
     gap = float(tenet.norm(tenet.subtract(yp, yd)))
     assert gap < 1e-11 * float(tenet.norm(yd))
+
+
+# --- the caches are bounded (M38, #202) -------------------------------------------------
+
+
+def _sweep_caches(h, env):
+    """Every per-bond cache the sweep fills, by the name its owner gives it."""
+    return {
+        "EdgeTable._table": h.edges._table,
+        "EdgeTable._embeds": h.edges._embeds,
+        "Env._cores": env._cores,
+        "Env._prepared": env._prepared,
+        "Env._compiled": env._compiled,
+    }
+
+
+def _swept(n, chi, model="spinless", seed=1):
+    """One full sweep of a ``cutoff=None`` MPO, and the ``(h, env)`` whose caches it filled."""
+    phys, terms = MODELS[model]
+    h = MPO.from_terms(n, terms(n), cutoff=None)
+    psi = MPS.random(phys, _bonds(phys, n, chi), seed=seed)
+    psi.canonize_(0)
+    env = Env(psi, h).setup_(0)
+    sweep_(psi, h, env, {}, chi=chi, cutoff=1e-12)
+    return h, env
+
+
+def test_the_sweep_caches_never_grow_past_the_budget(monkeypatch):
+    """#202's memory criterion: a full sweep visits every bond and keeps only the last few.
+
+    The unbounded caches this replaced held one entry per bond after a half sweep, and at
+    quantum-chemistry scale that total *is* the operator -- the object the instantiation
+    boundary above exists not to build. A model small enough for a test suite sits under
+    the shipped budget by design, so the budget is driven to both ends here instead: at
+    zero every cache falls to the two-entry floor a two-site bond needs, and the same
+    sweep with the budget effectively infinite holds one entry per bond, which is what
+    makes the first half a real bound rather than a statement about a small model.
+    """
+    n, held = 12, {}
+    for tag, budget in (("evicting", 0), ("unbounded", 1 << 40)):
+        monkeypatch.setattr(common, "CACHE_BUDGET", budget)
+        caches = _sweep_caches(*_swept(n, 8))
+        assert set(caches) == {  # a cache added later must make this list or explain itself
+            "EdgeTable._table",
+            "EdgeTable._embeds",
+            "Env._cores",
+            "Env._prepared",
+            "Env._compiled",
+        }
+        held[tag] = {name: len(cache) for name, cache in caches.items()}
+        for name, cache in caches.items():
+            assert isinstance(cache, common.Recent), name
+    assert set(held["evicting"].values()) == {2}
+    assert min(held["unbounded"].values()) > 2
+
+
+def test_a_model_under_the_budget_keeps_every_entry():
+    """The other half of the policy, and the reason it is bytes and not a count of entries.
+
+    A fixed count evicts on a two-megabyte MPO exactly as eagerly as on a twenty-gibibyte
+    one, and measured that cost 22-26 % of the wall time of a small ``dmrg_`` run for no
+    memory saved at all. Under the shipped budget nothing here evicts, so the common case
+    pays nothing -- which is what this asserts, at the same sweep the test above bounds.
+    """
+    n = 12
+    h, env = _swept(n, 8)
+    assert common.payload(dict(h.edges._table)) < common.CACHE_BUDGET
+    assert len(h.edges._table) == n  # every site's block table still cached
+    assert len(env._cores) == n - 1  # and every bond's merged cores
+
+
+def test_the_budget_evicts_by_use_and_keeps_a_two_site_bond_addressable(monkeypatch):
+    """The eviction order, on the class rather than through a sweep.
+
+    Oldest-*used* first, not oldest-written: a bond revisited on the return leg of a sweep
+    is one step away, which is the access pattern the whole policy is chosen for. And the
+    floor of two entries is what keeps a two-site bond -- which asks for site ``n`` and
+    site ``n + 1`` in one breath -- from thrashing however small the budget is set.
+    """
+    monkeypatch.setattr(common, "CACHE_BUDGET", 3 * np.zeros(64).nbytes)
+    cache = common.Recent()
+    for i in range(3):
+        cache[i] = np.zeros(64)
+    cache[0]  # a read is a use, so 0 is now the youngest and 1 the oldest
+    cache[3] = np.zeros(64)
+    assert 0 in cache and 1 not in cache
+    monkeypatch.setattr(common, "CACHE_BUDGET", 0)
+    tiny = common.Recent()
+    tiny["a"], tiny["b"], tiny["c"] = np.zeros(64), np.zeros(64), np.zeros(64)
+    assert len(tiny) == 2  # never below two, whatever the budget says
+
+
+def test_the_budget_changes_no_energy(monkeypatch):
+    """#202's correctness criterion: a cache policy that changes a number is a bug.
+
+    The same ``dmrg_`` run twice, once with the caches evicting on almost every insert and
+    once with them effectively unbounded, and the histories must agree **bitwise** -- not
+    to a tolerance. Eviction only ever forces a recomputation of a pure function of the
+    edge description, so a difference here would mean the rebuilt object was not the
+    evicted one.
+    """
+    n, terms = 8, MODELS["hubbard"][1]
+    out = {}
+    for tag, budget in (("evicting", 8 * 1024), ("unbounded", 1 << 40)):
+        monkeypatch.setattr(common, "CACHE_BUDGET", budget)
+        h = MPO.from_terms(n, terms(n), cutoff=None)
+        psi = MPS.random(HUBBARD, _bonds(HUBBARD, n, 8), seed=3)
+        out[tag] = dmrg_(psi, h, chi=8, cutoff=1e-12, max_sweeps=3).history
+    assert out["evicting"] == out["unbounded"]
+
+
+def test_the_cache_policy_is_one_decision_in_one_place():
+    """#202's structural criterion, read off the source rather than asserted about.
+
+    ``CACHE_BUDGET`` is *set* in ``common.py`` and nowhere else in the package, and every
+    cache is constructed as a bare ``Recent()`` -- so there is no per-cache budget to set,
+    no flag to thread through ``Env`` and ``EdgeTable`` separately, and no way for two of
+    them to disagree about the policy. Other modules may name it in a comment; what would
+    break the criterion is a second module deciding it.
+    """
+    package = MPS_PY.parent
+    sets = set()
+    for path in package.glob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            targets = (
+                node.targets
+                if isinstance(node, ast.Assign)
+                else [node.target]
+                if isinstance(node, (ast.AnnAssign, ast.AugAssign))
+                else []
+            )
+            if any(getattr(t, "id", None) == "CACHE_BUDGET" for t in targets):
+                sets.add(path.name)
+    assert sets == {"common.py"}
+    for path in (MPS_PY, ENV_PY):
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Call) and ast.unparse(node.func) == "Recent":
+                assert not node.args and not node.keywords, f"{path.name}:{node.lineno}"

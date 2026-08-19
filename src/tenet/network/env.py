@@ -13,7 +13,7 @@ import numpy as np
 
 import tenet
 from tenet import IN, OUT, Leg, SymmetricTensor
-from tenet.network.common import ones
+from tenet.network.common import Recent, ones
 from tenet.network.mps import MPO, MPS, EdgeBlocks, EdgeTable
 
 __all__ = ["Env"]
@@ -451,9 +451,16 @@ class Env:
         # the application level (``examples/bench_dmrg.py``); this layer names no
         # accelerator and ``None`` runs the plain Python function.
         self.compile = compile
-        self._prepared: dict[int, tuple] = {}  # bond -> (GL, GR, _Prepared, fields), one each
-        self._cores: dict[int, _Cores] = {}  # bond -> environment-free merged blocks
-        self._compiled: dict[int, tuple] = {}  # bond -> (leg key, _Prepared, callable)
+        # Three per-bond caches, all held to one byte budget by ``common.CACHE_BUDGET``
+        # (#202). The merged cores are environment-free and so are never *invalidated* --
+        # but a sweep visits every bond, so an unbounded cache of them holds the whole
+        # prepared operator at once, which is the memory the deferred instantiation
+        # boundary exists not to spend. Recency, not correctness, is what decides an
+        # eviction here; the environments in ``F`` keep their own invalidation discipline
+        # and are untouched by this.
+        self._prepared: dict[int, tuple] = Recent()  # bond -> (GL, GR, _Prepared, fields)
+        self._cores: dict[int, _Cores] = Recent()  # bond -> environment-free merged blocks
+        self._compiled: dict[int, tuple] = Recent()  # bond -> (leg key, _Prepared, callable)
         self._eye_p: SymmetricTensor | None = None  # the physical identity, for field padding
         n = len(psi)
         kl, kr = psi[0].legs[0], psi[n - 1].legs[2]
@@ -641,7 +648,7 @@ class Env:
         # edge-description branch, so ``edges`` is not ``None`` here -- a cross-method
         # invariant no checker narrows.
         edges = self.h.edges
-        if n not in self._cores:  # environment-free, so never invalidated
+        if n not in self._cores:  # environment-free, so evicted only by age (#202)
             if self._eye_p is None:
                 self._eye_p = tenet.identity((self.psi[0].legs[1],))
             self._cores[n] = _cores2(edges, n, self._eye_p)  # ty: ignore[invalid-argument-type]

@@ -19,6 +19,13 @@ Not a test, not part of the package, on no CI path. Run from the repo root:
     uv run python benchmarks/bench_qc_mpo.py            # the shipped input set
     uv run python benchmarks/bench_qc_mpo.py --synthetic-only   # no network at all
     uv run python benchmarks/bench_qc_mpo.py --list     # what would run
+    uv run python benchmarks/bench_qc_mpo.py --dmrg --only N2.CAS.6-31G   # the #202 trade
+
+``--dmrg`` is the second instrument (#202): full DMRG runs against the ``cutoff=None``
+operator, one per cache byte budget, reporting peak resident memory split across the
+sweep's five per-bond caches, the wall time, and how many block tables and merged cores
+each budget made the run build. The construction measurement above and this one answer
+different questions and share the inputs, the caps and the JSON trail.
 
 Each (input, cutoff) measurement runs in its own subprocess under a hard wall-clock cap
 and a hard address-space cap (``--wall``, ``--mem``), so an input that will not finish
@@ -72,7 +79,7 @@ import numpy as np
 
 import tenet
 from tenet import GradedSpace
-from tenet.network import MPO, local_op, mps
+from tenet.network import MPO, MPS, local_op, mps
 from tenet.symmetry import FZ2Sector, fZ2
 
 # --- provenance ---------------------------------------------------------------------
@@ -633,6 +640,124 @@ def measure(name, cutoff):
     )  # fmt: skip
 
 
+def payload(obj, seen):
+    """Bytes of distinct array buffers reachable from ``obj``; a shared buffer counts once.
+
+    Reads ``SymmetricTensor.blocks`` on purpose. That is forbidden *inside*
+    ``src/tenet/network/`` (``tests/network/test_hygiene.py``) and this is a benchmark,
+    not the package: what a cache costs is the size of the arrays it keeps alive, and
+    nothing above the block layer can say that. ``seen`` is threaded across buckets so a
+    tensor a downstream cache merely *references* is charged to the bucket that walked it
+    first -- which is the whole question #202 asks, since ``Env._cores`` holds several of
+    ``EdgeBlocks``' own tensors by reference rather than by copy.
+    """
+    if isinstance(obj, tenet.SymmetricTensor):
+        total = 0
+        for block in obj.blocks:
+            if id(block) not in seen:
+                seen.add(id(block))
+                total += block.nbytes
+        return total
+    if isinstance(obj, dict):
+        return sum(payload(v, seen) for v in obj.values())
+    if isinstance(obj, (tuple, list)):
+        return sum(payload(v, seen) for v in obj)
+    return 0
+
+
+def cache_bytes(h, env):
+    """The buckets #202 splits ``18.9 GiB`` into, in GiB, exclusive then own.
+
+    ``exclusive`` walks the buckets in the order the data flows -- the block tables, then
+    the group embeddings they contain, then ``Env``'s merged cores, prepared operators and
+    environments -- charging each buffer to the first bucket that reaches it, so the
+    numbers sum to the resident total. ``own`` re-walks each bucket alone, so the gap
+    between the two is exactly the sharing: the cores' ``own`` counts tensors the block
+    tables already hold.
+    """
+    tab, seen = h.edges, set()
+    buckets = {
+        "edge_blocks": tab._table,
+        "embeddings": tab._embeds,
+        "identities": tab._identities,
+        "cores": env._cores,
+        "prepared": env._prepared,
+        "environments": env.F,
+        "mpo_sites": h._sites,
+    }
+    out = {f"gib_{k}": payload(v, seen) / 2**30 for k, v in buckets.items()}
+    out.update({f"own_{k}": payload(v, set()) / 2**30 for k, v in buckets.items()})
+    out["gib_cached"] = sum(v for k, v in out.items() if k.startswith("gib_"))
+    out["entries"] = {k: len(v) for k, v in buckets.items()}
+    return out
+
+
+def _counting(fn, tally, key):
+    """``fn``, counting its calls into ``tally[key]`` -- what an eviction actually costs."""
+
+    def wrapper(*a, **kw):
+        tally[key] += 1
+        return fn(*a, **kw)
+
+    return wrapper
+
+
+def dmrg_run(name, chi, sweeps, budget):
+    """A **full** DMRG run at ``cutoff=None`` -- the consumer #202 is about.
+
+    ``sweep_`` is driven here rather than through ``dmrg_`` for one reason: ``dmrg_``
+    builds its own [Env][tenet.network.Env] and never hands it back, and the caches this
+    measures live on that object. The loop is ``dmrg_``'s own, minus the convergence test,
+    so the sweep count is fixed and the two sides of a before/after comparison do the same
+    arithmetic. ``budget`` overrides ``common.CACHE_BUDGET`` for the process, which is the
+    whole policy (#202) and therefore the only knob.
+
+    Rebuilds are counted rather than inferred: what a budget costs is how many block
+    tables and merged cores the sweep has to build a second time, and that count is what
+    the wall-clock difference is made of.
+    """
+    from tenet.network import Env, common, sweep_
+    from tenet.network import env as env_module
+
+    common.CACHE_BUDGET = budget
+    builds = {"tables": 0, "cores": 0}
+    mps.EdgeTable._build_table = _counting(mps.EdgeTable._build_table, builds, "tables")
+    env_module._cores2 = _counting(env_module._cores2, builds, "cores")
+    t0 = time.perf_counter()
+    norb, nelec, recs = synthetic(int(name[4:])) if name.startswith("syn-") else fetch(name)
+    screen = 1e-6 if name.startswith("syn-") else SCREEN
+    terms = to_tenet_terms(fold_terms(spin_orbital_terms(recs, screen=screen))[0])
+    n_sites = 2 * norb
+    h = MPO.from_terms(n_sites, terms, cutoff=None)
+    note(
+        event="dmrg_build", name=name, k=norb, sites=n_sites, chi=chi, budget=budget,
+        t=time.perf_counter() - t0, rss=rss_gib(), widths=bond_widths(h),
+    )  # fmt: skip
+
+    phys = GradedSpace.new(fZ2, {FZ2Sector(0): 1, FZ2Sector(1): 1})
+    triv = GradedSpace.new(fZ2, {FZ2Sector(0): 1})
+    mid = GradedSpace.new(fZ2, {FZ2Sector(0): chi - chi // 2, FZ2Sector(1): chi // 2})
+    psi = MPS.random(phys, [triv] + [mid] * (n_sites - 1) + [triv], seed=0)
+    t1 = time.perf_counter()
+    psi.canonize_(0)
+    env = Env(psi, h).setup_(0)
+    note(event="dmrg_setup", name=name, budget=budget, t=time.perf_counter() - t1, rss=rss_gib(),
+         **cache_bytes(h, env))  # fmt: skip
+
+    schmidt, energies = {}, []
+    for it in range(sweeps):
+        t2 = time.perf_counter()
+        energy, _ = sweep_(psi, h, env, schmidt, chi=chi, cutoff=1e-10)
+        energies.append(energy)
+        note(event="dmrg_sweep", name=name, budget=budget, sweep=it, energy=energy,
+             t=time.perf_counter() - t2, rss=rss_gib(), **cache_bytes(h, env))  # fmt: skip
+    note(
+        event="dmrg", name=name, k=norb, sites=n_sites, chi=chi, sweeps=sweeps, budget=budget,
+        energy=energies[-1], energies=energies, t_total=time.perf_counter() - t1, **builds,
+        rss=rss_gib(), **cache_bytes(h, env),
+    )  # fmt: skip
+
+
 def combinatorial(name):
     """The FSM/MVC cross-check for one input; no tenet assembly, so it reaches large K."""
     t0 = time.perf_counter()
@@ -666,6 +791,9 @@ def child(argv, mem):
     sys.setrecursionlimit(100000)
     if kind == "comb":
         combinatorial(name)
+    elif kind == "dmrg":
+        chi, sweeps, budget = int(argv[2]), int(argv[3]), int(argv[4])
+        dmrg_run(name, chi, sweeps, budget)
     else:
         measure(name, None if argv[2] == "none" else float(argv[2]))
 
@@ -692,6 +820,48 @@ def fmt(xs, width=5):
     return " ".join("--" if x is None else f"{x:>{width}}" for x in xs)
 
 
+def _dmrg_table(names, a):
+    """``--dmrg``: one full run per (input, budget), and the trade printed as a table.
+
+    The budget is #202's whole policy, so it is the only column that varies: the same
+    Hamiltonian, the same ``chi``, the same sweep count and the same seed on every row,
+    with a budget of a terabyte standing for the unbounded cache the issue is about.
+    ``blocks``/``embed``/``cores``/``prep`` are what is *still held* at the end of the run
+    and ``builds``/``rebuilt`` are how many block tables and merged cores the run had to
+    make -- the cost side of the trade, counted rather than inferred from the clock.
+    """
+    print(f"# machine   {platform.platform()} / {platform.processor() or platform.machine()}")
+    print(f"# dmrg      chi={a.chi}, {a.sweeps} sweeps, cutoff=None operator, fZ2 spin orbitals")
+    print(f"# caps      wall {a.wall:.0f} s and address space {a.mem:.1f} GiB per run")
+    header = (
+        f"{'input':<14} {'GiB cap':>8} {'peak GiB':>9} {'cached':>7} {'blocks':>7} "
+        f"{'embed':>7} {'cores':>7} {'prep':>6} {'wall s':>8} {'builds':>7} "
+        f"{'rebuilt':>8} {'energy':>16}"
+    )
+    for name in names:
+        print(f"\n== {name}")
+        print(header)
+        for gib in a.budgets:
+            args = ["dmrg", name, str(a.chi), str(a.sweeps), str(int(gib * 2**30))]
+            rows, status, wall = run_capped(args, a.wall, a.mem)
+            row = next((r for r in rows if r.get("event") == "dmrg"), None)
+            if row is None:
+                last = [r for r in rows if r.get("event", "").startswith("dmrg_")]
+                where = last[-1]["event"] if last else "term construction"
+                print(
+                    f"{name:<14} {gib:>8.2f} DID NOT FINISH after {where}: {status} ({wall:.1f}s)"
+                )
+                continue
+            print(
+                f"{name:<14} {gib:>8.2f} {row['rss']:>9.2f} {row['gib_cached']:>7.2f} "
+                f"{row['gib_edge_blocks']:>7.2f} {row['gib_embeddings']:>7.2f} "
+                f"{row['gib_cores']:>7.2f} {row['gib_prepared']:>6.2f} "
+                f"{row['t_total']:>8.1f} {row['tables']:>7} {row['cores']:>8} "
+                f"{row['energy']:>16.9f}"
+            )
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--child", nargs="*", help=argparse.SUPPRESS)
@@ -701,6 +871,13 @@ def main():
     ap.add_argument("--only", nargs="*", help="run just these inputs")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--self-check", action="store_true", help="the model-vs-assembler check")
+    ap.add_argument("--dmrg", action="store_true", help="full DMRG runs, the #202 cache trade")
+    ap.add_argument("--chi", type=int, default=16, help="--dmrg bond dimension")
+    ap.add_argument("--sweeps", type=int, default=3, help="--dmrg sweeps per run")
+    ap.add_argument(
+        "--budgets", type=float, nargs="*", default=[1024.0, 4.0, 1.0, 0.25],
+        help="--dmrg cache byte budgets in GiB; a huge one is the unbounded cache",
+    )  # fmt: skip
     a = ap.parse_args()
     sys.stdout.reconfigure(line_buffering=True)  # a run this long has to be watchable live
 
@@ -718,6 +895,9 @@ def main():
     if a.list:
         print("\n".join(names))
         return None
+
+    if a.dmrg:
+        return _dmrg_table(names, a)
 
     print(f"# machine   {platform.platform()} / {platform.processor() or platform.machine()}")
     print(

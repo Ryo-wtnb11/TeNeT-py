@@ -25,7 +25,7 @@ import numpy as np
 
 import tenet
 from tenet import IN, OUT, FusionTree, GradedSpace, Leg, SymmetricTensor
-from tenet.network.common import spectrum
+from tenet.network.common import Recent, spectrum
 from tenet.symmetry import Sector
 
 __all__ = [
@@ -1558,6 +1558,13 @@ class EdgeTable:
     memory claim, and ``tests/network/test_deferred.py`` is what fails if it stops
     holding.
 
+    The per-site cache is **bounded by bytes** (M38, #202): it keeps its most recently
+    used sites up to ``common.CACHE_BUDGET`` and evicts past it, because a sweep visits
+    every site and a cache holding all of them is the whole operator again -- the object
+    this boundary exists not to build. An operator small enough to sit under the budget
+    keeps every site and never evicts. A rebuilt block table is bit-identical to the
+    evicted one; ``edge_blocks`` is a pure function of the description.
+
     The next stage (#184 candidate (d)) plugs in *here*: a per-cut assembler with an
     expression algebra replaces ``_edge_table`` as the producer and
     [edge_blocks][tenet.network.EdgeTable.edge_blocks] as the per-site core builder, with the
@@ -1595,9 +1602,16 @@ class EdgeTable:
         # The numeric caches, and the only mutable state here. They are what makes the
         # two ways down peers rather than a pipeline: each is filled on request, per
         # site, so neither consumer pays for the other's tensors.
+        #
+        # The two per-site caches are bounded (#202): held to the whole chain they *are*
+        # the operator, which is the object deferring instantiation exists to avoid, and
+        # a sweep never asks for more than the last few sites at once. ``_identities`` is
+        # keyed by state space rather than by site -- one small rank-4 slab per distinct
+        # space, shared by every site that carries the state -- so it is not a per-bond
+        # cache and is not bounded.
         self._identities: dict = {}
-        self._table: dict = {}
-        self._embeds: dict = {}
+        self._table: dict = Recent()
+        self._embeds: dict = Recent()
 
     def __len__(self) -> int:
         return len(self.edges)

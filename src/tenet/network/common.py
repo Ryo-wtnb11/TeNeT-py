@@ -21,6 +21,7 @@ Python list is driver output, not a tensor.
 """
 
 from collections.abc import Sequence
+from typing import Any
 
 import autoray as ar
 
@@ -28,6 +29,117 @@ import tenet
 from tenet import Leg, SymmetricTensor
 
 __all__ = ["ones", "spectrum"]
+
+#: How many bytes of cached tensor payload each of the sweep's per-bond caches may hold.
+#: **This is the whole cache policy and it is one number in one place** (#202):
+#: ``EdgeTable``'s block tables and group embeddings and ``Env``'s merged cores, prepared
+#: operators and compiled matvecs all use it through [Recent][tenet.network.common.Recent],
+#: so there is no per-cache flag to thread and no way for two of them to disagree.
+#:
+#: A **byte** budget rather than a count of entries, and the count was measured before it
+#: was rejected: a bound of four entries costs +22 to +26 % wall time on the small models
+#: this package is otherwise used for, because a small MPO's whole block table is a few
+#: megabytes and evicting any of it buys nothing at all. A byte budget is never reached by
+#: those models, so they keep every entry and pay exactly nothing, and it is only the
+#: operator that is measured in gibibytes per site that ever evicts. That is the "the
+#: common case must not get slower to fix the rare one" criterion, met by construction
+#: instead of by tuning. ``docs/design.md`` "Milestone 38" carries the measurements.
+CACHE_BUDGET = 1 << 30  # 1 GiB
+
+
+def payload(obj: Any) -> int:
+    """Bytes of backend-array storage reachable from ``obj``.
+
+    Parameters
+    ----------
+    obj : object
+        A cached value: a [SymmetricTensor][tenet.SymmetricTensor], a mapping, a tuple
+        (``NamedTuple`` included) or anything else, which weighs nothing.
+
+    Returns
+    -------
+    int
+        The total ``nbytes`` of the arrays under ``obj``.
+
+    Notes
+    -----
+    Duck-typed rather than dispatched on type, which keeps it to three cases: anything
+    with ``nbytes`` is a backend array and is the leaf, anything with ``items`` is a
+    mapping *or* a tensor -- ``SymmetricTensor.items`` yields the reduced blocks, so the
+    two spell the same recursion -- and a tuple or list is walked. A shared array is
+    counted once per cache and so may be counted twice across two caches, which
+    over-estimates in the safe direction for a budget.
+    """
+    size = getattr(obj, "nbytes", None)  # a backend array: the leaf
+    if size is not None:
+        return int(size)
+    pairs = getattr(obj, "items", None)  # a mapping, or a tensor's reduced blocks
+    if pairs is not None:
+        return sum(payload(v) for _, v in pairs())
+    if getattr(obj, "_fields", None) is not None or type(obj) in (tuple, list):
+        return sum(payload(v) for v in obj)
+    return 0
+
+
+class Recent[K, V](dict[K, V]):
+    """A ``dict`` evicting its least recently used entries past ``CACHE_BUDGET`` bytes.
+
+    Notes
+    -----
+    A DMRG sweep visits bonds in a sliding order, so a cache of the last few bonds hits on
+    everything the sweep asks for twice while the entries behind it are dead weight -- at
+    quantum-chemistry scale, weight measured in gibibytes (#202). Recency is refreshed on
+    read as well as write, so a bond revisited immediately on the return leg of a sweep is
+    a hit.
+
+    Eviction is oldest-used first, and never below two entries: a two-site bond asks for
+    site ``n`` and site ``n + 1`` in one breath, so a cache that can hold fewer than two
+    thrashes by construction rather than by tuning. Below the budget nothing is evicted at
+    all, which is what makes this free for every model whose whole operator is smaller
+    than the budget.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        # Sizes are measured once, on insert. No call site deletes from these caches, so
+        # ``__delitem__`` and ``pop`` are not overridden and cannot desynchronise the
+        # running total; a future deleter has to keep this pair honest.
+        self._sizes: dict[K, int] = {}
+        self._total = 0
+
+    def __getitem__(self, key: K) -> V:
+        value = super().pop(key)
+        super().__setitem__(key, value)  # most recent again
+        return value
+
+    def __setitem__(self, key: K, value: V) -> None:
+        if key in self:
+            self._total -= self._sizes.pop(key)
+            super().pop(key)
+        self._sizes[key] = size = payload(value)
+        self._total += size
+        super().__setitem__(key, value)
+        while len(self) > 2 and self._total > CACHE_BUDGET:
+            oldest = next(iter(self))
+            self._total -= self._sizes.pop(oldest)
+            super().__delitem__(oldest)
+
+    def get(self, key: Any, default: Any = None, /) -> Any:
+        """``dict.get``, but a hit counts as a use.
+
+        Parameters
+        ----------
+        key : object
+            The key to look up.
+        default : object, optional
+            Returned when ``key`` is absent. Default ``None``.
+
+        Returns
+        -------
+        object
+            The cached value, or ``default``.
+        """
+        return self[key] if key in self else default
 
 
 def spectrum(s: SymmetricTensor) -> list[float]:
