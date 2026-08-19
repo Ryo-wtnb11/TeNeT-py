@@ -812,17 +812,26 @@ def test_the_su2_bond_keeps_its_three_blocks_without_the_sweep():
 
 
 def test_a_state_space_that_disagrees_with_its_bond_slot_raises_inside_from_dense():
-    """The embedding isometries are built at ``from_dense``'s default ``atol``.
+    """The assembled site is built at ``from_dense``'s default ``atol``.
 
-    A hand-built inconsistency — a state claiming sector ``-2`` placed into the slot the
-    bond keeps for ``+2`` — puts the embedding's ones into a symmetry-forbidden cell, so
-    construction *raises* instead of projecting the state away. Production code derives
-    the slots from the states, so this is the refusal that proves the derivation right.
+    Every edge is scattered into one buffer per site and that buffer goes through a single
+    ``from_dense``, so a hand-built inconsistency — one state's identity edge whose left
+    end is placed at the bond's ``-2`` slot and whose right end is placed at the ``+2``
+    slot — leaves mass in a symmetry-forbidden cell of the *site*, and construction
+    *raises* instead of projecting the state away. Production code derives every slot from
+    the states, so this is the refusal that proves the derivation right; it is the check
+    the per-state embedding isometries used to carry, over the whole site rather than one
+    isometry.
     """
     from tenet.network import mps as _mps  # noqa: PLC0415
 
-    bond = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(2): 1})
+    phys = GradedSpace.new(U1, {U1Sector(1): 1, U1Sector(-1): 1})
+    bond = GradedSpace.new(U1, {U1Sector(-2): 1, U1Sector(2): 1})
     state = GradedSpace.new(U1, {U1Sector(-2): 1})
-    starts = {U1Sector(-2): bond.sector_offset(U1Sector(2))}
+    block = np.asarray(_mps._identity_w(Leg(state, IN, False), phys).to_dense())
+    honest = {U1Sector(-2): bond.sector_offset(U1Sector(-2))}
+    corrupt = {U1Sector(-2): bond.sector_offset(U1Sector(2))}
+    ok = _mps._place([(block, state, honest, state, honest)], bond, bond, phys, False, False)
+    assert ok.legs[0].space == bond
     with pytest.raises(ValueError, match="not symmetric"):
-        _mps._embedding(bond, state, starts, left=True, dual=False)
+        _mps._place([(block, state, honest, state, corrupt)], bond, bond, phys, False, False)
