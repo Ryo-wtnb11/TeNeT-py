@@ -946,35 +946,56 @@ def _slabs(space: GradedSpace) -> Iterator[tuple[Sector, int, int, int]]:
         yield a, m, o, e - o
 
 
-def _place(items, space_l, space_r, phys, dual_l, dual_r):
+def _place(items, space_l, space_r, phys, dual_l, dual_r, carry=None):
     """Scatter every edge's dense block into one buffer; ``from_dense`` **once** per site.
 
     Placing a state at its slots of a bond is a 0/1 isometry, ``_merge`` hands every state
     a *disjoint* slab per sector, and the edge table is keyed ``(state_l, state_r)`` — so
-    no two edges write the same ``(row slab, column slab)`` and the whole placement is a
-    slab assignment in the dense carrier basis, not a contraction. ``items`` yields
-    ``(dense block, left state space, its slots, right state space, its slots)`` per live
-    edge; the block is the edge's **full** rank-4 dense array, never capped or sliced on
-    the way in (#147 gate 4), so the round trip is exact by
+    the write is disjoint **on the left index**: no two edges share a row slab. ``items``
+    yields ``(dense block, left state space, its slots, right state space, its slots)``
+    per live edge; the block is the edge's **full** rank-4 dense array, never capped or
+    sliced on the way in (#147 gate 4), so the round trip is exact by
     [from_dense][tenet.SymmetricTensor.from_dense]'s own contract.
 
+    With ``carry`` — the compressing sweep's already-truncated right leg as a dense
+    ``(D_FSM(n+1), chi)`` map, ``space_r``/``dual_r`` then describing that truncated bond
+    — the right end of every block is contracted on the way in, one small ``gemm`` per
+    edge, so the buffer is ``D_FSM x d**2 x chi`` rather than quadratic in the FSM width.
+    The column index is then no longer disjoint: two edges with different right states
+    contract into overlapping columns of the truncated bond, so the write **accumulates**
+    instead of assigning. Only the left slab assignment keeps the isometry argument; the
+    accumulation's oracle is the round trip itself.
+
     Built at ``from_dense``'s **default** relative ``atol``, which keeps the refusal the
-    per-state isometries used to carry: a slot map that disagrees with its state puts mass
-    in a symmetry-forbidden cell of the assembled site and construction *raises* rather
-    than projecting. ``None`` when no edge survives the cut.
+    per-state isometries used to carry, carry folded or not: a slot map that disagrees
+    with its state puts mass in a symmetry-forbidden cell of the assembled site and
+    construction *raises* rather than projecting. ``None`` when no edge survives the cut.
+
+    Simplification: the buffer is dense across sectors where the tensor stores only the
+    allowed blocks. #191 recorded per-coupled-sector assembly through ``to_matrices`` /
+    ``from_matrices`` (``map_view.py``:238, :282) as the upgrade path if that ever stopped
+    fitting. #193 took the measurement instead of assuming it: with the carry folded,
+    ``from_dense`` is 9% of a K=26 ab initio build and on a two-sector fermionic grading
+    the dense buffer is exactly 2x the stored blocks, so the ceiling on that route is
+    **~4.5%**. It is not the upgrade path it was recorded as; folding the carry was.
     """
     d = phys.dim
     buf = None
     for blk, state_l, slots_l, state_r, slots_r in items:
+        dtype = blk.dtype if carry is None else np.result_type(blk.dtype, carry.dtype)
         if buf is None:
-            buf = np.zeros((space_l.dim, d, d, space_r.dim), dtype=blk.dtype)
-        elif buf.dtype != np.result_type(buf.dtype, blk.dtype):
-            buf = buf.astype(np.result_type(buf.dtype, blk.dtype))
+            buf = np.zeros((space_l.dim, d, d, space_r.dim), dtype=dtype)
+        elif buf.dtype != np.result_type(buf.dtype, dtype):
+            buf = buf.astype(np.result_type(buf.dtype, dtype))
         for a, _, oa, ea in _slabs(state_l):
             ra = slots_l[a]
             for b, _, ob, eb in _slabs(state_r):
                 rb = slots_r[b]
-                buf[ra : ra + ea, :, :, rb : rb + eb] = blk[oa : oa + ea, :, :, ob : ob + eb]
+                sub = blk[oa : oa + ea, :, :, ob : ob + eb]
+                if carry is None:
+                    buf[ra : ra + ea, :, :, rb : rb + eb] = sub
+                else:
+                    buf[ra : ra + ea] += sub @ carry[rb : rb + eb]
     if buf is None:
         return None
     legs = (Leg(space_l, IN, dual_l), Leg(phys, OUT), Leg(phys, IN), Leg(space_r, OUT, dual_r))
@@ -1290,13 +1311,23 @@ def _dense_w(tab: _EdgeTable, w, key, identities: dict):
     return identities[space]
 
 
-def _site(tab: _EdgeTable, n: int, identities: dict) -> SymmetricTensor:
-    """Site ``n``, scattered into one buffer against the full bond, boundary caps included.
+def _site(tab: _EdgeTable, n: int, identities: dict, carry=None) -> SymmetricTensor:
+    """Site ``n``, scattered into one buffer against the bond, boundary caps included.
 
     The caps ride here rather than after a whole-MPO loop so that a site is finished the
     moment it is placed, which is what lets the compressing sweep consume them one at a
-    time.
+    time. ``carry`` is that sweep's rank-2 map onto the already-truncated right bond, both
+    legs ``IN`` as ``_instantiate`` repartitions it; ``_place`` folds it into the scatter,
+    so the site is born contracted with it and the buffer never widens past ``chi``. The
+    site's right leg is the carry's second leg moved to the codomain, which is the same
+    relabelling ``einsum("xy,apqx->apqy", carry, w)`` used to make: same space, ``OUT``,
+    ``dual`` flipped.
     """
+    if carry is None:
+        space_r, dual_r, dense_c = tab.bonds[n + 1], tab.dual, None
+    else:
+        space_r, dual_r = carry.legs[1].space, not carry.legs[1].dual
+        dense_c = np.asarray(carry.to_dense())
     items = (
         (
             _dense_w(tab, w, lk, identities),
@@ -1307,7 +1338,7 @@ def _site(tab: _EdgeTable, n: int, identities: dict) -> SymmetricTensor:
         )
         for (lk, rk), w in tab.edges[n].items()
     )
-    w = _place(items, tab.bonds[n], tab.bonds[n + 1], tab.phys, tab.dual, tab.dual)
+    w = _place(items, tab.bonds[n], space_r, tab.phys, tab.dual, dual_r, dense_c)
     if not tab.dual:
         return w
     # The two *outer* legs go back non-dual: ``Env`` builds its boundary environments from
@@ -1480,13 +1511,14 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
     the table needs every site.
 
     Given a float, materialisation runs **inside** the backward compressing sweep, which
-    is the only consumer of a full-width site there. Site ``N-1`` is placed and its left
-    bond truncated; site ``n`` is placed, absorbs the carry on its already-truncated right
-    leg, and is truncated in turn. The forward sweep in ``from_terms`` then runs on
-    tensors that are already at the operator Schmidt rank. Right to left first, exactly as
-    ``MPS.compress_`` canonizes before it truncates: a forward sweep alone measures the
-    rank of the *left* part against the raw FSM bond, which overshoots wherever the
-    redundancy is only visible from the right. The widest object that ever exists is
+    is the only consumer of a site there. Site ``N-1`` is placed and its left bond
+    truncated; site ``n`` is placed **against the carry**, which ``_place`` folds into the
+    scatter so that the site is born on the already-truncated right leg, and is truncated
+    in turn. The forward sweep in ``from_terms`` then runs on tensors that are already at
+    the operator Schmidt rank. Right to left first, exactly as ``MPS.compress_`` canonizes
+    before it truncates: a forward sweep alone measures the rank of the *left* part against
+    the raw FSM bond, which overshoots wherever the redundancy is only visible from the
+    right. The widest object that ever exists is
     ``D_FSM x d**2 x chi_Schmidt``, so the full-width MPO never exists as a whole.
     """
     tab = _edge_table(n_sites, phys, dual, states, order, moves, stops, spectators)
@@ -1495,9 +1527,7 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
         return [_site(tab, n, identities) for n in range(n_sites)], _blocks(tab, identities)
     out, carry = [], None
     for n in reversed(range(n_sites)):
-        w = _site(tab, n, identities)
-        if carry is not None:
-            w = _as_w(tenet.einsum("xy,apqx->apqy", carry, w))
+        w = _site(tab, n, identities, carry)
         if n:
             u, s, vh = tenet.linalg.svd_truncated(w, ((0,), (1, 2, 3)), cutoff=cutoff)
             w = _as_w(vh)
