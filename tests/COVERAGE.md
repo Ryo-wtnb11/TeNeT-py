@@ -47,7 +47,7 @@ in CI**; every empty cell is a decision, not a constraint.
 | 9 | `embed` / `restrict` / `direct_sum` / `isometry` | `{trivial, u1, su2, fz2, product}` | `tests/ops/test_embed.py:57`; `tests/ops/test_isometry.py:45-61` |
 | 10 | `to_symmetry` | bounded by `BranchingRules`: targets `{SU2, Trivial, fZ2, U1×U1}`; U1-as-source is the refusal | `tests/ops/test_to_symmetry.py:97`, `:386-408` |
 | 11 | `save` / `load` | `{trivial, u1, z2, su2, fz2, product, nested}` + SU(N) — all seven registered providers round-trip | `tests/test_serialize.py:36-57`; `tests/symmetry/test_z2.py:390-419`; `tests/symmetry/test_sun.py:451-501` |
-| 12 | network MPS/MPO/Env/dmrg/ctmrg | `{u1, su2, z2, su3, fz2}` (fermionic MPO/DMRG since #147; ctmrg stays bosonic) | `tests/network/test_mps.py:24-32`; `tests/network/test_mpo.py`; `tests/network/test_hubbard.py`; `tests/network/test_heff2.py:110-125`; `tests/network/test_ctmrg.py` |
+| 12 | network MPS/MPO/Env/dmrg/ctmrg | `{u1, su2, z2, su3, fz2}` (fermionic MPO/DMRG since #147; ctmrg stays bosonic) | `tests/network/test_mps.py:24-32`; `tests/network/test_mpo.py`; `tests/network/test_hubbard.py`; `tests/network/test_heff2.py:110-125`; `tests/network/test_deferred.py` (the deferred instantiation boundary, `{u1, fz2}` incl. spinful Hubbard); `tests/network/test_ctmrg.py` |
 | 13 | map view | `{su2, u1, trivial}` + jax | `tests/ops/test_map.py:143-166`, `:347-364` |
 
 ## The third axis: backend × mode

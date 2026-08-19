@@ -208,6 +208,22 @@ bond the next step discards — not the bond order, which `svd_truncated` alread
 recovers — `_instantiate` is where a mechanism has to land, and a second
 bond-basis algorithm is not what buys it.
 
+**Stage 1 of that landed as M37, and it moved the instantiation boundary rather
+than optimising the old one.** The mechanism has a name and a type: `EdgeTable`,
+the pruned finite-state machine with its bond space and dense slot map per cut,
+is what `from_terms(cutoff=None)` returns, and `MPO` carries it as the symbolic
+one of its two internal representations. Numeric instantiation is what a
+*consumer* asks for, per site, through one of the boundary's two doors —
+`EdgeTable.site` for a full-width rank-4 `W`, `EdgeTable.edge_blocks` for one
+site's group-restricted blocks — so `Env`'s prepared two-site operator is built
+without a full-width site tensor existing anywhere on its path. The measurement
+that motivated it is the one measured after: at K=16, `from_terms(cutoff=None)`
+went from 25.0 s and 21.7 GiB to 0.94 s and 0.17 GiB, and at K=26 it went from
+not finishing at all — killed in `_instantiate` at 564 s against the
+benchmark's own 8 GiB address-space cap — to 6.4 s at 0.94 GiB. What it
+does not buy is bond order, which is why it is a stage of the symbolic layer and
+not a substitute for it; the M37 milestone entry below states what remains.
+
 Three things block2 offers are out of reach by construction, each for a stated
 reason. Density-matrix and perturbative noise need a reduced density matrix and
 an eigendecomposition per variant, while `tenet` splits with `svd_truncated`;
@@ -3193,6 +3209,72 @@ The split:
   identical machine, 19,272 states either way. `_edge_table`, `_place`, `_instantiate`,
   `EdgeBlocks` and `network/env.py` are untouched: a state label is now an `int` where it
   was a tuple or `"IdR"`, and nothing outside `mps.py` ever read a label's value.
+
+- **M37** — shipped: deferred instantiation, built as the *instantiation boundary* of the
+  symbolic layer rather than as a shortcut around it (#200, stage 1 of #184's staging).
+  `from_terms(cutoff=None)` and `from_arrays(cutoff=None)` materialise nothing: what they
+  return is the edge description itself — `EdgeTable`, the pruned finite-state machine
+  with its bond space, dense slot map and group subsets per cut, built with no tensor —
+  and `MPO` carries it as the symbolic one of its two internal representations, with the
+  site tensors as the other. **The boundary is that type and it has exactly two doors.**
+  `EdgeTable.site(n)` places one full-width dense-blocked rank-4 `W`;
+  `EdgeTable.edge_blocks(n)` places one site's `EdgeBlocks` against the group-restricted
+  bonds, the six group embeddings included. They are peers, each cached per site, and
+  neither is built out of the other: `_instantiate` is the first door's consumer — the
+  streaming compressing sweep, which only runs at a float `cutoff` — and `Env._cores2` is
+  the second's. Two consequences are the restructuring rather than side effects.
+  `_instantiate` stops being the producer of everything and becomes a function that takes
+  the table and returns sites; and the group embedding, which it used to run for every
+  cut of the whole MPO before `Env` could touch a block, moved into the per-site core
+  builder, which is what #184 named as the real cost of this stage. `Env` reaches the
+  description through `MPO.edges` and one site's blocks through `MPO.edge_blocks`, the
+  same "the accessor is the only door" rule #141 set for the block table.
+
+  Measured on `benchmarks/bench_qc_mpo.py`, same machine, same term lists, the shipped
+  path against the base commit. At K=16 (N2 CAS 6-31G, 32 sites, 34 400 terms),
+  `cutoff=None`: **25.0 s / 21.7 GiB peak RSS → 0.94 s / 0.17 GiB**, a 128× memory
+  reduction, because assembly now allocates nothing at all. At K=26 (C2 CAS cc-pVDZ, 52
+  sites, 208 844 terms), `cutoff=None` went from **not finishing at all** — killed in
+  `_instantiate` at 564 s against the benchmark's 8 GiB address-space cap, which is
+  where it has stopped since #191 — to **6.4 s / 0.94 GiB**. At K=42 (the synthetic
+  generator, 84 sites, 494 092 terms), uncapped so that the base commit finishes at all:
+  **375.3 s / 22.5 GiB → 11.5 s / 1.43 GiB**. The default
+  `cutoff=1e-13` path is unchanged by construction and measured unchanged: K=16 3.94 →
+  4.02 s at 1.26 → 1.25 GiB, K=26 35.7 → 35.0 s at 6.00 → 5.91 GiB, K=42 25.0 → 24.9 s
+  at 2.63 → 2.66 GiB, identical bond profiles.
+
+  The honest other half of that measurement: *forcing* every site's block table is where
+  the deferred cost lands, and it is a real cost. At K=16 it is 17.6 s and 18.9 GiB peak
+  — below the base commit's 21.7 GiB, because the full-width sites no longer exist beside
+  the blocks, but the same order — at K=42 it is 266 s and 23.1 GiB, and at K=26 under
+  the benchmark's 8 GiB cap it does not fit at all. So the deferral removes the wall from
+  *construction* and does not remove it from a consumer that wants the whole operator at
+  once. What fixes that is the bond order, which is the next stage; what M37 buys is that
+  a Hamiltonian can now be assembled, and its cores prepared one bond at a time, without
+  ever paying for the whole thing.
+
+  What M37 does not buy is bond order, exactly as #184 ranked candidate (a): "real and
+  insufficient — it removes the memory wall and leaves the cubic". The FSM bond is still
+  Θ(K³) against the vertex cover's Θ(K²) (31 441 against 769 at K=26). Two things are
+  settled around it. The **minimum vertex cover is closed by measurement**, not deferred:
+  #184's reopen criterion — any cut where the post-SVD width exceeds the cover by more
+  than 10% — returned 1.0000 at K=16 over 33 cuts and 766-against-769 at K=26, so
+  `svd_truncated` reaches the cover on its own and #138's refusal stands at production
+  scale. And the caller-supplied operator equivalence relation stays gated on the next
+  stage's measurement; `id(op)` is still the only operator identity anywhere.
+
+  **What remains for the symbolic layer (#184 candidate (d)) is named at the boundary.**
+  An expression algebra with a per-cut assembler replaces `_edge_table` as the producer
+  and `EdgeTable.edge_blocks` as the per-site core builder; `_cores2`'s contract — "give
+  me bond `n`'s cores" — and the a/b/c/d partition are the interface it has to keep
+  hitting, and `Env._cores`' per-bond cache is the slot it plugs into. What it buys that
+  M37 does not is the two things the measurement above says are still open: a bond basis
+  that is not a prefix (so the cubic becomes quadratic) and shared numeric payloads, one
+  matrix per factor-stripped symbol shared by every occurrence and every scalar multiple
+  (block2's `operator_tensor.hpp`:40-47), which buys sweep arithmetic rather than width.
+  The two-representation trade #141 accepted stands one level deeper and its deletion
+  condition is unchanged: `from_w`'s numeric path and `MPO.to_dense` still need real site
+  tensors, so `EdgeTable.site` is not going away and neither is the dense `heff2`.
 
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic

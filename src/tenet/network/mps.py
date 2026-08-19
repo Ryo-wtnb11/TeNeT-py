@@ -33,6 +33,7 @@ __all__ = [
     "MPS",
     "MPS_FORMAT_VERSION",
     "EdgeBlocks",
+    "EdgeTable",
     "expectation_1site",
     "expectation_2site",
     "local_op",
@@ -1509,19 +1510,58 @@ def _canonical_blocks(
     return phys, table, out
 
 
-class _EdgeTable(NamedTuple):
-    """The pruned FSM, its bond spaces and its dense slot maps — built with no tensor.
+class EdgeTable:
+    """The pruned FSM, its bond spaces and its dense slot maps — and where they become tensors.
 
-    ``edges[n]`` is site ``n``'s surviving ``(state_l, state_r) -> W | None`` map (``None``
-    meaning a spectator identity); ``ordered[i]`` the live state keys at cut ``i`` in
-    allocation order, ``_IDL`` first and ``_IDR`` last; ``bonds[i]`` that cut's
-    ``GradedSpace`` and ``starts[i][k][a]`` the dense offset state ``k``'s sector ``a``
-    occupies in it; ``groups[i]`` the same, per ``IdL``/open/``IdR`` subset, as
-    ``(space, slots, keys)`` or ``None``.
+    Parameters
+    ----------
+    edges : list of dict
+        Per site, the surviving ``(state_l, state_r) -> W | None`` map, ``None``
+        meaning a spectator identity.
+    ordered : list of list
+        Per cut, the live state keys in allocation order, ``_IDL`` first and
+        ``_IDR`` last.
+    bonds : list
+        Per cut, that cut's ``GradedSpace``.
+    starts : list
+        Per cut, ``starts[i][k][a]``: the dense offset state ``k``'s sector ``a``
+        occupies in ``bonds[i]``.
+    groups : list
+        Per cut, the same as ``(space, slots, keys)`` per ``IdL`` / open / ``IdR``
+        subset, or ``None`` where the subset is empty.
+    states : dict
+        State label to its ``GradedSpace``.
+    phys : GradedSpace
+        The physical space.
+    dual : bool
+        The MPO's one dual convention, set by whether any k-site split runs in it.
 
-    It is the carrier every consumer scatters into: the dense sites and
-    [EdgeBlocks][tenet.network.EdgeBlocks]' operators differ only in which slot map they
-    place against, which is why one ``_place`` serves both.
+    Notes
+    -----
+    **This is the MPO's symbolic representation, and it is the instantiation boundary**
+    (#200, staging #184 Part 2 (a)). Nothing above it is numeric: ``_edge_table`` builds
+    the whole thing without a tensor. Everything below it is, and there are exactly two
+    ways down — [site][tenet.network.EdgeTable.site], which materialises one
+    dense-blocked rank-4 ``W`` on the full bond, and
+    [edge_blocks][tenet.network.EdgeTable.edge_blocks], which materialises one site's
+    [EdgeBlocks][tenet.network.EdgeBlocks] on the group-restricted bonds the two-site
+    matvec eats. They are peers: ``_instantiate`` is the first one's consumer and
+    ``env._cores2`` the second's, and neither is built out of the other.
+
+    The group *embedding* — the 0/1 isometry between a group of states and its slots of
+    the full bond — belongs to the second way down and is built there, which is the
+    restructuring #184 named as the real cost of deferred instantiation: ``Env``'s cores
+    used to be assembled from tensors ``_instantiate`` had already embedded.
+
+    Both ways down are cached per site and neither runs at construction, so an MPO that
+    only ever reaches the matvec never allocates a full-width site tensor. That is the
+    memory claim, and ``tests/network/test_deferred.py`` is what fails if it stops
+    holding.
+
+    The next stage (#184 candidate (d)) plugs in *here*: a per-cut assembler with an
+    expression algebra replaces ``_edge_table`` as the producer and
+    [edge_blocks][tenet.network.EdgeTable.edge_blocks] as the per-site core builder, with the
+    a/b/c/d partition as the interface it has to keep hitting.
     """
 
     edges: list[dict]
@@ -1533,8 +1573,292 @@ class _EdgeTable(NamedTuple):
     phys: GradedSpace
     dual: bool
 
+    def __init__(
+        self,
+        edges: list[dict],
+        ordered: list[list],
+        bonds: list,
+        starts: list,
+        groups: list,
+        states: dict,
+        phys: GradedSpace,
+        dual: bool,
+    ) -> None:
+        self.edges = edges
+        self.ordered = ordered
+        self.bonds = bonds
+        self.starts = starts
+        self.groups = groups
+        self.states = states
+        self.phys = phys
+        self.dual = dual
+        # The numeric caches, and the only mutable state here. They are what makes the
+        # two ways down peers rather than a pipeline: each is filled on request, per
+        # site, so neither consumer pays for the other's tensors.
+        self._identities: dict = {}
+        self._table: dict = {}
+        self._embeds: dict = {}
 
-def _edge_table(n_sites, phys, dual, states, order, moves, stops, spectators) -> _EdgeTable:
+    def __len__(self) -> int:
+        return len(self.edges)
+
+    def boundary_legs(self) -> tuple[Leg, Leg]:
+        """The MPO's two ``D=1`` boundary legs, without materialising a site.
+
+        Returns
+        -------
+        tuple of Leg
+            The first site's left leg and the last site's right leg, both non-dual
+            -- ``site``'s caps put them there and ``from_w``'s ends are non-dual too.
+        """
+        return Leg(self.bonds[0], IN), Leg(self.bonds[-1], OUT)
+
+    def site(self, n: int, carry: SymmetricTensor | None = None) -> SymmetricTensor:
+        """Site ``n``, scattered into one buffer against the bond, boundary caps included.
+
+        Parameters
+        ----------
+        n : int
+            The site.
+        carry : SymmetricTensor or None, optional
+            The compressing sweep's rank-2 map onto the already-truncated right
+            bond, both legs ``IN``. ``None`` (the default) places against the
+            full FSM bond.
+
+        Returns
+        -------
+        SymmetricTensor
+            The rank-4 ``(wl IN, p OUT, p IN, wr OUT)`` site tensor.
+
+        Notes
+        -----
+        The caps ride here rather than after a whole-MPO loop so that a site is finished
+        the moment it is placed, which is what lets the compressing sweep consume them one
+        at a time. ``_place`` folds ``carry`` into the scatter, so the site is born
+        contracted with it and the buffer never widens past ``chi``. The site's right leg
+        is the carry's second leg moved to the codomain, which is the same relabelling
+        ``einsum("xy,apqx->apqy", carry, w)`` used to make: same space, ``OUT``, ``dual``
+        flipped.
+
+        This is the full-width way down, and the one the prepared matvec does not take.
+        """
+        if carry is None:
+            space_r, dual_r, dense_c = self.bonds[n + 1], self.dual, None
+        else:
+            space_r, dual_r = carry.legs[1].space, not carry.legs[1].dual
+            dense_c = np.asarray(carry.to_dense())
+        items = (
+            (
+                self._dense_w(w, lk),
+                self.states[lk],
+                self.starts[n][lk],
+                self.states[rk],
+                self.starts[n + 1][rk],
+            )
+            for (lk, rk), w in self.edges[n].items()
+        )
+        w = _place(items, self.bonds[n], space_r, self.phys, self.dual, dual_r, dense_c)
+        if not self.dual:
+            return w
+        # The two *outer* legs go back non-dual: ``Env`` builds its boundary environments
+        # from the boundary legs' own flags (``Env.__init__``) and the other builder's ends
+        # are non-dual too. Both ends are D=1 on the unit sector, where the flag is a label.
+        sym = self.phys.provider
+        triv = GradedSpace.new(sym, {sym.unit: 1})
+        if n == 0:
+            cap = SymmetricTensor.from_dense(np.ones((1, 1)), (Leg(triv, IN), Leg(triv, OUT, True)))
+            w = _as_w(tenet.einsum("xpqr,ax->apqr", w, cap))
+        if n == len(self.edges) - 1:
+            cap = SymmetricTensor.from_dense(np.ones((1, 1)), (Leg(triv, IN, True), Leg(triv, OUT)))
+            w = _as_w(tenet.einsum("xb,apqx->apqb", cap, w))
+        return w
+
+    def edge_blocks(self, n: int) -> EdgeBlocks:
+        """Site ``n``'s [EdgeBlocks][tenet.network.EdgeBlocks] -- the per-site core builder.
+
+        Parameters
+        ----------
+        n : int
+            The site.
+
+        Returns
+        -------
+        EdgeBlocks
+            The a/b/c/d partition of the site's surviving edges, its four
+            group-restricted operators, its three derived rank-2 views and the
+            six group embeddings of its two cuts.
+
+        Notes
+        -----
+        Each block's operator is placed by the *same* ``_place`` as a full site, against
+        the group slot maps instead of the full-bond ones -- so no full-width rank-4
+        tensor exists on this route. The bond side of the two boundary cuts is non-dual,
+        matching ``site``'s caps and ``Env``'s boundary legs.
+
+        The six group embeddings are built here, per cut and shared between the two sites
+        that meet at it. Until #200 they were built by ``_instantiate`` for the whole MPO
+        at once, which is what tied ``Env``'s cores to a materialised operator.
+        """
+        got = self._table.get(n)
+        if got is None:
+            got = self._table[n] = self._build_table(n)
+        return got
+
+    # --- the machinery under the two ways down ---------------------------------------
+
+    def _dense_w(self, w, key):
+        """One edge's full rank-4 dense block; ``None`` is the state's identity.
+
+        Identity edges still go through ``_identity_w`` and its per-space cache: on a
+        sign-braiding aux space that ``einsum`` is *not* a bare delta in the carrier
+        basis, so the slab is read off the tensor rather than hand-derived.
+        """
+        if w is not None:
+            return np.asarray(w.to_dense())
+        space = self.states[key]
+        if space not in self._identities:
+            self._identities[space] = np.asarray(
+                _identity_w(Leg(space, IN, self.dual), self.phys).to_dense()
+            )
+        return self._identities[space]
+
+    def _group_place(self, n, pairs, gl, gr):
+        """One a/b/c/d block's operator, placed against its two groups' slot maps."""
+        left, right = self.groups[n][gl], self.groups[n + 1][gr]
+        if left is None or right is None:
+            return None
+        (space_l, slots_l, _), (space_r, slots_r, _) = left, right
+        items = (
+            (self._dense_w(w, lk), self.states[lk], slots_l[lk], self.states[rk], slots_r[rk])
+            for (lk, rk), w in pairs
+        )
+        return _place(items, space_l, space_r, self.phys, self.dual, self.dual)
+
+    def _channel_map(self, keys, spaces, slots_l, slots_r, dual_l, dual_r):
+        """The rank-2 0/1 map carrying each key's space identically across a site."""
+        dense = np.zeros((spaces[0].dim, spaces[1].dim))
+        for k in keys:
+            for a, _, _o, ext in _slabs(self.states[k]):
+                r0, c0 = slots_l[k][a], slots_r[k][a]
+                dense[r0 : r0 + ext, c0 : c0 + ext] = np.eye(ext)
+        legs = (Leg(spaces[0], IN, dual_l), Leg(spaces[1], OUT, dual_r))
+        return SymmetricTensor.from_dense(dense, legs)
+
+    def _embed(self, i):
+        """Cut ``i``'s six group embeddings, ``{group: (left slicer, right slicer)}``."""
+        got = self._embeds.get(i)
+        if got is not None:
+            return got
+        dual_b = self.dual and 0 < i < len(self.edges)
+        emb = {}
+        for name, g in self.groups[i].items():
+            if g is None:
+                emb[name] = (None, None)
+                continue
+            space, slots, keys = g
+            emb[name] = tuple(
+                _group_embedding(
+                    self.bonds[i],
+                    self.starts[i],
+                    space,
+                    slots,
+                    keys,
+                    self.states,
+                    left=left,
+                    dual=self.dual,
+                    dual_b=dual_b,
+                )
+                for left in (True, False)
+            )
+        self._embeds[i] = emb
+        return emb
+
+    def _build_table(self, n):
+        """``edge_blocks``' body: partition site ``n``'s edges, place them, embed its two cuts."""
+        n_sites = len(self.edges)
+        dicts: dict[str, dict] = {"a": {}, "b": {}, "c": {}, "d": {}}
+        id_channels = []  # states carried identically through this site, corners included
+        for corner in (_IDL, _IDR):
+            if corner in self.ordered[n] and corner in self.ordered[n + 1]:
+                id_channels.append(corner)
+        spec_keys = []
+        for (lk, rk), w in self.edges[n].items():
+            if lk == rk and lk in (_IDL, _IDR):
+                continue  # the two corner identities stay implicit
+            name = (
+                "d"
+                if lk == _IDL and rk == _IDR
+                else ("c" if lk == _IDL else ("b" if rk == _IDR else "a"))
+            )
+            dicts[name][lk, rk] = w
+            # A spectator may ride the factorized rank-2 channel maps only if its state's
+            # space braids with no sign: the identity tensor interleaves the bond line
+            # with the two physical lines, and for a state that braids with signs that
+            # crossing is the Jordan-Wigner string, which lives in the rank-4 tensor and
+            # in nothing cheaper (#160). Such a state is classified as operator-carrying
+            # and rides ``a_real_op``. Grading metadata off the space, not a provider
+            # branch.
+            if w is None and not _braids_with_signs(self.states[lk]):
+                id_channels.append(lk)
+                spec_keys.append(lk)
+        ops = {
+            name: self._group_place(n, dicts[name].items(), *where)
+            for name, where in _BLOCK_GROUPS.items()
+        }
+        real = [(kk, w) for kk, w in dicts["a"].items() if not (w is None and kk[0] in spec_keys)]
+        idmap = (
+            self._channel_map(
+                id_channels,
+                (self.bonds[n], self.bonds[n + 1]),
+                self.starts[n],
+                self.starts[n + 1],
+                self.dual and n > 0,
+                self.dual and n + 1 < n_sites,
+            )
+            if id_channels
+            else None
+        )
+        spec = None
+        if spec_keys:
+            gl_space, gl_slots, _ = self.groups[n]["open"]
+            gr_space, gr_slots, _ = self.groups[n + 1]["open"]
+            spec = self._channel_map(
+                spec_keys, (gl_space, gr_space), gl_slots, gr_slots, self.dual, self.dual
+            )
+        left, right = self._embed(n), self._embed(n + 1)
+        return EdgeBlocks(
+            dicts["a"],
+            dicts["b"],
+            dicts["c"],
+            dicts["d"],
+            ops["a"],
+            ops["b"],
+            ops["c"],
+            ops["d"],
+            idmap,
+            spec,
+            self._group_place(n, real, "open", "open"),
+            left["idl"][0],
+            left["open"][0],
+            left["idr"][0],
+            right["idl"][1],
+            right["open"][1],
+            right["idr"][1],
+        )
+
+
+# Which group subspace each block of MPSKit's ``(1 C D; . A B; . . 1)`` partition places
+# its two ends against — the only thing that separates the block table's scatter from the
+# full site's.
+_BLOCK_GROUPS = {
+    "a": ("open", "open"),
+    "b": ("open", "idr"),
+    "c": ("idl", "open"),
+    "d": ("idl", "idr"),
+}
+
+
+def _edge_table(n_sites, phys, dual, states, order, moves, stops, spectators) -> EdgeTable:
     """Prune dead states and derive every cut's bond space and slot map.
 
     Pruning intersects each cut's states with (reachable from ``_IDL``) and (co-reachable
@@ -1543,8 +1867,9 @@ def _edge_table(n_sites, phys, dual, states, order, moves, stops, spectators) ->
     a cut is then the direct sum of the surviving states' spaces, in allocation order with
     the identities at the two ends.
 
-    Symbolic throughout: not one tensor is built here. It is the half of the old
-    ``_instantiate`` that was already cheap and was thrown away once the sites existed.
+    Symbolic throughout: not one tensor is built here, and since #200 not one is built
+    afterwards either unless a consumer asks for it. This is the producer of the
+    description; [EdgeTable][tenet.network.EdgeTable] names its two consumers.
     """
     sym = phys.provider
     edges: list[dict] = []
@@ -1584,241 +1909,33 @@ def _edge_table(n_sites, phys, dual, states, order, moves, stops, spectators) ->
                 )
             }
         )
-    return _EdgeTable(edges, ordered, bonds, starts, groups, states, phys, dual)
+    return EdgeTable(edges, ordered, bonds, starts, groups, states, phys, dual)
 
 
-def _dense_w(tab: _EdgeTable, w, key, identities: dict):
-    """One edge's full rank-4 dense block; ``None`` is the state's identity.
+def _instantiate(tab: EdgeTable, cutoff: float) -> list[SymmetricTensor]:
+    """Place every site numerically, truncating as it goes — one consumer of the table.
 
-    Identity edges still go through ``_identity_w`` and its per-space cache: on a
-    sign-braiding aux space that ``einsum`` is *not* a bare delta in the carrier basis, so
-    the slab is read off the tensor rather than hand-derived.
+    The streaming materialiser, and since #200 the *only* thing ``_instantiate`` is: the
+    pruning and the bond spaces are ``_edge_table``'s, the per-site block table is
+    [EdgeTable.edge_blocks][tenet.network.EdgeTable.edge_blocks]'s, and this function asks
+    ``EdgeTable.site`` for one site at a time. The ``cutoff=None`` branch that used to
+    live here is gone, because an MPO that keeps its finite-state machine now keeps the
+    description rather than a materialised copy of it.
+
+    Materialisation runs **inside** the backward compressing sweep, which is the only
+    consumer of a site here. Site ``N-1`` is placed and its left bond truncated; site
+    ``n`` is placed **against the carry**, which ``_place`` folds into the scatter so that
+    the site is born on the already-truncated right leg, and is truncated in turn. The
+    forward sweep in ``from_terms`` then runs on tensors that are already at the operator
+    Schmidt rank. Right to left first, exactly as ``MPS.compress_`` canonizes before it
+    truncates: a forward sweep alone measures the rank of the *left* part against the raw
+    FSM bond, which overshoots wherever the redundancy is only visible from the right. The
+    widest object that ever exists is ``D_FSM x d**2 x chi_Schmidt``, so the full-width
+    MPO never exists as a whole.
     """
-    if w is not None:
-        return np.asarray(w.to_dense())
-    space = tab.states[key]
-    if space not in identities:
-        identities[space] = np.asarray(_identity_w(Leg(space, IN, tab.dual), tab.phys).to_dense())
-    return identities[space]
-
-
-def _site(tab: _EdgeTable, n: int, identities: dict, carry=None) -> SymmetricTensor:
-    """Site ``n``, scattered into one buffer against the bond, boundary caps included.
-
-    The caps ride here rather than after a whole-MPO loop so that a site is finished the
-    moment it is placed, which is what lets the compressing sweep consume them one at a
-    time. ``carry`` is that sweep's rank-2 map onto the already-truncated right bond, both
-    legs ``IN`` as ``_instantiate`` repartitions it; ``_place`` folds it into the scatter,
-    so the site is born contracted with it and the buffer never widens past ``chi``. The
-    site's right leg is the carry's second leg moved to the codomain, which is the same
-    relabelling ``einsum("xy,apqx->apqy", carry, w)`` used to make: same space, ``OUT``,
-    ``dual`` flipped.
-    """
-    if carry is None:
-        space_r, dual_r, dense_c = tab.bonds[n + 1], tab.dual, None
-    else:
-        space_r, dual_r = carry.legs[1].space, not carry.legs[1].dual
-        dense_c = np.asarray(carry.to_dense())
-    items = (
-        (
-            _dense_w(tab, w, lk, identities),
-            tab.states[lk],
-            tab.starts[n][lk],
-            tab.states[rk],
-            tab.starts[n + 1][rk],
-        )
-        for (lk, rk), w in tab.edges[n].items()
-    )
-    w = _place(items, tab.bonds[n], space_r, tab.phys, tab.dual, dual_r, dense_c)
-    if not tab.dual:
-        return w
-    # The two *outer* legs go back non-dual: ``Env`` builds its boundary environments from
-    # the boundary legs' own flags (``Env.__init__``) and the other builder's ends are
-    # non-dual too. Both ends are D=1 on the unit sector, where the flag is a label.
-    sym = tab.phys.provider
-    triv = GradedSpace.new(sym, {sym.unit: 1})
-    if n == 0:
-        cap = SymmetricTensor.from_dense(np.ones((1, 1)), (Leg(triv, IN), Leg(triv, OUT, True)))
-        w = _as_w(tenet.einsum("xpqr,ax->apqr", w, cap))
-    if n == len(tab.edges) - 1:
-        cap = SymmetricTensor.from_dense(np.ones((1, 1)), (Leg(triv, IN, True), Leg(triv, OUT)))
-        w = _as_w(tenet.einsum("xb,apqx->apqb", cap, w))
-    return w
-
-
-# Which group subspace each block of MPSKit's ``(1 C D; . A B; . . 1)`` partition places
-# its two ends against — the only thing that separates the block table's scatter from the
-# full site's.
-_BLOCK_GROUPS = {
-    "a": ("open", "open"),
-    "b": ("open", "idr"),
-    "c": ("idl", "open"),
-    "d": ("idl", "idr"),
-}
-
-
-def _blocks(tab: _EdgeTable, identities: dict) -> list[EdgeBlocks]:
-    """The per-site [EdgeBlocks][tenet.network.EdgeBlocks], from the same table.
-
-    The a/b/c/d partition of the surviving edges, with each block's operator placed by the
-    *same* ``_place`` against the group slot maps instead of the full-bond ones. The bond
-    side of the two boundary cuts is non-dual, matching ``_site``'s caps and ``Env``'s
-    boundary legs.
-    """
-    n_sites = len(tab.edges)
-    states = tab.states
-
-    def group_place(n, pairs, gl, gr):
-        left, right = tab.groups[n][gl], tab.groups[n + 1][gr]
-        if left is None or right is None:
-            return None
-        (space_l, slots_l, _), (space_r, slots_r, _) = left, right
-        items = (
-            (_dense_w(tab, w, lk, identities), states[lk], slots_l[lk], states[rk], slots_r[rk])
-            for (lk, rk), w in pairs
-        )
-        return _place(items, space_l, space_r, tab.phys, tab.dual, tab.dual)
-
-    def channel_map(keys, spaces, slots_l, slots_r, dual_l, dual_r):
-        """The rank-2 0/1 map carrying each key's space identically across a site."""
-        dense = np.zeros((spaces[0].dim, spaces[1].dim))
-        for k in keys:
-            for a, _, _o, ext in _slabs(states[k]):
-                r0, c0 = slots_l[k][a], slots_r[k][a]
-                dense[r0 : r0 + ext, c0 : c0 + ext] = np.eye(ext)
-        legs = (Leg(spaces[0], IN, dual_l), Leg(spaces[1], OUT, dual_r))
-        return SymmetricTensor.from_dense(dense, legs)
-
-    embeds = []
-    for i in range(n_sites + 1):
-        dual_b = tab.dual and 0 < i < n_sites
-        emb = {}
-        for name, g in tab.groups[i].items():
-            if g is None:
-                emb[name] = (None, None)
-                continue
-            space, slots, keys = g
-            emb[name] = tuple(
-                _group_embedding(
-                    tab.bonds[i],
-                    tab.starts[i],
-                    space,
-                    slots,
-                    keys,
-                    states,
-                    left=left,
-                    dual=tab.dual,
-                    dual_b=dual_b,
-                )
-                for left in (True, False)
-            )
-        embeds.append(emb)
-
-    out = []
-    for n in range(n_sites):
-        dicts: dict[str, dict] = {"a": {}, "b": {}, "c": {}, "d": {}}
-        id_channels = []  # states carried identically through this site, corners included
-        for corner in (_IDL, _IDR):
-            if corner in tab.ordered[n] and corner in tab.ordered[n + 1]:
-                id_channels.append(corner)
-        spec_keys = []
-        for (lk, rk), w in tab.edges[n].items():
-            if lk == rk and lk in (_IDL, _IDR):
-                continue  # the two corner identities stay implicit
-            name = (
-                "d"
-                if lk == _IDL and rk == _IDR
-                else ("c" if lk == _IDL else ("b" if rk == _IDR else "a"))
-            )
-            dicts[name][lk, rk] = w
-            # A spectator may ride the factorized rank-2 channel maps only if its state's
-            # space braids with no sign: the identity tensor interleaves the bond line
-            # with the two physical lines, and for a state that braids with signs that
-            # crossing is the Jordan-Wigner string, which lives in the rank-4 tensor and
-            # in nothing cheaper (#160). Such a state is classified as operator-carrying
-            # and rides ``a_real_op``. Grading metadata off the space, not a provider
-            # branch.
-            if w is None and not _braids_with_signs(states[lk]):
-                id_channels.append(lk)
-                spec_keys.append(lk)
-        ops = {
-            name: group_place(n, dicts[name].items(), *where)
-            for name, where in _BLOCK_GROUPS.items()
-        }
-        real = [(kk, w) for kk, w in dicts["a"].items() if not (w is None and kk[0] in spec_keys)]
-        idmap = (
-            channel_map(
-                id_channels,
-                (tab.bonds[n], tab.bonds[n + 1]),
-                tab.starts[n],
-                tab.starts[n + 1],
-                tab.dual and n > 0,
-                tab.dual and n + 1 < n_sites,
-            )
-            if id_channels
-            else None
-        )
-        spec = None
-        if spec_keys:
-            gl_space, gl_slots, _ = tab.groups[n]["open"]
-            gr_space, gr_slots, _ = tab.groups[n + 1]["open"]
-            spec = channel_map(
-                spec_keys, (gl_space, gr_space), gl_slots, gr_slots, tab.dual, tab.dual
-            )
-        out.append(
-            EdgeBlocks(
-                dicts["a"],
-                dicts["b"],
-                dicts["c"],
-                dicts["d"],
-                ops["a"],
-                ops["b"],
-                ops["c"],
-                ops["d"],
-                idmap,
-                spec,
-                group_place(n, real, "open", "open"),
-                embeds[n]["idl"][0],
-                embeds[n]["open"][0],
-                embeds[n]["idr"][0],
-                embeds[n + 1]["idl"][1],
-                embeds[n + 1]["open"][1],
-                embeds[n + 1]["idr"][1],
-            )
-        )
-    return out
-
-
-def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *, cutoff):
-    """Prune dead states, derive the bond spaces, and place every edge numerically.
-
-    ``_edge_table`` does the symbolic half; ``_site`` scatters each site's live edges into
-    one dense buffer and calls ``from_dense`` once for it.
-
-    At ``cutoff=None`` every site is placed and the surviving edges come back *also* as one
-    [EdgeBlocks][tenet.network.EdgeBlocks] per site — the same pruned graph, in the a/b/c/d
-    partition the two-site matvec consumes, placed by the same primitive against the group
-    slot maps. That branch does not stream and its peak memory is unchanged, deliberately:
-    the table needs every site.
-
-    Given a float, materialisation runs **inside** the backward compressing sweep, which
-    is the only consumer of a site there. Site ``N-1`` is placed and its left bond
-    truncated; site ``n`` is placed **against the carry**, which ``_place`` folds into the
-    scatter so that the site is born on the already-truncated right leg, and is truncated
-    in turn. The forward sweep in ``from_terms`` then runs on tensors that are already at
-    the operator Schmidt rank. Right to left first, exactly as ``MPS.compress_`` canonizes
-    before it truncates: a forward sweep alone measures the rank of the *left* part against
-    the raw FSM bond, which overshoots wherever the redundancy is only visible from the
-    right. The widest object that ever exists is
-    ``D_FSM x d**2 x chi_Schmidt``, so the full-width MPO never exists as a whole.
-    """
-    tab = _edge_table(n_sites, phys, dual, states, order, moves, stops, spectators)
-    identities: dict = {}
-    if cutoff is None:
-        return [_site(tab, n, identities) for n in range(n_sites)], _blocks(tab, identities)
     out, carry = [], None
-    for n in reversed(range(n_sites)):
-        w = _site(tab, n, identities, carry)
+    for n in reversed(range(len(tab.edges))):
+        w = tab.site(n, carry)
         if n:
             u, s, vh = tenet.linalg.svd_truncated(w, ((0,), (1, 2, 3)), cutoff=cutoff)
             w = _as_w(vh)
@@ -1827,7 +1944,7 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
             carry = tenet.repartition(tenet.einsum("xy,yz->xz", u, s), (), (0, 1))
         out.append(w)
     out.reverse()
-    return out, None
+    return out
 
 
 def _compress_forward(sites: list[SymmetricTensor], cutoff: float) -> list[SymmetricTensor]:
@@ -1852,11 +1969,18 @@ class MPO:
 
     Parameters
     ----------
-    sites : Iterable of SymmetricTensor
-        The rank-4 site tensors, left to right.
-    edge_blocks : Sequence of EdgeBlocks or None, optional
-        The per-site block table [from_terms][tenet.network.MPO.from_terms]
-        keeps at ``cutoff=None``; ``None`` (the default) for every other MPO.
+    sites : Iterable of SymmetricTensor or None, optional
+        The rank-4 site tensors, left to right. Exactly one of ``sites`` and
+        ``edges`` is given.
+    edges : EdgeTable or None, optional
+        The symbolic edge description [from_terms][tenet.network.MPO.from_terms]
+        keeps at ``cutoff=None``, from which sites and block tables are
+        materialised on request; ``None`` for every other MPO. Keyword-only.
+
+    Raises
+    ------
+    ValueError
+        If neither or both of ``sites`` and ``edges`` are given.
 
     Notes
     -----
@@ -1867,30 +1991,56 @@ class MPO:
     **A separate class from [MPS][tenet.network.MPS], with no shape flag** -- the comparison
     with YASTN's and TenPy's choices is in ``docs/design.md`` "Milestone 11".
 
-    [edge_blocks][tenet.network.MPO.edge_blocks] is the one read-only accessor beyond
-    the container protocol: the
-    per-site ``EdgeBlocks`` table when [from_terms][tenet.network.MPO.from_terms] kept its
-    finite-state
-    machine (``cutoff=None``), ``None`` for every other MPO. It exists so that
-    [Env][tenet.network.Env] can reach the symbolic edge structure without touching a
-    private name -- #138 refused public exposure of the symbolic layer "if a caller ever
-    needs to inspect it, that is a separate issue with an argument attached", and the
-    prepared two-site matvec is that caller and that argument (#141).
+    **Two internal representations, and ``edges`` is the symbolic one** (#200). Given an
+    ``EdgeTable`` the container holds no tensor at all: ``self[n]``
+    materialises site ``n`` on request and caches it, and
+    [edge_blocks][tenet.network.MPO.edge_blocks] does the same for the site's block table,
+    so an MPO whose only consumer is the prepared two-site matvec never allocates a
+    full-width rank-4 ``W``. Given site tensors it holds exactly those and
+    ``edge_blocks`` is ``None`` throughout. #141's standing trade -- two representations
+    in one class, because ``from_w``'s numeric path and ``to_dense`` still need the sites
+    -- is accepted here one level deeper, with its deletion condition unchanged.
+
+    ``edges`` and
+    [edge_blocks][tenet.network.MPO.edge_blocks] are the two read-only accessors beyond
+    the container protocol, and they exist so that [Env][tenet.network.Env] can reach the
+    symbolic structure without touching a private name -- #138 refused public exposure of
+    the symbolic layer "if a caller ever needs to inspect it, that is a separate issue
+    with an argument attached", and the prepared two-site matvec is that caller and that
+    argument (#141).
     """
 
-    sites: list[SymmetricTensor]
+    edges: EdgeTable | None
 
     def __init__(
-        self, sites: Iterable[SymmetricTensor], edge_blocks: Sequence[EdgeBlocks] | None = None
+        self,
+        sites: Iterable[SymmetricTensor] | None = None,
+        *,
+        edges: EdgeTable | None = None,
     ) -> None:
-        self.sites = list(sites)
-        self._edge_blocks = None if edge_blocks is None else list(edge_blocks)
+        if (sites is None) == (edges is None):
+            raise ValueError("MPO takes either its site tensors or an edge description, not both")
+        self.edges = edges
+        self._sites: dict[int, SymmetricTensor] = {} if sites is None else dict(enumerate(sites))
+        self._n = len(edges) if edges is not None else len(self._sites)
+
+    @property
+    def sites(self) -> list[SymmetricTensor]:
+        """The site tensors, materialising every one that is not built yet."""
+        return [self[n] for n in range(self._n)]
 
     def __len__(self) -> int:
-        return len(self.sites)
+        return self._n
 
     def __getitem__(self, n: int) -> SymmetricTensor:
-        return self.sites[n]
+        if n < 0:
+            n += self._n
+        got = self._sites.get(n)
+        if got is None:
+            if self.edges is None or not 0 <= n < self._n:
+                raise IndexError(f"MPO site index {n} is outside range({self._n})")
+            got = self._sites[n] = self.edges.site(n)
+        return got
 
     def __iter__(self) -> Iterator[SymmetricTensor]:
         return iter(self.sites)
@@ -1915,8 +2065,14 @@ class MPO:
         recover -- measured in #141, the sweep leaves zero identity edges on every model
         -- and [from_w][tenet.network.MPO.from_w] never had one. ``None`` therefore also routes
         [Env.heff2][tenet.network.Env.heff2] onto its dense path.
+
+        Since #200 the table is *built* here rather than stored here: the call goes
+        through to ``EdgeTable.edge_blocks``, which places one
+        site's blocks against the group slot maps and caches them. No full-width site
+        tensor is involved, which is what lets a Hamiltonian be assembled and swept
+        without one ever existing.
         """
-        return None if self._edge_blocks is None else self._edge_blocks[n]
+        return None if self.edges is None else self.edges.edge_blocks(n)
 
     @classmethod
     def from_w(
@@ -2155,15 +2311,15 @@ class MPO:
         walk.close()
         states, order = walk.states, walk.order
         moves, stops, spectators = walk.moves, walk.stops, walk.spectators
-        # ``_instantiate`` streams whenever it is given a float cutoff: it places one site
-        # at a time in the backward sweep's order and truncates as it goes, so what comes
-        # back is already at the operator Schmidt rank and the full-width MPO never exists.
-        sites, tables = _instantiate(
-            n_sites, phys, dual, states, order, moves, stops, spectators, cutoff=cutoff
-        )
+        # The edge description is the finite-state machine, and at ``cutoff=None`` it *is*
+        # the MPO: nothing is instantiated until a consumer asks (#200). Given a float,
+        # ``_instantiate`` streams -- one site at a time in the backward sweep's order,
+        # truncating as it goes -- so what comes back is already at the operator Schmidt
+        # rank and the full-width MPO never exists.
+        tab = _edge_table(n_sites, phys, dual, states, order, moves, stops, spectators)
         if cutoff is None:
-            return cls(sites, tables)
-        return cls(_compress_forward(sites, cutoff))
+            return cls(edges=tab)
+        return cls(_compress_forward(_instantiate(tab, cutoff), cutoff))
 
     @classmethod
     def from_arrays(
@@ -2294,7 +2450,7 @@ class MPO:
                 f"(screen={screen}); an MPO is read off its terms and there are none"
             )
         walk.close()
-        sites_out, tables = _instantiate(
+        tab = _edge_table(
             n_sites,
             phys,
             False,
@@ -2303,11 +2459,10 @@ class MPO:
             walk.moves,
             walk.stops,
             walk.spectators,
-            cutoff=cutoff,
         )
         if cutoff is None:
-            return cls(sites_out, tables)
-        return cls(_compress_forward(sites_out, cutoff))
+            return cls(edges=tab)
+        return cls(_compress_forward(_instantiate(tab, cutoff), cutoff))
 
     def to_dense(self) -> Any:
         """The full ``d**N x d**N`` operator, ``D=1`` boundaries dropped.
