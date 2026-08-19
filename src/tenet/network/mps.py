@@ -18,7 +18,7 @@ Every two-operand ``tenet.einsum`` in this module follows the package's composit
 import json
 import pathlib
 import string
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -922,21 +922,30 @@ def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
 
 # --- the symbolic layer -------------------------------------------------------------
 #
-# ``from_terms`` assembles a finite-state machine over the MPO bond before it touches a
+# Both builders assemble a finite-state machine over the MPO bond before either touches a
 # single wide tensor. A bond *state* is ``_IDL`` (identity to the left, the term not yet
-# begun), ``_IDR`` (the term already closed), or the tuple of ``(operator, site)`` events
-# a term has placed so far — its open left-partial-string. Terms sharing an opening share
-# a state; the closing edge carries the coefficient. Each state carries its **own**
-# ``GradedSpace``: the running fused charge for rank-3 operators, or the ``Leg``
-# ``_split``'s ``svd_truncated`` derived for a rank-2k operator mid-split. The bond
-# space at a cut is the direct sum, over that cut's states, of the states' spaces — no
-# charge solver anywhere (MPSKit's ``mpohamiltonian.jl``:479-492 is the precedent).
+# begun), ``_IDR`` (the term already closed), or one open left-partial-string — the
+# operators a term has placed so far. Terms sharing an opening share a state; the closing
+# edge carries the coefficient. Each state carries its **own** ``GradedSpace``: the
+# running fused charge for rank-3 operators, or the ``Leg`` ``_split``'s ``svd_truncated``
+# derived for a rank-2k operator mid-split. The bond space at a cut is the direct sum,
+# over that cut's states, of the states' spaces — no charge solver anywhere (MPSKit's
+# ``mpohamiltonian.jl``:479-492 is the precedent).
+#
+# **A state is an integer, and so is everything the walk indexes by** (#197). A partial
+# string used to be the tuple of its ``(operator, site)`` events, rebuilt and rehashed
+# once per operator placed, which made the prefix key quadratic in the term length; it is
+# now interned from ``(parent, slot, site)``, one dict lookup on three small ints.
+# ``_IDL`` and ``_IDR`` are 0 and 1 for the same reason. Nothing outside this module reads
+# a state label's *value* — ``_edge_table``, ``EdgeBlocks`` and ``env.py`` compare it
+# against those two constants and otherwise carry it — so the labels are free to be
+# whatever the walk is fastest on.
 # Simplification: operator identity is object identity (``id(op)``) — two equal-valued but
-# distinct operator objects get two states, and the compressing sweep erases the
+# distinct operator objects get two slots, and the compressing sweep erases the
 # difference; a symbolic ``Rule`` needs an operator vocabulary tenet refuses to grow.
 
-_IDL: tuple = ()  # the empty prefix
-_IDR = "IdR"
+_IDL = 0  # the empty prefix
+_IDR = 1
 
 
 def _slabs(space: GradedSpace) -> Iterator[tuple[Sector, int, int, int]]:
@@ -1106,18 +1115,190 @@ _INTERLEAVE = (
 )
 
 
-def _term_edges(
-    n_sites, coeff, ops, phys, dual, split, rank3, states, order, moves, stops, spectators
-):
-    """Walk one term left to right: allocate prefix states, emit its edges.
+class _Walk:
+    """The finite-state machine under construction, in the integer form the walk eats.
 
-    ``moves[n]`` collects the non-closing edges ``(state_l, state_r) -> W`` of site ``n``
-    (set-once: terms sharing a prefix share the edge), ``stops[n]`` the closing edges into
-    ``_IDR`` (accumulating — the coefficient rides here, so repeated strings sum), and
-    ``spectators[n]`` the states whose space runs through site ``n`` untouched.
+    A **slot** is one unit of on-site work: a rank-3 charge-leg operator, or one piece of
+    a rank-2k operator's split placed on a fixed tuple of sites. A canonicalized term is
+    then two integer rows -- its slots and its sites, both in site order -- and one
+    coefficient, which is the shape [MPO.from_arrays][tenet.network.MPO.from_arrays]
+    receives from its caller and the shape [MPO.from_terms][tenet.network.MPO.from_terms]
+    canonicalizes its term list into. One walk, two front ends.
+
+    Everything that depends on a *pattern* rather than on a term lives here and is built
+    once: ``ops`` per slot, and ``trans`` per ``(slot, running charge)`` -- the rank-4
+    edge tensor, the charge after it and the state's space. That is what takes the
+    per-operator cost in ``_term_edges`` down to two dict lookups, with the fusion, the
+    ``GradedSpace``, the braiding probe and the dense round trip paid once per pattern
+    instead of once per term (#197: at ab initio scale they measured 3.7
+    ``_braids_with_signs`` and 4.7 ``GradedSpace.new`` calls *per term*).
+
+    The five structures ``_edge_table`` consumes -- ``states``, ``order``, ``moves``,
+    ``stops``, ``spectators`` -- are attributes, filled in place. Closing edges accumulate
+    as plain coefficients in ``closing`` and become tensors in ``close``, once per
+    surviving edge rather than once per term.
     """
-    sym, d = phys.provider, phys.dim
-    unit_space = GradedSpace.new(sym, {sym.unit: 1})
+
+    def __init__(self, n_sites: int, phys: GradedSpace, dual: bool) -> None:
+        self.n_sites = n_sites
+        self.phys = phys
+        self.sym = phys.provider
+        self.dual = dual
+        unit = GradedSpace.new(self.sym, {self.sym.unit: 1})
+        self.slots: dict = {}  # the front end's key -> slot
+        self.ops: list = []  # slot -> (operator, its split piece or None)
+        self.charges: dict = {self.sym.unit: 0}  # running charge -> index; the unit is 0
+        self.sectors: list = [self.sym.unit]  # the inverse of ``charges``
+        self.trans: dict = {}  # (slot, charge) -> (W, the charge after it, the state's space)
+        self.states: dict = {_IDL: unit, _IDR: unit}
+        self.order: list = []
+        self.prefixes: dict = {}  # (parent, slot, site) -> state
+        self.high: dict = {}  # state -> the highest site already marked as its spectator
+        self.moves: list[dict] = [{} for _ in range(n_sites)]
+        self.stops: list[dict] = [{} for _ in range(n_sites)]
+        self.spectators: list[set] = [{_IDL, _IDR} for _ in range(n_sites)]
+        self.closing: dict = {}  # (site, state, slot, charge) -> summed coefficient
+        self.shift: Any = 0.0  # the constant terms, summed
+
+    def slot(self, key: Any, op: SymmetricTensor, piece: SymmetricTensor | None = None) -> int:
+        """Intern one unit of on-site work; ``piece`` is the split tensor of a k-site operator."""
+        got = self.slots.get(key)
+        if got is None:
+            got = self.slots[key] = len(self.ops)
+            self.ops.append((op, piece))
+        return got
+
+    def transition(self, slot: int, charge: int, site: int) -> tuple:
+        """The edge one slot writes out of one running charge -- built once, then cached."""
+        op, piece = self.ops[slot]
+        sym, phys, dual = self.sym, self.phys, self.dual
+        c = self.sectors[charge]
+        if piece is not None:
+            # A k-site operator's pieces run at unit charge and carry the split's own
+            # derived bond, so one that begins on a charged string is the same interleaving
+            # a term list is refused for, with the same message.
+            if c != sym.unit:
+                raise ValueError(_INTERLEAVE.format(site))
+            out = (piece, 0, piece.legs[3].space)
+        else:
+            d = phys.dim
+            q = op.legs[2].space.sectors[0][0]
+            nxt = sym.fusion(c, q)[0]
+            lab = sym.dual(nxt) if dual else nxt
+            space = GradedSpace.new(sym, {lab: 1})
+            left = GradedSpace.new(sym, {sym.dual(c) if dual else c: 1})
+            legs = (Leg(left, IN, dual), Leg(phys, OUT), Leg(phys, IN), Leg(space, OUT, dual))
+            block = np.reshape(np.asarray(op.to_dense())[:, :, 0], (1, d, d, 1))
+            # The running charge to the *right* of this site crosses the site's incoming
+            # physical line on its way out -- a braiding the dense ``[:, :, 0]`` round trip
+            # cannot see. The R-coefficient is paid here, per physical sector: ``+1``
+            # everywhere for a bosonic grading, the parity sign for a super one, which is
+            # exactly the Jordan-Wigner string's foothold on the operator's own site (#147
+            # gate 4 -- at ``d=2`` it is invisible because ``a+ Z = a+`` and ``Z a = a``).
+            if _braids_with_signs(space):
+                block = block.copy()
+                for a, _, o, e in _slabs(phys):
+                    tree = FusionTree((lab, a), (), (0,), sym.fusion(lab, a)[0])
+                    # permute_tree is the opt-in PermutationCoefficients capability;
+                    # every provider that reaches this braiding question implements it
+                    braid = sym.permute_tree(tree, (1, 0))  # ty: ignore[unresolved-attribute]
+                    block[:, :, o : o + e, :] *= braid[0][1].real
+            if nxt not in self.charges:
+                self.charges[nxt] = len(self.sectors)
+                self.sectors.append(nxt)
+            out = (SymmetricTensor.from_dense(block, legs), self.charges[nxt], space)
+        self.trans[(slot, charge)] = out
+        return out
+
+    def close(self) -> None:
+        """Turn the accumulated closing coefficients into edges: one multiply per edge.
+
+        The coefficient is the only thing that differs between two terms closing the same
+        string, so summing the coefficients and multiplying once is the same edge as
+        multiplying per term and adding the tensors -- at one ``multiply`` and no
+        ``SymmetricTensor.__add__`` per surviving edge, where the term-at-a-time form paid
+        both per term.
+        """
+        stops, last = self.stops, self.n_sites - 1
+        if self.shift:  # a constant shift: the identity at the last site, closed from IdL
+            idw = _identity_w(Leg(self.states[_IDL], IN, self.dual), self.phys)
+            w = tenet.multiply(idw, self.shift)
+            stops[last][_IDL] = stops[last][_IDL] + w if _IDL in stops[last] else w
+        for (site, state, slot, charge), coeff in self.closing.items():
+            w = tenet.multiply(self.trans[(slot, charge)][0], coeff)
+            stops[site][state] = stops[site][state] + w if state in stops[site] else w
+        self.closing.clear()
+
+
+def _term_edges(walk: _Walk, slots: Sequence, sites: Sequence, coeffs: Sequence) -> None:
+    """Walk canonicalized terms left to right: intern their states, emit their edges.
+
+    ``slots[t]`` and ``sites[t]`` are one term's operator slots and their site indices,
+    the same length and both in site order; ``coeffs[t]`` is its coefficient, with the
+    Koszul sign of the sort into site order already paid by whichever front end
+    canonicalized it. An empty row is a constant shift.
+
+    ``walk.moves[n]`` collects the non-closing edges ``(state_l, state_r) -> W`` of site
+    ``n`` (set-once: terms sharing a prefix share the edge, so it is written exactly where
+    the prefix is *new*), ``walk.closing`` the closing coefficients, and
+    ``walk.spectators[n]`` the states whose space runs through site ``n`` untouched.
+
+    Nothing in the loop builds anything: the prefix is interned rather than rebuilt, the
+    edge comes off ``walk.trans`` keyed by ``(slot, running charge)`` rather than being
+    constructed, the closing edge accumulates a coefficient rather than a tensor, and a
+    state's spectator span is marked at most once, by a high-water mark, rather than
+    re-walked by every term that passes through it.
+    """
+    trans, prefixes, states, order = walk.trans, walk.prefixes, walk.states, walk.order
+    moves, spectators, high, closing = walk.moves, walk.spectators, walk.high, walk.closing
+    transition = walk.transition
+    for row, where, coeff in zip(slots, sites, coeffs, strict=True):
+        if not row:
+            walk.shift = walk.shift + coeff
+            continue
+        state, charge, last = _IDL, 0, len(row) - 1
+        for i, slot in enumerate(row):
+            site = where[i]
+            if state != _IDL:
+                mark = high[state]
+                if mark < site - 1:
+                    for m in range(mark + 1, site):
+                        spectators[m].add(state)
+                    high[state] = site - 1
+            key = (slot, charge)
+            edge = trans.get(key)
+            if edge is None:
+                edge = transition(slot, charge, site)
+            w, charge, space = edge
+            if i == last:
+                if charge:
+                    raise ValueError(
+                        f"a term's operator charges must sum to the unit sector, got {space}; "
+                        "both MPO boundaries are the trivial D=1 leg, so a charged term has "
+                        "nowhere to end"
+                    )
+                shut = (site, state, slot, key[1])
+                closing[shut] = closing[shut] + coeff if shut in closing else coeff
+            else:
+                pkey = (state, slot, site)
+                nxt = prefixes.get(pkey)
+                if nxt is None:
+                    nxt = prefixes[pkey] = len(order) + 2
+                    states[nxt] = space
+                    high[nxt] = site
+                    order.append(nxt)
+                    moves[site][(state, nxt)] = w
+                state = nxt
+
+
+def _canonical_term(walk: _Walk, n_sites: int, coeff: Any, ops: list, split: Any) -> tuple:
+    """One ``(coeff, [(op, sites), ...])`` term as the ``(slots, sites, coefficient)`` triple.
+
+    ``from_terms``' half of the canonicalization ``_canonical_blocks`` does over whole
+    arrays for ``from_arrays``: every validation a term list can fail, the sort into site
+    order, and the Koszul sign that sort costs. What comes back is the integer rows
+    ``_term_edges`` eats from either front end.
+    """
     # A term is the *ordered product* of its operators. Placement walks the sites left
     # to right, so putting the list into site order first costs one Koszul sign per
     # swap of two sign-braiding operators -- `c+_1 c_0` written as
@@ -1150,70 +1331,182 @@ def _term_edges(
                 raise ValueError(
                     f"two operators of one term sit on site {site}; multiply them first"
                 )
-            elem = (id(op), site) if op.ndim == 3 else (id(op), sites, j)
-            placed[site] = (op, w, elem, j, len(span))
-    walk = sorted(placed)
-    if not walk:  # a constant shift: coeff times the identity, closed at the last site
-        w = tenet.multiply(_identity_w(Leg(unit_space, IN, dual), phys), coeff)
-        stops[n_sites - 1][_IDL] = stops[n_sites - 1][_IDL] + w if _IDL in stops[n_sites - 1] else w
-        return
-    prefix, c, open_k, prev = _IDL, sym.unit, None, -1
-    for s in walk:
-        op, w, elem, j, k = placed[s]
-        for m in range(prev + 1, s):
-            spectators[m].add(prefix)
+            placed[site] = (op, w, sites, j, len(span))
+    where = sorted(placed)
+    row, open_k = [], None
+    for site in where:
+        op, w, sites, j, k = placed[site]
         is3 = op.ndim == 3
         if open_k is not None and (is3 or (id(op), j) != open_k):
-            raise ValueError(_INTERLEAVE.format(s))
-        if not is3 and open_k is None and (j != 0 or c != sym.unit):
-            raise ValueError(_INTERLEAVE.format(s))
-        if is3:
-            q = op.legs[2].space.sectors[0][0]
-            c_next = sym.fusion(c, q)[0]
-            lab = sym.dual(c_next) if dual else c_next
-            space = GradedSpace.new(sym, {lab: 1})
-            key = (id(op), c)
-            if key not in rank3:
-                left = GradedSpace.new(sym, {sym.dual(c) if dual else c: 1})
-                legs = (Leg(left, IN, dual), Leg(phys, OUT), Leg(phys, IN), Leg(space, OUT, dual))
-                block = np.reshape(np.asarray(op.to_dense())[:, :, 0], (1, d, d, 1))
-                # The running charge to the *right* of this site crosses the site's
-                # incoming physical line on its way out -- a braiding the dense
-                # ``[:, :, 0]`` round trip cannot see. The R-coefficient is paid here,
-                # per physical sector: ``+1`` everywhere for a bosonic grading, the
-                # parity sign for a super one, which is exactly the Jordan-Wigner
-                # string's foothold on the operator's own site (#147 gate 4 -- at
-                # ``d=2`` it is invisible because ``a+ Z = a+`` and ``Z a = a``).
-                if _braids_with_signs(space):
-                    block = block.copy()
-                    for a, _, o, e in _slabs(phys):
-                        tree = FusionTree((lab, a), (), (0,), sym.fusion(lab, a)[0])
-                        block[:, :, o : o + e, :] *= sym.permute_tree(tree, (1, 0))[0][1].real
-                rank3[key] = SymmetricTensor.from_dense(block, legs)
-            wt = rank3[key]
-            open_next = None
+            raise ValueError(_INTERLEAVE.format(site))
+        if not is3 and open_k is None and j:
+            raise ValueError(_INTERLEAVE.format(site))
+        # The slot key is what state identity is made of: a rank-3 operator's states are
+        # told apart by the site the prefix key already carries, while a k-site operator's
+        # pieces belong to the tuple of sites they were placed on.
+        row.append(walk.slot(id(op) if is3 else (id(op), sites, j), op, None if is3 else w))
+        open_k = None if is3 or j + 1 == k else (id(op), j + 1)
+    return row, where, coeff
+
+
+def _expr_names(expr: str) -> list[str]:
+    """One block's operator pattern as a list of names, block2's own spelling rule.
+
+    Whitespace separates names; a pattern with no whitespace in it is one name per
+    character. That is what makes ``"cdcd"`` and ``"cd c"`` both legal, and it is the
+    line ``general_hamiltonian.hpp``:323-330 draws for the same reason: single
+    characters concatenate, a long name needs a separator.
+    """
+    return expr.split() if any(ch.isspace() for ch in expr) else list(expr)
+
+
+def _canonical_blocks(
+    n_sites: int,
+    ops: Mapping[str, SymmetricTensor],
+    blocks: Iterable[tuple[str, Any, Any]],
+    screen: float,
+) -> tuple[GradedSpace, list[SymmetricTensor], list[tuple[Any, Any, Any]]]:
+    """The three arrays as merged terms in site order, one numpy pass per block.
+
+    Returns the physical space, the operator table (the caller's operators followed by
+    whatever on-site products the coincidences needed), and one
+    ``(labels, sites, coefficients)`` triple per surviving term *width*: ``labels`` and
+    ``sites`` are ``(T, L)`` integer arrays and ``coefficients`` is length ``T``.
+
+    Three things happen here and each is whole-array work, so none of it costs a Python
+    object per term. Rows are sorted into site order by a stable ``argsort``, paying the
+    Koszul sign of every inversion of two sign-braiding operators -- the strict ``>``
+    rule ``_term_edges`` uses, so a repeated index never contributes a sign. Coincident
+    sites are then pre-multiplied into one on-site operator, cached per run of names, and
+    a run whose product vanishes drops its terms. Finally ``np.unique`` over
+    ``(labels, sites)`` with ``np.add.at`` over the coefficients fuses terms that agree,
+    and ``screen`` is applied to what the sum leaves -- after the merge, which is the
+    only position that can see a cancellation.
+    """
+    table = list(ops.values())
+    label = {name: i for i, name in enumerate(ops)}
+    phys = None
+    for name, op in ops.items():
+        if op.ndim != 3:
+            raise ValueError(
+                f"from_arrays: operator {name!r} is rank {op.ndim}; a block names one site per "
+                f"operator, so every entry of ops is local_op's rank-3 charge-leg form. An "
+                f"invariant k-site term spans k sites and goes to from_terms instead"
+            )
+        phys = _check_op(op, phys)
+    if phys is None:
+        raise ValueError("from_arrays: ops is empty; the physical space is read off an operator")
+    sym = phys.provider
+    charges = [op.legs[2].space.sectors[0][0] for op in table]
+    odd = [_braids_with_signs(op.legs[2].space) for op in table]
+    matrices = [np.asarray(op.to_dense())[:, :, 0] for op in table]
+    products: dict[tuple[int, ...], int] = {}
+
+    def product(combo: tuple[int, ...]) -> int:
+        """The on-site product of one run of coincident operators; ``-1`` if it vanishes."""
+        if combo not in products:
+            m, q = matrices[combo[0]], charges[combo[0]]
+            for c in combo[1:]:
+                m, q = m @ matrices[c], sym.fusion(q, charges[c])[0]
+            # ``local_op`` rebuilds through ``from_dense`` at its default relative atol, so a
+            # product whose charge is not the fused one *raises* rather than being projected.
+            products[combo] = -1
+            if np.any(m):
+                table.append(local_op(m, phys=phys, charge=q))
+                products[combo] = len(table) - 1
+        return products[combo]
+
+    groups: dict[int, list] = {}
+    for expr, indices, data in blocks:
+        names = _expr_names(expr)
+        if not names:
+            raise ValueError(f"from_arrays: block {expr!r} names no operator")
+        unknown = sorted({nm for nm in names if nm not in label})
+        if unknown:
+            raise ValueError(
+                f"from_arrays: block {expr!r} names {unknown}, which ops does not define; "
+                f"the table has {sorted(label)}"
+            )
+        width = len(names)
+        coeffs = np.asarray(data)
+        idx = np.asarray(indices)
+        if coeffs.ndim != 1:
+            raise ValueError(
+                f"from_arrays: block {expr!r} has a rank-{coeffs.ndim} data array; one "
+                f"coefficient per term means a 1-D array"
+            )
+        if idx.size != width * coeffs.size:
+            raise ValueError(
+                f"from_arrays: block {expr!r} has {width} operator(s) and {coeffs.size} "
+                f"coefficient(s), so indices holds {width * coeffs.size} site index(es), got "
+                f"{idx.size}"
+            )
+        if not coeffs.size:
+            continue
+        idx = np.ascontiguousarray(idx).astype(np.intp, copy=False).reshape(coeffs.size, width)
+        if idx.min() < 0 or idx.max() >= n_sites:
+            raise ValueError(
+                f"from_arrays: block {expr!r} has site indices [{idx.min()}, {idx.max()}], "
+                f"outside range({n_sites})"
+            )
+        cols = np.array([label[nm] for nm in names], dtype=np.intp)
+        # A term is the ordered product of its operators, so sorting it into site order
+        # costs one Koszul sign per inversion of two sign-braiding operators -- strictly
+        # ``>``, exactly ``_term_edges``' rule, so coincident sites cost nothing.
+        inversions = np.zeros(coeffs.size, dtype=np.intp)
+        for x in range(width):
+            for y in range(x + 1, width):
+                if odd[cols[x]] and odd[cols[y]]:
+                    inversions += idx[:, x] > idx[:, y]
+        coeffs = coeffs * (-1.0) ** inversions
+        perm = np.argsort(idx, axis=1, kind="stable")
+        sites = np.take_along_axis(idx, perm, axis=1)
+        labels = cols[perm]
+        # Rows are bucketed by *which* of their sites coincide -- at most 2**(L-1) buckets
+        # -- because that is what fixes the merged width, and a bucket is again rectangular.
+        if width == 1:
+            signature = np.zeros(coeffs.size, dtype=np.intp)
         else:
-            wt, space = w, w.legs[3].space
-            c_next = sym.unit
-            open_next = (id(op), j + 1) if j + 1 < k else None
-        if s == walk[-1]:
-            if is3 and c_next != sym.unit:
-                raise ValueError(
-                    f"a term's operator charges must sum to the unit sector, got {space}; "
-                    "both MPO boundaries are the trivial D=1 leg, so a charged term has "
-                    "nowhere to end"
-                )
-            wt = tenet.multiply(wt, coeff)
-            stops[s][prefix] = stops[s][prefix] + wt if prefix in stops[s] else wt
-        else:
-            new_prefix = (*prefix, elem)
-            if new_prefix not in states:
-                states[new_prefix] = space
-                order.append(new_prefix)
-            moves[s].setdefault((prefix, new_prefix), wt)
-            prefix, c = new_prefix, c_next
-        open_k = open_next
-        prev = s
+            same = (sites[:, 1:] == sites[:, :-1]).astype(np.intp)
+            signature = same @ (1 << np.arange(width - 1))
+        for sig in np.unique(signature):
+            runs: list[list[int]] = []
+            for j in range(width):
+                if j and (int(sig) >> (j - 1)) & 1:
+                    runs[-1].append(j)
+                else:
+                    runs.append([j])
+            rows = signature == sig
+            row_labels, row_sites, row_coeffs = labels[rows], sites[rows], coeffs[rows]
+            merged = np.empty((row_coeffs.size, len(runs)), dtype=np.intp)
+            keep = np.ones(row_coeffs.size, dtype=bool)
+            for c, run in enumerate(runs):
+                if len(run) == 1:
+                    merged[:, c] = row_labels[:, run[0]]
+                    continue
+                combos, back = np.unique(row_labels[:, run], axis=0, return_inverse=True)
+                mapped = np.array([product(tuple(int(x) for x in combo)) for combo in combos])
+                merged[:, c] = mapped[back.reshape(-1)]
+                keep &= merged[:, c] >= 0
+            starts = [run[0] for run in runs]
+            groups.setdefault(len(runs), []).append(
+                (merged[keep], row_sites[keep][:, starts], row_coeffs[keep])
+            )
+
+    out = []
+    for width, parts in sorted(groups.items()):
+        labels = np.concatenate([p[0] for p in parts])
+        sites = np.concatenate([p[1] for p in parts])
+        coeffs = np.concatenate([p[2] for p in parts])
+        if not coeffs.size:
+            continue
+        uniq, back = np.unique(np.concatenate([labels, sites], axis=1), axis=0, return_inverse=True)
+        summed = np.zeros(len(uniq), dtype=coeffs.dtype)
+        np.add.at(summed, back.reshape(-1), coeffs)
+        keep = np.abs(summed) > screen
+        if keep.any():
+            out.append((uniq[keep, :width], uniq[keep, width:], summed[keep]))
+    return phys, table, out
 
 
 class _EdgeTable(NamedTuple):
@@ -1537,6 +1830,23 @@ def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *
     return out, None
 
 
+def _compress_forward(sites: list[SymmetricTensor], cutoff: float) -> list[SymmetricTensor]:
+    """The left-to-right half of the compressing sweep, in place over ``sites``.
+
+    ``_instantiate`` ran the right-to-left half while it placed the sites; this is the
+    return leg, and it is the same eight lines for every builder that takes a float
+    ``cutoff``, so it lives here rather than once per builder.
+    """
+    for n in range(len(sites) - 1):
+        u, s, vh = tenet.linalg.svd_truncated(sites[n], ((0, 1, 2), (3,)), cutoff=cutoff)
+        sites[n] = _as_w(u)
+        carry = tenet.einsum("xy,yz->xz", s, vh)
+        # ``vh``'s ``wr`` leg came back bent; spell the bend, as in ``_instantiate``'s sweep.
+        carry = tenet.repartition(carry, (0, 1), ())
+        sites[n + 1] = _as_w(tenet.einsum("ypqr,xy->xpqr", sites[n + 1], carry))
+    return sites
+
+
 class MPO:
     """A finite MPO: one rank-4 ``SymmetricTensor`` per site, ``(wl IN, p OUT, p IN, wr OUT)``.
 
@@ -1815,7 +2125,6 @@ class MPO:
             strings.append((coeff, ops))
         if phys is None:
             raise ValueError("from_terms: no terms; the physical space is read off an operator")
-        sym = phys.provider
         # One dual convention per MPO, set by whether any k-site split runs in it: the
         # split's derived bonds come back dual, and a bond hosts both kinds of state.
         # On a sign-braiding grading ``_split`` hands its bonds back non-dual (the dual
@@ -1832,28 +2141,20 @@ class MPO:
                 splits[id(op)] = _split(op, split_cutoff)
             return splits[id(op)]
 
-        states: dict = {_IDL: GradedSpace.new(sym, {sym.unit: 1})}
-        states[_IDR] = states[_IDL]
-        order: list = []
-        rank3: dict = {}
-        moves: list[dict] = [{} for _ in range(n_sites)]
-        stops: list[dict] = [{} for _ in range(n_sites)]
-        spectators: list[set] = [{_IDL, _IDR} for _ in range(n_sites)]
+        # The term list is canonicalized into the same integer rows ``from_arrays``
+        # hands over -- slots and sites in site order, the Koszul sign already on the
+        # coefficient -- so both builders run the one walk (#197).
+        walk = _Walk(n_sites, phys, dual)
+        rows, sites, coeffs = [], [], []
         for coeff, ops in strings:
-            _term_edges(
-                n_sites,
-                coeff,
-                ops,
-                phys,
-                dual,
-                split,
-                rank3,
-                states,
-                order,
-                moves,
-                stops,
-                spectators,
-            )
+            row, where, c = _canonical_term(walk, n_sites, coeff, ops, split)
+            rows.append(row)
+            sites.append(where)
+            coeffs.append(c)
+        _term_edges(walk, rows, sites, coeffs)
+        walk.close()
+        states, order = walk.states, walk.order
+        moves, stops, spectators = walk.moves, walk.stops, walk.spectators
         # ``_instantiate`` streams whenever it is given a float cutoff: it places one site
         # at a time in the backward sweep's order and truncates as it goes, so what comes
         # back is already at the operator Schmidt rank and the full-width MPO never exists.
@@ -1862,14 +2163,151 @@ class MPO:
         )
         if cutoff is None:
             return cls(sites, tables)
-        for n in range(n_sites - 1):
-            u, s, vh = tenet.linalg.svd_truncated(sites[n], ((0, 1, 2), (3,)), cutoff=cutoff)
-            sites[n] = _as_w(u)
-            carry = tenet.einsum("xy,yz->xz", s, vh)
-            # ``vh``'s ``wr`` leg came back bent; spell the bend, as in the sweep above.
-            carry = tenet.repartition(carry, (0, 1), ())
-            sites[n + 1] = _as_w(tenet.einsum("ypqr,xy->xpqr", sites[n + 1], carry))
-        return cls(sites)
+        return cls(_compress_forward(sites, cutoff))
+
+    @classmethod
+    def from_arrays(
+        cls,
+        n_sites: int,
+        ops: Mapping[str, SymmetricTensor],
+        blocks: Iterable[tuple[str, Any, Any]],
+        *,
+        cutoff: float | None = 1e-13,
+        screen: float = 1e-12,
+    ) -> "MPO":
+        """Blocks of terms as arrays -- ``(expr, indices, data)`` -- as a graded MPO.
+
+        Parameters
+        ----------
+        n_sites : int
+            Chain length.
+        ops : Mapping of str to SymmetricTensor
+            The caller's operator table: a name to the rank-3 charge-leg form
+            of [local_op][tenet.network.local_op]. The names are what an
+            ``expr`` spells; nothing is registered anywhere and operator
+            identity stays object identity.
+        blocks : Iterable
+            One ``(expr, indices, data)`` triple per operator pattern.
+            ``expr`` is a string of names -- whitespace-separated, or one name
+            per character when it holds no whitespace. ``indices`` is an
+            integer array of shape ``(T, L)`` with ``L == len(expr)`` naming
+            the site of each operator (a 1-D array of ``T * L`` entries is
+            reshaped). ``data`` is the length-``T`` array of coefficients, and
+            its dtype decides the MPO's.
+        cutoff : float or None, optional
+            The compressing SVD sweeps' cutoff, with
+            [from_terms][tenet.network.MPO.from_terms]'s three-way meaning
+            unchanged. Default ``1e-13``. Keyword-only.
+        screen : float, optional
+            Coefficient magnitude threshold, applied **after** the merge:
+            a merged term survives when ``abs(coeff) > screen``. Default
+            ``1e-12``. Keyword-only.
+
+        Returns
+        -------
+        MPO
+            The assembled operator; with ``cutoff=None`` it carries the
+            per-site [edge_blocks][tenet.network.MPO.edge_blocks] table.
+
+        Raises
+        ------
+        ValueError
+            If an entry of ``ops`` is not rank 3, or the operators disagree
+            about the physical space, or a charge leg is non-Abelian (the
+            checks [from_terms][tenet.network.MPO.from_terms] makes); if
+            ``ops`` is empty; if a block's ``expr`` names an operator the
+            table does not define, or names none at all; if ``data`` is not
+            1-D, or ``len(expr) * len(data) != indices.size``; if a site index
+            leaves ``range(n_sites)``; or if no term survives the merge and
+            the screen.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPO, local_op
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> sp = np.array([[0.0, 0.0], [1.0, 0.0]])
+        >>> ops = {
+        ...     "+": local_op(sp, phys=phys, charge=U1Sector(-2)),
+        ...     "-": local_op(sp.T, phys=phys, charge=U1Sector(2)),
+        ... }
+        >>> bonds = np.array([[0, 1], [1, 2]])  # the 3-site XY chain, two blocks
+        >>> blocks = [("+-", bonds, np.full(2, 0.5)), ("-+", bonds, np.full(2, 0.5))]
+        >>> h = MPO.from_arrays(3, ops, blocks)
+        >>> len(h), h.to_dense().shape
+        (3, (8, 8))
+
+        Notes
+        -----
+        The same operator [from_terms][tenet.network.MPO.from_terms] builds, from the
+        input shape block2 uses (``integral_general.hpp``:45-57): three parallel arrays
+        per operator pattern, transposed into a triple because Python has no reason to
+        keep them apart. It exists for the input where the term count is the wall -- an
+        ab initio Hamiltonian is ``O(K^4)`` terms over a handful of patterns -- and the
+        difference is that the pattern's work is done once per *block* in numpy instead
+        of once per term in Python. ``from_terms``' list is the right shape for a lattice
+        model and is unchanged; neither is deprecated or aliased to the other.
+
+        **Every operator is rank 3.** A block gives one site index per name, so
+        ``local_op``'s invariant *k*-site form -- which spans *k* sites through an SVD --
+        has nowhere to put its extra indices and is refused with a message pointing at
+        ``from_terms``. The MPO bond spaces are still derived and never declared, and the
+        assembler is the same finite-state machine walk; only the way terms arrive is new.
+
+        Three things happen before the walk, and all three are whole-array work:
+
+        * each row is sorted into site order by a stable ``argsort``, paying the Koszul
+          sign of every inversion of two sign-braiding operators -- the same strict-``>``
+          rule ``from_terms`` applies to a term's operator list, so the two spellings of
+          one fermionic term agree by construction;
+        * operators that coincide on a site are **pre-multiplied** into one on-site
+          operator, cached per run of names, and a term whose on-site product vanishes
+          (``c c`` on one site, say) is dropped. This is the burden ``from_terms`` refuses
+          with "two operators of one term sit on site N; multiply them first";
+        * terms agreeing on ``(operator labels, sites)`` are fused, their coefficients
+          summed. Permutational symmetry is therefore **expanded** by the caller and
+          merged here, which is block2's own order and the only correct one: the eight
+          images of ``(ij|kl)`` are eight different operator strings, so folding the
+          orbit into one coefficient builds a different operator.
+
+        ``screen`` runs on what the merge leaves, which is the only position that can see
+        a cancellation, and it is one knob where block2 has four. At its default it
+        removes the symmetry-forbidden ``~1e-15`` entries a real integral file carries and
+        nothing else; it is an accuracy/size trade the caller can take deliberately at
+        ``1e-4`` and above, not a performance lever.
+        """
+        phys, table, merged = _canonical_blocks(n_sites, ops, blocks, screen)
+        # No k-site split runs here, so the MPO stays on the non-dual convention.
+        walk = _Walk(n_sites, phys, False)
+        slots = np.array([walk.slot(id(op), op) for op in table], dtype=np.intp)
+        seen = 0
+        for labels, sites, coeffs in merged:
+            # ``tolist`` once per group: the walk reads Python ints out of lists rather
+            # than boxing a numpy scalar per operator.
+            _term_edges(walk, slots[labels].tolist(), sites.tolist(), coeffs.tolist())
+            seen += len(coeffs)
+        if not seen:
+            raise ValueError(
+                "from_arrays: no term survived the merge and screen "
+                f"(screen={screen}); an MPO is read off its terms and there are none"
+            )
+        walk.close()
+        sites_out, tables = _instantiate(
+            n_sites,
+            phys,
+            False,
+            walk.states,
+            walk.order,
+            walk.moves,
+            walk.stops,
+            walk.spectators,
+            cutoff=cutoff,
+        )
+        if cutoff is None:
+            return cls(sites_out, tables)
+        return cls(_compress_forward(sites_out, cutoff))
 
     def to_dense(self) -> Any:
         """The full ``d**N x d**N`` operator, ``D=1`` boundaries dropped.
