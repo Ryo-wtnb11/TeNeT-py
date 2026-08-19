@@ -3141,6 +3141,39 @@ The split:
   form is one import away from `tenet.linalg` — three meanings for one word, which no
   docstring separates at a call site.
 
+- **M35** — shipped: `MPO.from_arrays`, a second *input layer* onto the same assembler.
+  The measurement that opens it is the one above, taken again after the term list became
+  the dominant cost: at ab initio scale the wall is the per-term Python work in front of
+  `_term_edges`, and the answer is the input shape rather than the assembler. block2
+  stores a Hamiltonian as three parallel arrays per operator pattern
+  (`integral_general.hpp`:45-57) — `exprs`, a flat index buffer of `nn` sites per term,
+  and one coefficient per term — and never builds a term object;
+  `MPO.from_arrays(n_sites, ops, blocks)` takes the same three, transposed into an
+  iterable of `(expr, indices, data)` triples, with `ops` the caller's name-to-operator
+  table so that **no operator vocabulary is introduced**: names mean what the call says
+  they mean, and operator identity stays `id(op)`. Sorting each row into site order,
+  paying the Koszul sign of each inversion of two sign-braiding operators,
+  pre-multiplying coincident sites into one on-site operator, and fusing terms that agree
+  on `(operator labels, sites)` all run over whole arrays, once per pattern rather than
+  once per term; what reaches `_term_edges` and `_instantiate` is the merged term set and
+  nothing about those two changes. Two consequences are the point rather than side
+  effects: the merge discharges the "two operators of one term sit on site N; multiply
+  them first" burden `from_terms` puts on its caller, and it is the only position from
+  which an exact cancellation is visible — a cancelled term never allocates a state, so
+  the FSM bond can come out *narrower* than the term list's, measured at −0.6% on C2
+  cc-pVDZ with the operator agreeing to 7e-15. `screen` (default `1e-12`,
+  `ExprBuilder`'s own) is one coefficient-magnitude knob applied after that merge where
+  block2 has four; at its default it removes the symmetry-forbidden ~1e-15 entries a real
+  integral file carries and nothing else, and it is an accuracy/size trade at `1e-4` and
+  above, not a performance lever. `from_terms` is unchanged and neither builder is
+  deprecated: a lattice model is a list of terms and an ab initio Hamiltonian is
+  `O(K⁴)` terms over a handful of patterns. Refused with it: k-site operators in `ops`
+  (a block gives one site index per name, so the invariant `k`-site form has nowhere to
+  put its extra indices, and the message points at `from_terms`), and permutational
+  symmetry kept implicit as a multiplicity factor — the eight images of `(ij|kl)` are
+  eight different operator strings, so the caller expands and the merge removes the
+  redundancy afterwards, which is block2's own order.
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
