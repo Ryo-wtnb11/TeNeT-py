@@ -1007,7 +1007,7 @@ def _merge(sym, keys, states):
 def _group_embedding(bond, bond_starts, group, group_starts, keys, states, *, left, dual, dual_b):
     """The 0/1 isometry between one *group* of states and its slots of the full bond.
 
-    ``_place``'s slot map as a tensor, for a set of states at once: the ``left`` orientation reads
+    ``_place``'s slot map as a tensor, a whole group at once: the ``left`` orientation reads
     ``(bond IN, group OUT)`` and slices a left environment down to the group; the other
     reads ``(group IN, bond OUT)`` and does the same to a right environment, or embeds a
     group-resolved environment back into the full bond. ``dual_b`` is the bond side's
@@ -1467,19 +1467,46 @@ def _blocks(tab: _EdgeTable, identities: dict) -> list[EdgeBlocks]:
     return out
 
 
-def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *, table=False):
+def _instantiate(n_sites, phys, dual, states, order, moves, stops, spectators, *, cutoff):
     """Prune dead states, derive the bond spaces, and place every edge numerically.
 
     ``_edge_table`` does the symbolic half; ``_site`` scatters each site's live edges into
-    one dense buffer and calls ``from_dense`` once for it. With ``table=True`` the same
-    edges are *also* returned as one [EdgeBlocks][tenet.network.EdgeBlocks] per site — the
-    same pruned graph, in the a/b/c/d partition the two-site matvec consumes — placed by
-    the same primitive against the group slot maps.
+    one dense buffer and calls ``from_dense`` once for it.
+
+    At ``cutoff=None`` every site is placed and the surviving edges come back *also* as one
+    [EdgeBlocks][tenet.network.EdgeBlocks] per site — the same pruned graph, in the a/b/c/d
+    partition the two-site matvec consumes, placed by the same primitive against the group
+    slot maps. That branch does not stream and its peak memory is unchanged, deliberately:
+    the table needs every site.
+
+    Given a float, materialisation runs **inside** the backward compressing sweep, which
+    is the only consumer of a full-width site there. Site ``N-1`` is placed and its left
+    bond truncated; site ``n`` is placed, absorbs the carry on its already-truncated right
+    leg, and is truncated in turn. The forward sweep in ``from_terms`` then runs on
+    tensors that are already at the operator Schmidt rank. Right to left first, exactly as
+    ``MPS.compress_`` canonizes before it truncates: a forward sweep alone measures the
+    rank of the *left* part against the raw FSM bond, which overshoots wherever the
+    redundancy is only visible from the right. The widest object that ever exists is
+    ``D_FSM x d**2 x chi_Schmidt``, so the full-width MPO never exists as a whole.
     """
     tab = _edge_table(n_sites, phys, dual, states, order, moves, stops, spectators)
     identities: dict = {}
-    out = [_site(tab, n, identities) for n in range(n_sites)]
-    return out, (_blocks(tab, identities) if table else None)
+    if cutoff is None:
+        return [_site(tab, n, identities) for n in range(n_sites)], _blocks(tab, identities)
+    out, carry = [], None
+    for n in reversed(range(n_sites)):
+        w = _site(tab, n, identities)
+        if carry is not None:
+            w = _as_w(tenet.einsum("xy,apqx->apqy", carry, w))
+        if n:
+            u, s, vh = tenet.linalg.svd_truncated(w, ((0,), (1, 2, 3)), cutoff=cutoff)
+            w = _as_w(vh)
+            # ``u`` came back on the map partition, its ``wl`` leg bent; spell the bend
+            # with ``repartition`` so the join above is a composition, not an implicit cap.
+            carry = tenet.repartition(tenet.einsum("xy,yz->xz", u, s), (), (0, 1))
+        out.append(w)
+    out.reverse()
+    return out, None
 
 
 class MPO:
@@ -1811,23 +1838,14 @@ class MPO:
                 stops,
                 spectators,
             )
+        # ``_instantiate`` streams whenever it is given a float cutoff: it places one site
+        # at a time in the backward sweep's order and truncates as it goes, so what comes
+        # back is already at the operator Schmidt rank and the full-width MPO never exists.
         sites, tables = _instantiate(
-            n_sites, phys, dual, states, order, moves, stops, spectators, table=cutoff is None
+            n_sites, phys, dual, states, order, moves, stops, spectators, cutoff=cutoff
         )
         if cutoff is None:
             return cls(sites, tables)
-        # Right to left first, exactly as ``MPS.compress_`` canonizes before it truncates:
-        # a forward sweep alone measures the rank of the *left* part against the raw
-        # FSM bond, which overshoots wherever the redundancy is only visible
-        # from the right. After this pass the forward rank is the operator Schmidt rank.
-        for n in range(n_sites - 1, 0, -1):
-            u, s, vh = tenet.linalg.svd_truncated(sites[n], ((0,), (1, 2, 3)), cutoff=cutoff)
-            sites[n] = _as_w(vh)
-            carry = tenet.einsum("xy,yz->xz", u, s)
-            # ``u`` came back on the map partition, its ``wl`` leg bent; spell the bend
-            # with ``repartition`` so the join below is a composition, not an implicit cap.
-            carry = tenet.repartition(carry, (), (0, 1))
-            sites[n - 1] = _as_w(tenet.einsum("xy,apqx->apqy", carry, sites[n - 1]))
         for n in range(n_sites - 1):
             u, s, vh = tenet.linalg.svd_truncated(sites[n], ((0, 1, 2), (3,)), cutoff=cutoff)
             sites[n] = _as_w(u)

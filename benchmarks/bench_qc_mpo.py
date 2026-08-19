@@ -476,7 +476,10 @@ class Phases:
     wrapped in place for the duration. The two compressing sweeps are separated by the
     partition their SVD asks for -- ``((0,), (1, 2, 3))`` is the right-to-left sweep,
     ``((0, 1, 2), (3,))`` the left-to-right one, and ``_split``'s internal SVD asks for
-    neither -- so the boundary between them is the first forward SVD's timestamp.
+    neither -- so each sweep is bracketed by its own first SVD's timestamp. Since #191
+    ``_instantiate`` *contains* the backward sweep at a float cutoff -- it places one
+    site at a time in that sweep's order -- so ``t_instantiate`` is instantiation and
+    sweep 1 together and ``t_sweep1`` is the span inside it, not a phase after it.
 
     ``_braids_with_signs`` is counted and timed because #184 predicted it to be an
     unprofiled hot spot worth a one-line ``functools.cache``. **Measured, it is not, and
@@ -588,9 +591,9 @@ def measure(name, cutoff):
         h = MPO.from_terms(n_sites, terms, cutoff=cutoff)
         t2 = time.perf_counter()
     sweeps = {}
-    if cutoff is not None and ph.t_instantiate_end and ph.t_sweep2_start:
+    if cutoff is not None and ph.t_sweep1_start and ph.t_sweep2_start:
         sweeps = {
-            "t_sweep1": ph.t_sweep2_start - ph.t_instantiate_end,
+            "t_sweep1": ph.t_sweep2_start - ph.t_sweep1_start,
             "t_sweep2": t2 - ph.t_sweep2_start,
         }
     note(
