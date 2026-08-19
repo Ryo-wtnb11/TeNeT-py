@@ -77,7 +77,7 @@ compile floor here.
 
 **Operand order is part of the arithmetic, not a style choice.** Every ``tenet.einsum``
 below is a *composition*: **operand 1 supplies the ``IN`` end of every shared wire**
-(M23's rule, ``tenet/network/__init__.py``). Meeting ``IN`` against ``OUT`` is not enough
+(M23's rule, ``docs/design.md`` "Milestone 11"). Meeting ``IN`` against ``OUT`` is not enough
 -- that condition is symmetric, while the cap direction, and hence the Koszul sign a
 fermionic provider pays, depends on which operand supplies which end. The wires that
 genuinely turn around -- the MPS bond arrow and the MPO bond arrow cross the two-site cell

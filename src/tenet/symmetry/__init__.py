@@ -1,4 +1,17 @@
-"""Symmetry providers and sector labels."""
+"""Symmetry providers and sector labels.
+
+A *provider* answers every categorical question about one symmetry — fusion rules,
+quantum dimensions, duality, F/R symbols, braiding — and a *sector* labels one irrep.
+[Trivial][tenet.symmetry.Trivial], [Z2][tenet.symmetry.Z2], [fZ2][tenet.symmetry.fZ2],
+[U1][tenet.symmetry.U1] and [SU2][tenet.symmetry.SU2] are the shipped instances, each
+beside its class and its ``*Sector`` type, and
+[ProductProvider][tenet.symmetry.ProductProvider] composes two into one.
+
+The capability protocol is the rest of the page: [supports][tenet.symmetry.supports] and
+[requires][tenet.symmetry.requires] ask and demand, the ``*Data`` protocols name what a
+provider may implement, and [CapabilityError][tenet.symmetry.CapabilityError] is the
+refusal raised when one is missing.
+"""
 
 from tenet.symmetry.base import (
     AssociatorData,

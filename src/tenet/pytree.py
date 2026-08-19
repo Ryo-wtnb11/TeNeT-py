@@ -3,14 +3,11 @@
 The contract: the leaves of a [SymmetricTensor][tenet.SymmetricTensor] are its ``blocks``, in
 ``structure.block_order``; the aux data (the treedef) is its ``structure``, which is
 frozen, hashable and array-free (invariant 8) and therefore a sound JIT cache key.
-``_unflatten`` deliberately does **not** validate — JAX routinely calls it with
-``object()`` sentinels, with ``SymmetricTensor`` instances, with batched tracers and
-with whatever a user's ``jax.tree.map`` returned, so JAX may temporarily hold a
-``SymmetricTensor`` with invalid leaves mid-transform. The public constructor remains
-the trust boundary and is untouched: ``SymmetricTensor(T.structure, T.blocks)``
-re-runs the full check in one expression. See
-https://docs.jax.dev/en/latest/custom_pytrees.html ("Custom pytrees and
-initialization with unexpected values").
+
+``_unflatten`` deliberately does **not** validate, because JAX calls it with sentinels,
+tracers and whatever a ``jax.tree.map`` returned
+(https://docs.jax.dev/en/latest/custom_pytrees.html). The public constructor remains the
+trust boundary: ``SymmetricTensor(T.structure, T.blocks)`` re-runs the full check.
 
 Batching recipe::
 
@@ -18,9 +15,9 @@ Batching recipe::
     jax.vmap(lambda T: tenet.norm(T) ** 2)(batched)
 
 ``batched`` is a transport container, not a tensor: its block shapes do not match its
-structure and nothing in ``tenet.*`` should be called on it. Inside the vmapped
-function the leaves are ``BatchTracer``s whose ``.shape`` is the *unbatched* shape, so
-ops and their validation behave normally.
+structure and nothing in ``tenet.*`` should be called on it. Inside the vmapped function
+the leaves are ``BatchTracer``s whose ``.shape`` is the *unbatched* shape, so ops and
+their validation behave normally.
 
 Complex-dtype gradients are unverified: ``norm`` goes through ``abs``, whose JAX
 derivative needs care for complex input. Tests here are real ``float64``.
