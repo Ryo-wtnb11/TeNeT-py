@@ -3276,6 +3276,92 @@ The split:
   condition is unchanged: `from_w`'s numeric path and `MPO.to_dense` still need real site
   tensors, so `EdgeTable.site` is not going away and neither is the dense `heff2`.
 
+- **M38** — shipped: the sweep's per-bond caches are held to **one byte budget**, and the
+  measurement that chose it also says how much of the wall M37 left is a cache at all
+  (#202, the direct follow-up to #200). M37's honest other half was 18.9 GiB to force
+  every site's block table; the caches that hold those bytes — `EdgeTable._table` and
+  `EdgeTable._embeds`, `Env._cores`, `Env._prepared` and `Env._compiled` — were each
+  correct in isolation and each unbounded, and a DMRG sweep visits every bond, so after
+  one half sweep the whole prepared operator is resident again. The policy is
+  `network/common.CACHE_BUDGET` and the `Recent` dict that reads it: least-recently-*used*
+  eviction past the budget, never below two entries (a two-site bond asks for site `n` and
+  site `n + 1` in one breath), and every one of the five caches is a bare `Recent()`. One
+  number, one place, no flag threaded through `Env` and `EdgeTable` separately.
+
+  **Where the bytes are**, measured over a full run at K=16 (N2 CAS 6-31G, 32 spin-orbital
+  sites, `chi=16`, three sweeps, `cutoff=None` operator, unbounded caches, 20.75 GiB peak
+  RSS), `benchmarks/bench_qc_mpo.py --dmrg`. "Charged once" walks the caches in data-flow
+  order and charges each array buffer to the first cache that reaches it, so the column
+  sums to what is resident; "own" re-walks each cache alone.
+
+  | cache | charged once | own |
+  |---|---|---|
+  | `EdgeTable._table` (block tables) | **13.69 GiB** | 13.69 GiB |
+  | `EdgeTable._embeds` (group embeddings) | 0.00 GiB | 2.97 GiB |
+  | `Env._cores` | **5.19 GiB** | 15.86 GiB |
+  | `Env._prepared` | 0.31 GiB | 11.81 GiB |
+  | `Env.F` (environments) | 0.06 GiB | 0.06 GiB |
+  | `MPO._sites` | 0.00 GiB | 0.00 GiB |
+  | total | 19.19 GiB | — |
+
+  That table answers #202's own question about whether the two caches want the same
+  policy, and the answer is that they cannot have different ones: `Env._cores` *owns*
+  15.86 GiB but is charged 5.19, because 10.7 GiB of it is `EdgeBlocks` tensors held by
+  reference — `ra1`, `ra2`, `open_l`, `open_r`. Evicting the block tables while keeping
+  the cores frees almost nothing, and the same holds one level further down for the group
+  embeddings, whose 2.97 GiB is entirely inside the block tables that hold them.
+
+  **The trade, over a full run and not a sweep**, same input and same three sweeps; `held`
+  is what remains cached at the end, `built` counts every block table and every merged
+  core the run had to make. The ground-state energy is `-27.234808138` on every row.
+
+  | budget | peak RSS | held | wall | tables built | cores built |
+  |---|---|---|---|---|---|
+  | unbounded | 20.75 GiB | 19.19 GiB | 128.4 s | 32 | 31 |
+  | 4 GiB | 17.65 GiB | 7.34 GiB | 232.3 s | 146 | 132 |
+  | 1 GiB (shipped) | **15.24 GiB** | 1.84 GiB | 317.0 s | 215 | 147 |
+
+  **A fixed count of entries was measured first and rejected, and the number that rejected
+  it is a small model, not a large one.** At bounds of 2, 4 and 8 entries the same run
+  peaks at 15.08, 17.75 and 20.25 GiB in 346.9, 271.6 and 258.3 s — the same curve. But a
+  count evicts on a two-megabyte MPO exactly as eagerly as on a twenty-gibibyte one, and
+  measured over `dmrg_` runs on the U(1) Heisenberg-plus-NNN and spinless-fermion chains
+  at `n=12, chi=16` and `n=20, chi=32`, a bound of four entries costs **+22 % to +26 %**
+  wall time for no memory saved at all. A byte budget is never reached by those models, so
+  they evict nothing and pay nothing: the same runs under the shipped budget are **−0.2 %
+  to +0.5 %** (median of nine), inside the ±5 % threshold this milestone holds itself to
+  and inside the run-to-run noise. That is #202's "the common case must not get slower to
+  fix the rare one", met by construction rather than by tuning. A sweep-direction-aware
+  window was not built: the build counts above say a sliding sweep already rebuilds one
+  table per bond at any budget that evicts at all, and no window changes that count — it
+  can only change which bond pays.
+
+  **What the budget cannot buy, measured rather than assumed.** Walking all 32 sites'
+  block tables while holding only two of them still peaks at **11.2 GiB**, because the
+  widest single site's table is 1.33 GiB and `_place`'s dense buffers to build it cost
+  several more. So the floor at K=16 is set by *one bond's working set*, not by how many
+  bonds are cached, and no cache policy reaches below it. The budget moves the peak from
+  20.75 to 15.24 GiB and the rest is bond width — #184's stage 2, unchanged and still the
+  mechanism that changes the order rather than the constant.
+
+  **K=26 does not complete, and the reason is that floor rather than the cache.** At C2
+  CAS cc-pVDZ (52 sites, FSM bond peaking at 31 441) a full run at a 1 GiB budget stays
+  resident at 19–24 GiB and does not finish `Env.setup_`. Walking the same operator's
+  block tables one at a time with only two held says why in one number: site 26's block
+  table **alone is 7.90 GiB** — 3.51 GiB of that its two cuts' group embeddings — at a
+  bond of 12 124, and the chain's widest bond is 31 441, whose table is `bond_l * bond_r`
+  larger again, about 52 GiB for a single site. One entry does not fit, so a policy whose
+  floor is two entries has nothing left to give. That is the same verdict at a larger K
+  as the K=16 floor above, and it is the measured statement that M38 removes a cache from
+  the critical path and stage 2 has to remove the width. `Env.F` keeps its own
+  invalidation discipline and is untouched: an eviction here is decided by recency and
+  never by correctness, because `edge_blocks` and `_cores2` are pure functions of the edge
+  description and a rebuilt entry is bit-identical to the evicted one. The oracles say the
+  same thing from the other side — ED, the explicit-JW dense oracle, the MPSKit Heisenberg
+  and Hubbard fixtures and `test_dmrg_prepared.py`'s six models are unedited and unchanged,
+  and `tests/network/test_deferred.py` asserts a full sweep's caches fall to the two-entry
+  floor at a zero budget while the same sweep unbounded holds one entry per bond.
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
