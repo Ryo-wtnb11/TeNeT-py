@@ -383,13 +383,17 @@ def dmrg_(
         Handed verbatim to [Env][tenet.network.Env], which wraps the prepared
         two-site matvec with it once per structure key. ``jax.jit`` is the
         intended argument and this layer names no accelerator, so the caller
-        supplies it and the ``jax`` extra. This is the one argument that changes
-        the run's performance *regime* rather than its accuracy: on an MPO that
-        kept its edge-block table (``from_terms(cutoff=None)``) the compiled
-        prepared matvec measured ~20x faster than the dense path, while the same
-        prepared matvec left uncompiled on plain NumPy pays a per-call dispatch
-        premium and measured 1.5--2.6x *slower* over a full sweep (#141). Default
-        ``None``, which runs the plain Python function and is today's behaviour.
+        supplies it and the ``jax`` extra. It changes the run's performance
+        *regime* rather than its accuracy, and the measured payoff is a matvec
+        one: with ``jax.jit`` the two-site matvec runs **10.6x** faster on a
+        lattice model with ``D_w = 8`` and **1.8--3.0x** faster on ab initio
+        integrals at ``K = 16``/``K = 26``, the factor shrinking as the bond
+        widens and the work moves into BLAS. **The sweep around it is not
+        traceable** -- the truncating SVD re-decides the bond space every sweep --
+        so on the JAX backend a compiled run is today slower end to end than the
+        plain NumPy one, and ``Env`` re-invokes ``compile`` at every bond visit.
+        Default ``None``, which runs the plain Python function and is today's
+        behaviour. The grid is ``docs/design.md``, M54.
 
     Returns
     -------
