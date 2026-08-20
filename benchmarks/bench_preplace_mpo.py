@@ -61,7 +61,17 @@ import numpy as np
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg
 from tenet.network import MPO
-from tenet.network.mps import _canonical_term, _identity_w, _Walk
+from tenet.network.mps import (
+    _aligned,
+    _as_w,
+    _canonical_term,
+    _compress_forward,
+    _corner_map,
+    _corner_slots,
+    _identity_w,
+    _joined,
+    _Walk,
+)
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -96,26 +106,30 @@ def _rows(n_sites, terms):
     return walk, out
 
 
-def _keep(blocks, cutoff):
-    """How many singular values each block keeps, under ``svd_truncated``'s ``rsum2``.
+def _keep(blocks, cutoff, mode):
+    """How many singular values each block keeps, in one of ``svd_truncated``'s modes.
 
-    ``blocks`` maps a quantum number to its ``(u, s, vh)``. The spectrum is pooled across
-    quantum numbers and the largest tail whose summed ``sigma**2`` stays under
-    ``cutoff * sum(sigma**2)`` is dropped, which is ``ops/linalg.py``'s ``_admissible`` at
-    ``qdim == 1``.
+    ``blocks`` maps a quantum number to its ``(u, s, vh)``. ``"rsum2"`` pools the spectrum
+    across quantum numbers and drops the largest tail whose summed ``sigma**2`` stays
+    under ``cutoff * sum(sigma**2)``, which is ``ops/linalg.py``'s ``_admissible`` at
+    ``qdim == 1``; ``"rel"`` keeps ``sigma > cutoff * sigma_max``, which at a tight cutoff
+    is a rank reveal rather than a truncation.
     """
     spectrum = sorted(
         ((float(sig), q, i) for q, (_u, s, _v) in blocks.items() for i, sig in enumerate(s)),
         key=lambda e: -e[0],
     )
-    weights = [sig**2 for sig, _q, _i in spectrum]
-    threshold = cutoff * sum(weights)
-    kept, dropped = len(spectrum), 0.0
-    for w in reversed(weights):
-        if dropped + w >= threshold:
-            break
-        dropped += w
-        kept -= 1
+    if mode == "rel":
+        kept = sum(1 for sig, _q, _i in spectrum if sig > cutoff * spectrum[0][0])
+    else:
+        weights = [sig**2 for sig, _q, _i in spectrum]
+        threshold = cutoff * sum(weights)
+        kept, dropped = len(spectrum), 0.0
+        for w in reversed(weights):
+            if dropped + w >= threshold:
+                break
+            dropped += w
+            kept -= 1
     counts: dict = {}
     for _sig, q, _i in spectrum[:kept]:
         counts[q] = counts.get(q, 0) + 1
@@ -142,7 +156,7 @@ class _Cut:
         self.fac = fac
 
 
-def stream(n_sites, walk, rows, cutoff, *, factors=False):
+def stream(n_sites, walk, rows, cutoff, *, mode="rsum2", factors=False):
     """Choose every cut's bond basis from the coefficient structure, left to right.
 
     Parameters
@@ -301,7 +315,7 @@ def stream(n_sites, walk, rows, cutoff, *, factors=False):
         for q, m in mats.items():
             if m.size and np.any(m):
                 blocks[q] = np.linalg.svd(m, full_matrices=False)
-        counts = _keep(blocks, cutoff) if blocks else {}
+        counts = _keep(blocks, cutoff, mode) if blocks else {}
 
         # --- the kept basis, in _merge's order, and the stream rebuilt on it, unweighted
         has_l = idl_row is not None and bool(np.any(idl_vec))
@@ -357,7 +371,14 @@ def build(n_sites, walk, cuts):
 
     One ``from_dense`` per site against the *chosen* basis, exactly as ``_place`` scatters
     against the finite-state machine's -- so this is where the ``D_FSM`` factor would have
-    been and is not. Only reached by the correctness half of the measurement.
+    been and is not.
+
+    Returns
+    -------
+    tuple
+        ``(sites, cuts)`` where ``cuts`` is ``_instantiate``'s own
+        ``(IdL live, the open block's space or None, IdR live)`` per cut, so the shipped
+        pinned sweeps can run on the result.
     """
     sym, phys, d = walk.phys.provider, walk.phys, walk.phys.dim
 
@@ -367,37 +388,113 @@ def build(n_sites, walk, cuts):
             walk.sectors.append(c)
         return walk.charges[c]
 
-    spaces, pos = [], []
+    atom: dict = {}
+
+    def block(o, qx):
+        got = atom.get((o, qx))
+        if got is None:
+            if o < 0:
+                one = GradedSpace.new(sym, {qx: 1})
+                got = np.asarray(_identity_w(Leg(one, IN), phys).to_dense())[0, :, :, 0]
+            else:
+                got = np.asarray(walk.transition(o, cidx(qx), 0)[0].to_dense())[0, :, :, 0]
+            atom[o, qx] = got
+        return got
+
+    spaces, pos, shapes, by_q = [], [], [], []
     for cut in cuts:
         counts: dict = {}
+        opens: dict = {}
+        seen: dict = {}
+        where, groups = [], {}
         for q in cut.q:
             counts[q] = counts.get(q, 0) + 1
         space = GradedSpace.new(sym, counts)
-        seen: dict = {}
-        where = []
-        for q in cut.q:
+        for i, q in enumerate(cut.q):
             where.append(space.sector_offset(q) + seen.get(q, 0))
             seen[q] = seen.get(q, 0) + 1
+            groups.setdefault(q, []).append(i)
+            if i not in (cut.idl, cut.idr):
+                opens[q] = opens.get(q, 0) + 1
         spaces.append(space)
         pos.append(np.array(where, dtype=np.intp))
+        by_q.append({q: np.array(xs, dtype=np.intp) for q, xs in groups.items()})
+        shapes.append(
+            (
+                cut.idl is not None,
+                GradedSpace.new(sym, opens) if opens else None,
+                cut.idr is not None,
+            )
+        )
 
     sites = []
+    axes = (np.arange(d), np.arange(d))
     for n in range(n_sites):
-        left = cuts[n]
-        buf = np.zeros((spaces[n].dim, d, d, spaces[n + 1].dim))
+        left, right = cuts[n], cuts[n + 1]
+        acc = np.zeros((len(left.q), d, d, len(right.q)))
         for o, mat in left.fac.items():
-            for x, qx in enumerate(left.q):
-                col = mat[x]
-                if not np.any(col):
-                    continue
-                if o < 0:
-                    one = GradedSpace.new(sym, {qx: 1})
-                    blk = np.asarray(_identity_w(Leg(one, IN), phys).to_dense())
-                else:
-                    blk = np.asarray(walk.transition(o, cidx(qx), n)[0].to_dense())
-                buf[pos[n][x], :, :, pos[n + 1]] += np.einsum("z,pq->zpq", col, blk[0, :, :, 0])
+            for qx, rows in by_q[n].items():
+                acc[rows] += np.einsum("xz,pq->xpqz", mat[rows], block(o, qx))
+        buf = np.zeros((spaces[n].dim, d, d, spaces[n + 1].dim))
+        buf[np.ix_(pos[n], *axes, pos[n + 1])] = acc
         legs = (Leg(spaces[n], IN), Leg(phys, OUT), Leg(phys, IN), Leg(spaces[n + 1], OUT))
         sites.append(tenet.SymmetricTensor.from_dense(buf, legs))
+    return sites, shapes
+
+
+def sweep_back(sites, cuts, cutoff):
+    """``_instantiate``'s pinned backward truncation, on tensors that are already narrow.
+
+    The mirror of the shipped ``_compress_forward``, and the half of #218's compression
+    that ``_instantiate`` fuses into placement. On the pre-placement bond there is nothing
+    to place, so it runs on plain site tensors: the two corner rows come out, the open row
+    slab is rotated and truncated, and the block-diagonal carry goes into site ``n - 1``.
+    """
+    sym = sites[0].legs[1].space.provider
+    unit = GradedSpace.new(sym, {sym.unit: 1})
+    for n in reversed(range(1, len(sites))):
+        has_l, _open, has_r = cuts[n]
+        bond = sites[n].legs[0].space
+        live = [g for g, on in (("idl", has_l), ("idr", has_r)) if on]
+        slots = _corner_slots(bond, sym) if live else {}
+        corners, rest = {}, sites[n]
+        for g in live:
+            take = _corner_map(bond, slots[g], (Leg(unit, IN), Leg(bond, OUT)), column=False)
+            put = _corner_map(bond, slots[g], (Leg(bond, IN), Leg(unit, OUT)), column=True)
+            corners[g] = tenet.einsum("xpqb,vx->vpqb", sites[n], take)
+            rest = tenet.subtract(rest, tenet.einsum("vpqb,xv->xpqb", corners[g], put))
+        u, s, vh = tenet.linalg.svd_truncated(rest, ((0,), (1, 2, 3)), cutoff=cutoff)
+        open_w, open_c = _as_w(vh), tenet.einsum("xy,yz->xz", u, s)
+        ref = open_c.legs[1]
+        rows, cols = [], []
+        for g in ("idl", "open", "idr"):
+            if g == "open":
+                rows.append(open_w)
+                cols.append(open_c)
+            elif g in live:
+                rows.append(_aligned(corners[g], open_w.legs[0].dual, 0))
+                cols.append(
+                    _corner_map(
+                        bond,
+                        slots[g],
+                        (open_c.legs[0], Leg(unit, ref.side, ref.dual)),
+                        column=True,
+                    )
+                )
+        sites[n] = _joined(rows, 0)
+        carry = tenet.repartition(_joined(cols, 1), (), (0, 1))
+        # ``_place`` folds this carry into its scatter; with the site already placed there
+        # is nothing to scatter, so the fold is spelled the way ``_place`` spells it -- a
+        # dense contraction on the right end, the new leg being the carry's second leg
+        # moved to the codomain (same space, ``OUT``, ``dual`` flipped).
+        left = sites[n - 1]
+        dense = np.asarray(left.to_dense()) @ np.asarray(carry.to_dense())
+        legs = (
+            *left.legs[:3],
+            Leg(carry.legs[1].space, OUT, not carry.legs[1].dual),
+        )
+        sites[n - 1] = tenet.SymmetricTensor.from_dense(dense, legs)
+        cuts[n] = (has_l, open_w.legs[0].space, has_r)
     return sites
 
 
@@ -409,12 +506,25 @@ def rss_gib():
     return peak / 2**30 if sys.platform == "darwin" else peak / 2**20
 
 
-def measure(name, n_sites, terms, cutoff=1e-13, dense_check=False):
-    """One fixture: pre-placement widths and cost, then #218's post-placement widths."""
+def measure(name, n_sites, terms, cutoff=1e-13, rank=1e-14, dense_check=False):
+    """One fixture, three width readings of the same mechanism against #218's.
+
+    * ``pre`` -- the basis chosen *and truncated* inside the pre-placement SVD, which is
+      the literal reading of the gate;
+    * ``exact`` -- the same choice at a rank-revealing threshold, which is the width
+      ``_place`` would be handed and the number the ``D_FSM`` claim is about;
+    * ``swept`` -- ``exact`` after #218's own two pinned truncating sweeps, run on the
+      pre-placement bond where they are ``chi x d**2 x chi`` rather than ``D_FSM``-wide.
+
+    The three separate the basis choice from the truncation policy, which is the only
+    thing that can differ between them: a relative cutoff inside the pre-placement SVD
+    measures a discarded direction against the *coefficient* matrix's norm, and the
+    shipped one measures it against the placed operator's.
+    """
     base = rss_gib()
     walk, rows = _rows(n_sites, terms)
     t0 = time.perf_counter()
-    cuts = stream(n_sites, walk, rows, cutoff, factors=dense_check)
+    cuts = stream(n_sites, walk, rows, cutoff)
     t_pre = time.perf_counter() - t0
     rss_pre = rss_gib()
     row = {
@@ -426,23 +536,33 @@ def measure(name, n_sites, terms, cutoff=1e-13, dense_check=False):
         "rss_pre_peak": round(rss_pre, 3),
     }
     t0 = time.perf_counter()
+    exact = stream(n_sites, walk, rows, rank, mode="rel", factors=True)
+    row["exact"] = widths(exact)
+    sites, shapes = build(n_sites, walk, exact)
+    sweep_back(sites, shapes, cutoff)
+    _compress_forward(sites, shapes, cutoff)
+    row["swept"] = pin.widths(sites)
+    row["wall_swept"] = round(time.perf_counter() - t0, 2)
+    row["rss_swept_peak"] = round(rss_gib(), 3)
+    t0 = time.perf_counter()
     post = MPO.from_terms(n_sites, terms, cutoff=cutoff)
     row["wall_post"] = round(time.perf_counter() - t0, 2)
     row["post"] = pin.widths(post.sites)
+    row["fsm"] = [b.dim for b in MPO.from_terms(n_sites, terms, cutoff=None).edges.bonds]
     row["rss_post_peak"] = round(rss_gib(), 3)
     if dense_check:
         ref = np.asarray(MPO.from_terms(n_sites, terms, cutoff=None).to_dense())
-        got = np.asarray(MPO(build(n_sites, walk, cuts)).to_dense())
+        got = np.asarray(MPO(sites).to_dense())
         row["err_pre"] = float(np.abs(got - ref).max())
         row["err_post"] = float(np.abs(np.asarray(post.to_dense()) - ref).max())
         row["err_vs_post"] = float(np.abs(got - np.asarray(post.to_dense())).max())
     return row
 
 
-def ratios(row):
+def ratios(row, key):
     """``(max over every cut, max away from the two boundary-adjacent cuts)``."""
     n = len(row["post"])
-    pairs = [(p / f, i) for i, (f, p) in enumerate(zip(row["post"], row["pre"], strict=True)) if f]
+    pairs = [(p / f, i) for i, (f, p) in enumerate(zip(row["post"], row[key], strict=True)) if f]
     inner = [r for r, i in pairs if 1 < i < n - 2]
     return max(r for r, _ in pairs), (max(inner) if inner else 1.0)
 
@@ -470,8 +590,9 @@ def main():
             f"{label:<18} err(pre) {row['err_pre']:.2e}  err(post) {row['err_post']:.2e}  "
             f"pre-vs-post {row['err_vs_post']:.2e}"
         )
-        print(f"{'':<18} post {row['post']}")
-        print(f"{'':<18} pre  {row['pre']}")
+        print(f"{'':<18} post  {row['post']}")
+        print(f"{'':<18} swept {row['swept']}")
+        print(f"{'':<18} pre   {row['pre']}")
 
     names = pin.FIXTURES
     if a.synthetic_only:
@@ -479,10 +600,25 @@ def main():
     if a.only:
         names = [x for x in names if x in a.only]
     print("\n# gate 1: pre-placement vs post-placement bond width per cut\n")
-    head = ("fixture", "N", "max post", "max pre", "all cuts", "inner", "pre wall", "pre RSS")
-    fmt = "{:<16} {:>4} {:>9} {:>8} {:>9} {:>8} {:>9} {:>9}"
+    head = (
+        "fixture",
+        "N",
+        "D_FSM",
+        "post",
+        "pre",
+        "exact",
+        "swept",
+        "pre/post",
+        "inner",
+        "swept/post",
+        "inner",
+        "pre wall",
+        "pre RSS",
+    )
+    fmt = "{:<16} {:>4} {:>7} {:>6} {:>6} {:>6} {:>6} {:>9} {:>7} {:>10} {:>7} {:>9} {:>8}"
     print(fmt.format(*head))
     inners, alls = [], []
+    sw_inners, sw_alls = [], []
     for label in names:
         out = subprocess.run(
             [sys.executable, __file__, "--child", label, str(a.cutoff)],
@@ -495,30 +631,44 @@ def main():
             if line.startswith("{"):
                 got = json.loads(line)
         if got is None:
-            print(fmt.format(label, "-", "-", "-", "-", "-", "-", "fail"))
+            print(fmt.format(label, *(["-"] * 11), "fail"))
             print("   " + (out.stderr.strip().splitlines() or ["no output"])[-1])
             continue
-        hi, inner = ratios(got)
+        hi, inner = ratios(got, "pre")
+        sw_hi, sw_inner = ratios(got, "swept")
         alls.append(hi)
         inners.append(inner)
+        sw_alls.append(sw_hi)
+        sw_inners.append(sw_inner)
         print(
             fmt.format(
                 label,
                 got["n_sites"],
+                max(got["fsm"]),
                 max(got["post"]),
                 max(got["pre"]),
+                max(got["exact"]),
+                max(got["swept"]),
                 f"{hi:.3f}",
                 f"{inner:.3f}",
+                f"{sw_hi:.3f}",
+                f"{sw_inner:.3f}",
                 f"{got['wall_pre']:.1f} s",
                 f"{got['rss_pre']:.2f} G",
             )
         )
         qc.note(**got)
     if alls:
-        print(f"\n# gate 1, all cuts:   max ratio {max(alls):.3f} "
+        print("\n# gate 1, truncating inside the pre-placement SVD")  # fmt: skip
+        print(f"#   all cuts   max ratio {max(alls):.3f} "
               f"{'PASS' if max(alls) <= 1.10 else 'FAIL'}")  # fmt: skip
-        print(f"# gate 1, inner cuts: max ratio {max(inners):.3f} "
+        print(f"#   inner cuts max ratio {max(inners):.3f} "
               f"{'PASS' if max(inners) <= 1.10 else 'FAIL'}")  # fmt: skip
+        print("\n# gate 1, pre-placement basis + #218's two pinned sweeps on it")
+        print(f"#   all cuts   max ratio {max(sw_alls):.3f} "
+              f"{'PASS' if max(sw_alls) <= 1.10 else 'FAIL'}")  # fmt: skip
+        print(f"#   inner cuts max ratio {max(sw_inners):.3f} "
+              f"{'PASS' if max(sw_inners) <= 1.10 else 'FAIL'}")  # fmt: skip
 
 
 if __name__ == "__main__":
