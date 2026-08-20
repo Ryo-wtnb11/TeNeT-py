@@ -3454,11 +3454,21 @@ The split:
   | K | route | build | 3 sweeps | peak RSS | energy |
   |---|---|---|---|---|---|
   | 16 (N2 CAS 6-31G) | fsm | 1.2 s | 337.0 s | 14.52 GiB | −27.234808137600 |
-  | 16 | **pinned** | 4.7 s | **4.3 s** | **1.45 GiB** | −27.258098346200 |
+  | 16 | **pinned** | 4.8 s | **4.5 s** | **1.38 GiB** | −27.258098346200 |
   | 16 | free-dense | 4.2 s | 1.9 s | 1.25 GiB | −27.258098346200 |
   | 26 (C2 CAS cc-pVDZ) | fsm (M38, #203) | — | did not finish `Env.setup_` | 19–24 GiB | — |
-  | 26 | **pinned** | 50.1 s | **13.2 s** | **3.21 GiB** | see note |
-  | 26 | free-dense | 42.9 s | 6.6 s | 5.25 GiB | see note |
+  | 26 | **pinned** | 42.0 s | **12.1 s** | **6.04 GiB** | see note |
+  | 26 | free-dense | 42.3 s | 6.2 s | 4.72 GiB | see note |
+
+  **One number moved between the first measurement and the re-run, and it moved the wrong
+  way.** An early K=26 run reported a 3.21 GiB peak; it is not reproducible. Three clean
+  measurements since — this row and the two independent C2 processes of the `chi` grid
+  below — put it at **6.04, 6.19 and 6.09 GiB**, so 6.0 GiB is the number and 3.21 was an
+  outlier taken while several other jobs were competing for the machine. The peak at K=26
+  is the *build* transient (`_place`'s `D_FSM × d² × chi` buffers), not the sweep, which
+  is why it is the part that moves with allocator behaviour. What does not move is the
+  claim that matters: K=26 completes, at 6 GiB, where M38 had it not finishing `Env.setup_`
+  at 19–24 GiB. K=16 is stable across every run at 1.2–1.45 GiB.
 
   The `fsm` row is M38's own run re-taken on this machine and it reproduces #203's number
   where it matters: the ground-state energy is `-27.2348081376`, which is `cutoff=None`
@@ -3539,7 +3549,7 @@ The split:
   build time.
 
   What #204 buys is therefore the *representation*: the operator no longer has to choose
-  between being compressed and being partitioned, K=26 completes at 3.21 GiB where it did
+  between being compressed and being partitioned, K=26 completes at 6 GiB where it did
   not complete at 19–24, and `heff2`'s prepared path lost its `cutoff=None` precondition —
   which is what makes it one path rather than two.
 

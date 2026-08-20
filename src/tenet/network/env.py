@@ -621,9 +621,12 @@ class Env:
         where the structural zeros go. Like MPSKit's matvec, the ``IdL``/``IdR``-anchored
         terms are one-sided: they use the sweep's **mixed-canonical gauge** -- sites left
         of the bond left-orthonormal, sites right of it right-orthonormal, which
-        [sweep_][tenet.network.sweep_] maintains at every bond -- as the second
-        precondition; environments built from a differently-gauged state belong to the
-        dense path. The apply itself is compiled through ``compile=`` once per structure
+        [sweep_][tenet.network.sweep_] maintains at every bond -- as the standing
+        precondition. It is the one thing this path asks of its caller, and it is not
+        chosen at run time either: a caller whose environments come from a differently
+        gauged state has to hand over ``MPO(h.sites)``, which throws the description away
+        and takes the branch below. The apply itself is compiled through ``compile=``
+        once per structure
         key -- the tuple of ``aa``'s legs plus the prepared operator's identity -- and
         the cache holds one entry per bond, replaced when the key moves.
 
