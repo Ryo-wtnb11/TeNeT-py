@@ -4160,15 +4160,58 @@ The split:
 
   | sweep | none | wfn 1e-4 | wfn 1e-5 | pert 1e-4 | pert 1e-5 |
   |---|---|---|---|---|---|
-  | PENDING |
+  | 1 | -24.349864427 | -24.349543127 | -24.349833679 | -24.425951531 | -24.422258663 |
+  | 2 | -27.873007896 | -27.872714128 | -27.872972186 | -28.467810250 | -28.649975575 |
+  | 3 | -29.496790511 | -29.502600631 | -29.497024609 | -29.744036677 | -29.745973189 |
+  | 4 | -29.731075981 | -29.734889316 | -29.734834377 | -29.985652872 | -30.019253895 |
+  | 5 | -30.023828869 | -30.031992607 | -30.029534633 | -30.142653652 | -30.290319415 |
+  | 6 | -30.373745070 | -30.347110623 | -30.372674421 | -30.220597603 | -30.736297838 |
+  | 7 | -30.690928175 | -30.666268136 | -30.715663218 | -30.254880595 | -30.986842395 |
+  | 8 | -30.917777919 | -30.855357500 | -30.901566826 | -30.312247486 | -31.042540010 |
+  | wall s | 1351 | 924 | 929 | 1468 | 1462 |
 
-  **Reading it.** PENDING
+  **Reading it.** Eight sweeps at `chi=24` do not converge this Hamiltonian — the noiseless
+  column is still falling at sweep 8 (-30.374, -30.691, -30.918 over the last three) — so
+  what the table compares is **descent rate on a hard ab initio problem, not two converged
+  answers**, and no column has plateaued for another to rescue. Within that, the ordering
+  at sweep 8 is:
+
+  | setting | sweep 8 | against no noise |
+  |---|---|---|
+  | `pert 1e-5` | -31.042540 | **0.125 lower** |
+  | `none` | -30.917778 | — |
+  | `wfn 1e-5` | -30.901567 | 0.016 higher |
+  | `wfn 1e-4` | -30.855358 | 0.062 higher |
+  | `pert 1e-4` | -30.312247 | 0.606 higher |
+
+  Three things in that column, and only the first is a point in the mixer's favour.
+  **`pert 1e-5` leads at every one of the eight sweeps** and ends 0.125 Ha below the
+  noiseless run — the aimed enrichment doing what it is for, on the workload it was
+  designed for. **Neither wavefunction setting ever gets ahead of no noise at all**, at
+  either strength and at any sweep: 1e-5 tracks the noiseless column to three decimals and
+  1e-4 is visibly behind it. That is block2's own "not very effective" for the cheap end,
+  measured here rather than quoted. And **`pert 1e-4` is worse than doing nothing** — it
+  buys the best first sweep of the whole table and then spends six sweeps climbing back,
+  ending 0.606 Ha above the noiseless run.
+
+  So the gate closes the second way it is allowed to: **the wavefunction noise is not
+  observed to plateau where the perturbative noise does not, and the claim "improves
+  convergence" is not made.** The mechanism ships because it is the decimation block2
+  defaults to and this engine now has design parity with it, which was the reason to build
+  it. What the table does establish is narrower and worth keeping: at the bottom of
+  block2's documented range the aimed perturbation is ahead of every other setting at every
+  sweep of a non-converged ab initio descent, and at ten times that strength it is behind
+  all of them. A mixer strong enough to reshape a bond is strong enough to reshape it
+  wrongly; 1e-4..1e-5 is a *range* because its top is not always the right end, and that is
+  now measured here instead of inherited.
 
   Both tables were taken on the same machine and the same commit; the N2 one is stitched
-  from two invocations because the first was killed after three columns, which is why
-  `bench_noise.py` grew `--settings` and `--out`. Its wall row is therefore **not** a cost
-  comparison — the two perturbative columns were measured against each other — and the
-  cost statement this stage makes is the structural one instead: a mixed sweep pays one
+  from three invocations, because a first attempt was killed after three columns and had
+  printed only their timings — which is why `bench_noise.py` grew `--settings` to resume a
+  column and `--out` to persist one the moment it finishes. Its wall row is therefore
+  **not** a cost comparison: the two `pert` columns ran concurrently with the `none` one
+  and the two `wfn` columns ran alone, so the 1468/1462 against 924/929 is contention, not
+  the mixer. The cost statement this stage makes is the structural one instead: a mixed sweep pays one
   extra family-resolved application of the operator per bond, against the `ncv` the Krylov
   loop already pays, plus one `eigh` of a `rho` the SVD split never forms.
 
