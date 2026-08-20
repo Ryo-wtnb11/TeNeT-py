@@ -224,6 +224,48 @@ def test_compile_is_called_once_per_structure_key_and_its_result_is_used():
     assert len(runs) == 6
 
 
+def test_a_sweep_compiles_once_per_distinct_structure_key(monkeypatch):
+    """#225: the compiled callable survives a bond revisit. Before the fix the cache
+    entry was rebuilt whenever the stored ``_Prepared`` was not the object ``_prepare2``
+    had just returned -- and it returns a fresh one every visit -- so ``compile`` ran
+    about ``2 x sweeps x bonds`` times for a handful of distinct graphs."""
+    h = MPO.from_terms(6, _heis(6), cutoff=None)
+    psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=2).canonize_()
+    compiled, keys = [], set()
+    original = Env.heff2
+
+    def recording(self, n, aa):
+        keys.add((n, tuple(aa.legs)))  # exactly what ``_compiled`` keys on
+        return original(self, n, aa)
+
+    monkeypatch.setattr(Env, "heff2", recording)
+    env = Env(psi, h, compile=lambda fn: compiled.append(fn) or fn).setup_()
+    for _ in range(2):
+        sweep_(psi, h, env, {}, chi=8, cutoff=1e-14)
+    visits = 2 * 2 * (len(h) - 1)  # two sweeps, both directions, every bond
+    assert len(compiled) == len(keys) < visits
+
+
+def test_a_moved_environment_still_rebuilds_the_prepared_operator():
+    """The other half of #225, and the half that must not move: the *operator* is cached
+    on the two environments' identity, so a rebuilt environment produces a rebuilt
+    operator. A stale one would give an energy that is plausible and wrong."""
+    h = MPO.from_terms(6, _heis(6), cutoff=None)
+    env, psi = _mid_env(h)
+    before = env._prepare2(3)
+    assert env._prepare2(3) is before  # nothing moved: the cached operator is served
+    env.clear_(2)
+    env.update_(2, to="last")  # a fresh ``F[(2, 3)]`` object, same numbers
+    after = env._prepare2(3)
+    assert after is not before
+    aa = tenet.einsum("apx,xqr->apqr", psi[3], psi[4])
+    fresh = Env(psi, h).setup_()
+    for m in range(3):
+        fresh.update_(m, to="last")
+    gap = tenet.norm(tenet.subtract(env.heff2(3, aa), fresh.heff2(3, aa)))
+    assert float(gap) < 1e-12
+
+
 # --- hygiene: the accessor is the only door ------------------------------------------
 
 

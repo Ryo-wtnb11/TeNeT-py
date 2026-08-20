@@ -637,8 +637,9 @@ class Env:
         gauged state has to hand over ``MPO(h.sites)``, which throws the description away
         and takes the branch below. The apply itself is compiled through ``compile=``
         once per structure
-        key -- the tuple of ``aa``'s legs plus the prepared operator's identity -- and
-        the cache holds one entry per bond, replaced when the key moves.
+        key -- the bond, and the tuple of ``aa``'s legs, which between them fix every leg
+        the traced graph sees -- and the cache holds one entry per bond, its callable
+        kept across a revisit and retraced only when the key moves.
 
         **The compatibility entry**, for an MPO with no description at all
         ([from_w][tenet.network.MPO.from_w] or bare site tensors), and no accelerator work
@@ -659,11 +660,20 @@ class Env:
             p = self._prepare2(n)
             key = tuple(aa.legs)
             hit = self._compiled.get(n)
-            if hit is None or hit[0] != key or hit[1] is not p:
-                fn = _apply2 if self.compile is None else self.compile(_apply2)
-                hit = (key, p, fn)
-                self._compiled[n] = hit
-            return hit[2](p, aa)
+            # The traced graph is a function of ``key`` alone: at a fixed bond the live
+            # fields of ``p`` are decided by the two sites' edge blocks, which never move,
+            # and every one of their legs is fixed by ``aa``'s two bond legs plus the
+            # operator's own. So the callable outlives a bond revisit and only a moved
+            # bond space retraces it. ``p`` itself stays in the entry because its *values*
+            # change every visit and because it is what weighs the entry for the byte
+            # budget (#202); it is deliberately not part of the key (#225).
+            fn = (
+                hit[2]
+                if hit is not None and hit[0] == key
+                else (_apply2 if self.compile is None else self.compile(_apply2))
+            )
+            self._compiled[n] = (key, p, fn)
+            return fn(p, aa)
         t = tenet.einsum("apqr,rys->apqys", aa, self.F[n + 2, n + 1])
         t = _composed("apqys,mQqy->apQms", t, self.h[n + 1], bend="q")
         t = _composed("apQms,xPpm->aPQxs", t, self.h[n], bend="p")
