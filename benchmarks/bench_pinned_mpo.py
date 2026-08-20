@@ -21,6 +21,11 @@ The script also checks that the pinned operator is the *same operator*: on every
 small enough to expand, ``to_dense`` against the free sweep and against the uncompressed
 ``from_terms``. A width number is worth nothing without it.
 
+``bench_qc_mpo.py``'s own ``MVC`` row is the third opinion and the sharper one: it computes
+a minimum vertex cover of each cut combinatorially, and the pinned bond equals it at every
+cut. The free sweep's boundary-adjacent 4 is *below* the cover, which is what mixing the
+``IdL``/``IdR`` channels away buys and what pinning declines to buy.
+
 Not a test, not part of the package, on no CI path. It reuses ``bench_qc_mpo.py``'s
 FCIDUMP fetch, its synthetic generator and its term folding unchanged, so the licence
 decision recorded in that module's docstring covers this one too.

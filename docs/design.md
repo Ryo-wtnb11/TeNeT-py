@@ -3422,6 +3422,18 @@ The split:
   and **smaller** on the two largest. The criterion was written expecting "the corners are
   2 states of 766"; that is what the inner column measures and it reads 1.000.
 
+  **The independently computed minimum vertex cover says the same thing from the other
+  side, and it is the sharper statement.** `bench_qc_mpo.py` has always printed, per cut,
+  the FSM bond beside a combinatorial minimum vertex cover of the same cut (Kuhn matching
+  plus Koenig, no `scipy`) beside what the sweeps leave. The pinned sweep's bond is now
+  **equal to that cover at every cut** — H4 `1 5 16 25 30 25 16 5 1`, H8
+  `1 5 16 33 46 63 84 109 122 109 84 63 46 33 16 5 1`, cover and post-SVD row identical
+  entry for entry. The free sweep's 4 at the boundary-adjacent cuts is *below* the cover,
+  and the cover is the right optimum here because it is computed for an operator that keeps
+  its `IdL`/`IdR` channels: going below it is precisely the act of mixing them away. So the
+  1.250 in the table is not the pinned bond being 25 % too wide, it is the free bond being
+  one state narrower than any partitioned operator can be.
+
   The pinned truncation is also not uniformly wider: on syn-42 and C2 it is *narrower*,
   because `rsum2` weighs the discarded singular values against the total weight of the
   matrix it decomposes, and the corner rows — which carry the not-yet-started and
