@@ -535,7 +535,7 @@ class Env:
         Notes
         -----
         ``to='last'`` writes ``F[(n, n+1)]`` from ``F[(n-1, n)]``; ``to='first'`` writes
-        ``F[(n, n-1)]`` from ``F[(n+1, n)]``. Dense path: three pairwise ``tenet.einsum``
+        ``F[(n, n-1)]`` from ``F[(n+1, n)]``. Site-tensor path: three pairwise ``tenet.einsum``
         calls each -- environment first, then the ket, then the MPO, then the bra. With an
         edge-block table present the step goes edge-aware instead
         (``_fold_last`` / ``_fold_first``): the identity channels ride ``idmap``
