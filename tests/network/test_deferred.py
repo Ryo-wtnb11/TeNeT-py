@@ -244,7 +244,7 @@ def test_the_deferred_and_numeric_heff2_paths_agree(model, chi):
     """``heff2`` off the description against ``heff2`` off the materialised ``W`` pair.
 
     The same MPO twice: once as the edge description, once as the plain site tensors
-    ``MPO(h.sites)`` carries, which routes ``Env`` onto the dense path. Two bond
+    ``MPO(h.sites)`` carries, which routes ``Env`` onto the site-tensor path. Two bond
     dimensions, three models -- a spin chain, a spinless fermionic chain and the spinful
     Hubbard chain -- and the two fermionic ones are what make this a statement about the
     Jordan-Wigner string rather than only about bookkeeping.

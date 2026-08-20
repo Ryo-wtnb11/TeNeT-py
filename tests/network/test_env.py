@@ -109,7 +109,7 @@ def test_fermionic_measure_agrees_with_the_dense_expectation():
     The check that catches an environment sign the variational energy would hide: a
     wrong cap in ``update_``'s transfer would still converge ``dmrg_`` to *an* energy,
     but it cannot reproduce the dense sandwich of an arbitrary state. Both MPO routes --
-    the block table (``cutoff=None``) and the compressed dense path -- against one
+    the block table (``cutoff=None``) and the compressed site-tensor path -- against one
     oracle (#160).
     """
     psi = _fermionic_state(4, seed=7)

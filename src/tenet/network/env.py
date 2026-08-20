@@ -599,7 +599,7 @@ class Env:
         (``effective_hamiltonian.hpp``:230-243). There is no runtime dispatch here either
         -- no bond-width threshold, no ``chi`` threshold, no ``path=`` keyword.
 
-        **The dense branch below is not a second engine; it is a compatibility entry.**
+        **The site-tensor branch below is not a second engine; it is a compatibility entry.**
         It exists for an MPO that carries no symbols at all --
         [from_w][tenet.network.MPO.from_w] and an ``MPO`` built from bare site tensors --
         and nothing else routes to it. Recovering symbols from a numeric ``W`` is not

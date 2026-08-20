@@ -2,7 +2,7 @@
 
 Everything here asserts *structure* -- edge counts, ``None``-ness, populated fields,
 dispatch counts, cache sizes -- never wall clock. The 1e-12 numerical agreement between
-the prepared and dense paths lives in ``tests/integration/test_dmrg_prepared.py``,
+the prepared and site-tensor paths lives in ``tests/integration/test_dmrg_prepared.py``,
 where the full sweep-gauge walk has the time budget it needs.
 """
 
@@ -83,7 +83,7 @@ def test_only_a_from_terms_mpo_carries_a_table():
     so a compressed bond still decomposes as ``IdL (+) open (+) IdR`` and still carries a
     table -- one open state per cut instead of one per open string. ``from_w``, which
     never had a description, still hands out ``None`` and still routes ``heff2`` onto the
-    dense path.
+    site-tensor path.
     """
     kept = MPO.from_terms(6, _heis(6), cutoff=None)
     assert all(kept.edge_blocks(n) is not None for n in range(6))

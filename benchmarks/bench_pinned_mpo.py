@@ -210,7 +210,7 @@ def dmrg_run(name, variant, chi, sweeps):
     * ``fsm`` -- ``from_terms(cutoff=None)``, the prepared path on the uncompressed
       finite-state-machine bond, which is #203's measurement and the number to beat;
     * ``free-dense`` -- the freely compressed sites in a bare ``MPO``, so ``heff2`` takes
-      its dense path. This is gate 2's zeroth-order baseline: the alternative that needs
+      its site-tensor path. This is gate 2's zeroth-order baseline: the alternative that needs
       no new code at all, reported beside the others whichever way it comes out.
 
     ``sweep_`` is driven directly rather than through ``dmrg_`` so the sweep count is

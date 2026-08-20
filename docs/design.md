@@ -3147,7 +3147,7 @@ The split:
   20, 32 stays 32 — while the SVD gauge turns 38 sparse edges into 302 dense pairs on the
   width-10 cylinder (#141). Whether keeping the table wins is therefore a backend question:
   with a `compile=` callable injected into `Env` the prepared matvec measured ~20× faster
-  than the dense path, while on the plain numpy backend at small bond dimension it pays a
+  than the site-tensor path, while on the plain numpy backend at small bond dimension it pays a
   per-call dispatch premium and a full sweep measured 1.5–2.6× *slower* (#141's tables).
   The default `cutoff` stays `1e-13` for that reason and for power-law couplings, where the
   sweep earns its keep — all-pairs `1/r²` at N=32 takes the bond 33 to 8. The per-site table
@@ -3480,7 +3480,7 @@ The split:
   three sweeps at `chi=16` on a 52-site strongly correlated system from a random start is
   nowhere near converged on any route, and the pinned and freely compressed operators are
   two different `chi`-16 truncations, so their sweeps diverge. The energy agreement that
-  *is* a correctness statement is the K=16 row, where the pinned and free-dense routes
+  *is* a correctness statement is the K=16 row, where the pinned and free site-tensor routes
   agree to 5e-13, and `tests/network/test_pinned.py`, which compares `to_dense`.
 
   **K=26 completes**, which M38 recorded as blocked by one bond's working set: site 26's
@@ -3501,7 +3501,7 @@ The split:
   Davidson preconditioner, one-site DMRG — attaches to this one path and to nothing else,
   which is the reason it had to stop moving before any of that starts.
 
-  **The dense branch is not a second engine; it is a compatibility entry.** It exists for
+  **The site-tensor branch is not a second engine; it is a compatibility entry.** It exists for
   an MPO that carries no symbols at all — `from_w` and a bare `MPO(sites)` — and no
   accelerator work targets it. It cannot be closed by recovering symbols from a numeric
   `W`, because in general there are none to recover: #141 measured that a compressed `W`

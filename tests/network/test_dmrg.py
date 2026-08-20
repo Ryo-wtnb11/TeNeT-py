@@ -383,7 +383,7 @@ def test_fermionic_dmrg_on_the_interacting_chain_matches_ed():
     N=6 rather than the issue's N=8: the physics (an interacting fermionic chain whose
     ground energy no free-fermion argument gives) is identical, and N=8 measured ~28 s
     under #160's audit, which does not fit the suite budget; the ED oracle is a 64-dim
-    ``eigh`` masked to even parity either way. One route (the compressed dense path);
+    ``eigh`` masked to even parity either way. One route (the compressed site-tensor path);
     the prepared path's agreement is pinned per-bond in
     ``tests/integration/test_dmrg_prepared.py``.
     """
