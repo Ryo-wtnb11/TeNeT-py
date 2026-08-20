@@ -590,8 +590,11 @@ class Env:
         Notes
         -----
         **Prepared path**, taken when ``self.h`` carries an edge-block table -- which
-        requires ``MPO.from_terms(..., cutoff=None)``, the precondition, because a
-        compressed or ``from_w`` MPO has no edge structure left to prepare. The two
+        every [MPO.from_terms][tenet.network.MPO.from_terms] /
+        [MPO.from_arrays][tenet.network.MPO.from_arrays] operator does at either cutoff
+        since #204, the compressing sweeps having been taught to keep the ``IdL`` / open
+        / ``IdR`` partition; [from_w][tenet.network.MPO.from_w], which has no
+        description at all, still takes the dense path. The two
         environments are folded into the site blocks **once per bond** (``_build2``,
         MPSKit's ``AC2_hamiltonian``) and cached against the environment tensors'
         identity, so one ``lanczos`` solve at ``ncv=3`` pays the fold once and applies

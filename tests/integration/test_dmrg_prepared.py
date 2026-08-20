@@ -23,7 +23,7 @@ import dmrg as example  # noqa: E402
 import tenet  # noqa: E402
 from tenet import GradedSpace  # noqa: E402
 from tenet.network import MPO, MPS, Env, dmrg_, local_op  # noqa: E402
-from tenet.symmetry import SU2, SU2Sector, U1Sector  # noqa: E402
+from tenet.symmetry import SU2, U1, SU2Sector, U1Sector  # noqa: E402
 
 E_OBC_12 = -5.142090632840532  # the open-boundary N=12 reference test_dmrg.py derives
 
@@ -154,6 +154,63 @@ def test_prepared_agrees_with_dense_on_a_fermionic_chain():
     unit = GradedSpace.new(fZ2, {FZ2Sector(0): 1})
     both = GradedSpace.new(fZ2, {FZ2Sector(0): 2, FZ2Sector(1): 2})
     assert _sweep_worst(5, h, phys, [unit] + [both] * 4 + [unit]) < 1e-12
+
+
+def _worst_across(n, hams, phys, bonds, seed=5):
+    """``_sweep_worst``, over several MPOs at once: the worst gap between any two of them.
+
+    The one comparison ``_sweep_worst`` cannot make, because it pairs an MPO with its own
+    table-less twin: a *compressed* operator's prepared path against a ``cutoff=None``
+    operator's prepared path, which are two different bonds carrying the same operator.
+    """
+    psi = MPS.random(phys, bonds, seed=seed).canonize_()
+    envs = [Env(psi, h).setup_() for h in hams]
+    worst = 0.0
+    for direction in ("right", "left"):
+        for b in range(n - 1) if direction == "right" else range(n - 2, -1, -1):
+            aa = tenet.einsum("apx,xqr->apqr", psi[b], psi[b + 1])
+            ys = [env.heff2(b, aa) for env in envs]
+            worst = max(worst, *(float(tenet.norm(tenet.subtract(ys[0], y))) for y in ys[1:]))
+            u, s, vh = tenet.linalg.svd(aa, ((0, 1), (2, 3)))
+            psi[b + 1] = vh
+            if direction == "right":
+                psi[b] = u
+                psi[b + 1] = tenet.einsum("xy,yqr->xqr", s, psi[b + 1])
+            else:
+                psi[b] = tenet.einsum("apx,xy->apy", u, s)
+            for env in envs:
+                env.clear_(b, b + 1)
+                if direction == "right":
+                    env.update_(b, to="last")
+                else:
+                    env.update_(b + 1, to="first")
+    measured = [Env(psi, h).measure() for h in hams]
+    return max(worst, *(abs(measured[0] - m) for m in measured[1:]))
+
+
+@pytest.mark.parametrize("chi", [1, 4], ids=["seed bond", "chi 4"])
+def test_the_compressed_prepared_path_agrees_with_dense_and_with_cutoff_none(chi):
+    """M39 (#204): a float-``cutoff`` MPO now has a prepared path, and it is the same one.
+
+    The compressing sweeps pin the two corner channels, so the compressed bond keeps the
+    ``IdL (+) open (+) IdR`` partition and ``heff2`` prepares against it. Two comparisons
+    at each bond of a walked mixed-canonical gauge, at two MPS bond dimensions: against
+    the dense path on the *same compressed tensors* (which isolates the block table), and
+    against the ``cutoff=None`` prepared path (which isolates the compression). The
+    Hamiltonian is a power-law chain, where the sweep actually truncates.
+    """
+    n = 8
+    pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
+    terms = _pair_terms(pairs, coeff=lambda i, j: (j - i) ** -3.0)
+    exact = MPO.from_terms(n, terms, cutoff=None)
+    comp = MPO.from_terms(n, terms, cutoff=1e-13)
+    assert comp.edges is not None and comp.edge_blocks(0) is not None
+    bonds = [
+        GradedSpace.new(U1, {a: m for a, _ in space.sectors})
+        for space, m in zip(example.bond_spaces(n), [1, *([chi] * (n - 1)), 1], strict=True)
+    ]
+    assert _sweep_worst(n, comp, example.PHYS, bonds) < 1e-12
+    assert _worst_across(n, [comp, exact], example.PHYS, bonds) < 1e-11
 
 
 def test_dmrg_reaches_the_n12_reference_on_both_paths():
