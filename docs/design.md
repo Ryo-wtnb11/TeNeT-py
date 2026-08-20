@@ -3908,6 +3908,110 @@ The split:
   drives an environment rebuild and checks the operator is rebuilt with it and agrees with a
   freshly built `Env`.
 
+- **M61 Stage A** — shipped: the two core primitives of the sweep step (#232, absorbing
+  #231), both in `tenet.ops`, both additions only. [map_diagonal][tenet.map_diagonal] is the
+  diagonal of a square map in the reduced basis; [zip_blocks][tenet.zip_blocks] is
+  `apply_blocks`' two-argument sibling.
+
+  **What the diagonal turned out to be, against what M53 predicted.** M53 refused the
+  leg-factorized candidate and recorded that a correct diagonal "consumes the provider's
+  F/R data, i.e. a new categorical contraction mode". Built, it consumes none, and the
+  reason is the one already written at the top of `ops/map.py`: composition is one
+  `matmul` per coupled sector and nothing recouples, because both sides of the join
+  enumerate the same trees in the same order and Clebsch-Gordan orthonormality collapses
+  the shared index. So for a square map the matrix a solver iterates on *is*
+  `to_matrices(m)`, and its diagonal is the blocks whose two fusion trees coincide, read
+  with one `einsum` per block. `Leg.fused_sector` reads `dual` and never `side`, so a
+  square map's codomain and domain draw their trees from one set and "the two trees
+  coincide" is well defined. No F-symbol, no R-symbol, no twist, no bend: the capability
+  set is empty beyond the fusion rules every structure already needs, and `map_diagonal`
+  therefore declares no `requires` and no protocol was added to the M24 lattice.
+
+  That is not a retraction of M53's measurement, and the distinction is the whole content
+  of this stage. What #230 refuted was *manufacturing* the diagonal from per-leg diagonals
+  of the operator's factors — a per-leg reading of a relational basis (invariant 4), which
+  loses the inner line on SU(2) and the graded braiding sign on fZ2. Given the map itself,
+  both are already in its coefficients, and the F-moves and the sign were paid by whoever
+  contracted it. The recoupling did not disappear; it moved to the caller's `einsum`.
+
+  **The four-provider gate, and the constructed SU(2) case.** The oracle is an explicitly
+  formed dense `H_eff`: `to_dense` on the assembled map, then `<e|H|e> / <e|e>` on the
+  dense image of each reduced-basis unit vector — basis-free, so not a restatement of the
+  implementation. A second oracle probes the public `compose(m, e)`. Worst deviation on
+  `tests/ops/test_map_diagonal.py`'s fixtures: U(1) `0.0`, fZ2 `0.0`, the spinful-Hubbard
+  `d=4` grading `0.0`, SU(2) `1.2e-15` on a diagonal of scale `7.08`. The SU(2) two-inner-line case is *constructed*, not
+  encountered: legs `(j=1, ½, ½, 1)` carry exactly two fusion trees over one external
+  sector tuple, inner lines `j=½` and `j=3/2`, and both entries are pinned —
+  `0.2917652786409168` and `0.8465778161839884` on the assembled `H_eff`,
+  `-0.45467078517172255` and `-0.02925182246327349` on a random square map on the same
+  legs. `benchmarks/bench_map_diagonal.py` then runs the *real* DMRG object against #230's
+  own probing oracle: worst `|exact − map_diagonal|` is `5.6e-17` on U(1), **exactly `0.0`**
+  on fZ2 and `7.4e-15` on SU(2), where #230's candidate was off by `1.56` and `0.45` on the
+  same fixtures.
+
+  **The cost figure is corrected, not confirmed.** #230 put the diagonal at 0.2 % of a
+  matvec; that was the price of the candidate, which is wrong. On the real implementation:
+
+  | | one `Env.heff2` | form `H_eff` | `map_diagonal` |
+  |---|---|---|---|
+  | U(1) Heisenberg | 1.10 ms | 2.33 ms (2.1x) | 0.021 ms (**1.9 %**) |
+  | fZ2 spinless | 0.74 ms | 1.72 ms (2.3x) | 0.017 ms (**2.3 %**) |
+  | SU(2) J1–J2 | 0.79 ms | 2.94 ms (3.7x) | 0.013 ms (**1.7 %**) |
+
+  Reading the diagonal is cheap. *Having* the map is not: `H_eff` is `chi^4 d^4`, already
+  2 GiB at `chi=64, d=2` and 512 GiB at #230's quantum-chemistry points, where forming it
+  is simply unavailable (the dense section of the benchmark reports the ceiling rather than
+  extrapolating past it). So Stage B cannot reach the preconditioner by forming the map and
+  calling this: it needs the diagonal built from the same `_Cores` the matvec uses, which is
+  block2's `initialize_diag` (`sparse_matrix.hpp`:81-140) — a second coefficient path with
+  its own 9j (:123-125) and its own fermion sign (:130). `map_diagonal` is that object's
+  **oracle**, exact and public, and the agreement section of the benchmark is the harness a
+  from-the-pieces implementation gets tested with. Recorded here so the stage is not later
+  read as having delivered the cheap route.
+
+  **The three design decisions, with their reasons.**
+
+  * *What it returns.* A `SymmetricTensor` on the map's codomain legs — the structure the
+    vectors it acts on carry, so `zip_blocks` pairs the two block for block and
+    `q / (lambda - diag)` type-checks. Those legs are all OUT, hence unit-coupled, and that
+    is the whole diagonal on the vectors tenet can represent: a `SymmetricTensor` on them is
+    invariant by construction (invariant 1), and a targeted charge is carried by an explicit
+    charge leg, which is then a leg of the map too.
+  * *The refusal.* Not square → `check_square`'s existing message, which names the first
+    offending position and both legs. No new checker: the predicate is
+    `ProductSpace.matches`, and this is its sixth caller.
+  * *The general square map, and the partition the caller has to arrive on.* The two-site
+    case is not special-cased; the implementation is rank-generic (one einsum subscript per
+    paired axis, 26 of them). The environments hand the operator over on `aa`'s own
+    partition — right bond IN on the ket side, OUT on the bra side — so the caller pays one
+    `repartition` to reach `(a p q r | a' p' q' r')`. That bend is deliberately *not* done
+    inside `map_diagonal`: it needs `BendingCoefficients`, and hiding a capability
+    requirement inside an operation that otherwise needs none would make the refusal
+    provider-dependent for no gain. It is also harmless to the answer — a bend is one scalar
+    per block (`BendPlan.terms`), i.e. a diagonal similarity, and `diag(S M S^-1) = diag(M)`
+    — which is why the same numbers come back on `aa`'s basis, and why a solver may
+    precondition in either partition. `tests/ops/test_map_diagonal.py` pins that
+    one-scalar-per-block claim on U(1) and SU(2) rather than asserting it in prose.
+
+  **`zip_blocks`, and why it does not reopen `multiply`'s refusal.** `multiply` refuses a
+  second `SymmetricTensor` because `a * b` asks for a *dense* elementwise product, which has
+  no expression in the reduced blocks — `T = Σ_τ A^(τ) ⊗ C^(τ)` — so the plausible blockwise
+  answer would be a silently different tensor. `zip_blocks` makes the opposite declaration
+  in its name and signature: a map over coefficients, supplied by the caller, with no claim
+  that it commutes with dense expansion; it is unreachable from `*` or `/` and requires one
+  shared structure, which is what makes "the aligned block pair" mean anything (`block_order`
+  is a pure function of the structure). The same argument already licensed the unary
+  `apply_blocks`; arity was never what was in question. `multiply`'s refusal test stands
+  unedited, and so does
+  `tests/network/test_hygiene.py::test_no_module_uses_reduced_blocks_numerically` — the
+  placement in `tenet.ops` is what that fence was demanding.
+
+  **No allocation claim is asserted in prose.** It is instrumented on `autoray.do`'s
+  outputs: every array `map_diagonal` produces is at most the size of one block of its own
+  *result*, with the `to_matrices` route — which concatenates a full-width matrix per
+  coupled sector to read its diagonal — as the positive control that trips the instrument.
+  A second test breaks `to_dense` and `to_matrices` outright and runs the operation anyway.
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,

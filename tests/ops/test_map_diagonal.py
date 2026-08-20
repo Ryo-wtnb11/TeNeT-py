@@ -56,7 +56,7 @@ FP = GradedSpace.new(fZ2, {FZ2Sector(0): 1, FZ2Sector(1): 1})
 # The spinful-Hubbard grading: d = 4, both parities twice (tests/network/test_hubbard.py).
 HUB = GradedSpace.new(fZ2, {FZ2Sector(0): 2, FZ2Sector(1): 2})
 
-SB = GradedSpace.new(SU2, {SU2Sector(0): 1, SU2Sector(1): 1})
+SB = GradedSpace.new(SU2, {SU2Sector(0): 1, SU2Sector(1): 2, SU2Sector(2): 1})
 SP = GradedSpace.new(SU2, {SU2Sector(1): 1})
 SX = GradedSpace.new(SU2, {SU2Sector(0): 1, SU2Sector(2): 1})
 
