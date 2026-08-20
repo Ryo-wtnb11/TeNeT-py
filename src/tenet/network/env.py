@@ -272,7 +272,7 @@ def _apply2(p: _Prepared, aa: SymmetricTensor) -> SymmetricTensor:
     key -- so it is traceable and is what [Env.heff2][tenet.network.Env.heff2] hands to
     ``compile=``. Four
     contractions for a string-built Hamiltonian -- the identity-through pair plus one
-    one-sided field per anchor -- against the dense path's four over the full
+    one-sided field per anchor -- against the compatibility entry's four over the full
     ``D_w``-wide ``W`` pair, and only the first pair still carries an MPO-bond leg.
 
     The one-sided ``caf``/``abf`` terms use the two-site sweep's mixed-canonical gauge,
@@ -589,9 +589,41 @@ class Env:
 
         Notes
         -----
-        **Prepared path**, taken when ``self.h`` carries an edge-block table -- which
-        requires ``MPO.from_terms(..., cutoff=None)``, the precondition, because a
-        compressed or ``from_w`` MPO has no edge structure left to prepare. The two
+        **The engine is one path: the prepared, symbolic, term-family matvec.** Every MPO
+        that carries an edge description -- [from_terms][tenet.network.MPO.from_terms] and
+        [from_arrays][tenet.network.MPO.from_arrays], at *either* cutoff since #204 --
+        goes through it, and **later parallelism and accelerator work attaches here and
+        nowhere else**. This is block2's engine design in tenet's form: its
+        ``EffectiveHamiltonian`` never forms the effective Hamiltonian and instead
+        dispatches the symbolic operator sum term by term against the wavefunction
+        (``effective_hamiltonian.hpp``:230-243). There is no runtime dispatch here either
+        -- no bond-width threshold, no ``chi`` threshold, no ``path=`` keyword.
+
+        **The dense branch below is not a second engine; it is a compatibility entry.**
+        It exists for an MPO that carries no symbols at all --
+        [from_w][tenet.network.MPO.from_w] and an ``MPO`` built from bare site tensors --
+        and nothing else routes to it. Recovering symbols from a numeric ``W`` is not
+        possible in general: #141 measured that a compressed ``W`` retains no edge
+        structure to recover. So the entry cannot be closed without refusing
+        externally-built MPOs, which is a decision about the public surface and not one
+        this milestone makes. block2 has no equivalent because block2 is a
+        quantum-chemistry *program* and never receives an operator from outside; tenet is
+        a library, and essentially every MPO in the literature is written as a ``W``
+        matrix. Adopt block2's engine, not block2's role.
+
+        **The knob that does exist is ``cutoff``, at build time.** ``cutoff=None`` keeps
+        the exact finite-state machine, whose bond is already minimal for a finite-range
+        lattice model and whose identity channels ride ``idmap``/``spec_op`` with no ``W``
+        contraction at all; a float ``cutoff`` compresses, which is what an ab initio
+        Hamiltonian needs and which -- because the rotation mixes the open states -- turns
+        every open state into an operator-carrying one. Both then run through this one
+        path. Measured at N=20 U(1) Heisenberg, ``chi=64``: 1.96 s at ``cutoff=None``
+        against 3.53 s at ``1e-13``. So a lattice model wants ``cutoff=None`` and quantum
+        chemistry wants the float, and the caller states which at build time rather than
+        the engine guessing at run time -- which is also how block2 takes its algorithm
+        choice. ``docs/design.md`` "Milestone 39" carries the ``chi`` scaling grid.
+
+        **The path in detail.** The two
         environments are folded into the site blocks **once per bond** (``_build2``,
         MPSKit's ``AC2_hamiltonian``) and cached against the environment tensors'
         identity, so one ``lanczos`` solve at ``ncv=3`` pays the fold once and applies
@@ -599,19 +631,25 @@ class Env:
         where the structural zeros go. Like MPSKit's matvec, the ``IdL``/``IdR``-anchored
         terms are one-sided: they use the sweep's **mixed-canonical gauge** -- sites left
         of the bond left-orthonormal, sites right of it right-orthonormal, which
-        [sweep_][tenet.network.sweep_] maintains at every bond -- as the second
-        precondition; environments built from a differently-gauged state belong to the
-        dense path. The apply itself is compiled through ``compile=`` once per structure
+        [sweep_][tenet.network.sweep_] maintains at every bond -- as the standing
+        precondition. It is the one thing this path asks of its caller, and it is not
+        chosen at run time either: a caller whose environments come from a differently
+        gauged state has to hand over ``MPO(h.sites)``, which throws the description away
+        and takes the branch below. The apply itself is compiled through ``compile=``
+        once per structure
         key -- the tuple of ``aa``'s legs plus the prepared operator's identity -- and
         the cache holds one entry per bond, replaced when the key moves.
 
-        **Dense path**, for every MPO without a table: right environment, then ``W2``,
-        then ``W1``, then the left environment -- YASTN's ``Env_mps_mpo_mps.Heff2`` order
+        **The compatibility entry**, for an MPO with no description at all
+        ([from_w][tenet.network.MPO.from_w] or bare site tensors), and no accelerator work
+        targets it: right environment, then
+        ``W2``, then ``W1``, then the left environment -- YASTN's ``Env_mps_mpo_mps.Heff2`` order
         (``_env.py``:496-518) with ``precompute=False``, which ``_dmrg.py``:102-108
         documents as ``O(D^3 M d + D^2 M^2 d^2)``.
 
-        The two paths agree as operators but sum their terms in a different order, so
-        they agree to solver precision, never bitwise. In and out on ``(left bond OUT, p
+        The engine and the compatibility entry agree as operators but sum their terms in
+        a different order, so they agree to solver precision, never bitwise. In and out
+        on ``(left bond OUT, p
         OUT, q OUT, right bond IN)``: the *bra* legs of the two environments become the
         output's bonds while the *ket* legs close against the input's, which is why the
         result has ``aa``'s structure exactly and [lanczos][tenet.network.lanczos] can add

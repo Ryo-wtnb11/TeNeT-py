@@ -1565,6 +1565,17 @@ class EdgeTable:
     keeps every site and never evicts. A rebuilt block table is bit-identical to the
     evicted one; ``edge_blocks`` is a pure function of the description.
 
+    **Two producers, one interface** (#204). ``_edge_table`` builds the finite-state
+    machine; ``_compressed_table`` builds the *compressed* description a float-``cutoff``
+    builder returns -- the compressed sites plus, per cut, the three group slabs the
+    pinned sweeps preserved, with one open state per cut where the FSM has one per open
+    string and with the per-edge dicts empty. Both answer the same two ways down, because
+    what the prepared matvec consumes of a bond is the ``IdL (+) open (+) IdR``
+    decomposition and the four blocks placed against it, never the edges: no consumer of
+    [EdgeBlocks][tenet.network.EdgeBlocks] reads ``a``/``b``/``c``/``d``. The one
+    difference is inside [edge_blocks][tenet.network.EdgeTable.edge_blocks], which slices
+    the compressed ``W'`` where it scatters the FSM's edges.
+
     The next stage (#184 candidate (d)) plugs in *here*: a per-cut assembler with an
     expression algebra replaces ``_edge_table`` as the producer and
     [edge_blocks][tenet.network.EdgeTable.edge_blocks] as the per-site core builder, with the
@@ -1612,6 +1623,11 @@ class EdgeTable:
         self._identities: dict = {}
         self._table: dict = Recent()
         self._embeds: dict = Recent()
+        # The compressed site tensors, or ``None`` for the finite-state machine itself
+        # (#204). Set by ``_compressed_table``: a description whose cuts are already the
+        # compressed ``IdL (+) open (+) IdR`` and whose sites are already numeric, so
+        # ``site`` hands one back and ``edge_blocks`` slices one instead of scattering.
+        self.compressed: list[SymmetricTensor] | None = None
 
     def __len__(self) -> int:
         return len(self.edges)
@@ -1654,8 +1670,14 @@ class EdgeTable:
         ``einsum("xy,apqx->apqy", carry, w)`` used to make: same space, ``OUT``, ``dual``
         flipped.
 
+        A **compressed** description (#204) is already numeric: its site is handed back
+        as it is and ``carry`` has nowhere to go, because the two sweeps that would fold
+        one are what produced the description in the first place.
+
         This is the full-width way down, and the one the prepared matvec does not take.
         """
+        if self.compressed is not None:
+            return self.compressed[n]
         if carry is None:
             space_r, dual_r, dense_c = self.bonds[n + 1], self.dual, None
         else:
@@ -1712,10 +1734,18 @@ class EdgeTable:
         The six group embeddings are built here, per cut and shared between the two sites
         that meet at it. Until #200 they were built by ``_instantiate`` for the whole MPO
         at once, which is what tied ``Env``'s cores to a materialised operator.
+
+        For a **compressed** description (#204) there is nothing to scatter: the four
+        blocks are the four sub-slabs of the compressed ``W'``, cut out by the same group
+        embeddings, and ``spec_op``/``a_real_op`` say that in a rotated open basis a
+        spectator's identity ride no longer separates -- everything open is
+        operator-carrying. A spin chain that wants the spectator shortcut keeps
+        ``cutoff=None``, where nothing changed.
         """
         got = self._table.get(n)
         if got is None:
-            got = self._table[n] = self._build_table(n)
+            build = self._slice_table if self.compressed is not None else self._build_table
+            got = self._table[n] = build(n)
         return got
 
     # --- the machinery under the two ways down ---------------------------------------
@@ -1786,6 +1816,60 @@ class EdgeTable:
             )
         self._embeds[i] = emb
         return emb
+
+    def _slice_table(self, n):
+        """``edge_blocks``' body for a compressed description: slice ``W'`` by slab.
+
+        The pinned sweeps left the two corner channels exact, so ``idmap`` is those two
+        channels and nothing else -- no free-riding spectator survives a rotation of the
+        open basis, which is why ``spec_op`` is ``None`` and ``a_real_op`` is ``a_op``.
+        """
+        # ``_slice_table`` is reached only through ``edge_blocks``' compressed branch
+        w = self.compressed[n]  # ty: ignore[not-subscriptable]
+        left, right = self._embed(n), self._embed(n + 1)
+
+        def block(gl, gr):
+            # ``left[g][1]`` reads ``(group IN, bond OUT)`` and ``right[g][0]``
+            # ``(bond IN, group OUT)``: the two orientations that meet ``W'``'s own legs.
+            el, er = left[gl][1], right[gr][0]
+            if el is None or er is None:
+                return None
+            return tenet.einsum("xw,vpqx->vpqw", er, tenet.einsum("xpqb,vx->vpqb", w, el))
+
+        corners = [k for k in (_IDL, _IDR) if k in self.ordered[n] and k in self.ordered[n + 1]]
+        ops = {name: block(*where) for name, where in _BLOCK_GROUPS.items()}
+        n_sites = len(self.edges)
+        idmap = (
+            self._channel_map(
+                corners,
+                (self.bonds[n], self.bonds[n + 1]),
+                self.starts[n],
+                self.starts[n + 1],
+                self.dual and n > 0,
+                self.dual and n + 1 < n_sites,
+            )
+            if corners
+            else None
+        )
+        return EdgeBlocks(
+            {},
+            {},
+            {},
+            {},
+            ops["a"],
+            ops["b"],
+            ops["c"],
+            ops["d"],
+            idmap,
+            None,
+            ops["a"],
+            left["idl"][0],
+            left["open"][0],
+            left["idr"][0],
+            right["idl"][1],
+            right["open"][1],
+            right["idr"][1],
+        )
 
     def _build_table(self, n):
         """``edge_blocks``' body: partition site ``n``'s edges, place them, embed its two cuts."""
@@ -1926,7 +2010,65 @@ def _edge_table(n_sites, phys, dual, states, order, moves, stops, spectators) ->
     return EdgeTable(edges, ordered, bonds, starts, groups, states, phys, dual)
 
 
-def _instantiate(tab: EdgeTable, cutoff: float) -> list[SymmetricTensor]:
+# --- the corner-pinned compressing sweeps -------------------------------------------
+#
+# Both truncating sweeps rotate the **open** block of a cut only; the ``_IDL`` and
+# ``_IDR`` channels pass through unrotated, so a compressed bond still decomposes as
+# ``IdL (+) open (+) IdR`` and still carries the partition ``Env.heff2``'s prepared path
+# eats (#204). That is a restriction of the gauge freedom, not a new algorithm:
+# ``block-diag(1, U, 1)`` is a legal MPO gauge transformation and the truncation drops
+# open directions under the same ``cutoff``. block2 pins the same way on its own SVD
+# route (``general_mpo.hpp``:764-805 removes the delayed identity row from the matrix
+# before the SVD and gives it a unit singular value); the ``IdR`` half is tenet's.
+#
+# The layout fact both halves ride on: a cut's bond is ``_merge``'s direct sum over
+# ``ordered[i] = [_IDL, *open, _IDR]`` and both corner states carry the trivial ``D=1``
+# unit space (``_Walk.__init__``), so the two corner channels are the **first** and
+# **last** degeneracy slot of the bond's unit sector and nothing else. Pinning is then:
+# take those two rows out, rotate what is left, put the three slabs back in that order --
+# and ``tenet.direct_sum`` puts them back in exactly ``_merge``'s order, which is what
+# lets the compressed description reuse ``_merge`` to describe its own cuts.
+
+
+def _corner_slots(bond: GradedSpace, sym: Any) -> dict[str, int]:
+    """The dense rows the two corner channels occupy; asked only where one is live.
+
+    Both corner states carry the unit space, so a cut with no live corner need not have
+    a unit sector at all -- an all-odd bond is what a chain of one fermionic operator
+    leaves -- and this is not asked there.
+    """
+    off = bond.sector_offset(sym.unit)
+    return {"idl": off, "idr": off + dict(bond.sectors)[sym.unit] - 1}
+
+
+def _corner_map(bond: GradedSpace, row: int, legs: tuple, *, column: bool) -> SymmetricTensor:
+    """The one-row (or one-column) selector of a corner channel, on the given legs.
+
+    A dense ``(D, 1)`` indicator through ``from_dense`` with the legs declared, the way
+    ``_channel_map`` and ``_group_embedding`` build theirs -- the slab is *read off* a
+    tensor rather than hand-derived, which is what keeps the dual flags and any braiding
+    sign honest. Cheap in the one place it matters: this never allocates the
+    ``D_FSM x D_FSM`` object a whole-group embedding of the uncompressed bond would.
+    """
+    dense = np.zeros((bond.dim, 1))
+    dense[row, 0] = 1.0
+    return SymmetricTensor.from_dense(dense if column else dense.T, legs)
+
+
+def _aligned(t: SymmetricTensor, dual: bool, axis: int) -> SymmetricTensor:
+    """``t`` with ``axis``'s ``dual`` flag matching ``dual``; the corner spaces are the unit."""
+    return t if t.legs[axis].dual == dual else tenet.flip_dual(t, axis)
+
+
+def _joined(parts: list[SymmetricTensor], axes: Any) -> SymmetricTensor:
+    """``parts[0] (+) parts[1] (+) ...`` along ``axes``, in ``_merge``'s allocation order."""
+    out = parts[0]
+    for p in parts[1:]:
+        out = tenet.direct_sum(out, p, axes=axes)
+    return out
+
+
+def _instantiate(tab: EdgeTable, cutoff: float) -> tuple[list[SymmetricTensor], list]:
     """Place every site numerically, truncating as it goes — one consumer of the table.
 
     The streaming materialiser, and since #200 the *only* thing ``_instantiate`` is: the
@@ -1946,36 +2088,164 @@ def _instantiate(tab: EdgeTable, cutoff: float) -> list[SymmetricTensor]:
     FSM bond, which overshoots wherever the redundancy is only visible from the right. The
     widest object that ever exists is ``D_FSM x d**2 x chi_Schmidt``, so the full-width
     MPO never exists as a whole.
+
+    **The SVD acts on the open row slab only** (#204): the two corner channels are taken
+    out first, the rest is rotated and truncated, and the carry handed to site ``n-1`` is
+    the block-diagonal ``1_IdL (+) (u.s) (+) 1_IdR`` -- which ``_place`` folds exactly as
+    it folds the free carry, its right end being one rank-2 map either way. The corner
+    rows are removed by subtracting their own one-row slabs rather than by restricting to
+    the open group, because a whole-group embedding of the *uncompressed* bond is a
+    ``D_FSM x D_FSM`` object (7.9 GiB at K=26, #202) and a one-row selector is not.
+
+    Returns the sites and, per cut, ``(IdL live, the open block's space or None, IdR
+    live)`` -- the description of the partition the sweep just preserved, which
+    ``_compress_forward`` carries on and ``_compressed_table`` turns into a block table.
     """
+    sym = tab.phys.provider
+    unit = GradedSpace.new(sym, {sym.unit: 1})
+    n_sites = len(tab.edges)
+    cuts: list = [None] * (n_sites + 1)
+    for i in (0, n_sites):
+        cuts[i] = (tab.groups[i]["idl"] is not None, None, tab.groups[i]["idr"] is not None)
     out, carry = [], None
-    for n in reversed(range(len(tab.edges))):
+    for n in reversed(range(n_sites)):
         w = tab.site(n, carry)
         if n:
-            u, s, vh = tenet.linalg.svd_truncated(w, ((0,), (1, 2, 3)), cutoff=cutoff)
-            w = _as_w(vh)
+            bond, dual_b = tab.bonds[n], tab.dual
+            live = [g for g in ("idl", "idr") if tab.groups[n][g] is not None]
+            slots = _corner_slots(bond, sym) if live else {}
+            corners, rest = {}, w
+            for g in live:
+                take = _corner_map(
+                    bond, slots[g], (Leg(unit, IN, dual_b), Leg(bond, OUT, dual_b)), column=False
+                )
+                put = _corner_map(
+                    bond, slots[g], (Leg(bond, IN, dual_b), Leg(unit, OUT, dual_b)), column=True
+                )
+                corners[g] = tenet.einsum("xpqb,vx->vpqb", w, take)
+                rest = tenet.subtract(rest, tenet.einsum("vpqb,xv->xpqb", corners[g], put))
+            u, s, vh = tenet.linalg.svd_truncated(rest, ((0,), (1, 2, 3)), cutoff=cutoff)
             # ``u`` came back on the map partition, its ``wl`` leg bent; spell the bend
-            # with ``repartition`` so the join above is a composition, not an implicit cap.
-            carry = tenet.repartition(tenet.einsum("xy,yz->xz", u, s), (), (0, 1))
+            # with ``repartition`` so the join below is a composition, not an implicit cap.
+            open_w, open_c = _as_w(vh), tenet.einsum("xy,yz->xz", u, s)
+            ref = open_c.legs[1]
+            rows, cols = [], []
+            for g in ("idl", "open", "idr"):
+                if g == "open":
+                    rows.append(open_w)
+                    cols.append(open_c)
+                elif g in live:
+                    rows.append(_aligned(corners[g], open_w.legs[0].dual, 0))
+                    cols.append(
+                        _corner_map(
+                            bond,
+                            slots[g],
+                            (open_c.legs[0], Leg(unit, ref.side, ref.dual)),
+                            column=True,
+                        )
+                    )
+            w = _joined(rows, 0)
+            carry = tenet.repartition(_joined(cols, 1), (), (0, 1))
+            cuts[n] = ("idl" in live, open_w.legs[0].space, "idr" in live)
         out.append(w)
     out.reverse()
-    return out
+    return out, cuts
 
 
-def _compress_forward(sites: list[SymmetricTensor], cutoff: float) -> list[SymmetricTensor]:
+def _compress_forward(
+    sites: list[SymmetricTensor], cuts: list, cutoff: float
+) -> list[SymmetricTensor]:
     """The left-to-right half of the compressing sweep, in place over ``sites``.
 
     ``_instantiate`` ran the right-to-left half while it placed the sites; this is the
-    return leg, and it is the same eight lines for every builder that takes a float
-    ``cutoff``, so it lives here rather than once per builder.
+    return leg, and it is the same shape for every builder that takes a float ``cutoff``,
+    so it lives here rather than once per builder. It is ``_instantiate``'s pinning
+    mirrored onto the open **column** slab, and it narrows ``cuts`` in place as it goes.
     """
+    sym = sites[0].legs[1].space.provider
+    unit = GradedSpace.new(sym, {sym.unit: 1})
     for n in range(len(sites) - 1):
-        u, s, vh = tenet.linalg.svd_truncated(sites[n], ((0, 1, 2), (3,)), cutoff=cutoff)
-        sites[n] = _as_w(u)
-        carry = tenet.einsum("xy,yz->xz", s, vh)
+        has_l, _open, has_r = cuts[n + 1]
+        bond, dual_b = sites[n].legs[3].space, sites[n].legs[3].dual
+        live = [g for g, on in (("idl", has_l), ("idr", has_r)) if on]
+        slots = _corner_slots(bond, sym) if live else {}
+        corners, rest = {}, sites[n]
+        for g in live:
+            take = _corner_map(
+                bond, slots[g], (Leg(bond, IN, dual_b), Leg(unit, OUT, dual_b)), column=True
+            )
+            put = _corner_map(
+                bond, slots[g], (Leg(unit, IN, dual_b), Leg(bond, OUT, dual_b)), column=False
+            )
+            corners[g] = tenet.einsum("xv,apqx->apqv", take, sites[n])
+            rest = tenet.subtract(rest, tenet.einsum("vx,apqv->apqx", put, corners[g]))
+        u, s, vh = tenet.linalg.svd_truncated(rest, ((0, 1, 2), (3,)), cutoff=cutoff)
+        open_w, open_c = _as_w(u), tenet.einsum("xy,yz->xz", s, vh)
+        ref = open_c.legs[0]
+        rows, cols = [], []
+        for g in ("idl", "open", "idr"):
+            if g == "open":
+                rows.append(open_w)
+                cols.append(open_c)
+            elif g in live:
+                rows.append(_aligned(corners[g], open_w.legs[3].dual, 3))
+                cols.append(
+                    _corner_map(
+                        bond,
+                        slots[g],
+                        (Leg(unit, ref.side, ref.dual), open_c.legs[1]),
+                        column=False,
+                    )
+                )
+        sites[n] = _joined(rows, 3)
         # ``vh``'s ``wr`` leg came back bent; spell the bend, as in ``_instantiate``'s sweep.
-        carry = tenet.repartition(carry, (0, 1), ())
+        carry = tenet.repartition(_joined(cols, 0), (0, 1), ())
         sites[n + 1] = _as_w(tenet.einsum("ypqr,xy->xpqr", sites[n + 1], carry))
+        cuts[n + 1] = (has_l, open_w.legs[3].space, has_r)
     return sites
+
+
+def _compressed_table(sites: list[SymmetricTensor], cuts: list, phys: GradedSpace) -> EdgeTable:
+    """The compressed operator as a description: the sites plus each cut's three slabs.
+
+    The carrier #204 asks for. A float-``cutoff`` builder no longer hands ``MPO`` bare
+    site tensors; it hands this, so ``MPO.edges`` stays the one dispatch source for
+    [Env.heff2][tenet.network.Env.heff2] whether the MPO was compressed or not. What the
+    prepared machinery consumes of a bond is the direct-sum decomposition ``IdL (+) open
+    (+) IdR`` and the four blocks placed against it -- not the FSM's edges, which no
+    consumer of [EdgeBlocks][tenet.network.EdgeBlocks] reads -- and after the pinned
+    sweeps a compressed bond still has that decomposition, with one *open state per cut*
+    where the FSM had one per open string.
+
+    So the per-edge dicts are empty and every field the matvec does read is sliced out of
+    the compressed ``W'`` by [EdgeTable.edge_blocks][tenet.network.EdgeTable.edge_blocks].
+    Simplification: the open state's label is the cut index, which is enough because
+    nothing outside this module reads a state label's value.
+    """
+    sym = phys.provider
+    unit = GradedSpace.new(sym, {sym.unit: 1})
+    # The compressed MPO carries one dual convention on its interior bonds (the two ends
+    # are ``D=1`` and non-dual, as ``site``'s caps and ``from_w``'s ends are), so
+    # ``_embed``'s ``dual and 0 < i < N`` rule describes it unchanged.
+    dual = sites[-1].legs[0].dual
+    states: dict = {_IDL: unit, _IDR: unit}
+    ordered, bonds, starts, groups = [], [], [], []
+    for i, (has_l, open_space, has_r) in enumerate(cuts):
+        key = _IDR + 1 + i  # one open state per cut, labelled by the cut
+        if open_space is not None:
+            states[key] = open_space
+        live = (("idl", _IDL, has_l), ("open", key, open_space is not None), ("idr", _IDR, has_r))
+        cut = [k for _n, k, on in live if on]
+        bond, per_state = _merge(sym, cut, states)
+        ordered.append(cut)
+        bonds.append(bond)
+        starts.append(per_state)
+        groups.append({n: (*_merge(sym, [k], states), [k]) if on else None for n, k, on in live})
+    tab = EdgeTable(
+        [{} for _ in range(len(sites))], ordered, bonds, starts, groups, states, phys, dual
+    )
+    tab.compressed = sites
+    return tab
 
 
 class MPO:
@@ -1987,9 +2257,11 @@ class MPO:
         The rank-4 site tensors, left to right. Exactly one of ``sites`` and
         ``edges`` is given.
     edges : EdgeTable or None, optional
-        The symbolic edge description [from_terms][tenet.network.MPO.from_terms]
-        keeps at ``cutoff=None``, from which sites and block tables are
-        materialised on request; ``None`` for every other MPO. Keyword-only.
+        The edge description [from_terms][tenet.network.MPO.from_terms] and
+        [from_arrays][tenet.network.MPO.from_arrays] keep -- the finite-state
+        machine at ``cutoff=None``, the compressed sites and their per-cut
+        slabs at a float cutoff -- from which sites and block tables come on
+        request; ``None`` for every other MPO. Keyword-only.
 
     Raises
     ------
@@ -2005,12 +2277,14 @@ class MPO:
     **A separate class from [MPS][tenet.network.MPS], with no shape flag** -- the comparison
     with YASTN's and TenPy's choices is in ``docs/design.md`` "Milestone 11".
 
-    **Two internal representations, and ``edges`` is the symbolic one** (#200). Given an
-    ``EdgeTable`` the container holds no tensor at all: ``self[n]``
+    **Two internal representations, and ``edges`` is the description** (#200). Given an
+    ``EdgeTable`` the container may hold no tensor at all: ``self[n]``
     materialises site ``n`` on request and caches it, and
     [edge_blocks][tenet.network.MPO.edge_blocks] does the same for the site's block table,
     so an MPO whose only consumer is the prepared two-site matvec never allocates a
-    full-width rank-4 ``W``. Given site tensors it holds exactly those and
+    full-width rank-4 ``W``. A *compressed* description (#204) already holds its sites --
+    the two truncating sweeps built them -- and answers both accessors off those. Given
+    site tensors and no description the container holds exactly those and
     ``edge_blocks`` is ``None`` throughout. #141's standing trade -- two representations
     in one class, because ``from_w``'s numeric path and ``to_dense`` still need the sites
     -- is accepted here one level deeper, with its deletion condition unchanged.
@@ -2074,11 +2348,15 @@ class MPO:
 
         Notes
         -----
-        Only ``from_terms(..., cutoff=None)`` carries a table: the compressing sweep's
-        SVD gauge mixes the FSM states, so a compressed ``W`` *has* no edge structure to
-        recover -- measured in #141, the sweep leaves zero identity edges on every model
-        -- and [from_w][tenet.network.MPO.from_w] never had one. ``None`` therefore also routes
-        [Env.heff2][tenet.network.Env.heff2] onto its dense path.
+        Every ``from_terms`` / ``from_arrays`` operator carries a table, at either
+        cutoff. The float cutoff used to give one up, because the compressing sweep's SVD
+        gauge mixed the FSM states and left zero identity edges on every model (#141);
+        since #204 both sweeps pin the two corner channels, so a compressed bond still
+        decomposes as ``IdL (+) open (+) IdR`` and still has a table -- one open state per
+        cut rather than one per open string. [from_w][tenet.network.MPO.from_w] never had
+        a description and returns ``None``, which routes
+        [Env.heff2][tenet.network.Env.heff2] onto its compatibility entry, which is what
+        that branch is for.
 
         Since #200 the table is *built* here rather than stored here: the call goes
         through to ``EdgeTable.edge_blocks``, which places one
@@ -2179,8 +2457,8 @@ class MPO:
         Returns
         -------
         MPO
-            The assembled operator; with ``cutoff=None`` it carries the
-            per-site [edge_blocks][tenet.network.MPO.edge_blocks] table.
+            The assembled operator, carrying the per-site
+            [edge_blocks][tenet.network.MPO.edge_blocks] table at either cutoff.
 
         Raises
         ------
@@ -2257,15 +2535,27 @@ class MPO:
         peels it into ``k`` tensors -- is a different SVD and is **unaffected** by
         ``cutoff=None``; it runs at the default ``1e-13`` in that case.
 
-        **For finite-range models the compressing sweeps reduce the bond dimension by
-        exactly nothing**, while the SVD gauge mixes the FSM states and erases the
-        identity edges, so only ``cutoff=None`` keeps the block table that
-        [edge_blocks][tenet.network.MPO.edge_blocks] exposes and that routes
-        [Env.heff2][tenet.network.Env.heff2] onto its prepared per-bond operator. Whether
-        that trade wins depends on the backend and the bond dimension, and the default
-        stays ``1e-13`` because power-law couplings are where the sweep earns its keep.
-        The measurements behind both statements are in ``docs/design.md``
-        "Milestone 16".
+        **``cutoff`` is the regime knob, and it is a build-time choice rather than a
+        hidden runtime one.** Both settings now keep the block table
+        [edge_blocks][tenet.network.MPO.edge_blocks] exposes and both run through
+        [Env.heff2][tenet.network.Env.heff2]'s **one** engine path, because the sweeps pin
+        the ``IdL``/``IdR`` channels through their SVDs (#204) instead of rotating them
+        away (#141). What the choice decides is the operator the engine runs on:
+
+        * ``cutoff=None`` for a **finite-range lattice model**. The compressing sweeps
+          reduce its bond by exactly nothing, and the finite-state machine keeps its
+          identity channels separable, so every spectator site rides a rank-2 map with no
+          ``W`` contraction. Measured on N=20 U(1) Heisenberg at ``chi=64``: **1.96 s**
+          against **3.53 s** at ``1e-13``.
+        * a float ``cutoff`` for **power-law couplings and ab initio integrals**, where
+          the sweep is the difference between a bond of 31,441 and one of 736 and the
+          operator does not fit otherwise. The rotation mixes the open states, so no
+          spectator separates any more and every open state is operator-carrying; that
+          is a real constant factor and it is the same uniform mechanism block2 uses,
+          which carries its identity as an ordinary entry in its operator map.
+
+        The default stays ``1e-13``. The measurements are in ``docs/design.md``
+        "Milestone 16" and "Milestone 39".
 
         **There is no** ``phys=`` **argument**: the operators carry the physical space and
         a second source of truth could disagree with them, which would surface as a
@@ -2333,7 +2623,8 @@ class MPO:
         tab = _edge_table(n_sites, phys, dual, states, order, moves, stops, spectators)
         if cutoff is None:
             return cls(edges=tab)
-        return cls(_compress_forward(_instantiate(tab, cutoff), cutoff))
+        sites, cuts = _instantiate(tab, cutoff)
+        return cls(edges=_compressed_table(_compress_forward(sites, cuts, cutoff), cuts, phys))
 
     @classmethod
     def from_arrays(
@@ -2376,8 +2667,8 @@ class MPO:
         Returns
         -------
         MPO
-            The assembled operator; with ``cutoff=None`` it carries the
-            per-site [edge_blocks][tenet.network.MPO.edge_blocks] table.
+            The assembled operator, carrying the per-site
+            [edge_blocks][tenet.network.MPO.edge_blocks] table at either cutoff.
 
         Raises
         ------
@@ -2476,7 +2767,8 @@ class MPO:
         )
         if cutoff is None:
             return cls(edges=tab)
-        return cls(_compress_forward(_instantiate(tab, cutoff), cutoff))
+        sites, cuts = _instantiate(tab, cutoff)
+        return cls(edges=_compressed_table(_compress_forward(sites, cuts, cutoff), cuts, phys))
 
     def to_dense(self) -> Any:
         """The full ``d**N x d**N`` operator, ``D=1`` boundaries dropped.

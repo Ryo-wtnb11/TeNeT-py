@@ -3362,6 +3362,219 @@ The split:
   and `tests/network/test_deferred.py` asserts a full sweep's caches fall to the two-entry
   floor at a zero budget while the same sweep unbounded holds one entry per bond.
 
+- **M39** — shipped: the two compressing SVD sweeps **pin the `IdL` and `IdR` channels**,
+  so a float-`cutoff` MPO is compressed *and* partitioned where #141 measured that it could
+  be only one or the other (#204, stage 2 of #184's staging). The mechanism is one
+  restriction of gauge freedom, not a new algorithm. At each cut the bond is
+  `_merge`'s direct sum over `[_IDL, *open, _IDR]` and both corner states carry the trivial
+  `D=1` unit space, so the two corner channels are the first and last degeneracy slot of
+  the bond's unit sector; `_instantiate` takes those two rows out, rotates and truncates
+  only what is left, and hands site `n-1` the block-diagonal carry `1_IdL ⊕ (u·s) ⊕ 1_IdR`,
+  which `_place` folds exactly as it folded the free one. `_compress_forward` is the same
+  thing on the open *column* slab. `tenet.direct_sum` puts the three slabs back in
+  `_merge`'s own order, which is what lets the compressed description reuse `_merge` to
+  describe its own cuts.
+
+  **block2 ships the `IdL` half of this constraint in its own SVD route**, which is why the
+  design was taken as a restriction rather than proposed as an invention:
+  `general_mpo.hpp`:764-805 removes the delayed identity row from the matrix before the SVD
+  and gives it a unit singular value, and the bipartite branch forces vertex 0 into the left
+  cover for the same reason. The `IdR` half is tenet's.
+
+  **The carrier is `EdgeTable` again, with a second producer.** `_edge_table` builds the
+  finite-state machine; `_compressed_table` builds the compressed description — the
+  compressed sites plus, per cut, the three group slabs — with **one open state per cut**
+  where the FSM has one per open string, empty per-edge dicts, and
+  `EdgeTable.edge_blocks` slicing `W'` where it used to scatter edges. That is legal
+  because what `Env.heff2`'s prepared machinery consumes of a bond is the direct-sum
+  decomposition and the four blocks placed against it, never the edges: `_cores2`,
+  `_fold_last` and `_fold_first` read `a_op`/`b_op`/`c_op`/`d_op`, `idmap`,
+  `spec_op`/`a_real_op` and the six embeddings and nothing else. `spec_op` is `None` and
+  `a_real_op` is `a_op` on a compressed bond — in a rotated open basis a spectator's
+  identity ride no longer separates — and a lattice model that wants the spectator shortcut
+  keeps `cutoff=None`, where nothing changed at all. `_cores2`, `_build2`, `_apply2`,
+  `_fold_last`, `_fold_first` are untouched.
+
+  **Gate 1 — what pinning costs in bond width**, per cut, `benchmarks/bench_pinned_mpo.py`,
+  the same fixtures as `bench_qc_mpo.py`. `all cuts` is `max(pinned/free)` over every cut;
+  `inner` excludes the two cuts adjacent to the boundary.
+
+  | fixture | N | max free | max pinned | all cuts | inner |
+  |---|---|---|---|---|---|
+  | H4 STO-6G | 8 | 30 | 30 | 1.250 | 1.000 |
+  | H8 STO-6G | 16 | 122 | 122 | 1.250 | 1.000 |
+  | N2 STO-3G | 20 | 96 | 96 | 1.250 | 1.000 |
+  | H10 STO-6G | 20 | 192 | 192 | 1.250 | 1.000 |
+  | N2 CAS 6-31G (K=16) | 32 | 562 | 562 | 1.250 | 1.000 |
+  | C2 CAS cc-pVDZ (K=26) | 52 | 766 | **736** | 1.250 | 1.000 |
+  | syn-42 | 84 | 146 | **54** | 1.250 | 0.486 |
+
+  **The 1.10 criterion as written fails, and it fails at exactly two cuts of every
+  fixture, for a reason that is structural and bounded.** The two cuts adjacent to the
+  boundary go 4 → 5, everywhere, and nowhere else moves: at cut 1 the left block is one
+  site, so the free rank saturates at `d² = 4` and the two pinned corner rows are linearly
+  dependent on the open block there. A block-diagonal carry cannot absorb that dependency
+  — writing the open rows' component along a corner row into the carry makes it block
+  *triangular*, which puts non-identity content into the next site's `IdL` column and
+  destroys the partition the whole change exists to keep. So the cost is at most one state
+  per corner per cut, it bites only where the free bond is already at `d²`, and the maximum
+  bond width — the quantity memory and wall depend on — is bit-identical on five fixtures
+  and **smaller** on the two largest. The criterion was written expecting "the corners are
+  2 states of 766"; that is what the inner column measures and it reads 1.000.
+
+  **The independently computed minimum vertex cover says the same thing from the other
+  side, and it is the sharper statement.** `bench_qc_mpo.py` has always printed, per cut,
+  the FSM bond beside a combinatorial minimum vertex cover of the same cut (Kuhn matching
+  plus Koenig, no `scipy`) beside what the sweeps leave. The pinned sweep's bond is now
+  **equal to that cover at every cut** — H4 `1 5 16 25 30 25 16 5 1`, H8
+  `1 5 16 33 46 63 84 109 122 109 84 63 46 33 16 5 1`, cover and post-SVD row identical
+  entry for entry. The free sweep's 4 at the boundary-adjacent cuts is *below* the cover,
+  and the cover is the right optimum here because it is computed for an operator that keeps
+  its `IdL`/`IdR` channels: going below it is precisely the act of mixing them away. So the
+  1.250 in the table is not the pinned bond being 25 % too wide, it is the free bond being
+  one state narrower than any partitioned operator can be.
+
+  The pinned truncation is also not uniformly wider: on syn-42 and C2 it is *narrower*,
+  because `rsum2` weighs the discarded singular values against the total weight of the
+  matrix it decomposes, and the corner rows — which carry the not-yet-started and
+  already-finished channels' whole coefficient mass — are no longer in that total. Accuracy
+  is unchanged where it can be checked: `<psi|H|psi>` on random fZ2 states at syn-8 is
+  `1.8e-9` and `1.8e-8` relative against the uncompressed operator, against the free sweep's
+  `3.1e-8` and `4.3e-9`, and on the fixtures small enough to expand `to_dense` agrees with
+  the uncompressed `from_terms` at `6.4e-15` (H4) where the free sweep gives `3.3e-14`.
+
+  **Gate 2 — a full DMRG at `chi=16`, three sweeps, per operator route.** `fsm` is the
+  prepared path on the uncompressed FSM bond, which is M38's row and the number to beat;
+  `pinned` is this milestone; `free-dense` is gate 2's honest baseline, the freely
+  compressed sites handed over in a bare `MPO` so that `heff2` takes the compatibility
+  entry —
+  the alternative that needs no new code at all. It is a *measurement*, not a shipped
+  route: a `from_terms` operator always carries its description and always runs the one
+  engine path, and reaching this row means deliberately throwing the description away.
+
+  | K | route | build | 3 sweeps | peak RSS | energy |
+  |---|---|---|---|---|---|
+  | 16 (N2 CAS 6-31G) | fsm | 1.2 s | 337.0 s | 14.52 GiB | −27.234808137600 |
+  | 16 | **pinned** | 4.8 s | **4.5 s** | **1.38 GiB** | −27.258098346200 |
+  | 16 | free-dense | 4.2 s | 1.9 s | 1.25 GiB | −27.258098346200 |
+  | 26 (C2 CAS cc-pVDZ) | fsm (M38, #203) | — | did not finish `Env.setup_` | 19–24 GiB | — |
+  | 26 | **pinned** | 42.0 s | **12.1 s** | **6.04 GiB** | see note |
+  | 26 | free-dense | 42.3 s | 6.2 s | 4.72 GiB | see note |
+
+  **One number moved between the first measurement and the re-run, and it moved the wrong
+  way.** An early K=26 run reported a 3.21 GiB peak; it is not reproducible. Three clean
+  measurements since — this row and the two independent C2 processes of the `chi` grid
+  below — put it at **6.04, 6.19 and 6.09 GiB**, so 6.0 GiB is the number and 3.21 was an
+  outlier taken while several other jobs were competing for the machine. The peak at K=26
+  is the *build* transient (`_place`'s `D_FSM × d² × chi` buffers), not the sweep, which
+  is why it is the part that moves with allocator behaviour. What does not move is the
+  claim that matters: K=26 completes, at 6 GiB, where M38 had it not finishing `Env.setup_`
+  at 19–24 GiB. K=16 is stable across every run at 1.2–1.45 GiB.
+
+  The `fsm` row is M38's own run re-taken on this machine and it reproduces #203's number
+  where it matters: the ground-state energy is `-27.2348081376`, which is `cutoff=None`
+  behaviour byte-identical, and the peak is 14.52 GiB against the 15.24 GiB recorded there
+  (that run also carried the cache-accounting instrumentation this one does not).
+
+  The K=26 energies are a completion-and-resource measurement, not an energy comparison:
+  three sweeps at `chi=16` on a 52-site strongly correlated system from a random start is
+  nowhere near converged on any route, and the pinned and freely compressed operators are
+  two different `chi`-16 truncations, so their sweeps diverge. The energy agreement that
+  *is* a correctness statement is the K=16 row, where the pinned and free-dense routes
+  agree to 5e-13, and `tests/network/test_pinned.py`, which compares `to_dense`.
+
+  **K=26 completes**, which M38 recorded as blocked by one bond's working set: site 26's
+  block table alone was 7.90 GiB on the FSM bond of 12 124, and the widest bond of 31 441
+  extrapolated to ~52 GiB for a single site. On the compressed bond the widest is 736, and
+  the whole 52-site prepared operator fits under the M38 byte budget, so the caches stop
+  evicting and M38's recompute tax is gone for exactly the workload that paid it.
+
+  **The engine is one path, and this is where that is settled.** `Env.heff2` runs the
+  prepared, symbolic, term-family matvec for every MPO that carries an edge description —
+  `from_terms` and `from_arrays`, at either cutoff. **That is block2's engine design
+  adopted rather than re-invented**: its `EffectiveHamiltonian` never forms the effective
+  Hamiltonian and dispatches the symbolic operator sum term by term against the
+  wavefunction (`effective_hamiltonian.hpp`:230-243); the only thing it materialises is
+  `diag`, for the preconditioner. A runtime dispatch between two matvec paths was
+  measured, built and then **removed**: block2's algorithm choice is a build-time
+  argument, and tenet's is `cutoff`. Everything later — parallelism, GPU execution, a
+  Davidson preconditioner, one-site DMRG — attaches to this one path and to nothing else,
+  which is the reason it had to stop moving before any of that starts.
+
+  **The dense branch is not a second engine; it is a compatibility entry.** It exists for
+  an MPO that carries no symbols at all — `from_w` and a bare `MPO(sites)` — and no
+  accelerator work targets it. It cannot be closed by recovering symbols from a numeric
+  `W`, because in general there are none to recover: #141 measured that a compressed `W`
+  retains no edge structure. Closing it would mean *refusing* externally-built MPOs, which
+  is a decision about the public surface and not part of #204. block2 has no equivalent
+  because block2 is a quantum-chemistry **program** and never receives an operator from
+  outside; tenet is a library, and essentially every MPO in the literature is written as a
+  `W` matrix, so refusing one would close the library in a way block2 never has to
+  consider. This is the same class of judgement that kept disk spilling and the operator
+  vocabulary out: adopt block2's engine, not block2's role.
+
+  **The `chi` scaling grid, as information rather than as a decision.** Two DMRG sweeps
+  per point, the two routes selected the only way a caller can select them (the operator
+  with its description, against `MPO(h.sites)` — the same tensors with no description).
+  `ratio` is prepared / dense, so below 1.00 is the prepared path ahead.
+
+  | model | D_w | chi | prepared | dense | ratio | RSS prep | RSS dense |
+  |---|---|---|---|---|---|---|---|
+  | N=20 U(1) Heisenberg + NNN | 8 | 16 | 10.44 s | 3.25 s | 3.21x | 0.24 G | 0.11 G |
+  | | 8 | 64 | 12.65 s | 3.84 s | 3.29x | 0.27 G | 0.12 G |
+  | | 8 | 256 | 12.13 s | 3.77 s | 3.22x | 0.36 G | 0.19 G |
+  | N2 CAS 6-31G (K=16) | 562 | 16 | 3.50 s | 1.36 s | 2.57x | 1.31 G | 1.29 G |
+  | | 562 | 64 | 15.59 s | 8.95 s | 1.74x | 2.99 G | 1.84 G |
+  | | 562 | 128 | 65.44 s | 34.48 s | 1.90x | 5.49 G | 3.73 G |
+  | C2 CAS cc-pVDZ (K=26) | 736 | 16 | 8.54 s | 3.84 s | 2.22x | 6.19 G | 6.09 G |
+  | | 736 | 64 | 46.72 s | **47.98 s** | **0.97x** | 7.83 G | 7.85 G |
+
+  Both routes agree on the energy at every point converged enough to compare — to 1e-13 on
+  the lattice model and to 1e-12 on N2 at all three `chi`. (The two C2 rows at `chi=16`
+  disagree, 100.6 against 60.7, and that is not a path disagreement: two sweeps at
+  `chi=16` on a 52-site strongly correlated system from a random start is nowhere near
+  converged, and at `chi=64` the two routes land on the same `39.86930419362358`.)
+
+  **What the grid says.** The lattice ratio is flat in `chi` at ~3.2x: at `D_w = 8` there
+  is nothing for a symbolic dispatch to save and the per-bond core construction is pure
+  overhead — which is exactly why `cutoff=None` is the lattice-model setting, since the
+  finite-state machine keeps the identity channels separable and the same run costs 1.96 s
+  against 3.53 s. On ab initio integrals the ratio **narrows in `chi` on the widest bond**,
+  reaching 0.97x on C2 at `chi=64`: the per-bond cores do amortise as the two-site tensor
+  grows, which is the question the M38-era `chi=16` measurement could not answer. That is
+  the honest position of the engine today — a constant factor against the compatibility
+  entry's dense contraction at small `chi`, at parity by `chi=64` where the bond is widest
+  — and where the optimisation work goes is *inside* this one path, never into a second.
+
+  **The constant factor on a lattice model at a float cutoff is real and is not engineered
+  around.** N=20 U(1) Heisenberg, `chi=64`, four sweeps: `cutoff=None` **1.96 s**, default
+  `cutoff=1e-13` **3.53 s**, same ground state `-8.682473334398`. The mechanism is named
+  rather than hidden: the compressing rotation mixes the open states, so a spectator no
+  longer separates onto the rank-2 identity ride — `spec_op` is `None`, `a_real_op` is the
+  whole open group — and every open state is operator-carrying. This is not a defect #204
+  introduced; it is the uniform mechanism block2 already uses, where the identity is an
+  ordinary entry in the `ops` map and an explicit entry in the symbolic matrix, paid like
+  any other operator. block2's lattice performance is fine for the same reason tenet's is
+  at `cutoff=None`: a spin chain's bond is small in the first place. The knob is `cutoff`,
+  it is documented in `MPO.from_terms`' and `Env.heff2`'s Notes, and the caller sets it at
+  build time.
+
+  What #204 buys is therefore the *representation*: the operator no longer has to choose
+  between being compressed and being partitioned, K=26 completes at 6 GiB where it did
+  not complete at 19–24, and `heff2`'s prepared path lost its `cutoff=None` precondition —
+  which is what makes it one path rather than two.
+
+  **The pre-placement basis choice is the named successor**, for the K where the build
+  transient walls (`D_FSM × d² × chi`; benzene at K=108 extrapolates to ~10² GB). Its shape
+  is block2's, now read first-hand rather than inferred: a left-to-right streaming pass
+  whose rows are (previous cut's kept basis) × (site operators) — `expr_index_hash` includes
+  the kept-basis index (`general_mpo.hpp`:540-541) and Part 6 rebuilds the coefficient
+  stream on the kept basis — with both sides interned per cut and a dense per-quantum-number
+  SVD of the `szl × szr` block (:763, :828-833), the singular values folded into the next
+  site's coefficients rather than into a tensor. It gets its own gate (pre-placement against
+  post-placement width) when it is filed, and it slots in behind this milestone's carrier
+  without moving the interface again.
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,

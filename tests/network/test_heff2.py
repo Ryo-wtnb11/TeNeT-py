@@ -74,13 +74,20 @@ def _mid_env(h, seed=1):
 # --- the table is present, and absent where it should be absent ----------------------
 
 
-def test_only_cutoff_none_from_terms_carries_a_table():
-    """``from_terms(cutoff=None)`` exposes a block table; the default and ``from_w`` expose
-    ``None`` -- measurement 2's reason: the compressing sweep leaves zero identity edges
-    on every model, so there is nothing to recover and no table to hand out."""
+def test_only_a_from_terms_mpo_carries_a_table():
+    """``from_terms`` exposes a block table at **either** cutoff; ``from_w`` exposes ``None``.
+
+    The float cutoff used to give up the table, because the compressing sweep's SVD gauge
+    mixed the finite-state machine's states and left zero identity edges on every model
+    (#141's measurement 2). Since #204 both truncating sweeps pin the two corner channels,
+    so a compressed bond still decomposes as ``IdL (+) open (+) IdR`` and still carries a
+    table -- one open state per cut instead of one per open string. ``from_w``, which
+    never had a description, still hands out ``None`` and still routes ``heff2`` onto the
+    dense path.
+    """
     kept = MPO.from_terms(6, _heis(6), cutoff=None)
     assert all(kept.edge_blocks(n) is not None for n in range(6))
-    assert all(MPO.from_terms(6, _heis(6)).edge_blocks(n) is None for n in range(6))
+    assert all(MPO.from_terms(6, _heis(6)).edge_blocks(n) is not None for n in range(6))
     from_w = example.mpo(6)
     assert all(from_w.edge_blocks(n) is None for n in range(6))
     assert MPO(kept.sites).edge_blocks(0) is None  # rebuilding the container drops the table

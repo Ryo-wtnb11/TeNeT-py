@@ -91,13 +91,29 @@ def test_no_module_reaches_into_another_modules_private_names(path):
             assert not private, f"{path.name} imports {private} from {node.module}"
 
 
-def test_direct_sum_left_the_mpo_builder():
+def test_direct_sum_never_assembles_an_mpo_bond_from_edges():
     """M15 (#138): ``from_terms`` assembles a finite-state machine, edge by edge.
 
     ``tenet.direct_sum``'s block-diagonal placement is the wrong primitive for a graph
-    whose edges are deliberately off-diagonal, so it does not appear in ``mps.py`` at all.
+    whose edges are deliberately off-diagonal, so the FSM assembly -- ``_place``,
+    ``_merge``, ``_group_embedding``, ``EdgeTable`` -- never reaches for it.
+
+    The two corner-pinned compressing sweeps (#204) do, and they are the case the rule
+    was drawn against: their carry ``1_IdL (+) (u.s) (+) 1_IdR`` is block-diagonal *by
+    construction* and their site is a direct sum of three row slabs, which is precisely
+    what ``direct_sum`` means. So the assertion is now "only there": the sweeps, and
+    nothing else in ``mps.py``.
     """
-    assert "direct_sum" not in (PACKAGE / "mps.py").read_text()
+    tree = ast.parse((PACKAGE / "mps.py").read_text())
+    callers = {
+        fn.name
+        for fn in ast.walk(tree)
+        if isinstance(fn, ast.FunctionDef)
+        and any(
+            isinstance(node, ast.Attribute) and node.attr == "direct_sum" for node in ast.walk(fn)
+        )
+    }
+    assert callers == {"_joined"}, sorted(callers)
 
 
 @pytest.mark.parametrize("path", MODULES, ids=lambda p: p.name)
@@ -251,8 +267,12 @@ def test_every_two_operand_einsum_is_a_composition(monkeypatch):
         qs = (-1, 1) if i % 2 else (-2, 0, 2)
         bonds.append(GradedSpace.new(U1, {U1Sector(q): 2 for q in qs}))
     bonds.append(unit)
-    for cutoff in (None, 1e-13):
-        h = MPO.from_terms(n, terms, cutoff=cutoff)
+    built = [MPO.from_terms(n, terms, cutoff=c) for c in (None, 1e-13)]
+    # Both builders now hand back a description (#204), so the third operator is the one
+    # that still has none -- a bare container over the compressed sites, which is what
+    # keeps ``update_``'s and ``heff2``'s dense branches on the smoke's path.
+    built.append(MPO(built[1].sites))
+    for h in built:
         h.to_dense()
         psi = MPS.random(phys, bonds, seed=3)
         psi.norm()
