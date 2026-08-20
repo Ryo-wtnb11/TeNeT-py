@@ -4261,7 +4261,149 @@ The split:
   no edge description is honest but weak; closing it needs symbols the compatibility entry
   does not have (#141), which is the same wall `heff2`'s docstring records.
 
-Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
+- **M61 Stage D** — shipped: `Env` accepts a **bra that is not the ket**, and the sweep
+  can hold its state orthogonal to already-converged ones (#232 Stage D, absorbing #216
+  and the engine half of #213). `Env` gains one keyword-only `bra=` and one method
+  `project2`; `MPO` gains `identity`; `lanczos`, `sweep_` and `dmrg_` each gain one
+  keyword-only argument whose default preserves today's behaviour. block2 is GPL-3.0 and
+  this repository is Apache-2.0: everything here is description in original words with
+  `file:line` citations, and no code, comment or docstring crossed.
+
+  **What block2's `ext_mes` actually contract: the identity, not `H`.** The question is
+  worth asking because `two_dot_eigs_and_perturb` builds each `ortho_bra` through a
+  moving environment and calls `multiply` on it (`sweep_algorithm.hpp`:1195-1206), which
+  reads like an energy. It is not: the driver constructs those environments with
+  `impo = self.get_identity_mpo()` (`pyblock2/driver/core.py`:4817-4830), one per
+  converged state, between the sweeping ket and that state. So the per-bond vector is an
+  **overlap** — the converged state's two-site reduced form in the sweeping state's
+  environment gauge — and that is what is adopted here.
+
+  **Penalty versus hard projection: block2 ships both, and its state-specific default is
+  hard.** With `ors` and an empty `projection_weights` its Davidson projects every basis
+  vector by `1 - |v><v|`, after Gram-Schmidt-ing the `ors` against each other
+  (`iterative_matrix_functions.hpp`:1198-1200, :1219-1237). With a non-empty
+  `projection_weights` it instead adds `w_k |v_k><v_k|` to each `sigma` (:1201-1204,
+  :1250-1253), i.e. solves `H + sum_k w_k |v_k><v_k|` — the **level-shift** approach its
+  own documentation names as such and warns about, since a weight below the gap reports
+  unphysical eigenvalues `E_k + w_k` (`docs/source/user/keywords.rst`, `proj_mps_tags`
+  and `proj_weights`). Hard projection is what `statespecific` alone runs, it has no
+  parameter to get wrong, and its Ritz value is the projected operator's own, so nothing
+  has to be subtracted back off. tenet adopts hard projection and ships **no weight
+  argument**: a knob whose failure mode is a plausible wrong energy is not worth the
+  surface.
+
+  **The gauge the two-state contraction requires: none of the environments, one of the
+  reading.** `update_`'s folds are exact for any pair of chains — `MPS._braket`'s
+  docstring already recorded the same fact one level down, the transfer tensor holds one
+  index from each chain — so `Env(psi, h, bra=phi).measure()` **is** `<phi|H|psi>` for two
+  states in any gauge and at any norm, and that is the engine fact #213's public API
+  stands on. What does need a gauge is the *use* of `project2`'s output as a projection
+  direction, because "project the sweeping state's two-site variational space against the
+  converged state" is a statement about an orthonormal basis: it holds exactly when the
+  **sweeping** state is mixed-canonical at the bond, which `sweep_` maintains anyway. The
+  converged states need nothing and are therefore **held fixed**, their per-bond reduced
+  forms recomputed at each bond, rather than canonicalized and propagated the way block2
+  moves its `ext_mpss` (:893-917) — a gauge transformation on any of their bonds cancels
+  between the two environments and the two-site tensor, so the propagation would buy an
+  invariance that is already free.
+
+  **`heff2` refuses on a two-state `Env`, and the refusal is the honest half of the
+  design.** The prepared matvec's one-sided `caf`/`abf` terms read the `IdL`/`IdR`
+  environment channels as gauge identities, which is true of a canonical chain against
+  *itself* and false of a mixed transfer; block2 does not iterate on its `ext_mes`
+  either. So a two-state object supports environment building, `measure` and `project2`,
+  and `heff2`/`heff2_families` raise with a message naming what the object is for.
+  `project2` shares `heff2`'s **compatibility entry** verbatim (factored out as
+  `_heff2_full`) — the one path in the class that reads no channel as a gauge identity,
+  hence the one that survives `bra is not psi` — so this stage adds no `tenet.einsum`
+  call site to `network/` at all and
+  `tests/network/test_hygiene.py::test_every_two_operand_einsum_is_a_composition` passes
+  unedited, its reachability assertion included.
+
+  **The projection is spelled with `MPO.identity`, not a second environment class.** An
+  overlap *is* an environment; giving `Env` the identity operator reuses every cap
+  direction the Jordan-Wigner oracle already pinned, at the price of a `D=1` unit leg
+  nobody contracts. `MPO.identity` is `tenet.identity` on `(unit, phys)` transposed into
+  the MPO's `(wl IN, p OUT, p IN, wr OUT)` axis order — no `einsum`, so no composition
+  rule to state — and it carries no `EdgeTable`, so it takes the full-contraction path by
+  construction.
+
+  **The finding that cost this stage its afternoon: `tenet.inner` is not the pairing
+  `tenet.norm` induces, on a graded provider.** `inner`'s own docstring promises
+  `inner(a, a) == norm(a)**2`. For a rank-4 fZ2 tensor on legs
+  `(W OUT, V OUT, V OUT, W IN)` with `W` carrying both parities it does not:
+  `inner(t, t) = 5.847465` against `norm(t)**2 = 21.149209`, which is also the plain sum
+  of squares of `t.to_dense()`. The cause is structural — `inner` contracts every axis
+  but the first and closes axis 0 with `full_trace`, which puts a twist on that wire — so
+  it bites exactly when the first axis carries an odd sector, i.e. on every two-site
+  tensor of a fermionic sweep away from the boundary. It has never been caught because
+  the one-state solve is **self-consistent in the twisted form**: `lanczos` builds its
+  tridiagonal from `inner`, `Env.heff2` returns its image in the same form, `H_eff`
+  commutes with the twist, and the Ritz values come out exact — the fZ2 ground-state
+  energies in this suite are exact to 1e-15 and stay so. A **projector** is not
+  self-consistent that way: it has to be built in the pairing the state is normalized in.
+  `dmrg._dot` therefore spells that pairing directly —
+  `full_trace(compose(adjoint(m), m'))` on the bent `(l, p | q, r)` partition, the same
+  two primitives `_rho` uses — and it agrees with `inner` on every ungraded provider.
+  Built on `inner` instead, the fZ2 excited state converges to a **non-eigenvector**: at
+  N=6 it stalls at -2.978 against the exact -3.049, with a residual `||H psi - E psi||`
+  of 0.31 and a reported energy equal to its own Rayleigh quotient — a fixed point of the
+  sweep that is not a state. With `_dot` it is exact. The core defect is deliberately
+  **not** fixed here: it lives in `tenet.ops.contraction.inner`, outside this stage's
+  scope, and correcting it would move `lanczos`' numbers on every graded provider. It is
+  left as a follow-up with this reproduction attached.
+
+  **The excited-state oracles, every number against exact diagonalization computed in the
+  test rather than a recorded literal** (`tests/integration/test_dmrg_excited.py`):
+
+  | model | quantity | exact | DMRG | error |
+  |---|---|---|---|---|
+  | U(1) Heisenberg N=8, `S^z=0` | ground | -3.3749325986878871 | -3.3749325986878906 | 3.6e-15 |
+  | U(1) Heisenberg N=8, `S^z=0` | first excited | -2.9822404877628852 | -2.9822404877628852 | **0.0** |
+  | fZ2 free fermions N=12, even | ground | -7.2962298105587546 | -7.2962298105587484 | 6.2e-15 |
+  | fZ2 free fermions N=12, even | first excited | -6.8140830895374620 | -6.8140830895374433 | 1.9e-14 |
+  | SU(2) Heisenberg N=8, singlets | ground | -3.3749325986878871 | -3.3749325986877823 | 1.0e-13 |
+  | SU(2) Heisenberg N=8, singlets | second singlet | -2.3338038644955690 | -2.3338038644955423 | 2.7e-14 |
+
+  The last digits move run to run at the 1e-14 level, for M61 Stage C's reason (threaded
+  LAPACK reductions; the unmodified baseline differs from itself by up to 9.4e-14), so the
+  asserted tolerances are 1e-10 and 1e-9 rather than these figures.
+
+  `<psi2|psi1>` after convergence, measured with this stage's own machinery
+  (`Env(psi2, MPO.identity(...), bra=psi1).measure()`): **1.1e-16** on U(1), **3.6e-16**
+  on fZ2 at N=12, **5.6e-17** on SU(2).
+
+  The SU(2) oracle needs the singlet spectrum, and it is obtained without an `S^2`
+  matrix: every multiplet of spin `S >= 1` contributes one copy of its energy to both the
+  `S^z = 0` and `S^z = 1` blocks, so the multiset difference of the two dense spectra is
+  exactly the singlets — which is the sector an SU(2) MPS with a trivial boundary leg
+  lives in.
+
+  **The degeneracy check is a cross-sector identity, not a tolerance.** The N=8 open
+  chain's first excited state is a triplet, so its energy is *both* the second eigenvalue
+  of the `S^z_tot = 0` block — which orthogonality against the ground state reaches — and
+  the first of the `S^z_tot = 1` block, which a charged `D=1` boundary leg reaches with no
+  projection at all. The ED pair agrees to 3.6e-15 on -2.98224048776288, and the two DMRG
+  runs land on it from their two different mechanisms. A converged state whose boundary
+  legs put it in *another* sector is dropped from the projection rather than projected
+  with — it is orthogonal by the symmetry before the sweep does anything — and the run is
+  then byte-identical to the plain ground-state run, which the suite asserts at `abs=0.0`.
+
+  **The standing limitation, asserted rather than described.** Two chains whose bond
+  spaces share no sector at some cut have an identically zero transfer there, and
+  `tenet.compose` has no block to take its backend reference from (`ops/map.py`:167), so
+  the two-state `Env` raises instead of returning the structural zero. It does not reach
+  the excited-state workflow, whose states are seeded on one set of bond spaces and swept
+  together, and the sector skip above keeps the one case that would reach it out of the
+  contraction.
+
+  **The name is TenPy's.** YASTN spells the same argument `project` and TenPy
+  `orthogonal_to`; the second is taken because `project` names *a* mechanism and this
+  argument is one of two that implement it — block2 ships both — while `orthogonal_to`
+  names the result, which is the same under either.
+
+Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
+left that list with M61 Stage D above.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
 and the gap M13's refusal guarded against was the cap-direction convention M23/#160
