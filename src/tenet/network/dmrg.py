@@ -342,6 +342,7 @@ def dmrg_(
     ncv: int = 3,
     seed: int = 0,
     callback: Callable[[DMRG_out], None] | None = None,
+    compile: Callable | None = None,
 ) -> DMRG_out:
     """Sweep ``psi`` to the ground state of ``h`` in place and return a
     [DMRG_out][tenet.network.DMRG_out].
@@ -378,6 +379,17 @@ def dmrg_(
     callback : Callable[[DMRG_out], None] or None, optional
         Invoked once per sweep with that sweep's [DMRG_out][tenet.network.DMRG_out].
         Default ``None``.
+    compile : Callable or None, optional
+        Handed verbatim to [Env][tenet.network.Env], which wraps the prepared
+        two-site matvec with it once per structure key. ``jax.jit`` is the
+        intended argument and this layer names no accelerator, so the caller
+        supplies it and the ``jax`` extra. This is the one argument that changes
+        the run's performance *regime* rather than its accuracy: on an MPO that
+        kept its edge-block table (``from_terms(cutoff=None)``) the compiled
+        prepared matvec measured ~20x faster than the dense path, while the same
+        prepared matvec left uncompiled on plain NumPy pays a per-call dispatch
+        premium and measured 1.5--2.6x *slower* over a full sweep (#141). Default
+        ``None``, which runs the plain Python function and is today's behaviour.
 
     Returns
     -------
@@ -455,7 +467,7 @@ def dmrg_(
     else:
         plan = [Sweep(64 if chi is None else chi, 1e-14 if cutoff is None else cutoff)]
     psi.canonize_(0)
-    env = Env(psi, h).setup_(0)
+    env = Env(psi, h, compile=compile).setup_(0)
     schmidt: dict[int, list[float]] = {}
     energy: float = float("inf")
     history: list[tuple[float, float, float, float]] = []
