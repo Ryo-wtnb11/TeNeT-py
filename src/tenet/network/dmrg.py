@@ -67,12 +67,71 @@ class Sweep(NamedTuple):
     noise_type: str = "wavefunction"
 
 
+def _dot(a: SymmetricTensor, b: SymmetricTensor) -> float:
+    """``<a|b>`` as the Hilbert-Schmidt pairing, through ``compose``/``full_trace``.
+
+    Not [tenet.inner][], and the difference is measurable rather than stylistic: on a
+    **graded** provider ``inner(t, t)`` and ``norm(t)**2`` disagree for a two-site tensor
+    whose left bond carries an odd sector -- ``inner`` leaves axis 0 open and closes it
+    with ``full_trace``, which puts a twist on that wire. A projector has to be built
+    from the pairing the *state* is normalized in, which is ``norm``'s, so this spells
+    that one directly: one map composed with another's adjoint, closed by the qdim-weighted
+    trace -- the same two primitives ``_rho`` uses, for the same reason (no operand order
+    is left to state). It agrees with ``inner`` on every ungraded provider.
+    """
+    m = tenet.repartition(a, (0, 1), (2, 3))
+    return float(
+        tenet.full_trace(tenet.compose(tenet.adjoint(m), tenet.repartition(b, (0, 1), (2, 3))))
+    )
+
+
+def _orthonormal(
+    vectors: Sequence[SymmetricTensor],
+) -> tuple[tuple[SymmetricTensor, float], ...]:
+    """Gram-Schmidt the given vectors against each other, dropping the null ones.
+
+    block2's Davidson does the same to its ``ors`` before it projects anything with them
+    (``iterative_matrix_functions.hpp``:1219-1225): the projector ``1 - sum_k |p_k><p_k|``
+    is only that projector on an orthonormal set. A vector that comes back numerically
+    zero is dropped rather than divided by -- two converged states in *different* charge
+    sectors give an identically empty projection vector, which is structurally right and
+    would otherwise be a division by zero.
+    """
+    basis: list[tuple[SymmetricTensor, float]] = []
+    for t in vectors:
+        t = _project_out(t, basis)
+        gram = _dot(t, t)
+        if abs(gram) > 1e-24 and float(tenet.norm(t)) > 1e-12:
+            basis.append((t, gram))
+    return tuple(basis)
+
+
+def _project_out(
+    t: SymmetricTensor, basis: Sequence[tuple[SymmetricTensor, float]]
+) -> SymmetricTensor:
+    """``t - sum_k b_k <b_k,t>/<b_k,b_k>`` in [tenet.inner][]'s own pairing.
+
+    Divided by ``<b_k, b_k>`` rather than pre-normalized by
+    [tenet.norm][]: the two are the same number on an ungraded provider and are
+    **not** on a graded one, where ``inner`` carries the string the sweep's own
+    solve carries -- ``lanczos`` builds its tridiagonal from ``inner`` and
+    ``Env.heff2`` returns its image in the same pairing, so the eigenproblem is
+    self-consistent in that pairing and the projector has to be too. Mixing the two
+    (normalizing with ``norm`` and projecting with ``inner``) makes the projector
+    non-idempotent exactly on the odd-parity bonds.
+    """
+    for b, gram in basis:
+        t = tenet.subtract(t, b * (_dot(b, t) / gram))
+    return t
+
+
 def lanczos(
     matvec: Callable[[SymmetricTensor], SymmetricTensor],
     v: SymmetricTensor,
     *,
     ncv: int = 3,
     tol: float = 1e-13,
+    orthogonal_to: Sequence[SymmetricTensor] = (),
 ) -> tuple[float, SymmetricTensor]:
     """Ground eigenpair ``(value, vector)`` of a Hermitian ``matvec`` over SymmetricTensors.
 
@@ -88,6 +147,10 @@ def lanczos(
     tol : float, optional
         The happy-breakdown threshold on the recurrence norm ``beta``.
         Default ``1e-13``. Keyword-only.
+    orthogonal_to : Sequence of SymmetricTensor, optional
+        Vectors on ``v``'s structure to hold the solve orthogonal to. Default
+        ``()``, which projects nothing, allocates nothing and leaves the
+        recurrence exactly as it was. Keyword-only.
 
     Returns
     -------
@@ -95,6 +158,12 @@ def lanczos(
         The smallest ('SR') Ritz value.
     vector : SymmetricTensor
         The matching normalized Ritz vector, on ``v``'s structure.
+
+    Raises
+    ------
+    ValueError
+        If ``orthogonal_to`` spans the whole space ``v`` lives in, so that the
+        projected start vector is numerically zero.
 
     Examples
     --------
@@ -121,6 +190,21 @@ def lanczos(
 
     This is an inner solver inside an outer sweep, not a standalone eigensolver: the
     recurrence is **not reorthogonalized**, so ``ncv`` is meant to stay small.
+
+    **``orthogonal_to`` is hard projection, not a level shift**, and both are block2's:
+    with ``ors`` and no weights the basis vectors are projected by ``1 - |v><v|``
+    (``iterative_matrix_functions.hpp``:1198-1200, :1226-1237), while a non-empty
+    ``projection_weights`` instead replaces ``H`` by ``H + sum_k w_k |v_k><v_k|`` (:1201-1204,
+    :1250-1253) -- the level-shift approach its own documentation names as such
+    (``docs/source/user/keywords.rst``, ``proj_mps_tags``), and which it warns reports
+    unphysical eigenvalues ``E_k + w_k`` when a weight is smaller than the gap. Hard
+    projection is what ``statespecific`` alone does, it has no parameter to get wrong, and
+    the eigenvalue it returns is the projected operator's own -- so it is what is adopted
+    here and no weight argument exists.
+
+    The projector is applied to the start vector and to every ``matvec`` result, which is
+    plain Lanczos on ``P H P`` restricted to ``range(P)``: the recurrence stays a valid
+    three-term one for a Hermitian operator, rather than a perturbed one for ``H``.
     """
     # Simplification: no reorthogonalization, and neither has YASTN. At ``ncv=3`` the
     # recurrence has not had time to lose orthogonality, and the vector is reseeded from the
@@ -128,6 +212,20 @@ def lanczos(
     # against the stored ``V`` becomes the two-line addition.
     # Simplification: numpy ``eigh`` on the ``(3, 3)`` tridiagonal, not
     # ``tenet.linalg.eigh``. The projected matrix has no symmetry structure -- 9 floats.
+    basis = _orthonormal(orthogonal_to)
+    if basis:
+        v = _project_out(v, basis)
+        if float(tenet.norm(v)) < 1e-12:
+            raise ValueError(
+                "the start vector lies in the span of orthogonal_to, so there is no "
+                "vector left to iterate on at this bond; the two-site space is too "
+                "small to hold another state (block2 asserts on the same condition)"
+            )
+        full = matvec
+
+        def matvec(x: SymmetricTensor) -> SymmetricTensor:
+            return _project_out(full(x), basis)
+
     vecs = [v / tenet.norm(v)]
     alphas: list[float] = []
     betas: list[float] = []
@@ -154,6 +252,16 @@ def lanczos(
 #: The two spellings of ``noise``, and the decimation each one implies. Stated once,
 #: read by [Sweep][tenet.network.Sweep], [sweep_][tenet.network.sweep_] and the refusal.
 _NOISE_TYPES = ("wavefunction", "perturbative")
+
+
+def _pair(left: SymmetricTensor, right: SymmetricTensor) -> SymmetricTensor:
+    """Merge two adjacent site tensors into one ``(l, p, q, r)`` two-site tensor.
+
+    One spelling for both chains a projected sweep holds: the state being optimized and
+    each converged state whose reduced form [Env.project2][tenet.network.Env.project2]
+    then carries into the sweeping state's gauge.
+    """
+    return tenet.einsum("apx,xqr->apqr", left, right)
 
 
 def _rho(m: SymmetricTensor, forward: bool) -> SymmetricTensor:
@@ -243,6 +351,7 @@ def sweep_(
     ncv: int = 3,
     noise: float = 0.0,
     noise_type: str = "wavefunction",
+    orthogonal_to: Sequence[Env] = (),
     seed: int = 0,
 ) -> tuple[float, float]:
     """One left-to-right then right-to-left two-site sweep. ``psi`` and ``env`` mutate.
@@ -277,6 +386,14 @@ def sweep_(
         Which perturbation ``noise`` means, and therefore which decimation the
         sweep runs -- the table in Notes. Default ``"wavefunction"``, today's
         behaviour. Read only when ``noise`` is nonzero. Keyword-only.
+    orthogonal_to : Sequence of Env, optional
+        Two-state environments, one per converged state to hold ``psi``
+        orthogonal to -- each an ``Env(phi, MPO.identity(...), bra=psi)``, built
+        and handed over the way ``env`` is, and **mutated in place** alongside
+        it. Default ``()``, which projects nothing.
+        [dmrg_][tenet.network.dmrg_] builds them from a list of
+        [MPS][tenet.network.MPS] and is the spelling a caller wants.
+        Keyword-only.
     seed : int, optional
         Makes the noise draw at bond ``n`` reproducible as ``seed + n``.
         Unused by ``noise_type="perturbative"``, which draws nothing.
@@ -368,6 +485,20 @@ def sweep_(
 
     Neither noise is variational: a noisy sweep's energy may sit above the same sweep at
     ``noise=0.0``.
+
+    **Excited states** (``orthogonal_to``): at each bond, every handed-over two-state
+    environment produces one projection vector -- its converged state's two-site reduced
+    form in ``psi``'s environment gauge -- and the collection is handed to
+    [lanczos][tenet.network.lanczos] as *arguments of the solve*, which is the shape
+    block2's ``eigs(..., ortho_bra, projection_weights)`` has
+    (``sweep_algorithm.hpp``:1190-1206, :1244-1249). The converged states are **held
+    fixed**: their per-bond reduced forms are recomputed at every bond, and their
+    environments follow ``psi`` exactly as ``env`` does. block2 instead canonicalizes and
+    propagates its ``ext_mpss`` alongside the sweep (:893-917), which its ``eff_ham``
+    machinery needs; the contraction does not, because a gauge transformation on any bond
+    of the converged state cancels between the two environments and its two-site tensor.
+    What *is* required is that ``psi`` be mixed-canonical at the bond, which this sweep
+    maintains anyway and which the projection's meaning rests on.
     """
     if noise_type not in _NOISE_TYPES:
         raise ValueError(
@@ -381,8 +512,13 @@ def sweep_(
         forward = direction == "right"
         bonds = range(n_sites - 1) if forward else range(n_sites - 2, -1, -1)
         for n in bonds:
-            aa = tenet.einsum("apx,xqr->apqr", psi[n], psi[n + 1])
-            energy, aa = lanczos(lambda v, n=n: env.heff2(n, v), aa, ncv=ncv)
+            aa = _pair(psi[n], psi[n + 1])
+            energy, aa = lanczos(
+                lambda v, n=n: env.heff2(n, v),
+                aa,
+                ncv=ncv,
+                orthogonal_to=[o.project2(n, _pair(o.psi[n], o.psi[n + 1])) for o in orthogonal_to],
+            )
             if noise and noise_type == "perturbative":
                 left, right, s = _split_dm(
                     aa,
@@ -419,11 +555,12 @@ def sweep_(
                     psi[n] = tenet.einsum("apx,xy->apy", u, s)
                 schmidt[n] = spectrum(s)
             psi.center = n + 1 if forward else n
-            env.clear_(n, n + 1)
-            if direction == "right":
-                env.update_(n, to="last")
-            else:
-                env.update_(n + 1, to="first")
+            for e in (env, *orthogonal_to):
+                e.clear_(n, n + 1)
+                if direction == "right":
+                    e.update_(n, to="last")
+                else:
+                    e.update_(n + 1, to="first")
     return energy, max_dw
 
 
@@ -499,6 +636,7 @@ def dmrg_(
     schmidt_tol: float = 1e-8,
     max_sweeps: int = 40,
     ncv: int = 3,
+    orthogonal_to: Sequence[MPS] | None = None,
     seed: int = 0,
     callback: Callable[[DMRG_out], None] | None = None,
     compile: Callable | None = None,
@@ -531,6 +669,13 @@ def dmrg_(
     ncv : int, optional
         Krylov-space dimension for [lanczos][tenet.network.lanczos].
         Default ``3``.
+    orthogonal_to : Sequence of MPS or None, optional
+        Already-converged states to hold ``psi`` orthogonal to, turning the run
+        from a ground-state search into an excited-state one: with the ground
+        state ``psi1`` in hand, ``dmrg_(psi2, h, orthogonal_to=[psi1])``
+        targets the first excited state. The states are **not** modified and
+        need no particular gauge. Default ``None``, which projects nothing and
+        is today's behaviour. See Notes.
     seed : int, optional
         Feeds [sweep_][tenet.network.sweep_]'s noise draw, distinctly per
         sweep; a schedule with ``noise=0.0`` everywhere draws nothing.
@@ -612,6 +757,24 @@ def dmrg_(
     noise at a ramp's intermediate ``chi`` has converged to the wrong thing, and reporting
     it as converged is worse than sweeping on.
 
+    **``orthogonal_to``, and why the name.** YASTN spells the same argument ``project``
+    and TenPy ``orthogonal_to``; the second is taken, because ``project`` names the
+    mechanism and this argument is one of two mechanisms that implement it -- block2 has
+    both, hard projection and a level shift (see [lanczos][tenet.network.lanczos]) -- while
+    ``orthogonal_to`` names the *result*, which is the same under either. The machinery is
+    one two-state [Env][tenet.network.Env] per given state over
+    [MPO.identity][tenet.network.MPO.identity], set up here and swept alongside ``env``;
+    what each contributes at a bond is a projection vector handed to ``lanczos`` as an
+    argument of the solve. Sector targeting is unaffected and composes with it: a
+    charged ``D=1`` boundary leg on bond 0 fixes the sector, orthogonality then walks up
+    the spectrum inside it, and a converged state whose boundary legs put it in a
+    *different* sector is dropped from the projection -- it is orthogonal to ``psi`` by
+    the symmetry, before the sweep does anything, which is right rather than merely
+    harmless.
+
+    The reported energy is the projected operator's own Ritz value, so it is the excited
+    energy directly and needs no shift subtracted.
+
     ``callback``, if given, is invoked once per sweep with the
     [DMRG_out][tenet.network.DMRG_out] built for that sweep, after ``history`` is
     appended, so it sees the sweep that just finished. Its return value is ignored:
@@ -631,6 +794,25 @@ def dmrg_(
         plan = [Sweep(64 if chi is None else chi, 1e-14 if cutoff is None else cutoff)]
     psi.canonize_(0)
     env = Env(psi, h, compile=compile).setup_(0)
+    # One two-state environment per converged state, over the identity operator: block2's
+    # ext_mes, whose per-bond ``multiply`` is the projection vector (``core.py``:4817-4830
+    # builds them with ``get_identity_mpo()``). They are set up *after* ``canonize_``,
+    # because their bra side is this ``psi`` and they follow it through the sweep.
+    orthos: tuple[Env, ...] = ()
+    if orthogonal_to:
+        ident = MPO.identity(len(psi), psi[0].legs[1].space)
+        ends = (psi[0].legs[0], psi[len(psi) - 1].legs[2])
+        orthos = tuple(
+            Env(phi, ident, bra=psi).setup_(0)
+            for phi in orthogonal_to
+            # A converged state whose boundary legs put it in another sector is
+            # orthogonal to ``psi`` already, by the symmetry and not by the sweep, and
+            # its mixed transfer has no coupled sector to be contracted at all. Skipping
+            # it is the statement that sector targeting and orthogonality compose.
+            if (phi[0].legs[0].space, phi[0].legs[0].dual) == (ends[0].space, ends[0].dual)
+            and (phi[len(phi) - 1].legs[2].space, phi[len(phi) - 1].legs[2].dual)
+            == (ends[1].space, ends[1].dual)
+        )
     schmidt: dict[int, list[float]] = {}
     energy: float = float("inf")
     history: list[tuple[float, float, float, float]] = []
@@ -649,6 +831,7 @@ def dmrg_(
             ncv=ncv,
             noise=entry.noise,
             noise_type=entry.noise_type,
+            orthogonal_to=orthos,
             seed=seed + 977 * it,
         )
         denergy = abs(old_energy - energy)
