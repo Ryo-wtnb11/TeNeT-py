@@ -49,7 +49,7 @@ import autoray as ar
 import numpy as np
 
 from tenet.leg import IN, OUT, Leg
-from tenet.map_view import as_map, from_matrices, map_layout, to_matrices
+from tenet.map_view import as_map, check_square, from_matrices, map_layout, to_matrices
 from tenet.ops.embed import embed
 from tenet.structure import FusionBlockKey, TensorStructure
 
@@ -63,6 +63,7 @@ __all__ = [
     "compose",
     "identity",
     "isometry",
+    "map_diagonal",
     "random_isometry",
 ]
 
@@ -490,3 +491,122 @@ def adjoint(t: "SymmetricTensor") -> "SymmetricTensor":
     return SymmetricTensor(
         plan.new_structure, tuple(ar.do("conj", t.blocks[src]) for src in plan.sources)
     )
+
+
+@cache
+def _diagonal_subscripts(structure: TensorStructure) -> str:
+    """``"abab->ab"``-style subscripts pairing ``out_axes[i]`` with ``in_axes[i]``.
+
+    Public axis order may interleave the two sides, so the pairing is read off the
+    axis lists rather than assumed contiguous.
+    """
+    out_axes, in_axes = structure.out_axes, structure.in_axes
+    if len(out_axes) > 26:
+        # Simplification: one einsum letter per paired axis. Lift to
+        # ar.do("einsum", operand, indices) with integer indices if a rank-52 map
+        # ever exists.
+        raise ValueError(
+            f"map_diagonal: {len(out_axes)} paired axes exceed the 26 available einsum subscripts"
+        )
+    letters = [""] * structure.ndim
+    for i, (o, n) in enumerate(zip(out_axes, in_axes, strict=True)):
+        letters[o] = letters[n] = "abcdefghijklmnopqrstuvwxyz"[i]
+    return "".join(letters) + "->" + "".join(letters[a] for a in out_axes)
+
+
+def map_diagonal(m: "SymmetricTensor") -> "SymmetricTensor":
+    """The diagonal of a square map, in the reduced basis, on its codomain legs.
+
+    Parameters
+    ----------
+    m : SymmetricTensor
+        A square map: its domain must be its codomain as ``(space, dual)`` in the
+        same order. ``side`` is not compared and ``name`` is ignored.
+
+    Returns
+    -------
+    SymmetricTensor
+        The diagonal entries, on ``m``'s codomain legs — the same structure the
+        vectors ``m`` acts on carry, so
+        [zip_blocks][tenet.zip_blocks] pairs the two block for block.
+
+    Raises
+    ------
+    ValueError
+        If the map is not square (``check_square``'s refusal, which names the
+        first offending position and both legs), or if it has more than 26
+        paired axes.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> legs = (Leg(V, OUT), Leg(V, OUT, dual=True))
+    >>> d = tenet.map_diagonal(tenet.identity(legs))  # the identity's diagonal is all ones
+    >>> d.legs == legs
+    True
+    >>> [b.tolist() for b in d.blocks]
+    [[[1.0, 1.0], [1.0, 1.0]], [[1.0]]]
+
+    Notes
+    -----
+    **Coefficient space, not dense space**, in
+    [apply_blocks][tenet.apply_blocks]' sense: the result holds the diagonal of the
+    matrix a solver iterates on, not the diagonal of the dense expansion of ``m``. The two
+    coincide entry for entry only where the Clebsch-Gordan factor is all-ones.
+    For a vector ``v`` on the same legs, entry ``k`` of the result is
+    ``(m @ v)[k]`` when ``v`` is the ``k``-th reduced-basis unit vector — which is
+    also ``<v|m|v> / <v|v>``, and *that* reading is basis-free and survives dense
+    expansion.
+
+    **Which basis, and why no recoupling coefficient appears.** Composition is one
+    ``matmul`` per coupled sector and nothing else — the module docstring above
+    explains why — so the matrix of ``m`` in the reduced storage basis *is*
+    ``to_matrices(m)``, and the diagonal of that matrix is the diagonal of the
+    blocks whose two fusion trees coincide. The trees are drawn from one set:
+    ``Leg.fused_sector`` reads ``dual``, never ``side``, so a square map's
+    codomain and domain contribute identical uncoupled labels. No F-symbol, no
+    R-symbol, no twist and no bend is read here, and the operation therefore
+    requires no capability beyond the fusion rules every structure already needs.
+
+    That is not in tension with the fusion-tree basis being relational
+    (invariant 4). The reduced basis of a rank-``N`` map is labelled by a *pair of
+    trees*, not by a tuple of external sectors, and this reads the labels: for
+    SU(2) at external tuple ``(1, ½, ½, 1)`` two inner lines share one sector
+    tuple and are two distinct blocks with unrelated diagonal entries. What cannot
+    be done — measured in issue #230 — is to *manufacture* the diagonal by
+    contracting per-leg diagonals of the operator's factors, which is a per-leg
+    reading of that relational basis and loses both the inner line and the
+    graded braiding sign. Given the map itself, both are already in its blocks.
+
+    **Nothing full-width is allocated**: one ``einsum`` per diagonal block, each
+    output the size of one block of the *result*. ``to_matrices`` is deliberately
+    not called — it would concatenate the whole per-sector matrix to read its
+    diagonal.
+
+    **The unit-coupled reading.** The result carries ``m``'s codomain legs, whose
+    blocks are the unit-coupled ones, and that is the whole diagonal of the
+    operator on the vectors tenet can represent: a ``SymmetricTensor`` on those
+    legs is invariant by construction (invariant 1), and a targeted charge is
+    carried by an explicit charge leg — which is then a leg of ``m`` too. A vector
+    stored on a different partition of the same legs (an MPS two-site tensor keeps
+    its right bond IN) reaches this basis by [bend][tenet.bend], which is one
+    scalar per block: a diagonal similarity, so it leaves both this diagonal and
+    the quotient ``q / (lambda - diag)`` entry for entry unchanged.
+    """
+    from tenet.tensor import SymmetricTensor
+
+    check_square(m, "map_diagonal")
+    structure = TensorStructure(tuple(m.codomain))
+    subscripts = _diagonal_subscripts(m.structure)
+    blocks = tuple(
+        ar.do(
+            "einsum",
+            subscripts,
+            m.blocks[m.structure.index_of(FusionBlockKey(key.output_tree, key.output_tree))],
+        )
+        for key in structure.block_order
+    )
+    return SymmetricTensor(structure, blocks)

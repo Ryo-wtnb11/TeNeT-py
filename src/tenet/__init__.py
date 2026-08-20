@@ -56,6 +56,7 @@ from tenet.ops import (
     inner,
     isometry,
     linalg,
+    map_diagonal,
     multiply,
     negative,
     norm,
@@ -68,6 +69,7 @@ from tenet.ops import (
     trace,
     transpose,
     unfuse,
+    zip_blocks,
 )
 from tenet.serialize import load, save
 from tenet.space import GradedSpace, ProductSpace
@@ -126,6 +128,7 @@ __all__ = [
     "isometry",
     "linalg",
     "load",
+    "map_diagonal",
     "map_layout",
     "multiply",
     "negative",
@@ -142,4 +145,5 @@ __all__ = [
     "trace",
     "transpose",
     "unfuse",
+    "zip_blocks",
 ]

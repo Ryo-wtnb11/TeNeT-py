@@ -31,10 +31,12 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
+from tenet.ops.basic import _check_same_structure
+
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["apply_blocks", "block_power", "block_sqrt"]
+__all__ = ["apply_blocks", "block_power", "block_sqrt", "zip_blocks"]
 
 Array = Any
 
@@ -165,3 +167,86 @@ def block_power(t: "SymmetricTensor", p: Any) -> "SymmetricTensor":
     canonical-form and gauge-fixing loops.
     """
     return apply_blocks(t, lambda b: ar.do("power", b, p))
+
+
+def zip_blocks(
+    a: "SymmetricTensor", b: "SymmetricTensor", fn: Callable[[Array, Array], Array]
+) -> "SymmetricTensor":
+    """``fn`` over the aligned block pairs of two tensors sharing one structure.
+
+    The two-argument sibling of [apply_blocks][tenet.apply_blocks], and
+    **coefficient space, not dense space** in exactly the same sense.
+
+    Parameters
+    ----------
+    a : SymmetricTensor
+        The left operand; its structure is the result's.
+    b : SymmetricTensor
+        The right operand. Its structure must equal ``a``'s exactly — same
+        provider, same legs (``space``, ``side``, ``dual``) in the same order —
+        so that ``block_order`` pairs the blocks index for index.
+    fn : callable
+        An **elementwise and shape-preserving** function of two backend arrays of
+        equal shape. It is not checked (a shape change is caught by
+        ``SymmetricTensor.__post_init__``), and it is not required that
+        ``fn(0, 0) == 0``.
+
+    Returns
+    -------
+    SymmetricTensor
+        ``fn`` of every aligned block pair, on the operands' shared structure.
+
+    Raises
+    ------
+    ValueError
+        If the structures differ — different providers, different ``ndim``, or a
+        differing leg; the message names the first differing axis and both legs,
+        in [add][tenet.add]'s style. Nothing is widened and nothing is aligned by
+        sector label (invariant 11).
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> legs = (Leg(V, OUT), Leg(V, IN))
+    >>> q = SymmetricTensor.random(legs, seed=0)
+    >>> d = SymmetricTensor.random(legs, seed=1)
+    >>> p = tenet.zip_blocks(q, d, lambda x, y: x / (2.5 - y))  # a Jacobi step
+    >>> p.structure == q.structure
+    True
+
+    Notes
+    -----
+    **Why this does not reopen [multiply][tenet.multiply]'s refusal.** ``multiply``
+    refuses a second ``SymmetricTensor`` because ``a * b`` *asks for a categorical
+    operation and there is none*: a tensor is ``Σ_τ A^(τ) ⊗ C^(τ)``, so an
+    entrywise dense product has no expression in the reduced blocks, and the
+    plausible-looking blockwise answer would be a silently different tensor —
+    ``multiply`` is defined by dense semantics and must keep them. This function
+    makes the opposite declaration in its name and signature: it is a map over
+    *coefficients*, the caller supplies the map, and no claim is made that it
+    commutes with [to_dense][tenet.SymmetricTensor.to_dense]. It cannot be reached by
+    an operator (``*``, ``/``) and cannot be reached by accident, and requiring
+    one shared structure is what makes "the aligned block pair" mean something:
+    ``block_order`` is a pure function of the structure, so equal structures give
+    equal key tuples in equal order. The same argument already licenses the unary
+    ``apply_blocks``; the arity is not what was ever in question.
+
+    The consumer this exists for is the Jacobi preconditioner of a Davidson step,
+    ``q / (lambda - diag)`` over the reduced storage a solver iterates on, with
+    ``diag`` from [map_diagonal][tenet.map_diagonal]. That quotient is a
+    coefficient-space statement about the solver's own vector, not a statement
+    about the dense tensor, which is precisely the distinction ``multiply``'s
+    refusal draws.
+
+    Structure is untouched, so this is linear-algebra-free, backend-generic,
+    traceable and differentiable, exactly as ``apply_blocks`` is.
+    """
+    from tenet.tensor import SymmetricTensor
+
+    _check_same_structure(a, b, "zip_blocks")
+    return SymmetricTensor(
+        a.structure, tuple(fn(x, y) for x, y in zip(a.blocks, b.blocks, strict=True))
+    )
