@@ -41,9 +41,14 @@ class Sweep(NamedTuple):
     cutoff : float, optional
         The singular-value cutoff handed to the same SVD. Default ``1e-14``.
     noise : float, optional
-        Relative strength of the wavefunction perturbation
-        [sweep_][tenet.network.sweep_] adds before each split. Default ``0.0``
-        (no perturbation, and no random number drawn).
+        Relative strength of the perturbation [sweep_][tenet.network.sweep_]
+        mixes in at each split. Default ``0.0`` (no perturbation, no random
+        number drawn, and the plain SVD split).
+    noise_type : str, optional
+        Which perturbation ``noise`` means -- ``"wavefunction"`` (the default)
+        or ``"perturbative"``. It also decides the **decimation**: see
+        [sweep_][tenet.network.sweep_]'s table. Ignored when ``noise`` is
+        ``0.0``.
 
     Notes
     -----
@@ -59,6 +64,7 @@ class Sweep(NamedTuple):
     chi: int = 64
     cutoff: float = 1e-14
     noise: float = 0.0
+    noise_type: str = "wavefunction"
 
 
 def lanczos(
@@ -145,6 +151,87 @@ def lanczos(
     return float(values[0]), out / tenet.norm(out)
 
 
+#: The two spellings of ``noise``, and the decimation each one implies. Stated once,
+#: read by [Sweep][tenet.network.Sweep], [sweep_][tenet.network.sweep_] and the refusal.
+_NOISE_TYPES = ("wavefunction", "perturbative")
+
+
+def _rho(m: SymmetricTensor, forward: bool) -> SymmetricTensor:
+    """``m m^dag`` (forward) or ``m^dag m`` (backward), for ``m`` on ``(l, p | q, r)``.
+
+    Composition, not ``einsum``: a density matrix *is* a map composed with its adjoint,
+    both directions, so the shared wires are the composed side by construction and there
+    is no operand order to state. The trace is over the legs the composition consumes --
+    the right pair going forward, the left pair coming back.
+    """
+    return tenet.compose(m, tenet.adjoint(m)) if forward else tenet.compose(tenet.adjoint(m), m)
+
+
+def _perturbations(
+    env: Env, n: int, aa: SymmetricTensor, noise: float
+) -> tuple[SymmetricTensor, ...]:
+    """block2's perturbation vectors: the operator's term families on ``aa``, scaled.
+
+    [Env.heff2_families][tenet.network.Env.heff2_families] resolves ``H_eff aa`` by term
+    family -- tenet's analogue of block2's per-sub-label resolution
+    (``effective_hamiltonian.hpp``:263-360) -- and this scales them the way
+    ``scale_perturbative_noise`` does (``moving_environment.hpp``:3698-3713): each vector
+    is first normalized to unit norm, then the whole collection is scaled so its total
+    squared norm is ``noise``. A unit-norm ``aa`` contributes 1 to the density matrix's
+    trace and the perturbation contributes ``noise``, which is what keeps ``noise``
+    dimensionless and block2's 1e-4..1e-5 range meaningful. A family that comes back
+    numerically zero is dropped rather than divided by, and drops out of the count.
+    """
+    parts = [(p, float(tenet.norm(p))) for p in env.heff2_families(n, aa)]
+    live = [(p, w) for p, w in parts if w > 0.0]
+    if not live:
+        return ()
+    scale = (noise / len(live)) ** 0.5
+    return tuple(p * (scale / w) for p, w in live)
+
+
+def _split_dm(
+    aa: SymmetricTensor,
+    forward: bool,
+    *,
+    chi: int,
+    cutoff: float,
+    perturbations: tuple[SymmetricTensor, ...] = (),
+) -> tuple[SymmetricTensor, SymmetricTensor, SymmetricTensor]:
+    """block2's default decimation: ``eigh`` of ``rho = tr aa aa^dag``, perturbation folded in.
+
+    Returns ``(left, right, s)`` on the truncated bond, ``left`` for site ``n`` and
+    ``right`` for site ``n + 1``: going forward ``left`` is the isometry and ``right``
+    carries the weight, coming back the mirror. ``s`` is the singular-value tensor
+    [svd_truncated][tenet.ops.linalg.svd_truncated] would have returned.
+
+    The truncation is the existing one, not a second one:
+    ``svd_truncated`` of the (Hermitian, positive) ``rho`` selects on ``sigma**2``, and
+    ``cutoff_mode="rsum1"`` on that spectrum is the same rule as the default
+    ``"rsum2"`` on ``aa``'s -- both drop the largest set whose ``qdim``-weighted
+    ``sum sigma**2`` stays under ``cutoff`` times the total. ``max_bond`` walks the same
+    order, because squaring is monotone. So the kept bond space is the SVD split's, and
+    the agreement is by construction rather than by luck.
+
+    ``rho`` is formed on the *bent* partition ``(l, p | q, r)`` -- the one
+    ``svd_truncated`` lowers to anyway -- and every contraction here is a
+    [tenet.compose][], so no wire's direction is left to operand order.
+    """
+    m = tenet.repartition(aa, (0, 1), (2, 3))
+    rho = _rho(m, forward)
+    for p in perturbations:
+        rho = tenet.add(rho, _rho(tenet.repartition(p, (0, 1), (2, 3)), forward))
+    v, w, _ = tenet.linalg.svd_truncated(rho, max_bond=chi, cutoff=cutoff, cutoff_mode="rsum1")
+    s = tenet.block_sqrt(w)  # rho's spectrum is aa's, squared
+    if forward:
+        return v, tenet.compose(tenet.adjoint(v), m), s
+    # ``adjoint`` keeps ``v``'s public axis order, so the new bond comes back *last*;
+    # ``svd_truncated``'s ``vh`` spells the same map with the bond first, which is the
+    # order [MPS.__setitem__][tenet.network.MPS.__setitem__] and the sweep's next merge
+    # read. One ``transpose`` says so, and pays whatever braid the provider charges.
+    return tenet.compose(m, v), tenet.transpose(tenet.adjoint(v), (2, 0, 1)), s
+
+
 def sweep_(
     psi: MPS,
     h: MPO,
@@ -155,6 +242,7 @@ def sweep_(
     cutoff: float,
     ncv: int = 3,
     noise: float = 0.0,
+    noise_type: str = "wavefunction",
     seed: int = 0,
 ) -> tuple[float, float]:
     """One left-to-right then right-to-left two-site sweep. ``psi`` and ``env`` mutate.
@@ -181,12 +269,17 @@ def sweep_(
         Krylov-space dimension for [lanczos][tenet.network.lanczos].
         Default ``3``. Keyword-only.
     noise : float, optional
-        Relative strength of the wavefunction perturbation added after the
-        eigensolver and before each split; ``0.0`` (the default) draws no
-        random number and the sweep is bit-identical to a sweep without the
-        keyword. Keyword-only.
+        Relative strength of the perturbation mixed in after the eigensolver
+        and before each split; ``0.0`` (the default) draws no random number,
+        builds no density matrix, and the sweep is bit-identical to a sweep
+        without the keyword. Keyword-only.
+    noise_type : {"wavefunction", "perturbative"}, optional
+        Which perturbation ``noise`` means, and therefore which decimation the
+        sweep runs -- the table in Notes. Default ``"wavefunction"``, today's
+        behaviour. Read only when ``noise`` is nonzero. Keyword-only.
     seed : int, optional
         Makes the noise draw at bond ``n`` reproducible as ``seed + n``.
+        Unused by ``noise_type="perturbative"``, which draws nothing.
         Default ``0``. Keyword-only.
 
     Returns
@@ -197,8 +290,36 @@ def sweep_(
         The **maximum** per-bond discarded weight (see Notes for why the
         maximum rather than the total).
 
+    Raises
+    ------
+    ValueError
+        If ``noise_type`` is neither ``"wavefunction"`` nor ``"perturbative"``
+        -- a typo that silently ran the default would misreport the mixer.
+
     Notes
     -----
+    **Which decimation runs is decided by the two keywords and by nothing else.** No
+    bond width, no ``chi``, no runtime probe (#218):
+
+    ======================================== ==================================
+    ``(noise, noise_type)``                  the split
+    ======================================== ==================================
+    ``noise == 0.0``, any ``noise_type``     ``svd_truncated`` of ``aa``
+    ``> 0``, ``"wavefunction"``              ``svd_truncated`` of a perturbed ``aa``
+    ``> 0``, ``"perturbative"``              ``eigh`` of a perturbed ``rho``
+    ======================================== ==================================
+
+    A caller reads the rule off the [Sweep][tenet.network.Sweep] entry: the density-matrix
+    split engages exactly when perturbative noise is asked for, and a noiseless sweep --
+    including the cooling tail of a ramp, and every sweep of a run that never mentions
+    noise -- takes the SVD split. That is deliberate rather than a default falling out:
+    squaring the two-site tensor into ``rho`` resolves a singular value ``sigma`` through
+    ``sigma**2``, so the split's own accuracy floor moves from machine epsilon to its
+    square root, and a converged noiseless sweep is exactly where that costs something.
+    block2 makes the same pairing in the other direction -- its wavefunction noise exists
+    only on its SVD branch (``sweep_algorithm.hpp``:964-978) and its density-matrix branch
+    (:930-953) is where the perturbative noise goes.
+
     YASTN's ``_dmrg_sweep_2site_`` (``_dmrg.py``:222-249) and its
     ``(('last', 0), ('first', 1))`` two-direction loop, five steps per bond: merge,
     ``eigs``, split, ``clear_site_``, ``update_env_``.
@@ -218,7 +339,8 @@ def sweep_(
     its caller is asking how much of the state was thrown away. Two conventions, two
     names.
 
-    With ``noise > 0`` a random symmetric tensor over the two-site tensor's own legs is
+    **Wavefunction noise** (``noise > 0``, ``noise_type="wavefunction"``): a random
+    symmetric tensor over the two-site tensor's own legs is
     added after the eigensolver and before the split, at relative strength ``noise``
     (block2's ``NoiseTypes::Wavefunction`` scaling, ``operator_functions.hpp``:777-815, so
     ``noise`` is dimensionless and block2's 1e-4..1e-5 range transfers), and the two-site
@@ -228,38 +350,75 @@ def sweep_(
     empty and which ``svd_truncated`` therefore omits from the bond, which is the local
     minimum a symmetric DMRG falls into: a sector that is zero stays zero forever, because
     nothing else in the sweep can create it. It cannot reach outside ``bond_l (x) phys``
-    -- no wavefunction noise can, and neither can two-site DMRG itself. Noise is not
-    variational: a noisy sweep's energy may sit above the same sweep at ``noise=0.0``.
+    -- no wavefunction noise can, and neither can two-site DMRG itself.
+
+    **Perturbative noise** (``noise > 0``, ``noise_type="perturbative"``): block2's
+    default (``noise_type = NoiseTypes::DensityMatrix`` with
+    ``decomp_type = DecompositionTypes::DensityMatrix``, ``sweep_algorithm.hpp``:104-106),
+    and **not randomness**: the perturbation vectors are the operator's own action on the
+    current two-site tensor, resolved by term family through
+    [Env.heff2_families][tenet.network.Env.heff2_families]. The split becomes an ``eigh``
+    of ``rho = tr aa aa^dag`` with ``rho += noise * sum_k p_k p_k^dag`` folded in
+    (``moving_environment.hpp``:3554, :3636, :4250), each ``p_k`` normalized and the
+    collection scaled to total squared norm ``noise`` (:3698-3713), so ``noise`` stays
+    dimensionless in the same 1e-4..1e-5 range. This reaches the sectors *the Hamiltonian
+    couples to*, which is the difference from the random draw: it cannot waste the
+    perturbation on a direction the operator never visits, and on a sector-poor bond it
+    fills what ``H`` can actually populate.
+
+    Neither noise is variational: a noisy sweep's energy may sit above the same sweep at
+    ``noise=0.0``.
     """
-    # Simplification: wavefunction noise only, block2's cheapest (NoiseTypes::Wavefunction
-    # = 1) and its own docs call the cheap end "not very effective". Every stronger mixer
-    # (DensityMatrix, ReducedPerturbativeCollected, White's alpha) perturbs a density
-    # matrix, and this sweep has none: it splits with svd_truncated, not an eigh of
-    # rho = tr aa aa^dag. Upgrade path: perturbative noise is a different split and its
-    # own issue.
+    if noise_type not in _NOISE_TYPES:
+        raise ValueError(
+            f"noise_type={noise_type!r} is not one of {_NOISE_TYPES}; it decides the "
+            "decimation as well as the perturbation, so a typo would run the SVD split "
+            "and report a mixer that never ran"
+        )
     n_sites = len(psi)
     energy, max_dw = 0.0, 0.0
     for direction in ("right", "left"):
-        bonds = range(n_sites - 1) if direction == "right" else range(n_sites - 2, -1, -1)
+        forward = direction == "right"
+        bonds = range(n_sites - 1) if forward else range(n_sites - 2, -1, -1)
         for n in bonds:
             aa = tenet.einsum("apx,xqr->apqr", psi[n], psi[n + 1])
             energy, aa = lanczos(lambda v, n=n: env.heff2(n, v), aa, ncv=ncv)
-            if noise:
-                r = SymmetricTensor.random(aa.legs, seed=seed + n)
-                aa = tenet.add(aa, r * float(noise * tenet.norm(aa) / tenet.norm(r)))
-                aa = aa / tenet.norm(aa)
-            u, s, vh = tenet.linalg.svd_truncated(aa, ((0, 1), (2, 3)), max_bond=chi, cutoff=cutoff)
-            norm_s = tenet.norm(s)
-            max_dw = max(max_dw, 1.0 - float(norm_s / tenet.norm(aa)) ** 2)
-            s = s / norm_s  # the two-site tensor is normalized; keep the MPS so
-            psi[n + 1] = vh  # through the write barrier, so ``vh`` is on (l, p | r) now
-            if direction == "right":
-                psi[n] = u
-                psi[n + 1] = tenet.einsum("xy,yqr->xqr", s, psi[n + 1])
+            if noise and noise_type == "perturbative":
+                left, right, s = _split_dm(
+                    aa,
+                    forward,
+                    chi=chi,
+                    cutoff=cutoff,
+                    perturbations=_perturbations(env, n, aa, noise),
+                )
+                # The factor that carries the weight is the truncated state; the other is
+                # an isometry. So its norm is the kept fraction, which is the same
+                # Pythagoras the SVD split spells with ``norm(s)``.
+                carrier = right if forward else left
+                norm_c = tenet.norm(carrier)
+                max_dw = max(max_dw, 1.0 - float(norm_c / tenet.norm(aa)) ** 2)
+                psi[n] = left if forward else left / norm_c
+                psi[n + 1] = right / norm_c if forward else right
+                schmidt[n] = spectrum(s / tenet.norm(s))
             else:
-                psi[n] = tenet.einsum("apx,xy->apy", u, s)
-            psi.center = n if direction == "left" else n + 1
-            schmidt[n] = spectrum(s)
+                if noise:
+                    r = SymmetricTensor.random(aa.legs, seed=seed + n)
+                    aa = tenet.add(aa, r * float(noise * tenet.norm(aa) / tenet.norm(r)))
+                    aa = aa / tenet.norm(aa)
+                u, s, vh = tenet.linalg.svd_truncated(
+                    aa, ((0, 1), (2, 3)), max_bond=chi, cutoff=cutoff
+                )
+                norm_s = tenet.norm(s)
+                max_dw = max(max_dw, 1.0 - float(norm_s / tenet.norm(aa)) ** 2)
+                s = s / norm_s  # the two-site tensor is normalized; keep the MPS so
+                psi[n + 1] = vh  # through the write barrier: ``vh`` is on (l, p | r) now
+                if forward:
+                    psi[n] = u
+                    psi[n + 1] = tenet.einsum("xy,yqr->xqr", s, psi[n + 1])
+                else:
+                    psi[n] = tenet.einsum("apx,xy->apy", u, s)
+                schmidt[n] = spectrum(s)
+            psi.center = n + 1 if forward else n
             env.clear_(n, n + 1)
             if direction == "right":
                 env.update_(n, to="last")
@@ -489,6 +648,7 @@ def dmrg_(
             cutoff=entry.cutoff,
             ncv=ncv,
             noise=entry.noise,
+            noise_type=entry.noise_type,
             seed=seed + 977 * it,
         )
         denergy = abs(old_energy - energy)
