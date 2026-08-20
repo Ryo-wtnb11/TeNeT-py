@@ -11,6 +11,7 @@ import pytest
 import tenet
 from tenet import GradedSpace
 from tenet.network import MPO, MPS, Env, Sweep, dmrg_, lanczos, local_op, sweep_
+from tenet.network import env as env_module
 from tenet.symmetry import SU2, U1, SU2Sector, U1Sector
 
 from . import test_mpo as mpo_test  # the SU(2) Hamiltonian, built once and shared
@@ -398,3 +399,38 @@ def test_fermionic_dmrg_on_the_interacting_chain_matches_ed():
     h = _fermionic_chain(n, cutoff=1e-13, interaction=v)
     out = dmrg_(_fermionic_state(n, seed=3), h, chi=16, cutoff=1e-14)
     assert out.energy == pytest.approx(ed, abs=1e-10)
+
+
+def test_dmrg_forwards_compile_to_the_prepared_matvec_without_changing_the_run():
+    """The identity-recording stub of ``test_heff2.py``:215, driven through ``dmrg_``.
+
+    Two claims in one run, because they are the same run: the callable reaches the
+    matvec (so ``dmrg_`` does not discard the caller's choice), and wrapping it in an
+    identity leaves the energies and the sweep history bit-for-bit what the plain call
+    produces -- which is the "default behaviour unchanged" oracle stated as an equality
+    rather than as an absence.
+    """
+    from .test_heff2 import _heis  # noqa: PLC0415
+
+    h = MPO.from_terms(6, _heis(6), cutoff=None)
+    runs = []
+
+    def stub(fn):
+        def wrapped(*args):
+            runs.append(fn)
+            return fn(*args)
+
+        return wrapped
+
+    plain = dmrg_(MPS.random(example.PHYS, example.bond_spaces(6), seed=0), h, chi=8, max_sweeps=3)
+    out = dmrg_(
+        MPS.random(example.PHYS, example.bond_spaces(6), seed=0),
+        h,
+        chi=8,
+        max_sweeps=3,
+        compile=stub,
+    )
+    assert runs, "compile= never reached the matvec"
+    assert set(runs) == {env_module._apply2}
+    assert out.energy == plain.energy
+    assert out.history == plain.history

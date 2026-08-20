@@ -3575,6 +3575,110 @@ The split:
   post-placement width) when it is filed, and it slots in behind this milestone's carrier
   without moving the interface again.
 
+- **M54** — shipped: `dmrg_` forwards a caller-supplied `compile=` to its `Env`, and the
+  compiled matvec is measured at quantum-chemistry scale for the first time (#220). The code
+  change is one keyword-only parameter; the measurement is the content.
+
+  `Env.__init__` has taken `compile=` since M16 and `dmrg_` built its `Env` without a way to
+  pass one, so every run through the top-level driver was uncompiled *by construction* and
+  the only route to the engine's other regime was to build `Env` by hand and drive `sweep_`
+  in a loop. The argument stays a callable the caller supplies — no module-level default, no
+  accelerator named at this layer — and the default `None` leaves today's behaviour
+  untouched.
+
+  **The instrument.** `benchmarks/bench_dmrg_compile.py`, one process per point so the peak
+  RSS is that point's own, two sweeps from a random full-rank seed at `cutoff=1e-10`. The
+  lattice model is N=20 U(1) Heisenberg with a next-nearest-neighbour term at `cutoff=None`
+  (`D_w = 8`); the two ab initio inputs are `bench_qc_mpo.py`'s FCIDUMPs at the default
+  cutoff — M39's pinned operator, which is what #218's grid measured and the only route that
+  finishes at K=26. `steady` is the mean per-matvec wall *after* the first call on each
+  compiled callable; `trace` is the sum of the first-call latencies with one steady run
+  subtracted from each, which is what the XLA trace and compile cost and nothing else. The
+  `none (JAX)` row is the same JAX backend with no `compile=` at all, present so that a
+  slower sweep is attributed to the right thing.
+
+  | model | chi | compile | steady matvec | first call | trace total | sweep wall | peak RSS |
+  |---|---|---|---|---|---|---|---|
+  | lattice, N=20, `D_w`=8 | 16 | none (NumPy) | 1.595 ms | 35.0 ms | 2.4 s | 8.35 s | 0.21 G |
+  | | 16 | none (JAX) | 13.710 ms | 667.1 ms | 47.7 s | 194.73 s | 7.26 G |
+  | | 16 | **`jax.jit`** | **0.151 ms** | 178.2 ms | 13.0 s | 175.86 s | 7.17 G |
+  | | 64 | none (NumPy) | 1.881 ms | 44.3 ms | 3.1 s | 9.97 s | 0.23 G |
+  | | 64 | **`jax.jit`** | **0.215 ms** | 232.7 ms | 17.0 s | 755.94 s | 8.67 G |
+  | | 128 | none (NumPy) | 1.673 ms | 37.9 ms | 2.6 s | 8.65 s | 0.24 G |
+  | | 128 | **`jax.jit`** | **0.226 ms** | 229.0 ms | 16.7 s | 702.68 s | 8.38 G |
+  | N2 CAS 6-31G, K=16 | 16 | none (NumPy) | 3.361 ms | 5.4 ms | 0.3 s | 3.38 s | 1.50 G |
+  | | 16 | **`jax.jit`** | **1.333 ms** | 54.8 ms | 6.5 s | 79.47 s | 5.91 G |
+  | | 64 | none (NumPy) | 25.051 ms | 28.1 ms | 0.4 s | 15.40 s | 2.96 G |
+  | | 64 | **`jax.jit`** | **8.666 ms** | 78.4 ms | 8.4 s | 92.54 s | 8.01 G |
+  | | 128 | none (NumPy) | 111.616 ms | 117.7 ms | 0.7 s | 61.44 s | 5.41 G |
+  | | 128 | **`jax.jit`** | **37.632 ms** | 122.0 ms | 10.2 s | 137.91 s | 13.41 G |
+  | C2 CAS cc-pVDZ, K=26 | 16 | none (NumPy) | 4.773 ms | 9.9 ms | 1.0 s | 8.30 s | 6.21 G |
+  | | 16 | **`jax.jit`** | **2.670 ms** | 181.5 ms | 35.9 s | 676.95 s | 12.08 G |
+  | | 64 | none (NumPy) | 46.678 ms | 52.6 ms | 1.2 s | 45.79 s | 7.72 G |
+  | | 64 | **`jax.jit`** | **19.858 ms** | 254.0 ms | 47.1 s | 817.59 s | 11.75 G |
+  | | 128 | none (NumPy) | 222.853 ms | 235.0 ms | 2.4 s | 200.01 s | 8.59 G |
+  | | 128 | **`jax.jit`** | **92.965 ms** | 377.8 ms | 57.3 s | 1076.71 s | 12.93 G |
+
+  Sweep wall excludes the operator build (4.6 s for N2, 40 s for C2, both routes). The NumPy
+  rows reproduce #218's grid where they overlap — C2 at `chi=16` and `chi=64` is 8.30 s and
+  45.79 s here against 8.54 s and 46.72 s there — and the compiled and uncompiled arms agree
+  on the energy to 1e-13 on the lattice at every `chi` and on N2 at every `chi`. They do
+  *not* agree on C2, where the two sweeps from a random start on a 52-site strongly
+  correlated system are nowhere near converged and a reordering of floating-point sums moves
+  the run onto a different bond structure; #218 records the same instability at that point
+  for two NumPy routes. Correctness of the compiled path is settled by the lattice and N2
+  agreement, not by C2.
+
+  **The compiled matvec is real, and its factor shrinks as the bond widens.** 10.6x on the
+  lattice, 2.5–3.0x on N2, 1.8–2.4x on C2. The direction is the finding: at `D_w = 8` nearly
+  all of the eager cost is Python-level dispatch, which a trace removes outright, while on a
+  bond of 562 or 736 the same matvec already spends its time inside BLAS, where a trace has
+  little left to take. **#141's ~20x is a small-`D_w` number**, and reading it as an ab
+  initio number would have been wrong.
+
+  **The trace does not explode with K — it is re-paid per bond visit.** `Env.heff2` keys
+  `_compiled` per bond and rebuilds the entry when `hit[1] is not p` (`env.py`:662), and
+  `_prepare2` returns a *new* `_Prepared` whenever either environment moved, which during a
+  sweep is every visit. So the compiled callable is discarded and re-traced at every bond the
+  sweep touches: the lattice run makes **73 `compile()` calls against 60 distinct structure
+  keys**, N2 **121 against 34**, C2 **201 against 109** — in each case about `2 x sweeps x
+  bonds`, and on N2 that is 121 traces for 34 distinct graphs. This is the third outcome the
+  question allowed for, and it is the one that happened: not "the trace is cheap once", not
+  "the trace explodes with the number of blocks", but *the trace is charged again every
+  time*. A single trace costs 55–122 ms at K=16 and 181–378 ms at K=26, so it does grow with
+  the block count, mildly and not alarmingly; what makes it dominant is the multiplier.
+
+  **The compiled sweep is slower end to end, and `compile=` is not what makes it slower.**
+  On the lattice at `chi=16` the compiled sweep is 175.86 s against 8.35 s, of which 13.0 s
+  is tracing and 0.02 s is matvec — 92 % of it is the *rest of the sweep* running eagerly on
+  the JAX backend. The `none (JAX)` row settles the attribution: 194.73 s with no `compile=`
+  at all, and a matvec 8.6x *slower* than NumPy's. The truncating SVD, the canonicalization
+  and the environment updates sit outside `heff2` and outside any trace — they are the
+  data-dependent control flow `tenet.network` refuses to trace by construction (M11) — and on
+  JAX they pay per-operation dispatch with nothing amortising it. Peak RSS follows at 5.9–13.4
+  GiB against 0.2–8.6 GiB, part JAX's own runtime and part the traced executables, which
+  accumulate precisely because each `compile()` call produces one that is never reused.
+
+  **Verdict: the compiled path does not fail at K=26, and it does not close the
+  constant-factor question either.** It survives — 201 traces at 52 sites complete, the
+  per-trace cost grows only mildly from K=16 to K=26, and peak memory stays inside the same
+  order as the NumPy run — so the structural failure the issue named (an XLA graph whose
+  trace cost scales unlike `ConnectionInfo`'s linear index table) **did not materialise**.
+  What replaces it is a lower ceiling and a wasted multiplier: at ab initio scale the matvec
+  is only ~2x faster compiled, the trace is paid `2 x sweeps x bonds` times for a handful of
+  distinct graphs, and the sweep around it is not traceable at all. Compiling is therefore
+  not a route to an order of magnitude on this workload today, and `compile=None` remains the
+  right default.
+
+  **What this does not decide.** Whether tenet grows a `ConnectionInfo`-shaped contraction
+  plan — a flat index-and-coefficient table built once per structure and reused, the
+  backend-neutral analogue of what `jit` does for one backend — is a separate decision with
+  this measurement as its input, and it is not taken here. What the measurement contributes
+  is specific rather than directional: the reuse `ConnectionInfo` gets for free is the reuse
+  the identity test at `env.py`:662 throws away, `n_keys` says how much reuse is actually
+  available (34 distinct graphs where 121 traces are taken), and a plan would amortise on the
+  NumPy path, where the other 90 % of the sweep already runs.
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,

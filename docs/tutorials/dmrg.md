@@ -212,6 +212,27 @@ The `svd_truncated`-outside / `svd(bond=)`-inside pairing has two legitimate hal
 this example uses one: [CTMRG](ctmrg.md) needs the inside half because it differentiates
 through its sweeps; DMRG needs only the outside half because it does not.
 
+One piece *inside* the sweep is traceable, and `dmrg_` takes a callable for it. The
+two-site matvec is a pure function of a fixed contraction structure, so it can be handed
+to `jax.jit` — the caller supplies the callable and the `jax` extra, since this layer
+names no accelerator:
+
+```python
+import jax                       # pip install "tenet-py[jax]"
+import tenet.pytree              # registers SymmetricTensor as a JAX pytree
+
+dmrg_(psi, h, chi=64)                    # the plain run, NumPy, no extra
+dmrg_(psi, h, chi=64, compile=jax.jit)   # the same run, matvec compiled
+```
+
+**Read the caveat before reaching for it.** The compiled matvec is real — measured 10.6x
+faster per call on this lattice model, and 1.8–3.0x on ab initio integrals, where the
+work is already inside BLAS. But the *sweep* around it is not traceable, so on the JAX
+backend a compiled run is today slower end to end than the plain NumPy one; and `Env`
+rebuilds its prepared operator at every bond visit and so calls `compile` again each
+time, one XLA trace per bond per sweep. The measured grid, and what it says about where
+the constant factor actually lives, is in [Design](../design.md), M54.
+
 ## What to do with the converged state
 
 `dmrg_` hands back a `DMRG_out` whose `psi` is an ordinary `MPS`, and four calls cover

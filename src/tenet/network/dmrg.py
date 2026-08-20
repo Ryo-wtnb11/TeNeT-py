@@ -342,6 +342,7 @@ def dmrg_(
     ncv: int = 3,
     seed: int = 0,
     callback: Callable[[DMRG_out], None] | None = None,
+    compile: Callable | None = None,
 ) -> DMRG_out:
     """Sweep ``psi`` to the ground state of ``h`` in place and return a
     [DMRG_out][tenet.network.DMRG_out].
@@ -378,6 +379,21 @@ def dmrg_(
     callback : Callable[[DMRG_out], None] or None, optional
         Invoked once per sweep with that sweep's [DMRG_out][tenet.network.DMRG_out].
         Default ``None``.
+    compile : Callable or None, optional
+        Handed verbatim to [Env][tenet.network.Env], which wraps the prepared
+        two-site matvec with it once per structure key. ``jax.jit`` is the
+        intended argument and this layer names no accelerator, so the caller
+        supplies it and the ``jax`` extra. It changes the run's performance
+        *regime* rather than its accuracy, and the measured payoff is a matvec
+        one: with ``jax.jit`` the two-site matvec runs **10.6x** faster on a
+        lattice model with ``D_w = 8`` and **1.8--3.0x** faster on ab initio
+        integrals at ``K = 16``/``K = 26``, the factor shrinking as the bond
+        widens and the work moves into BLAS. **The sweep around it is not
+        traceable** -- the truncating SVD re-decides the bond space every sweep --
+        so on the JAX backend a compiled run is today slower end to end than the
+        plain NumPy one, and ``Env`` re-invokes ``compile`` at every bond visit.
+        Default ``None``, which runs the plain Python function and is today's
+        behaviour. The grid is ``docs/design.md``, M54.
 
     Returns
     -------
@@ -455,7 +471,7 @@ def dmrg_(
     else:
         plan = [Sweep(64 if chi is None else chi, 1e-14 if cutoff is None else cutoff)]
     psi.canonize_(0)
-    env = Env(psi, h).setup_(0)
+    env = Env(psi, h, compile=compile).setup_(0)
     schmidt: dict[int, list[float]] = {}
     energy: float = float("inf")
     history: list[tuple[float, float, float, float]] = []
