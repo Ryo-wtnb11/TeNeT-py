@@ -27,8 +27,25 @@ GPL-3.0 and no line of it is reproduced here.
 Gate: ``max(pre / post)`` at or below 1.10 on every fixture, reported for the inner cuts
 and for the two boundary cuts separately. #218's gate failed on its all-cuts reading for a
 structural reason -- the free sweep's boundary width sat *below* the minimum vertex cover,
-which no partitioned operator can reach -- so both readings are printed and the verdict
+which no partitioned operator can reach -- so every reading is printed and the verdict
 names the one it rests on.
+
+**Three widths of one mechanism**, because the basis choice and the truncation policy are
+two separate things and only the first is what #222 is about:
+
+* ``pre`` -- the basis chosen *and truncated* inside the pre-placement SVD. This is the
+  gate's literal reading.
+* ``exact`` -- the same choice at a rank-revealing threshold: the width ``_place`` would
+  be handed, and the number the ``D_FSM`` claim is about. Printed beside ``D_FSM``.
+* ``swept`` -- ``exact`` after #218's own two pinned truncating sweeps, which on the
+  pre-placement bond decompose a ``chi x d**2 x chi`` tensor rather than a
+  ``D_FSM x d**2 x chi`` one.
+
+``pre`` and ``swept`` differ for one reason and it is not the basis: ``rsum2`` weighs a
+discarded direction against the norm of the matrix it decomposes, and the *coefficient*
+matrix's norm is not the placed operator's. The scalar stream carries each slot's
+Frobenius norm so the two metrics agree wherever the string basis is orthogonal, and a
+dense synthetic integral set is exactly where it is not.
 
 The width is worthless if the operator is wrong, so every fixture small enough to expand
 is checked with ``to_dense`` against ``from_terms`` at ``cutoff=None`` and at ``1e-13``
@@ -36,8 +53,8 @@ before any width is believed.
 
 Restrictions, stated rather than hidden: the prototype handles rank-3 term operators on an
 abelian grading (``qdim == 1``), which is every fixture below. A k-site operator's split
-pieces and a non-abelian ``qdim`` weight both belong to the production change, not to the
-gate.
+pieces and a non-abelian ``qdim`` weight are not covered, and the first of those is a
+design question rather than an implementation gap -- see ``docs/design.md`` "M55".
 
 Not a test, not part of the package, on no CI path. It reuses ``bench_qc_mpo.py``'s
 FCIDUMP fetch, its synthetic generator and its term folding unchanged, so the licence
@@ -506,6 +523,19 @@ def rss_gib():
     return peak / 2**30 if sys.platform == "darwin" else peak / 2**20
 
 
+def _buffer(left, right, d):
+    """The widest ``_place`` buffer a sweep over these two bond profiles allocates, in GiB.
+
+    ``_place`` scatters into ``(left bond) x d x d x (right bond)`` at ``float64``, one site
+    at a time (M33's carry fold), so the transient the ``D_FSM`` claim is about is the
+    largest of those products. Passing the finite-state machine's bonds and the compressed
+    ones gives what #218 allocates; passing the pre-placement bonds twice gives what a
+    pre-placement builder would.
+    """
+    widest = max(left[n] * d * d * right[n + 1] for n in range(len(right) - 1))
+    return widest * 8 / 2**30
+
+
 def measure(name, n_sites, terms, cutoff=1e-13, rank=1e-14, dense_check=False):
     """One fixture, three width readings of the same mechanism against #218's.
 
@@ -550,6 +580,8 @@ def measure(name, n_sites, terms, cutoff=1e-13, rank=1e-14, dense_check=False):
     row["post"] = pin.widths(post.sites)
     row["fsm"] = [b.dim for b in MPO.from_terms(n_sites, terms, cutoff=None).edges.bonds]
     row["rss_post_peak"] = round(rss_gib(), 3)
+    row["place_fsm"] = round(_buffer(row["fsm"], row["post"], walk.phys.dim), 4)
+    row["place_pre"] = round(_buffer(row["exact"], row["exact"], walk.phys.dim), 4)
     if dense_check:
         ref = np.asarray(MPO.from_terms(n_sites, terms, cutoff=None).to_dense())
         got = np.asarray(MPO(sites).to_dense())
@@ -612,10 +644,15 @@ def main():
         "inner",
         "swept/post",
         "inner",
+        "place#218",
+        "place pre",
         "pre wall",
         "pre RSS",
     )
-    fmt = "{:<16} {:>4} {:>7} {:>6} {:>6} {:>6} {:>6} {:>9} {:>7} {:>10} {:>7} {:>9} {:>8}"
+    fmt = (
+        "{:<16} {:>4} {:>7} {:>6} {:>6} {:>6} {:>6} {:>9} {:>7} {:>10} {:>7} "
+        "{:>10} {:>10} {:>9} {:>8}"
+    )
     print(fmt.format(*head))
     inners, alls = [], []
     sw_inners, sw_alls = [], []
@@ -631,7 +668,7 @@ def main():
             if line.startswith("{"):
                 got = json.loads(line)
         if got is None:
-            print(fmt.format(label, *(["-"] * 11), "fail"))
+            print(fmt.format(label, *(["-"] * 13), "fail"))
             print("   " + (out.stderr.strip().splitlines() or ["no output"])[-1])
             continue
         hi, inner = ratios(got, "pre")
@@ -653,6 +690,8 @@ def main():
                 f"{inner:.3f}",
                 f"{sw_hi:.3f}",
                 f"{sw_inner:.3f}",
+                f"{got['place_fsm']:.3f} G",
+                f"{got['place_pre']:.3f} G",
                 f"{got['wall_pre']:.1f} s",
                 f"{got['rss_pre']:.2f} G",
             )

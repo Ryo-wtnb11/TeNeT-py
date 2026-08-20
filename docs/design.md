@@ -4500,6 +4500,107 @@ The split:
 
 Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
 left that list with M61 Stage D above.
+- **M55** — **measured, not shipped**: the pre-placement basis choice — M39's named successor,
+  block2's Part 2 position — was built as a prototype, taken to its gate, and the gate says
+  the change does not belong in `src/` (#222). The measurement is the whole deliverable.
+
+  **What was built.** `benchmarks/bench_preplace_mpo.py` carries a self-contained
+  pre-placement assembler with block2's shape, read first-hand and written independently
+  (`general_mpo.hpp`:540-541, :666-780, :723-730, :763, :764-805, :828-833, :1210-1214,
+  :1381+; block2 is GPL-3.0 and no line of it is reproduced): the coefficient stream is
+  carried forward on the *kept* basis so every decomposed matrix has
+  `(kept basis) × (site fan-out)` rows and never `D_FSM`; both sides are interned per cut,
+  left rows by `(kept index, site slot)` and right columns by the remaining operator string;
+  the SVD runs dense on the `szl × szr` scalar block per quantum number; the singular values
+  are folded into the next cut's coefficients rather than into a tensor; and `IdL`/`IdR` are
+  excluded from the choice and given their own slots, which is M39's corner pinning applied
+  one stage earlier. Correctness first: the operator built through the chosen basis agrees
+  with `from_terms` at `cutoff=None` to 2e-16 – 9e-16 on the spin, spinless-fermion and
+  spinful Hubbard fixtures, and with M39's own compressed operator to the same tolerance.
+
+  **Gate 1**, per cut, on M39's fixtures. `post` is M39's shipped width. Three widths of the
+  one mechanism, because the basis choice and the truncation policy are separable and only
+  the first is what the successor was about: `pre` truncates *inside* the pre-placement SVD;
+  `exact` is the same choice at a rank-revealing threshold, which is the width `_place`
+  would be handed; `swept` is `exact` after M39's own two pinned truncating sweeps, which on
+  the pre-placement bond decompose a `χ × d² × χ` tensor instead of a `D_FSM × d² × χ` one.
+  `place` is the widest `_place` buffer each route allocates.
+
+  | fixture | N | D_FSM | post | pre | exact | swept | pre/post | swept/post | place M39 | place pre | pre wall | pre RSS |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | H4 STO-6G | 8 | 108 | 30 | 30 | 30 | 30 | 1.000 | 1.000 | 0.000 G | 0.000 G | 0.0 s | 0.00 G |
+  | H8 STO-6G | 16 | 1 148 | 122 | 122 | 122 | 122 | 1.000 | 1.000 | 0.001 G | 0.000 G | 0.1 s | 0.02 G |
+  | N2 STO-3G | 20 | 588 | 96 | 96 | 96 | 96 | 1.000 | 1.000 | 0.001 G | 0.000 G | 0.1 s | 0.02 G |
+  | H10 STO-6G | 20 | 2 376 | 192 | 192 | 192 | 192 | 1.000 | 1.000 | 0.003 G | 0.001 G | 0.2 s | 0.10 G |
+  | N2 CAS 6-31G (K=16) | 32 | 5 111 | 562 | 562 | 562 | 562 | 1.000 | 1.000 | 0.048 G | 0.008 G | 2.4 s | 0.60 G |
+  | C2 CAS cc-pVDZ (K=26) | 52 | 31 441 | 736 | 766 | 766 | **736** | 1.333 | **1.000** | 0.277 G | 0.017 G | 39.4 s | **5.15 G** |
+  | syn-42 (K=42) | 84 | 10 764 | 54 | 175 | 228 | **54** | 4.154 | **1.000** | 0.013 G | 0.002 G | 55.4 s | **4.74 G** |
+
+  Every ratio is `max` over the cuts; the inner reading (excluding the two boundary-adjacent
+  cuts, M39's own split) is identical to the all-cuts reading on every row, so nothing here
+  turns on which one is read. **The literal gate — truncate inside the pre-placement SVD —
+  fails at 4.154.** **The mechanism's own gate — the pre-placement basis with M39's
+  truncation left where it is — passes at exactly 1.000, cut for cut, on every fixture.**
+
+  **The two readings differ for a reason that is about the metric, not the basis.** `rsum2`
+  weighs a discarded direction against the norm of the matrix it decomposes. Post-placement
+  that matrix is the operator; pre-placement it is a matrix of scalars whose columns are
+  operator *strings*, and the string basis is orthogonal only where the strings differ on
+  some site by orthogonal operators. The prototype carries each slot's Frobenius norm
+  relative to the identity's so the two metrics agree where the basis is orthogonal, and it
+  moved C2 not at all and syn-42 from 4.200 to 4.154 — a dense synthetic integral set is
+  precisely where `n`-type strings overlap and the diagonal approximation is worst. Where no
+  truncation happens at all the two readings are bit-identical, which is the cleanest
+  statement available that the *rank* is reproduced: five fixtures agree at every cut, and
+  C2's six untruncated middle cuts (631, 598, 585, 576, 571, 570) agree entry for entry.
+
+  **The reason the change does not ship is not the width. It is that the transient it
+  removes is smaller than the transient it introduces.** The object #222 set out to delete
+  is `_place`'s `D_FSM × d² × χ` buffer; measured, that buffer is **0.277 GiB at K=26** and
+  **0.013 GiB at K=42**. The pre-placement basis choice that replaces it needs
+  `szl × szr` scalars per quantum number, and measured, that costs **5.15 GiB at K=26** and
+  **4.74 GiB at K=42** — one to two orders of magnitude more than the thing it removes, at
+  a wall time (39.4 s at K=26) equal to the entire shipped build (38.9 s). Pre-placement
+  moves the ceiling **backwards** on this input set.
+
+  **Why block2 does not pay this and tenet would.** `szr` is the number of distinct
+  *remaining* operator strings at a cut — 79 838 at C2's first cut, ~19 000 at its middle —
+  and the SVD is dense on `szl × szr` **per quantum number**. block2 blocks by particle
+  number, `Sz` and point group, which at K=26 is of order a hundred blocks, and
+  `Σ_q szl_q · szr_q` falls with the block count. tenet's spin-orbital sites are graded
+  **fZ2**, which is two blocks, so almost nothing falls out. The mechanism whose cost block2's
+  symmetry pays for is the one tenet does not have at this layer. That is a statement about
+  the *grading carried on the MPO bond*, not about the order of operations, and it is where
+  a successor to this measurement would have to start: an MPO bond graded by `U(1) × U(1)`
+  (particle number and spin) rather than by fZ2 is what makes the pre-placement block sizes
+  fall, and that is a change to what `local_op`'s charge means, not to the assembler.
+
+  **A second finding, independent of the memory one: the design as filed does not cover
+  tenet's non-Abelian route.** block2's operator alphabet is single-site and second-quantized,
+  so a left partial string is a sequence of on-site symbols and the coefficient stream is
+  scalars. tenet's SU(2) MPOs cannot be written that way — `local_op` refuses a
+  symmetry-breaking single-site factor on non-Abelian legs, so an SU(2) Hamiltonian is a
+  *k-site invariant* operator that `_split` peels into pieces with a **derived internal
+  bond** (`tests/network/test_mpo.py`'s `su2_heisenberg` is the whole model in two lines).
+  Where that bond carries degeneracy above one, a bond direction pairs a left factor and a
+  right factor through an index that the coefficient stream cannot see: the pre-placement
+  matrix stops being `coefficients × atoms` and the rank of the scalar matrix stops bounding
+  the operator's. It is fixable — expand the interning key by the piece's own bond index and
+  block the SVD by it — but it is a design the successor's issue does not contain, and it is
+  the one place where "adopt block2's shape" does not transfer, for the same reason M39
+  recorded for the coupling coefficients: block2 knows what its operators *are* and tenet's
+  are opaque caller tensors.
+
+  **What stands from the measurement.** The pre-placement basis choice reaches M39's bond
+  exactly, so the *basis* question the successor was filed on is answered and closed: there
+  is nothing to gain in width and nothing to lose. `_place`'s buffer would shrink 16× at
+  K=26 (0.277 → 0.017 GiB) and 9× at K=42, which is real and which is not where the build's
+  6–7 GiB peak is. **The K ceiling therefore does not move**, and M35's `K^4.22` build wall
+  and the K≈48–53 estimate stand unrevised; no ceiling measurement at K=42 or beyond is
+  reported here because no production change shipped to measure one on. The refusal of a
+  max-flow (#138, re-measured twice) is untouched and remains a refusal.
+
+Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
 and the gap M13's refusal guarded against was the cap-direction convention M23/#160
