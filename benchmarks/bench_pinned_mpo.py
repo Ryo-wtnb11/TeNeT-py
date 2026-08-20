@@ -190,12 +190,78 @@ FIXTURES = [
 ]
 
 
+# --- gate 2: a full DMRG run through each of the three routes -----------------------
+
+
+def dmrg_run(name, variant, chi, sweeps):
+    """One full DMRG at fixed sweep count; peak RSS and wall, per operator route.
+
+    Three routes, the same arithmetic:
+
+    * ``pinned`` -- ``from_terms(cutoff=1e-13)``, the compressed **prepared** path #204
+      builds;
+    * ``fsm`` -- ``from_terms(cutoff=None)``, the prepared path on the uncompressed
+      finite-state-machine bond, which is #203's measurement and the number to beat;
+    * ``free-dense`` -- the freely compressed sites in a bare ``MPO``, so ``heff2`` takes
+      its dense path. This is gate 2's zeroth-order baseline: the alternative that needs
+      no new code at all, reported beside the others whichever way it comes out.
+
+    ``sweep_`` is driven directly rather than through ``dmrg_`` so the sweep count is
+    fixed and the three routes do the same work, which is ``bench_qc_mpo.dmrg_run``'s
+    reason too.
+    """
+    import resource  # noqa: PLC0415
+
+    from tenet.network import MPS, Env, sweep_  # noqa: PLC0415
+
+    def rss():
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return peak / 2**30 if sys.platform == "darwin" else peak / 2**20
+
+    t0 = time.perf_counter()
+    n_sites, terms = qc_terms(name)
+    if variant == "pinned":
+        h = MPO.from_terms(n_sites, terms, cutoff=1e-13)
+    elif variant == "fsm":
+        h = MPO.from_terms(n_sites, terms, cutoff=None)
+    else:
+        h = MPO(free_sites(MPO.from_terms(n_sites, terms, cutoff=None).edges, 1e-13))
+    t_build = time.perf_counter() - t0
+    qc.note(event="build", name=name, variant=variant, t=round(t_build, 1), rss=round(rss(), 2))
+
+    phys = GradedSpace.new(fZ2, {FZ2Sector(0): 1, FZ2Sector(1): 1})
+    triv = GradedSpace.new(fZ2, {FZ2Sector(0): 1})
+    mid = GradedSpace.new(fZ2, {FZ2Sector(0): chi - chi // 2, FZ2Sector(1): chi // 2})
+    psi = MPS.random(phys, [triv] + [mid] * (n_sites - 1) + [triv], seed=0)
+    t1 = time.perf_counter()
+    psi.canonize_(0)
+    env = Env(psi, h).setup_(0)
+    schmidt, energies = {}, []
+    for it in range(sweeps):
+        t2 = time.perf_counter()
+        energy, _ = sweep_(psi, h, env, schmidt, chi=chi, cutoff=1e-10)
+        energies.append(energy)
+        qc.note(event="sweep", name=name, variant=variant, sweep=it, energy=energy,
+                t=round(time.perf_counter() - t2, 1), rss=round(rss(), 2))  # fmt: skip
+    qc.note(event="dmrg", name=name, variant=variant, chi=chi, sweeps=sweeps,
+            energy=energies[-1], energies=energies, t_build=round(t_build, 1),
+            t_sweeps=round(time.perf_counter() - t1, 1), rss=round(rss(), 2))  # fmt: skip
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--only", action="append", default=None)
     ap.add_argument("--synthetic-only", action="store_true")
     ap.add_argument("--cutoff", type=float, default=1e-13)
+    ap.add_argument("--dmrg", choices=("pinned", "fsm", "free-dense"))
+    ap.add_argument("--chi", type=int, default=16)
+    ap.add_argument("--sweeps", type=int, default=3)
     a = ap.parse_args()
+    sys.stdout.reconfigure(line_buffering=True)
+    if a.dmrg:
+        for name in a.only or ["N2.CAS.6-31G"]:
+            dmrg_run(name, a.dmrg, a.chi, a.sweeps)
+        return
 
     print("# correctness: pinned vs free vs uncompressed to_dense\n")
     for name, (n, terms) in SMALL.items():
