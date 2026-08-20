@@ -413,15 +413,40 @@ def _fold_first(
     return out  # ty: ignore[invalid-return-type]
 
 
+def _heff2_full(h: MPO, fl: SymmetricTensor, fr: SymmetricTensor, n: int, aa: SymmetricTensor):
+    """``<bra env| W_n W_{n+1} |aa, ket env>`` by the four full contractions, no gauge asked.
+
+    YASTN's ``Env_mps_mpo_mps.Heff2`` order (``_env.py``:496-518) with
+    ``precompute=False``: right environment, then ``W2``, then ``W1``, then the left
+    environment. Exact for any state and for a bra that is not the ket, because nothing
+    here reads an ``IdL``/``IdR`` channel as a gauge identity -- which is what makes it
+    both [Env.heff2][tenet.network.Env.heff2]'s compatibility entry *and*
+    [Env.project2][tenet.network.Env.project2]'s whole body.
+
+    ``aa`` lives on the *ket* bonds and the result on the *bra* bonds; the two coincide
+    for a one-state [Env][tenet.network.Env] and that is why ``heff2`` can iterate on it.
+    """
+    t = tenet.einsum("apqr,rys->apqys", aa, fr)
+    t = _composed("apqys,mQqy->apQms", t, h[n + 1], bend="q")
+    t = _composed("apQms,xPpm->aPQxs", t, h[n], bend="p")
+    return _composed("aPQxs,axB->BPQs", t, fl, bend="a")
+
+
 class Env:
-    """``<psi|H|psi>`` partial contractions for one ``(psi, h)`` pair.
+    """``<bra|H|psi>`` partial contractions for one ``(psi, h)`` pair -- ``bra = psi`` by default.
 
     Parameters
     ----------
     psi : MPS
-        The state; the cache holds views into its current tensors.
+        The **ket**; the cache holds views into its current tensors.
     h : MPO
         The Hamiltonian.
+    bra : MPS or None, optional
+        The **bra**, when it is not ``psi``. Default ``None``, meaning
+        ``bra is psi`` -- today's one-state environment, ``<psi|H|psi>``.
+        With a second state given, every environment is the mixed transfer
+        contraction and ``Env(psi, h, bra=phi).measure()`` **is**
+        ``<phi|H|psi>``. Keyword-only.
     compile : Callable or None, optional
         Wraps the prepared matvec once per structure key -- ``jax.jit`` at the
         application level; this layer names no accelerator and ``None`` (the
@@ -455,12 +480,34 @@ class Env:
 
     Why one class rather than YASTN's factory over eight: ``docs/design.md``
     "Milestone 11".
+
+    **The two-state form** (``bra=phi``) builds ``<phi| ... |psi>`` instead, which is the
+    engine half of the excited-state and measurement machinery: block2's ``ext_mes`` are
+    moving environments between two *different* states
+    (``sweep_algorithm.hpp``:1195-1206). What it asks of its two states is **nothing**:
+    ``update_``'s folds (``_fold_last``/``_fold_first`` and the site-tensor branch alike)
+    are exact for any pair of chains, and ``MPS._braket``'s docstring already records the
+    same fact one level down -- the two chains may carry different bond spaces, because
+    the transfer tensor holds one index from each. Two-state environments are therefore
+    gauge-free, and [measure][tenet.network.Env.measure] on one is ``<phi|H|psi>``
+    undivided, for a ``phi`` and a ``psi`` in any gauge and at any norm.
+
+    What the two-state form does **not** support is
+    [heff2][tenet.network.Env.heff2]: the prepared matvec's one-sided terms read the
+    ``IdL``/``IdR`` environment channels as gauge identities, which is true of a
+    left-orthonormal chain against *itself* and false of a mixed transfer, so it refuses
+    rather than returning a plausible wrong operator. block2 does not iterate on its
+    ``ext_mes`` either -- it calls ``multiply`` on them, once per bond, to produce a
+    *projection vector*. [project2][tenet.network.Env.project2] is that call.
     """
 
     F: dict[tuple[int, int], SymmetricTensor]
 
-    def __init__(self, psi: MPS, h: MPO, *, compile: Callable | None = None) -> None:
+    def __init__(
+        self, psi: MPS, h: MPO, *, bra: MPS | None = None, compile: Callable | None = None
+    ) -> None:
         self.psi = psi
+        self.bra = psi if bra is None else bra
         self.h = h
         # ``compile=`` wraps the prepared matvec once per structure key -- ``jax.jit`` at
         # the application level (``examples/bench_dmrg.py``); this layer names no
@@ -479,6 +526,11 @@ class Env:
         self._eye_p: SymmetricTensor | None = None  # the physical identity, for field padding
         n = len(psi)
         kl, kr = psi[0].legs[0], psi[n - 1].legs[2]
+        # The bra's own boundary legs, which are the ket's for a one-state Env. Keeping
+        # them apart is what lets the two chains carry different boundary charges: the
+        # seed is then invariant only where the two agree, so an overlap between two
+        # sectors is structurally zero rather than numerically small.
+        bl, br = self.bra[0].legs[0], self.bra[len(self.bra) - 1].legs[2]
         # Read them off the description where there is one: asking ``h[0]`` for its leg
         # would materialise a site, which is what the deferred path exists to avoid.
         wl, wr = (
@@ -491,14 +543,14 @@ class Env:
                 (
                     Leg(kl.space, IN, kl.dual),
                     Leg(wl.space, OUT, wl.dual),
-                    Leg(kl.space, OUT, kl.dual),
+                    Leg(bl.space, OUT, bl.dual),
                 )
             ),
             (n, n - 1): ones(
                 (
                     Leg(kr.space, OUT, kr.dual),
                     Leg(wr.space, IN, wr.dual),
-                    Leg(kr.space, IN, kr.dual),
+                    Leg(br.space, IN, br.dual),
                 )
             ),
         }
@@ -558,7 +610,7 @@ class Env:
         [heff2][tenet.network.Env.heff2] this path is **exact for any state** -- no gauge
         assumption.
         """
-        a, bra = self.psi[n], tenet.adjoint(self.psi[n])
+        a, bra = self.psi[n], tenet.adjoint(self.bra[n])
         blocks = self.h.edge_blocks(n)
         if to == "last":
             if blocks is not None:
@@ -671,6 +723,7 @@ class Env:
         result has ``aa``'s structure exactly and [lanczos][tenet.network.lanczos] can add
         the two.
         """
+        self._one_state("heff2")
         if self.h.edges is not None:
             p = self._prepare2(n)
             key = tuple(aa.legs)
@@ -695,10 +748,7 @@ class Env:
             )
             self._compiled[n] = (key, p, fn)
             return fn(p, aa)
-        t = tenet.einsum("apqr,rys->apqys", aa, self.F[n + 2, n + 1])
-        t = _composed("apqys,mQqy->apQms", t, self.h[n + 1], bend="q")
-        t = _composed("apQms,xPpm->aPQxs", t, self.h[n], bend="p")
-        return _composed("aPQxs,axB->BPQs", t, self.F[n - 1, n], bend="a")
+        return _heff2_full(self.h, self.F[n - 1, n], self.F[n + 2, n + 1], n, aa)
 
     def heff2_families(self, n: int, aa: SymmetricTensor) -> tuple[SymmetricTensor, ...]:
         """[heff2][tenet.network.Env.heff2]'s term families, applied separately, unsummed.
@@ -754,9 +804,88 @@ class Env:
         Not compiled: ``compile=`` wraps the *summed* matvec, which is what a Krylov solve
         calls thousands of times; this is called once per bond visit.
         """
+        self._one_state("heff2_families")
         if self.h.edges is None:
             return (self.heff2(n, aa),)
         return tuple(_families2(self._prepare2(n), aa))
+
+    def project2(self, n: int, aa: SymmetricTensor) -> SymmetricTensor:
+        """The bond's projection vector: ``aa`` carried from the ket's bonds to the bra's.
+
+        Parameters
+        ----------
+        n : int
+            The bond's left site.
+        aa : SymmetricTensor
+            The **ket** chain's two-site tensor at that bond,
+            ``(left bond OUT, p OUT, q OUT, right bond IN)``.
+
+        Returns
+        -------
+        SymmetricTensor
+            The same rank-4 structure on the **bra** chain's bonds:
+            ``<bra env| H_n H_{n+1} |aa, ket env>``. With ``h`` the identity
+            ([MPO.identity][tenet.network.MPO.identity]) this is the two-site reduced
+            form of the ket state in the bra state's environment gauge, and
+            ``tenet.inner(p, bb)`` is then ``<ket|bra'>`` for any ``bb`` in the bra's
+            two-site variational space.
+
+        Examples
+        --------
+        >>> import tenet
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPO, MPS, Env
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> states = [U1Sector(1), U1Sector(-1), U1Sector(1), U1Sector(-1)]
+        >>> phi = MPS.product(phys, states).canonize_()
+        >>> psi = MPS.product(phys, states).canonize_()
+        >>> env = Env(phi, MPO.identity(4, phys), bra=psi).setup_()
+        >>> pair = tenet.einsum("apx,xqr->apqr", phi[0], phi[1])
+        >>> p = env.project2(0, pair)
+        >>> bb = tenet.einsum("apx,xqr->apqr", psi[0], psi[1])
+        >>> round(float(tenet.inner(p, bb)), 12)  # <psi|phi> read at one bond
+        1.0
+
+        Notes
+        -----
+        block2's ``i_eff->multiply`` on a two-state moving environment
+        (``sweep_algorithm.hpp``:1195-1206), which is how it builds one ``ortho_bra``
+        entry per converged state before handing the collection to ``eigs``
+        (:1244-1249). Its ``ext_mes`` are built with the **identity** MPO -- the driver
+        reads ``get_identity_mpo()`` for exactly this (``pyblock2/driver/core.py``:4817-4830)
+        -- so the vector is an overlap, not an energy; [MPO.identity][tenet.network.MPO.identity]
+        is the same spelling here.
+
+        **What the contraction requires of its two states is only what the caller reads
+        it as.** The contraction itself is exact in any gauge. But the *use* --
+        "project the bra's two-site variational space against the ket state" -- is a
+        statement about an orthonormal basis, so it holds exactly when the bra chain is
+        mixed-canonical at bond ``n``, which [sweep_][tenet.network.sweep_] maintains at
+        every bond it visits. The ket needs nothing: a gauge transformation on any of its
+        bonds cancels between the two environments and the two-site tensor, which is why
+        the converged states of an ``orthogonal_to=`` run are held fixed rather than
+        canonicalized alongside the sweep the way block2 canonicalizes its ``ext_mpss``
+        (:893-917).
+
+        The four contractions are ``heff2``'s compatibility entry, shared verbatim: the
+        one path in this class that reads no channel as a gauge identity, hence the one
+        that survives ``bra is not psi``.
+        """
+        return _heff2_full(self.h, self.F[n - 1, n], self.F[n + 2, n + 1], n, aa)
+
+    def _one_state(self, what: str) -> None:
+        """Refuse ``what`` on a two-state ``Env``, naming what the object *is* for."""
+        if self.bra is not self.psi:
+            raise ValueError(
+                f"{what} is a one-state operation and this Env carries bra is not psi. "
+                "The prepared matvec reads the IdL/IdR environment channels as gauge "
+                "identities, which holds for a canonical chain against itself and not "
+                "for a mixed <phi|...|psi> transfer, so iterating on it would return a "
+                "plausible wrong operator. A two-state Env supports setup_/update_/"
+                "measure (measure() is <phi|H|psi>) and project2, which is the per-bond "
+                "projection vector block2 gets from its ext_mes by multiply"
+            )
 
     def _prepare2(self, n: int) -> _Prepared:
         """The bond's prepared operator, rebuilt only when either environment moved.
@@ -791,19 +920,25 @@ class Env:
         Returns
         -------
         float
-            ``<psi|H|psi>``, **not** divided by ``<psi|psi>``.
+            ``<bra|H|psi>``, **not** divided by any norm -- ``<psi|H|psi>`` on a
+            one-state [Env][tenet.network.Env] and ``<phi|H|psi>`` on an
+            ``Env(psi, h, bra=phi)``.
 
         Notes
         -----
         The first thing in this repository that measures a converged energy independently
-        of the ``lanczos`` Rayleigh quotient that produced it. YASTN's ``measure`` is the
+        of the ``lanczos`` Rayleigh quotient that produced it. On a two-state
+        [Env][tenet.network.Env] it is instead the engine fact the measurement API stands
+        on (#213): ``Env(psi, h, bra=phi).measure()`` **is** ``<phi|H|psi>``, and with
+        ``h`` the identity ([MPO.identity][tenet.network.MPO.identity]) it is the plain
+        overlap ``<phi|psi>``. No gauge is assumed of either chain. YASTN's ``measure`` is the
         same closing contraction one level down (``_env.py``:462-468, ``vdot(vecL,
         vecR)``); the pass is built in a fresh [Env][tenet.network.Env] so a measurement never
         writes
         into a sweep's cache.
         """
         n = len(self.psi)
-        env = Env(self.psi, self.h)
+        env = Env(self.psi, self.h, bra=self.bra)
         for site in range(n):
             env.update_(site, to="last")
         closed = tenet.einsum("Rms,rms->Rr", env.F[n, n - 1], env.F[n - 1, n])

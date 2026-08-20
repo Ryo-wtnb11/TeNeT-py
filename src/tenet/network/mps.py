@@ -2367,6 +2367,55 @@ class MPO:
         return None if self.edges is None else self.edges.edge_blocks(n)
 
     @classmethod
+    def identity(cls, n_sites: int, phys: GradedSpace) -> "MPO":
+        """The identity operator as an MPO: ``D=1`` bonds, ``eye`` on every site.
+
+        Parameters
+        ----------
+        n_sites : int
+            Chain length.
+        phys : GradedSpace
+            The physical space of every site.
+
+        Returns
+        -------
+        MPO
+            An ``n_sites``-site MPO with unit-sector ``D=1`` bonds throughout and no
+            edge description, so every consumer takes the full-contraction path.
+
+        Examples
+        --------
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPO, MPS, Env
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1)]).canonize_()
+        >>> phi = MPS.product(phys, [U1Sector(1), U1Sector(-1)]).canonize_()
+        >>> round(Env(psi, MPO.identity(2, phys), bra=phi).measure(), 12)
+        1.0
+
+        Notes
+        -----
+        It exists because an **overlap is an environment**: ``<phi|psi>`` and its
+        per-bond projection vectors are what a two-state [Env][tenet.network.Env] over
+        this operator produces, which is exactly how block2 builds the ``ext_mes`` its
+        excited-state projection reads -- ``impo = self.get_identity_mpo()``
+        (``pyblock2/driver/core.py``:4817-4830). One operator spelled once beats a second
+        environment class whose contractions would be this one's with a leg deleted.
+
+        Deliberately carries **no** ``EdgeTable``: the prepared matvec's one-sided terms
+        are a gauge statement about a state against itself, and this operator's only
+        caller is the two-state path where that statement is false. The site tensor is
+        [tenet.identity][] on ``(unit, phys)`` transposed into the MPO's
+        ``(wl IN, p OUT, p IN, wr OUT)`` axis order -- no ``einsum``, so no composition
+        rule to state.
+        """
+        sym = phys.provider
+        unit = GradedSpace.new(sym, {sym.unit: 1})
+        eye = tenet.identity((Leg(unit, OUT), Leg(phys, OUT)))  # (u OUT, p OUT, u IN, p IN)
+        return cls([tenet.transpose(eye, (2, 1, 3, 0))] * n_sites)
+
+    @classmethod
     def from_w(
         cls,
         w: Any,
