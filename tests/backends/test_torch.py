@@ -334,6 +334,15 @@ def test_apply_blocks_sqrt_power(name):
     )
 
 
+def test_map_diagonal():
+    """The reduced-basis diagonal is a per-block ``einsum``, so torch must reach it too."""
+    legs = (Leg(V, OUT), Leg(W, OUT), Leg(V, IN), Leg(W, IN))
+    t = tt(legs, seed=16)
+    d = tenet.map_diagonal(t)
+    assert is_torch(d)
+    same(d, tenet.map_diagonal(t.to_backend("numpy")))
+
+
 def test_cast():
     """SU(2) -> U(1) forgetting: ``to_dense`` out, ``from_dense`` back in, on torch."""
     t = tt((Leg(V, OUT), Leg(V, IN)), seed=14)

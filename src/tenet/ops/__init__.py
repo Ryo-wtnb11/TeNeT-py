@@ -19,7 +19,14 @@ from tenet.ops.cast import to_symmetry
 from tenet.ops.contraction import einsum, full_trace, inner, tensordot, trace
 from tenet.ops.embed import direct_sum, embed, restrict
 from tenet.ops.fusion import fuse, unfuse
-from tenet.ops.map import adjoint, compose, identity, isometry, random_isometry
+from tenet.ops.map import (
+    adjoint,
+    compose,
+    identity,
+    isometry,
+    map_diagonal,
+    random_isometry,
+)
 from tenet.ops.permutation import transpose
 from tenet.ops.repartition import bend, flip_dual, repartition
 
@@ -43,6 +50,7 @@ __all__ = [
     "identity",
     "inner",
     "isometry",
+    "map_diagonal",
     "multiply",
     "negative",
     "norm",
