@@ -3575,6 +3575,117 @@ The split:
   post-placement width) when it is filed, and it slots in behind this milestone's carrier
   without moving the interface again.
 
+- **M53** — **refused at Part 1, on measurement (#219).** The two-site effective
+  Hamiltonian's diagonal *cannot* be produced from the same `_Cores`/`EdgeBlocks` the matvec
+  uses, and the obstruction is categorical rather than arithmetic. `lanczos` is unchanged, no
+  solver was added, and `Env` grew no method. What shipped is the instrument and this entry.
+
+  **What was asked.** block2's engine has two halves and M39 adopted one. The second is the
+  diagonal preconditioner: `effective_hamiltonian.hpp`:141-146 allocates `diag` behind a
+  `compute_diag` constructor flag, :191-200 fills it, :491-492 asserts it and hands it to
+  Davidson, and `iterative_matrix_functions.hpp`:66-72 is the whole preconditioner —
+  `q_i /= lambda - aa_i`, Davidson 1975 §III.D. The premise to establish first was that
+  `Env` can build `diag(H_eff)` at a bond without forming `H_eff` and without a full-width
+  intermediate.
+
+  **The instrument.** `benchmarks/bench_heff2_diagonal.py`, on no CI path. It needs no new
+  library code to know the truth: the diagonal of the matrix the solver actually iterates on
+  is obtained by probing [Env.heff2][tenet.network.Env.heff2] with the reduced basis' own
+  unit vectors and reading the probed entry back — `dim(aa)` matvecs, which is a
+  fixture-sized oracle and nothing more. Against that it puts the candidate contraction,
+  the one every "take only the diagonal in the two-site index" reading means:
+
+  ```text
+  diag[a, p, q, r] = sum_{x, m, y} GL[a, x, a] W1[x, p, p, m] W2[m, q, q, y] GR[r, y, r]
+  ```
+
+  evaluated on reduced blocks, over the site-tensor path so that the two `W`s are in hand.
+
+  | provider | worst \|exact − candidate\| | the diagonal's own scale | verdict |
+  |---|---|---|---|
+  | U(1) Heisenberg (ungraded Abelian) | 1.11e-16 | 0.418 | exact |
+  | fZ2 spinless fermions (graded Abelian) | 1.56e+00 | 0.782 | wrong by a sign |
+  | SU(2) J1–J2 chain (non-Abelian) | 4.52e-01 | 0.943 | wrong index set |
+
+  1. **Ungraded Abelian is the only case the candidate gets right**, and it gets it right to
+     machine precision. That is the whole of the intuition the issue was written on, and it
+     is a special case.
+  2. **Graded Abelian fails by a parity-dependent sign**, not by a small amount: the ratio
+     exact/candidate is exactly ±1 block by block, and it is −1 on three of the six blocks
+     with a non-zero diagonal, so the error reaches twice the diagonal's scale. The braiding
+     the matvec pays through `_composed` (#147, #160) is paid on the diagonal too, and a
+     product of reduced-block diagonals does not carry it.
+  3. **Non-Abelian does not fail numerically — it fails structurally.** The two-site
+     reduced basis is labelled by a fusion *tree*, and for SU(2) one external sector tuple
+     carries several. At the measured bond the tuple (1, ½, ½, 1) carries two inner lines and
+     the exact diagonal on them is **−0.16586** and **+0.08648**: not equal, not related, and
+     the candidate has no index to tell them apart. A leg-factorized contraction produces a
+     value per external sector tuple, so it cannot even have the right *shape*, let alone the
+     right values. Invariant 4 states this in advance — fusion-tree information is
+     relational, not per-leg — and the diagonal is a per-leg reading of a relational basis.
+
+  **This is what block2 does too, read correctly.** block2 does not reuse its matvec for the
+  diagonal, and the reason is not performance: `initialize_diag`
+  (`sparse_matrix.hpp`:81-140) is handed the coupling object `cg` and builds each diagonal
+  entry with a **Wigner 9j** (:123-125) and an explicit fermionic sign (:130). It is a second
+  coefficient path, parallel to the matvec's own (`sparse_matrix.hpp`:225 is the matvec's
+  9j), not a cheap projection of the first. The measurement above is the same statement
+  arrived at from tenet's side: the missing ingredient is exactly the recoupling coefficient
+  and the braiding sign. tenet's job is also strictly harder than block2's here — block2's
+  two-site wavefunction is a two-index coupled object, so one 9j closes it, while tenet's
+  `aa` is rank-4 with a left-associated tree over `(a, p, q)` and the analogous coefficient
+  is a chain of F-moves.
+
+  **The cost was never the problem, and the instrument says so on the record** so that the
+  refusal is not misread as a cost refusal. Dense, no symmetry, the candidate contraction
+  against one matvec of the same shape:
+
+  | chi | d | D_w | matvec | diagonal | ratio |
+  |---|---|---|---|---|---|
+  | 64 | 2 | 5 | 0.225 ms | 0.043 ms | 0.193 |
+  | 128 | 2 | 5 | 2.238 ms | 0.046 ms | 0.021 |
+  | 64 | 4 | 100 | 57.99 ms | 0.233 ms | 0.0040 |
+  | 128 | 4 | 100 | 231.5 ms | 0.501 ms | 0.0022 |
+  | 128 | 4 | 300 | 1070.6 ms | 2.328 ms | 0.0022 |
+
+  The diagonal is **0.2 % of a matvec at quantum-chemistry scale** and at worst 19 % at the
+  smallest lattice point, and it shrinks as `chi` grows because the matvec is `chi^3` where
+  the diagonal is `chi^2`. Against M57's 74.6 % matvec share the prize is intact; nothing
+  about the arithmetic argues against this milestone.
+
+  **Two API refusals stand between here and a preconditioner, and both are deliberate.**
+
+  * **Building it.** There is no public spelling for a diagonal, and
+    `tests/network/test_hygiene.py::test_no_module_uses_reduced_blocks_numerically` forbids
+    any `.blocks` read inside `src/tenet/network/`. `Env` therefore cannot write this method
+    at all — not "should not", cannot, with a test that fails. A correct diagonal is a **core
+    `tenet.ops` operation** that consumes the provider's F/R data, i.e. a new categorical
+    contraction mode, and it lands on the invariant-5 boundary ("categorical operations are
+    never defined by backend array operations"). That is a milestone of its own with fusion
+    trees, duality and braiding in it, not a driver-layer change, and #219 was scoped as the
+    latter.
+  * **Applying it.** `tenet.multiply`/`divide` refuse a `SymmetricTensor` operand in as many
+    words — *"elementwise products of two SymmetricTensors are not a defined categorical
+    operation"*. `q / (lambda - diag)` is exactly that product, and block2's own
+    preconditioner is a flat loop over storage (`iterative_matrix_functions.hpp`:69-71). This
+    half is the smaller one: [apply_blocks][tenet.apply_blocks] already admits *unary*
+    coefficient-space elementwise maps and says so ("**Coefficient space, not dense space**"),
+    so the missing primitive is its binary sibling over two tensors sharing one structure. It
+    is a small, well-defined public addition — but it is a public addition, and it should be
+    made by whoever owns the diagonal, not ahead of it.
+
+  **What this closes and what it does not.** It closes "the diagonal is a contraction over
+  the blocks `_cores2`/`_build2` already assemble" — it is not, on three of the four
+  providers the repository tests. It does **not** close the preconditioned solver: a Jacobi
+  preconditioner need not be exact to work, and an approximate diagonal (the candidate above,
+  which is exact on U(1) and sign-wrong on fZ2) may still cut the iteration count. That is a
+  different claim with a different acceptance test — measured iteration counts, not agreement
+  with a formed `H_eff` — and it still needs the binary `apply_blocks` above before it can be
+  spelled. A revival takes one of two shapes, and should say which: the **exact** one, which
+  is a core categorical operation and carries the SU(2) criterion, or the **approximate**
+  one, which is a solver experiment and must drop that criterion explicitly rather than
+  quietly.
+
 - **M54** — shipped: `dmrg_` forwards a caller-supplied `compile=` to its `Env`, and the
   compiled matvec is measured at quantum-chemistry scale for the first time (#220). The code
   change is one keyword-only parameter; the measurement is the content.
