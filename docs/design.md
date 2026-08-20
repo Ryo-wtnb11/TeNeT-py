@@ -3451,11 +3451,24 @@ The split:
 
   | K | route | build | 3 sweeps | peak RSS | energy |
   |---|---|---|---|---|---|
-  | 16 (N2 CAS 6-31G) | fsm (M38, #203) | — | 317.0 s | 15.24 GiB | −27.234808138 |
-  | 16 | **pinned** | 5.4 s | **4.7 s** | **1.22 GiB** | −27.258098346 |
-  | 16 | free-dense | 4.4 s | 1.9 s | 1.22 GiB | −27.258098346 |
+  | 16 (N2 CAS 6-31G) | fsm | 1.2 s | 337.0 s | 14.52 GiB | −27.234808137600 |
+  | 16 | **pinned** | 4.7 s | **4.3 s** | **1.45 GiB** | −27.258098346200 |
+  | 16 | free-dense | 4.2 s | 1.9 s | 1.25 GiB | −27.258098346200 |
   | 26 (C2 CAS cc-pVDZ) | fsm (M38, #203) | — | did not finish `Env.setup_` | 19–24 GiB | — |
   | 26 | **pinned** | 50.1 s | **13.2 s** | **3.21 GiB** | see note |
+  | 26 | free-dense | 42.9 s | 6.6 s | 5.25 GiB | see note |
+
+  The `fsm` row is M38's own run re-taken on this machine and it reproduces #203's number
+  where it matters: the ground-state energy is `-27.2348081376`, which is `cutoff=None`
+  behaviour byte-identical, and the peak is 14.52 GiB against the 15.24 GiB recorded there
+  (that run also carried the cache-accounting instrumentation this one does not).
+
+  The K=26 energies are a completion-and-resource measurement, not an energy comparison:
+  three sweeps at `chi=16` on a 52-site strongly correlated system from a random start is
+  nowhere near converged on any route, and the pinned and freely compressed operators are
+  two different `chi`-16 truncations, so their sweeps diverge. The energy agreement that
+  *is* a correctness statement is the K=16 row, where the pinned and free-dense routes
+  agree to 5e-13, and `tests/network/test_pinned.py`, which compares `to_dense`.
 
   **K=26 completes**, which M38 recorded as blocked by one bond's working set: site 26's
   block table alone was 7.90 GiB on the FSM bond of 12 124, and the widest bond of 31 441
