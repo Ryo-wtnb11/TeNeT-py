@@ -14,7 +14,7 @@ from tenet.ops.basic import (
     norm,
     subtract,
 )
-from tenet.ops.blocks import apply_blocks, block_power, block_sqrt
+from tenet.ops.blocks import apply_blocks, block_power, block_sqrt, zip_blocks
 from tenet.ops.cast import to_symmetry
 from tenet.ops.contraction import einsum, full_trace, inner, tensordot, trace
 from tenet.ops.embed import direct_sum, embed, restrict
@@ -55,4 +55,5 @@ __all__ = [
     "trace",
     "transpose",
     "unfuse",
+    "zip_blocks",
 ]

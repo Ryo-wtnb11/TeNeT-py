@@ -68,6 +68,7 @@ from tenet.ops import (
     trace,
     transpose,
     unfuse,
+    zip_blocks,
 )
 from tenet.serialize import load, save
 from tenet.space import GradedSpace, ProductSpace
@@ -142,4 +143,5 @@ __all__ = [
     "trace",
     "transpose",
     "unfuse",
+    "zip_blocks",
 ]

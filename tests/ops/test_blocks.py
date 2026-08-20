@@ -378,3 +378,66 @@ def test_module_source_has_no_backend_import_and_no_data_dependent_branch():
         assert banned not in src
     for banned in (".any()", ".all()", "bool(", "functools.cache", "try:"):
         assert banned not in src
+
+
+# --- the binary sibling (M61 Stage A, #232) --------------------------------------
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
+def test_zip_blocks_is_linear_arithmetic_when_the_map_is(name):
+    """Against ``add``/``subtract``, which are the same blockwise pairing spelled out."""
+    a, b = tensor(name, seed=0), tensor(name, seed=1)
+    assert tenet.allclose(tenet.zip_blocks(a, b, lambda x, y: x + y), a + b)
+    assert tenet.allclose(tenet.zip_blocks(a, b, lambda x, y: x - y), a - b)
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
+def test_zip_blocks_is_the_jacobi_quotient_the_solver_spells(name):
+    """``q / (lambda - d)`` entry by entry over the reduced storage, on every provider."""
+    q, d = tensor(name, seed=0), positive(tensor(name, seed=2))
+    out = tenet.zip_blocks(q, d, lambda x, y: x / (5.0 - y))
+    assert out.structure == q.structure
+    for got, x, y in zip(out.blocks, q.blocks, d.blocks, strict=True):
+        np.testing.assert_allclose(np.asarray(got), np.asarray(x) / (5.0 - np.asarray(y)))
+
+
+def test_zip_blocks_refuses_a_structure_mismatch_naming_what_differs():
+    a = tensor("u1")
+    for other, needle in (
+        (SymmetricTensor.random(LEGS["u1"][:3], seed=0), "different ndim"),
+        (tensor("su2"), "different providers"),
+        (
+            SymmetricTensor.random((*LEGS["u1"][:3], Leg(Q2, IN)), seed=0),
+            "legs differ at public axis 3",
+        ),
+    ):
+        with pytest.raises(ValueError, match="zip_blocks"):
+            tenet.zip_blocks(a, other, lambda x, y: x + y)
+        with pytest.raises(ValueError, match=needle):
+            tenet.zip_blocks(a, other, lambda x, y: x + y)
+
+
+def test_zip_blocks_does_not_reopen_multiplys_refusal():
+    """The refusal ``zip_blocks`` is not a way around still stands, unedited."""
+    a = tensor("u1")
+    with pytest.raises(TypeError, match="not a defined categorical operation"):
+        tenet.multiply(a, a)
+    with pytest.raises(TypeError, match="not a defined categorical operation"):
+        _ = a * a
+
+
+def test_zip_blocks_is_coefficient_space_not_dense_space_on_su2():
+    """The same boundary ``apply_blocks`` is measured on, with two operands.
+
+    A *lower bound* on the disagreement, so a change that made the two agree fails.
+    """
+    a, b = rank3("su2", seed=0), rank3("su2", seed=1)
+    blockwise = tenet.zip_blocks(a, b, lambda x, y: x * y).to_dense()
+    dense = np.asarray(a.to_dense()) * np.asarray(b.to_dense())
+    assert np.abs(np.asarray(blockwise) - dense).max() > 1.0
+    for name in ("u1",):  # all-ones CG: the two coincide
+        x, y = rank3(name, seed=0), rank3(name, seed=1)
+        np.testing.assert_allclose(
+            np.asarray(tenet.zip_blocks(x, y, lambda p, q: p * q).to_dense()),
+            np.asarray(x.to_dense()) * np.asarray(y.to_dense()),
+        )

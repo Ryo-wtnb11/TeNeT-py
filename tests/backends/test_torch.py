@@ -327,6 +327,11 @@ def test_apply_blocks_sqrt_power(name):
         tenet.block_power(t, 3), tenet.block_power(r, 3), atol=1e-12
     )  # `pow` is torch's, to a ulp
     same(t.apply_blocks(lambda b: b * 2), r.apply_blocks(lambda b: b * 2))
+    u = tt(LEGS[name], seed=15)
+    same(
+        tenet.zip_blocks(t, u, lambda x, y: x + y),
+        tenet.zip_blocks(r, u.to_backend("numpy"), lambda x, y: x + y),
+    )
 
 
 def test_cast():
