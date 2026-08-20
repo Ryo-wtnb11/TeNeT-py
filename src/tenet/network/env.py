@@ -264,6 +264,39 @@ def _build2(cores: _Cores, gl: SymmetricTensor, gr: SymmetricTensor) -> _Prepare
     )
 
 
+def _families2(p: _Prepared, aa: SymmetricTensor) -> list[SymmetricTensor]:
+    """The matvec's term families, each applied to ``aa`` separately and not yet summed.
+
+    One entry per populated family of the prepared operator, in ``_apply2``'s accumulation
+    order; absent families contribute nothing, exactly as they contribute nothing to the
+    sum. [Env.heff2_families][tenet.network.Env.heff2_families] is the public read, and
+    [sweep_][tenet.network.sweep_]'s perturbative noise is what wants the pieces apart
+    rather than added up.
+    """
+    parts: list[SymmetricTensor] = []
+    # The per-line ignores below: _prepare sets _Prepared's fields in groups —
+    # ``gl`` with ``grt``, ``gl2``/``gr2`` with ``ra1`` or ``sr2``, ``ra2`` with
+    # ``ra1`` — so inside each branch the sibling field is non-None; a cross-field
+    # invariant no checker narrows.
+    if p.grt is not None:  # II + EE + sign-free spectator AA: identity through both sites
+        t = _composed("rxs,apqr->apqxs", p.grt, aa, bend="r")
+        parts.append(_composed("axB,apqxs->Bpqs", p.gl, t, bend="x"))  # ty: ignore[invalid-argument-type]
+    if p.caf is not None:  # IC + ID + CB + CA: the IdL channel left of the bond is gauge-1
+        parts.append(_composed("PpQqrs,apqr->aPQs", p.caf, aa, bend="r"))
+    if p.abf is not None:  # AB + BE + DE: the IdR channel right of the bond is gauge-1
+        parts.append(tenet.einsum("aPpQqB,apqr->BPQr", p.abf, aa))
+    if p.ra1 is not None:  # AA remainder, left factor operator-carrying
+        t = tenet.einsum("apqr,rws->apqws", aa, p.gr2)  # ty: ignore[invalid-argument-type]
+        t = _composed("apqws,mQqw->apQms", t, p.ra2, bend="q")  # ty: ignore[invalid-argument-type]
+        t = _composed("apQms,wPpm->aPQws", t, p.ra1, bend="p")
+        parts.append(_composed("aPQws,awB->BPQs", t, p.gl2, bend="a"))  # ty: ignore[invalid-argument-type]
+    if p.sr2 is not None:  # AA remainder, free spectator left then operator right
+        t = tenet.einsum("apqr,rws->apqws", aa, p.gr2)  # ty: ignore[invalid-argument-type]
+        t = _composed("apqws,mQqw->apQms", t, p.sr2, bend="q")
+        parts.append(_composed("apQms,amB->BpQs", t, p.gl2, bend="a"))  # ty: ignore[invalid-argument-type]
+    return parts
+
+
 def _apply2(p: _Prepared, aa: SymmetricTensor) -> SymmetricTensor:
     """The prepared two-site matvec: MPSKit :485-500 after merging, in tenet legs.
 
@@ -280,34 +313,16 @@ def _apply2(p: _Prepared, aa: SymmetricTensor) -> SymmetricTensor:
     right of it right-orthonormal, so the ``IdL``/``IdR`` environment channels are
     identities nobody contracts. [sweep_][tenet.network.sweep_] maintains that gauge at
     every bond it visits; [Env.heff2][tenet.network.Env.heff2]'s docstring states the precondition.
+
+    The families are applied by ``_families2`` and summed here in its order, which is the
+    order the accumulator used before the two were separated -- the sum is unchanged term
+    for term.
     """
-    y = None
-
-    def acc(t: SymmetricTensor) -> None:
-        nonlocal y
-        y = t if y is None else tenet.add(y, t)
-
-    # The per-line ignores below: _prepare sets _Prepared's fields in groups —
-    # ``gl`` with ``grt``, ``gl2``/``gr2`` with ``ra1`` or ``sr2``, ``ra2`` with
-    # ``ra1`` — so inside each branch the sibling field is non-None; a cross-field
-    # invariant no checker narrows.
-    if p.grt is not None:  # II + EE + sign-free spectator AA: identity through both sites
-        t = _composed("rxs,apqr->apqxs", p.grt, aa, bend="r")
-        acc(_composed("axB,apqxs->Bpqs", p.gl, t, bend="x"))  # ty: ignore[invalid-argument-type]
-    if p.caf is not None:  # IC + ID + CB + CA: the IdL channel left of the bond is gauge-1
-        acc(_composed("PpQqrs,apqr->aPQs", p.caf, aa, bend="r"))
-    if p.abf is not None:  # AB + BE + DE: the IdR channel right of the bond is gauge-1
-        acc(tenet.einsum("aPpQqB,apqr->BPQr", p.abf, aa))
-    if p.ra1 is not None:  # AA remainder, left factor operator-carrying
-        t = tenet.einsum("apqr,rws->apqws", aa, p.gr2)  # ty: ignore[invalid-argument-type]
-        t = _composed("apqws,mQqw->apQms", t, p.ra2, bend="q")  # ty: ignore[invalid-argument-type]
-        t = _composed("apQms,wPpm->aPQws", t, p.ra1, bend="p")
-        acc(_composed("aPQws,awB->BPQs", t, p.gl2, bend="a"))  # ty: ignore[invalid-argument-type]
-    if p.sr2 is not None:  # AA remainder, free spectator left then operator right
-        t = tenet.einsum("apqr,rws->apqws", aa, p.gr2)  # ty: ignore[invalid-argument-type]
-        t = _composed("apqws,mQqw->apQms", t, p.sr2, bend="q")
-        acc(_composed("apQms,amB->BpQs", t, p.gl2, bend="a"))  # ty: ignore[invalid-argument-type]
-    return y  # ty: ignore[invalid-return-type]  # some branch always fired: h has at least one term
+    parts = _families2(p, aa)
+    y = parts[0]  # some branch always fired: h has at least one term
+    for t in parts[1:]:
+        y = tenet.add(y, t)
+    return y
 
 
 def _fold_last(
@@ -684,6 +699,64 @@ class Env:
         t = _composed("apqys,mQqy->apQms", t, self.h[n + 1], bend="q")
         t = _composed("apQms,xPpm->aPQxs", t, self.h[n], bend="p")
         return _composed("aPQxs,axB->BPQs", t, self.F[n - 1, n], bend="a")
+
+    def heff2_families(self, n: int, aa: SymmetricTensor) -> tuple[SymmetricTensor, ...]:
+        """[heff2][tenet.network.Env.heff2]'s term families, applied separately, unsummed.
+
+        Parameters
+        ----------
+        n : int
+            The bond's left site.
+        aa : SymmetricTensor
+            The two-site tensor, exactly as [heff2][tenet.network.Env.heff2] takes it.
+
+        Returns
+        -------
+        tuple of SymmetricTensor
+            One partial application per populated family, each with ``aa``'s structure;
+            their sum is ``heff2(n, aa)`` term for term.
+
+        Examples
+        --------
+        >>> import tenet
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPO, MPS, Env, local_op
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> import numpy as np
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> sz = local_op(np.diag([-0.5, 0.5]), phys=phys, charge=U1Sector(0))
+        >>> h = MPO.from_terms(3, [(1.0, [(sz, i), (sz, i + 1)]) for i in range(2)])
+        >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1), U1Sector(1)]).canonize_()
+        >>> env = Env(psi, h).setup_()
+        >>> aa = tenet.einsum("apx,xqr->apqr", psi[0], psi[1])
+        >>> parts = env.heff2_families(0, aa)
+        >>> total = parts[0]
+        >>> for part in parts[1:]:
+        ...     total = tenet.add(total, part)
+        >>> bool(tenet.allclose(total, env.heff2(0, aa)))
+        True
+
+        Notes
+        -----
+        block2's ``perturbative_noise`` (``effective_hamiltonian.hpp``:263-360) builds one
+        perturbation vector per *sub-label* of the symbolic operator sum; the families
+        ``_cores2`` already holds -- the identity-through ride, the two one-sided anchored
+        sums, and the two open-to-open ``AA`` remainders -- are this engine's version of
+        that resolution, and this is the read [sweep_][tenet.network.sweep_]'s
+        perturbative noise uses. It is a **read**, not a second engine: the same
+        ``_prepare2`` cache, the same contractions, only not added up.
+
+        The compatibility entry (an MPO with no edge description) has no families to
+        resolve, so it returns the single vector ``(heff2(n, aa),)`` -- the operator's own
+        action on the state, unresolved. A one-vector mixer is weaker than a
+        family-resolved one, and it is what an operator that carries no symbols can offer.
+
+        Not compiled: ``compile=`` wraps the *summed* matvec, which is what a Krylov solve
+        calls thousands of times; this is called once per bond visit.
+        """
+        if self.h.edges is None:
+            return (self.heff2(n, aa),)
+        return tuple(_families2(self._prepare2(n), aa))
 
     def _prepare2(self, n: int) -> _Prepared:
         """The bond's prepared operator, rebuilt only when either environment moved.

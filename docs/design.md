@@ -4011,6 +4011,255 @@ The split:
   *result*, with the `to_matrices` route — which concatenates a full-width matrix per
   coupled sector to read its diagonal — as the positive control that trips the instrument.
   A second test breaks `to_dense` and `to_matrices` outright and runs the operation anyway.
+- **M61 Stage C** — shipped: the sweep gains block2's **default decimation** and the
+  **perturbative noise** that rides on it (#232 Stage C, absorbing #223). `sweep_` and
+  `Sweep` gain one keyword-only `noise_type`; `dmrg_`, `lanczos`, `Env.heff2` and the MPO
+  builders are unchanged.
+
+  **What block2 actually does, and why the two arrive together.** Its defaults are
+  `noise_type = NoiseTypes::DensityMatrix` and `decomp_type = DecompositionTypes::DensityMatrix`
+  (`sweep_algorithm.hpp`:104-106). `update_two_dot` (:814-1008) solves, then
+  `density_matrix(...)` builds `rho = aa aa^dag` and folds the perturbation in
+  (`moving_environment.hpp`:3554, :3636), and `split_density_matrix` (:4250) takes an
+  eigendecomposition of `rho` under the cutoff. The SVD split (:4079) is the *other*
+  branch, and the wavefunction noise M14 shipped lives on that branch **only**
+  (`sweep_algorithm.hpp`:964-978). The perturbation vectors come from
+  `h_eff->perturbative_noise(...)` (`effective_hamiltonian.hpp`:263-360): one vector per
+  sub-label of the symbolic operator sum — **the noise is the operator's own action on the
+  current state, resolved by term family, not randomness.** So the mixer needs a density
+  matrix to enter, and the density matrix is only worth building if something is being
+  mixed into it; porting either alone re-derives the fragment the other closes. block2 is
+  GPL-3.0 and this repository is Apache-2.0: everything here is description in original
+  words with `file:line` citations, and no code, comment or docstring crossed.
+
+  **The perturbation vectors, in tenet.** `Env.heff2_families(n, aa)` returns the prepared
+  matvec's term families applied to `aa` separately — the identity-through ride, the two
+  one-sided `IdL`/`IdR`-anchored sums, and the two open-to-open `AA` remainders, which are
+  exactly the branches `_apply2` already dispatched over and this engine's analogue of
+  block2's per-sub-label resolution. `_apply2` now sums what `_families2` builds, in its
+  accumulator's order, so the matvec is unchanged term for term; the families are a *read*
+  of the same `_prepare2` cache, not a second engine, and they are deliberately not
+  compiled (`compile=` wraps the summed matvec, which a Krylov solve calls thousands of
+  times; this is called once per bond visit). An MPO with no edge description has no
+  families to resolve and gets the single vector `H_eff aa` — a weaker mixer, and what an
+  operator carrying no symbols can offer. Scaling is block2's
+  (`moving_environment.hpp`:3698-3713): each vector normalized, then the collection scaled
+  to total squared norm `noise`, so against a unit-norm `aa` the parameter stays
+  dimensionless and block2's 1e-4..1e-5 range transfers unchanged.
+
+  **The truncation is the existing one, not a second one.** `rho` is built with
+  `tenet.compose` and `tenet.adjoint` on the bent `(l, p | q, r)` partition — a density
+  matrix *is* a map composed with its adjoint, so the composition rule (M23/#160) is met
+  by construction and no operand order is left to state — and then handed to
+  `tenet.linalg.svd_truncated` at `cutoff_mode="rsum1"`. For a Hermitian positive `rho`
+  that is an eigendecomposition, its singular values are `aa`'s squared, and `rsum1` on
+  that spectrum is *the same keep rule* as the default `rsum2` on `aa`'s: both drop the
+  largest set whose `qdim`-weighted `sum sigma^2` stays under `cutoff` times the total.
+  `max_bond` walks the same order because squaring is monotone. **So the kept bond space
+  is identical by construction rather than by luck**, and `chi`/`cutoff` keep their
+  documented meanings without a second selection rule to maintain. The discarded weight
+  and the Schmidt spectrum keep theirs too: the factor that carries the weight is the
+  truncated state and the other is an isometry, so its norm is the same Pythagoras
+  `norm(s)` spells on the SVD branch, and `s` itself is `tenet.block_sqrt` of the returned
+  spectrum, which is the matrix square root because that tensor is diagonal.
+
+  **The selection rule is schedule-level, never a runtime dispatch** (#218, reaffirmed):
+
+  | `(noise, noise_type)` | the split |
+  |---|---|
+  | `noise == 0.0`, any `noise_type` | `svd_truncated` of `aa` |
+  | `> 0`, `"wavefunction"` | `svd_truncated` of a perturbed `aa` |
+  | `> 0`, `"perturbative"` | `eigh` of a perturbed `rho` |
+
+  No bond width, no `chi` threshold, no probe. A noiseless sweep — including a ramp's
+  cooling tail — keeps the SVD split, and that pairing is deliberate rather than a default
+  falling out: squaring `aa` into `rho` resolves a singular value `sigma` through
+  `sigma^2`, so the split's own accuracy floor moves from machine epsilon to its square
+  root, and a converged noiseless sweep is exactly where that costs something. block2
+  makes the same pairing from the other side. An unrecognized `noise_type` raises rather
+  than falling back, because a typo that silently ran the SVD split would report a mixer
+  that never ran.
+
+  The table above is `sweep_`'s docstring table, not a paraphrase of it, and the sentence
+  under it there reads: *"A caller reads the rule off the `Sweep` entry: the density-matrix
+  split engages exactly when perturbative noise is asked for, and a noiseless sweep --
+  including the cooling tail of a ramp, and every sweep of a run that never mentions noise
+  -- takes the SVD split."* `Sweep.noise_type` carries the same choice at schedule level,
+  so `Sweep(32, noise=1e-4, noise_type="perturbative")` is the whole spelling a caller
+  needs and `Sweep(32, noise=1e-4)` is unchanged from M14.
+
+  **The two splits, measured against each other with nothing folded in.** Bond 2 of a
+  three-sweep state, both directions, `cutoff=1e-14`
+  (`tests/network/test_density_matrix.py` asserts the same thing at looser tolerances):
+
+  | model | chi | bond space | max Schmidt difference | discarded-weight difference | the weight itself |
+  |---|---|---|---|---|---|
+  | U(1) Heisenberg N=10 | 4 | identical | 5.4e-16 | 0 | 4.3e-04 |
+  | U(1) Heisenberg N=10 | 8 | identical | 5.4e-16 | 0 | 0 |
+  | U(1) Heisenberg N=10 | 16 | identical | 5.4e-16 | 0 | 0 |
+  | fZ2 Hubbard N=6, U/t=4 | 4 | identical | 3.9e-16 | 1.1e-16 | 2.7e-01 |
+  | fZ2 Hubbard N=6, U/t=4 | 8 | identical | 3.9e-16 | 1.1e-16 | 1.0e-01 |
+  | fZ2 Hubbard N=6, U/t=4 | 16 | identical | 3.9e-16 | 2.2e-16 | 3.0e-03 |
+
+  "Identical bond space" is the `GradedSpace` compared as an object, not its dimension —
+  the sectors and their degeneracies agree, which is the claim the `rsum1` argument above
+  makes and the one a shape check would miss.
+
+  **`noise=0.0` is the old path, and the measurement says so as loudly as this machine
+  allows.** The `noise=0.0` branch is the pre-M61 body statement for statement, so the
+  claim is really about the diff; a numerical check was run anyway, over 354 numbers —
+  seven DMRG runs' per-sweep energies, energy changes, Schmidt changes and discarded
+  weights, plus a full per-bond Schmidt spectrum, on the U(1) Heisenberg chain at two
+  sizes and both MPO routes, the fZ2 Hubbard chain at two `U/t`, and the SU(2) chain.
+  **Bit-exact reproducibility is not a property this stack has**: the *unmodified*
+  baseline, run twice with `VECLIB_MAXIMUM_THREADS=1` and `PYTHONHASHSEED=0`, differs from
+  itself by up to 9.4e-14 on those same numbers (threaded LAPACK reductions). Against that
+  floor, branch-versus-baseline differs by at most **6.7e-14** — *smaller* than the
+  baseline's own run-to-run spread, i.e. the two paths are numerically indistinguishable
+  by any instrument this machine has. The suite is the other half of the statement: every
+  existing test passes **unedited**, including
+  `tests/network/test_hygiene.py::test_every_two_operand_einsum_is_a_composition`, whose
+  reachability assertion is why the density matrix is built from `compose`/`adjoint` and
+  spells no new `einsum` at all.
+
+  **The convergence gate, and it closes with the table rather than with a claim.** #232's
+  Stage C asks for a measured case where the wavefunction noise plateaus and the
+  perturbative noise does not, *or the honest finding that it does not* — in which case
+  the stage still ships, because block2's default is the design being adopted and not a
+  performance patch. It is the second outcome. `benchmarks/bench_noise.py` runs one fixed
+  schedule under five noise settings with nothing else varying — same seed, same starting
+  MPS, same `chi`, same sweep count, same operator, noise on for the first five sweeps and
+  off for the last three so every column ends cooled and the last row is comparable.
+
+  The lattice contrast first, U(1) Heisenberg N=20 from the `D=1` Neel product seed,
+  `chi=24` (energies per sweep):
+
+  | sweep | none | wfn 1e-4 | wfn 1e-5 | pert 1e-4 | pert 1e-5 |
+  |---|---|---|---|---|---|
+  | 1 | -8.605141831 | -8.605140548 | -8.605141724 | **-8.655765651** | **-8.650923250** |
+  | 2 | -8.681922862 | -8.681915084 | -8.681922679 | -8.682456851 | -8.682443457 |
+  | 3 | -8.682473217 | -8.682473049 | -8.682473215 | -8.682473193 | -8.682473209 |
+  | 4 | -8.682473226 | -8.682473070 | -8.682473225 | -8.682473193 | -8.682473209 |
+  | 5 | -8.682473226 | -8.682473070 | -8.682473224 | -8.682473193 | -8.682473209 |
+  | 6 | -8.682473226 | -8.682473226 | -8.682473226 | -8.682473226 | -8.682473226 |
+  | 7 | -8.682473226 | -8.682473226 | -8.682473226 | -8.682473226 | -8.682473226 |
+  | 8 | -8.682473226 | -8.682473226 | -8.682473226 | -8.682473226 | -8.682473226 |
+  | wall s | 7.3 | 6.4 | 5.0 | 7.6 | 7.3 |
+
+  **Nothing plateaus, so nothing is rescued.** What the perturbative columns do show is a
+  real head start: after *one* sweep they are 5.1e-2 and 4.6e-2 below every other column,
+  which is the aimed enrichment doing exactly what it is for on a seed whose bonds are
+  `D=1` — and by sweep 3 the head start is spent, because at `chi=24` this model is not
+  bond-limited and the plain sweep gets there on its own. The wavefunction columns are
+  *slower* than no noise at all here, which is the "not very effective" block2's own docs
+  say of the cheap end, visible. `wfn 1e-4` is still 1.6e-7 off at sweep 5 and only the
+  cooled tail closes it.
+
+  N2 CAS 6-31G at K=16 — 32 spin-orbital fZ2 sites, the `cutoff=None` operator, `chi=24`,
+  the same schedule:
+
+  | sweep | none | wfn 1e-4 | wfn 1e-5 | pert 1e-4 | pert 1e-5 |
+  |---|---|---|---|---|---|
+  | 1 | -24.349864427 | -24.349543127 | -24.349833679 | -24.425951531 | -24.422258663 |
+  | 2 | -27.873007896 | -27.872714128 | -27.872972186 | -28.467810250 | -28.649975575 |
+  | 3 | -29.496790511 | -29.502600631 | -29.497024609 | -29.744036677 | -29.745973189 |
+  | 4 | -29.731075981 | -29.734889316 | -29.734834377 | -29.985652872 | -30.019253895 |
+  | 5 | -30.023828869 | -30.031992607 | -30.029534633 | -30.142653652 | -30.290319415 |
+  | 6 | -30.373745070 | -30.347110623 | -30.372674421 | -30.220597603 | -30.736297838 |
+  | 7 | -30.690928175 | -30.666268136 | -30.715663218 | -30.254880595 | -30.986842395 |
+  | 8 | -30.917777919 | -30.855357500 | -30.901566826 | -30.312247486 | -31.042540010 |
+  | wall s | 1351 | 924 | 929 | 1468 | 1462 |
+
+  **Reading it.** Eight sweeps at `chi=24` do not converge this Hamiltonian — the noiseless
+  column is still falling at sweep 8 (-30.374, -30.691, -30.918 over the last three) — so
+  what the table compares is **descent rate on a hard ab initio problem, not two converged
+  answers**, and no column has plateaued for another to rescue. Within that, the ordering
+  at sweep 8 is:
+
+  | setting | sweep 8 | against no noise |
+  |---|---|---|
+  | `pert 1e-5` | -31.042540 | **0.125 lower** |
+  | `none` | -30.917778 | — |
+  | `wfn 1e-5` | -30.901567 | 0.016 higher |
+  | `wfn 1e-4` | -30.855358 | 0.062 higher |
+  | `pert 1e-4` | -30.312247 | 0.606 higher |
+
+  Three things in that column, and only the first is a point in the mixer's favour.
+  **`pert 1e-5` leads at every one of the eight sweeps** and ends 0.125 Ha below the
+  noiseless run — the aimed enrichment doing what it is for, on the workload it was
+  designed for. **Neither wavefunction setting ever gets ahead of no noise at all**, at
+  either strength and at any sweep: 1e-5 tracks the noiseless column to three decimals and
+  1e-4 is visibly behind it. That is block2's own "not very effective" for the cheap end,
+  measured here rather than quoted. And **`pert 1e-4` is worse than doing nothing** — it
+  buys the best first sweep of the whole table and then spends six sweeps climbing back,
+  ending 0.606 Ha above the noiseless run.
+
+  So the gate closes the second way it is allowed to: **the wavefunction noise is not
+  observed to plateau where the perturbative noise does not, and the claim "improves
+  convergence" is not made.** The mechanism ships because it is the decimation block2
+  defaults to and this engine now has design parity with it, which was the reason to build
+  it. What the table does establish is narrower and worth keeping: at the bottom of
+  block2's documented range the aimed perturbation is ahead of every other setting at every
+  sweep of a non-converged ab initio descent, and at ten times that strength it is behind
+  all of them. A mixer strong enough to reshape a bond is strong enough to reshape it
+  wrongly; 1e-4..1e-5 is a *range* because its top is not always the right end, and that is
+  now measured here instead of inherited.
+
+  Both tables were taken on the same machine and the same commit; the N2 one is stitched
+  from three invocations, because a first attempt was killed after three columns and had
+  printed only their timings — which is why `bench_noise.py` grew `--settings` to resume a
+  column and `--out` to persist one the moment it finishes. Its wall row is therefore
+  **not** a cost comparison: the two `pert` columns ran concurrently with the `none` one
+  and the two `wfn` columns ran alone, so the 1468/1462 against 924/929 is contention, not
+  the mixer. The cost statement this stage makes is the structural one instead: a mixed sweep pays one
+  extra family-resolved application of the operator per bond, against the `ncv` the Krylov
+  loop already pays, plus one `eigh` of a `rho` the SVD split never forms.
+
+  **The oracles, with the mixer on** (`tests/integration/test_dmrg_noise.py`, a perturbative
+  ramp of three mixed sweeps then a cooled tail): the dense `S^z_tot = 0` restriction of
+  the N=12 Heisenberg chain — which is also the MPSKit.jl number — from a random seed and
+  from the `D=1` Neel product seed; the MPSKit.jl Hubbard fixture across `U/t`; and
+  `test_dmrg_prepared.py`'s six term-family models, mixed against unmixed. All land on the
+  same energy. That last set is the load-bearing one: the perturbation is *built from*
+  those families, so a family folded in with a wrong coefficient could not leave both runs
+  on the same number — the SU(2) and fZ2 rows in particular are what says the fold touches
+  no recoupling and no fermionic sign.
+
+  **The one place the mixer does move an energy, and why it is not a counterexample.** The
+  Ly=6 cylinder at `chi=32` converges to a *discarded weight of 1e-2* — a percent of the
+  state thrown away every sweep — and there the mixed run lands 3.1e-4 above the unmixed
+  one, which is 3 % of its own truncation error. Two runs that each discarded a percent of
+  themselves differ because they were truncated, not because one was mixed; noise is not
+  variational and never claimed to be. At `chi=64` the same model has both runs at a 1e-16
+  discarded weight and they agree to **8.9e-16**, and at `chi=128` to 6.2e-15. The test
+  therefore asserts the discarded weight is machine-zero *before* comparing energies, so it
+  cannot silently decay into a comparison of two truncated states.
+
+  The wavefunction noise does *not* move that same `chi=32` cylinder (6.7e-9 from the
+  unmixed run), and the contrast is the mechanism rather than a defect: at equal `noise`
+  the family-resolved perturbation is aimed at directions the operator couples to, so on a
+  bond where a percent of the state is being discarded every sweep it genuinely reshapes
+  which states survive, while a random tensor at the same relative strength is spread over
+  every structurally allowed direction and mostly gets truncated away again. Aimed
+  enrichment is what the mechanism is *for*; that it therefore has a visible effect exactly
+  where truncation is severe is the expected sign, not a warning one.
+
+  **What was deliberately not built.** No `NoiseTypes` lattice — `Reduced`, `Collected`,
+  `LowMem` and `MidMem` are memory-layout engineering around block2's `SparseMatrixGroup`,
+  not design, and this engine has no such object to lay out. No `Unscaled` variant: it
+  exists so a caller can bypass the per-vector normalization, and a knob whose only effect
+  is to make `noise` dimension-ful is a knob that makes the documented 1e-4..1e-5 range a
+  lie. No White single-site `alpha` mixer: block2's one-site mode is the consumer that
+  needs it and one-site sweeps stay out of scope until there is a measured cost to trade.
+  The families are not compiled and the density matrix is not cached — the mixer runs once
+  per bond visit, against a matvec the Krylov loop runs `ncv` times.
+
+  **Follow-ups this stage leaves.** The `heff2_families` call doubles the bond's matvec
+  work on a mixed sweep, and it recomputes what `_apply2` will compute again inside
+  `lanczos`; a shared partial-application cache is the obvious saving and is not worth its
+  invalidation discipline until a profile asks. The single-vector fallback for an MPO with
+  no edge description is honest but weak; closing it needs symbols the compatibility entry
+  does not have (#141), which is the same wall `heff2`'s docstring records.
 
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
