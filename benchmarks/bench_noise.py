@@ -23,6 +23,7 @@ than vendoring is in that file's docstring and is not repeated here.
 """
 
 import argparse
+import json
 import pathlib
 import sys
 import time
@@ -94,7 +95,7 @@ def run(h, seed_state, *, chi, sweeps, hot, noise, noise_type):
     return energies
 
 
-def table(name, h, seed_state, *, chi, sweeps, hot, settings=SETTINGS):
+def table(name, h, seed_state, *, chi, sweeps, hot, settings=SETTINGS, out=None):
     print(f"\n== {name}: chi={chi}, {sweeps} sweeps, noise on for the first {hot}")
     columns, walls = {}, {}
     for label, noise, noise_type in settings:
@@ -104,6 +105,11 @@ def table(name, h, seed_state, *, chi, sweeps, hot, settings=SETTINGS):
         )
         walls[label] = time.perf_counter() - t0
         print(f"   ... {label} done in {walls[label]:.1f} s", flush=True)
+        if out is not None:  # one JSON line per finished column: a kill loses nothing
+            row = {"model": name, "label": label, "chi": chi, "sweeps": sweeps, "hot": hot,
+                   "wall": walls[label], "energies": columns[label]}  # fmt: skip
+            with pathlib.Path(out).open("a") as fh:
+                fh.write(json.dumps(row) + "\n")
     width = max(len(label) for label in columns) + 2
     print(f"\n{'sweep':>6}" + "".join(f"{label:>{width + 12}}" for label in columns))
     for it in range(sweeps):
@@ -125,6 +131,7 @@ def main():
         "--settings", nargs="*", choices=[s[0] for s in SETTINGS],
         help="run just these columns; an hour-long table is worth resuming rather than redoing",
     )  # fmt: skip
+    ap.add_argument("--out", help="append one JSON line per finished column")
     a = ap.parse_args()
     sys.stdout.reconfigure(line_buffering=True)
     wanted = a.only or ["n2", "heisenberg"]
@@ -139,6 +146,7 @@ def main():
             sweeps=a.sweeps,
             hot=a.hot,
             settings=chosen,
+            out=a.out,
         )
     if "heisenberg" in wanted:
         h, seed_state = heisenberg_model(a.sites)
@@ -150,6 +158,7 @@ def main():
             sweeps=a.sweeps,
             hot=a.hot,
             settings=chosen,
+            out=a.out,
         )
 
 
