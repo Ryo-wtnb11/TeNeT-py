@@ -4533,8 +4533,8 @@ left that list with M61 Stage D above.
   | N2 STO-3G | 20 | 588 | 96 | 96 | 96 | 96 | 1.000 | 1.000 | 0.001 G | 0.000 G | 0.1 s | 0.02 G |
   | H10 STO-6G | 20 | 2 376 | 192 | 192 | 192 | 192 | 1.000 | 1.000 | 0.003 G | 0.001 G | 0.2 s | 0.10 G |
   | N2 CAS 6-31G (K=16) | 32 | 5 111 | 562 | 562 | 562 | 562 | 1.000 | 1.000 | 0.048 G | 0.008 G | 2.4 s | 0.60 G |
-  | C2 CAS cc-pVDZ (K=26) | 52 | 31 441 | 736 | 766 | 766 | **736** | 1.333 | **1.000** | 0.277 G | 0.017 G | 39.4 s | **5.15 G** |
-  | syn-42 (K=42) | 84 | 10 764 | 54 | 175 | 228 | **54** | 4.154 | **1.000** | 0.013 G | 0.002 G | 55.4 s | **4.74 G** |
+  | C2 CAS cc-pVDZ (K=26) | 52 | 31 441 | 736 | 766 | 766 | **736** | 1.333 | **1.000** | 0.277 G | 0.017 G | 38.7 s | **5.14 G** |
+  | syn-42 (K=42) | 84 | 10 764 | 54 | 175 | 228 | **54** | 4.154 | **1.000** | 0.013 G | 0.002 G | 56.9 s | **4.33 G** |
 
   Every ratio is `max` over the cuts; the inner reading (excluding the two boundary-adjacent
   cuts, M39's own split) is identical to the all-cuts reading on every row, so nothing here
@@ -4558,9 +4558,10 @@ left that list with M61 Stage D above.
   removes is smaller than the transient it introduces.** The object #222 set out to delete
   is `_place`'s `D_FSM × d² × χ` buffer; measured, that buffer is **0.277 GiB at K=26** and
   **0.013 GiB at K=42**. The pre-placement basis choice that replaces it needs
-  `szl × szr` scalars per quantum number, and measured, that costs **5.15 GiB at K=26** and
-  **4.74 GiB at K=42** — one to two orders of magnitude more than the thing it removes, at
-  a wall time (39.4 s at K=26) equal to the entire shipped build (38.9 s). Pre-placement
+  `szl × szr` scalars per quantum number, and measured, that costs **5.14 GiB at K=26** and
+  **4.33 GiB at K=42** (4.74 GiB on an independent run of the same point) — one to two
+  orders of magnitude more than the thing it removes, at a wall time (38.7 s at K=26) equal
+  to the entire shipped build (38.9 s). Pre-placement
   moves the ceiling **backwards** on this input set.
 
   **Why block2 does not pay this and tenet would.** `szr` is the number of distinct
