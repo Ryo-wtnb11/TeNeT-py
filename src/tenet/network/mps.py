@@ -2534,15 +2534,27 @@ class MPO:
         peels it into ``k`` tensors -- is a different SVD and is **unaffected** by
         ``cutoff=None``; it runs at the default ``1e-13`` in that case.
 
-        **For finite-range models the compressing sweeps reduce the bond dimension by
-        exactly nothing**, so ``cutoff=None`` is what a lattice model wants; the default
-        stays ``1e-13`` because power-law couplings and ab initio integrals are where the
-        sweep earns its keep. The choice is no longer also a choice of matvec: both
-        cutoffs keep the block table [edge_blocks][tenet.network.MPO.edge_blocks] exposes
-        and both route [Env.heff2][tenet.network.Env.heff2] onto its prepared per-bond
-        operator, because the sweeps pin the ``IdL``/``IdR`` channels through their SVDs
-        (#204) instead of rotating them away (#141). The measurements are in
-        ``docs/design.md`` "Milestone 16" and "Milestone 39".
+        **``cutoff`` is the regime knob, and it is a build-time choice rather than a
+        hidden runtime one.** Both settings now keep the block table
+        [edge_blocks][tenet.network.MPO.edge_blocks] exposes and both run through
+        [Env.heff2][tenet.network.Env.heff2]'s **one** engine path, because the sweeps pin
+        the ``IdL``/``IdR`` channels through their SVDs (#204) instead of rotating them
+        away (#141). What the choice decides is the operator the engine runs on:
+
+        * ``cutoff=None`` for a **finite-range lattice model**. The compressing sweeps
+          reduce its bond by exactly nothing, and the finite-state machine keeps its
+          identity channels separable, so every spectator site rides a rank-2 map with no
+          ``W`` contraction. Measured on N=20 U(1) Heisenberg at ``chi=64``: **1.96 s**
+          against **3.53 s** at ``1e-13``.
+        * a float ``cutoff`` for **power-law couplings and ab initio integrals**, where
+          the sweep is the difference between a bond of 31,441 and one of 736 and the
+          operator does not fit otherwise. The rotation mixes the open states, so no
+          spectator separates any more and every open state is operator-carrying; that
+          is a real constant factor and it is the same uniform mechanism block2 uses,
+          which carries its identity as an ordinary entry in its operator map.
+
+        The default stays ``1e-13``. The measurements are in ``docs/design.md``
+        "Milestone 16" and "Milestone 39".
 
         **There is no** ``phys=`` **argument**: the operators carry the physical space and
         a second source of truth could disagree with them, which would surface as a

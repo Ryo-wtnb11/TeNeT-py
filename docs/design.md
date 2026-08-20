@@ -3446,8 +3446,10 @@ The split:
   **Gate 2 — a full DMRG at `chi=16`, three sweeps, per operator route.** `fsm` is the
   prepared path on the uncompressed FSM bond, which is M38's row and the number to beat;
   `pinned` is this milestone; `free-dense` is gate 2's honest baseline, the freely
-  compressed sites in a bare `MPO` so `heff2` takes its dense path — the alternative that
-  needs no new code at all.
+  compressed sites handed over in a bare `MPO` so that `heff2` takes the escape hatch —
+  the alternative that needs no new code at all. It is a *measurement*, not a shipped
+  route: a `from_terms` operator always carries its description and always runs the one
+  engine path, and reaching this row means deliberately throwing the description away.
 
   | K | route | build | 3 sweeps | peak RSS | energy |
   |---|---|---|---|---|---|
@@ -3476,30 +3478,70 @@ The split:
   the whole 52-site prepared operator fits under the M38 byte budget, so the caches stop
   evicting and M38's recompute tax is gone for exactly the workload that paid it.
 
-  **The gate-2 baseline says the dense path is faster at `chi=16`, and that is reported as
-  measured.** 1.9 s against 4.7 s of sweeps at the same 1.22 GiB, energies agreeing to
-  1e-12. The prepared path's claim was never that it beats a dense contraction over a
-  766-wide `W` at `chi=16`; it is that it reuses per-bond cores across a Lanczos solve and
-  that the block structure is what a larger `chi` amortises. At `chi=16` on this input it
-  does not pay, and whether it pays at a `chi` where the two-site tensor dominates is the
-  measurement the next issue owes. What #204 buys unambiguously is the *other* half: the
-  operator no longer has to choose between being compressed and being partitioned, K=26
-  completes at 3.21 GiB where it did not complete at 19–24, and `heff2`'s prepared path
-  lost its `cutoff=None` precondition.
+  **The engine is single-path by design, and this is where that is settled.** `Env.heff2`
+  takes the prepared path for every MPO that carries an edge description — `from_terms`
+  and `from_arrays`, at either cutoff — and the dense branch is the escape hatch for an
+  MPO that has no symbols at all, which is `from_w` and an `MPO` built from bare site
+  tensors. **That is block2's engine design adopted rather than re-invented**: its
+  `EffectiveHamiltonian` dispatches a symbolic `OpSum` term by term against the
+  wavefunction (`effective_hamiltonian.hpp`:230-243), never forms the effective
+  Hamiltonian, and has no dense-`W`-pair contraction to fall back on; the only thing it
+  materialises is `diag`, for the preconditioner. A runtime dispatch between two matvec
+  paths was measured, built and then **removed**: block2's algorithm choice is a build-time
+  argument, and tenet's is `cutoff`. Everything later — parallelism, GPU execution, a
+  Davidson preconditioner, one-site DMRG — attaches to this one path, which is the reason
+  it had to stop moving before any of that starts.
 
-  **The small-model regression is real and is reported as a cost, not as noise.** N=20
-  U(1) Heisenberg, `chi=64`, four sweeps, best of three: `cutoff=None` (whose path did not
-  change) **1.96 s**, the default `cutoff=1e-13` **3.53 s**, and the same compressed
-  tensors in a bare `MPO` — which is exactly what the default used to do — **1.80 s**.
-  The same ground state, `-8.682473334398`, on all three. Against a stated ±5 % threshold
-  that is a **+96 % regression** for a lattice model left on the default cutoff, and its
-  cause is named in the design above rather than discovered: on a compressed bond
-  `spec_op` is `None`, so the free-riding spectators that a nearest-neighbour spin chain is
-  almost entirely made of no longer ride the rank-2 `idmap` and pay a rank-4 contraction
-  each. `cutoff=None` is the lattice-model answer and it is unchanged and slightly *faster*
-  than the old default here; a heuristic in `heff2` that picks the dense path below some
-  bond width was deliberately not added, because a magic number in the dispatch is a knob
-  this layer does not have and the choice belongs to whoever measures their own model.
+  **The `chi` scaling grid, as information rather than as a decision.** Two DMRG sweeps
+  per point, the two routes selected the only way a caller can select them (the operator
+  with its description, against `MPO(h.sites)` — the same tensors with no description).
+  `ratio` is prepared / dense, so below 1.00 is the prepared path ahead.
+
+  | model | D_w | chi | prepared | dense | ratio | RSS prep | RSS dense |
+  |---|---|---|---|---|---|---|---|
+  | N=20 U(1) Heisenberg + NNN | 8 | 16 | 10.44 s | 3.25 s | 3.21x | 0.24 G | 0.11 G |
+  | | 8 | 64 | 12.65 s | 3.84 s | 3.29x | 0.27 G | 0.12 G |
+  | | 8 | 256 | 12.13 s | 3.77 s | 3.22x | 0.36 G | 0.19 G |
+  | N2 CAS 6-31G (K=16) | 562 | 16 | 3.50 s | 1.36 s | 2.57x | 1.31 G | 1.29 G |
+  | | 562 | 64 | 15.59 s | 8.95 s | 1.74x | 2.99 G | 1.84 G |
+  | | 562 | 128 | 65.44 s | 34.48 s | 1.90x | 5.49 G | 3.73 G |
+  | C2 CAS cc-pVDZ (K=26) | 736 | 16 | 8.54 s | 3.84 s | 2.22x | 6.19 G | 6.09 G |
+  | | 736 | 64 | 46.72 s | **47.98 s** | **0.97x** | 7.83 G | 7.85 G |
+
+  Both routes agree on the energy at every point converged enough to compare — to 1e-13 on
+  the lattice model and to 1e-12 on N2 at all three `chi`. (The two C2 rows at `chi=16`
+  disagree, 100.6 against 60.7, and that is not a path disagreement: two sweeps at
+  `chi=16` on a 52-site strongly correlated system from a random start is nowhere near
+  converged, and at `chi=64` the two routes land on the same `39.86930419362358`.)
+
+  **What the grid says.** The lattice ratio is flat in `chi` at ~3.2x: at `D_w = 8` there
+  is nothing for a symbolic dispatch to save and the per-bond core construction is pure
+  overhead — which is exactly why `cutoff=None` is the lattice-model setting, since the
+  finite-state machine keeps the identity channels separable and the same run costs 1.96 s
+  against 3.53 s. On ab initio integrals the ratio **narrows in `chi` on the widest bond**,
+  reaching 0.97x on C2 at `chi=64`: the per-bond cores do amortise as the two-site tensor
+  grows, which is the question the M38-era `chi=16` measurement could not answer. That is
+  the honest position of the engine today — a constant factor against a dense contraction
+  at small `chi`, at parity by `chi=64` where the bond is widest — and where the
+  optimisation work goes is *inside* this path, not into a second one.
+
+  **The constant factor on a lattice model at a float cutoff is real and is not engineered
+  around.** N=20 U(1) Heisenberg, `chi=64`, four sweeps: `cutoff=None` **1.96 s**, default
+  `cutoff=1e-13` **3.53 s**, same ground state `-8.682473334398`. The mechanism is named
+  rather than hidden: the compressing rotation mixes the open states, so a spectator no
+  longer separates onto the rank-2 identity ride — `spec_op` is `None`, `a_real_op` is the
+  whole open group — and every open state is operator-carrying. This is not a defect #204
+  introduced; it is the uniform mechanism block2 already uses, where the identity is an
+  ordinary entry in the `ops` map and an explicit entry in the symbolic matrix, paid like
+  any other operator. block2's lattice performance is fine for the same reason tenet's is
+  at `cutoff=None`: a spin chain's bond is small in the first place. The knob is `cutoff`,
+  it is documented in `MPO.from_terms`' and `Env.heff2`'s Notes, and the caller sets it at
+  build time.
+
+  What #204 buys is therefore the *representation*: the operator no longer has to choose
+  between being compressed and being partitioned, K=26 completes at 3.21 GiB where it did
+  not complete at 19–24, and `heff2`'s prepared path lost its `cutoff=None` precondition —
+  which is what makes it one path rather than two.
 
   **The pre-placement basis choice is the named successor**, for the K where the build
   transient walls (`D_FSM × d² × chi`; benzene at K=108 extrapolates to ~10² GB). Its shape

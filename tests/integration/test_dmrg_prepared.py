@@ -190,14 +190,16 @@ def _worst_across(n, hams, phys, bonds, seed=5):
 
 @pytest.mark.parametrize("chi", [1, 4], ids=["seed bond", "chi 4"])
 def test_the_compressed_prepared_path_agrees_with_dense_and_with_cutoff_none(chi):
-    """M39 (#204): a float-``cutoff`` MPO now has a prepared path, and it is the same one.
+    """M39 (#204): a float-``cutoff`` MPO runs the one engine path, and it is the same one.
 
-    The compressing sweeps pin the two corner channels, so the compressed bond keeps the
-    ``IdL (+) open (+) IdR`` partition and ``heff2`` prepares against it. Two comparisons
-    at each bond of a walked mixed-canonical gauge, at two MPS bond dimensions: against
-    the dense path on the *same compressed tensors* (which isolates the block table), and
-    against the ``cutoff=None`` prepared path (which isolates the compression). The
-    Hamiltonian is a power-law chain, where the sweep actually truncates.
+    The compressing sweeps pin the two corner channels, so a compressed bond keeps the
+    ``IdL (+) open (+) IdR`` partition and ``heff2`` prepares against it exactly as it
+    does for the finite-state machine -- one path for every MPO that carries a
+    description. Two comparisons at every bond of a walked mixed-canonical gauge, at two
+    MPS bond dimensions: against the dense escape hatch on the *same compressed tensors*
+    (which isolates the block table), and against the ``cutoff=None`` prepared path
+    (which isolates the compression). The Hamiltonian is a power-law chain, where the
+    sweep actually truncates.
     """
     n = 8
     pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]

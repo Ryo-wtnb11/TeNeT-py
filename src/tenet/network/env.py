@@ -589,12 +589,31 @@ class Env:
 
         Notes
         -----
-        **Prepared path**, taken when ``self.h`` carries an edge-block table -- which
-        every [MPO.from_terms][tenet.network.MPO.from_terms] /
-        [MPO.from_arrays][tenet.network.MPO.from_arrays] operator does at either cutoff
-        since #204, the compressing sweeps having been taught to keep the ``IdL`` / open
-        / ``IdR`` partition; [from_w][tenet.network.MPO.from_w], which has no
-        description at all, still takes the dense path. The two
+        **One engine path, and it is the prepared one.** Every MPO that carries an edge
+        description -- [from_terms][tenet.network.MPO.from_terms] and
+        [from_arrays][tenet.network.MPO.from_arrays], at *either* cutoff since #204 --
+        goes through it. This is block2's own engine design in tenet's form: its
+        ``EffectiveHamiltonian`` dispatches a symbolic ``OpSum`` term by term against the
+        wavefunction (``effective_hamiltonian.hpp``:230-243), never forms the effective
+        Hamiltonian, and has no dense-``W``-pair contraction to fall back on. There is no
+        runtime dispatch here either -- no bond-width threshold, no ``chi`` threshold, no
+        ``path=`` keyword. The dense branch below is the escape hatch for an MPO that has
+        no symbols at all, which is [from_w][tenet.network.MPO.from_w] and an ``MPO``
+        built from bare site tensors, and nothing else.
+
+        **The knob that does exist is ``cutoff``, at build time.** ``cutoff=None`` keeps
+        the exact finite-state machine, whose bond is already minimal for a finite-range
+        lattice model and whose identity channels ride ``idmap``/``spec_op`` with no ``W``
+        contraction at all; a float ``cutoff`` compresses, which is what an ab initio
+        Hamiltonian needs and which -- because the rotation mixes the open states -- turns
+        every open state into an operator-carrying one. Both then run through this one
+        path. Measured at N=20 U(1) Heisenberg, ``chi=64``: 1.96 s at ``cutoff=None``
+        against 3.53 s at ``1e-13``. So a lattice model wants ``cutoff=None`` and quantum
+        chemistry wants the float, and the caller states which at build time rather than
+        the engine guessing at run time -- which is also how block2 takes its algorithm
+        choice. ``docs/design.md`` "Milestone 39" carries the ``chi`` scaling grid.
+
+        **The path in detail.** The two
         environments are folded into the site blocks **once per bond** (``_build2``,
         MPSKit's ``AC2_hamiltonian``) and cached against the environment tensors'
         identity, so one ``lanczos`` solve at ``ncv=3`` pays the fold once and applies
@@ -608,8 +627,9 @@ class Env:
         key -- the tuple of ``aa``'s legs plus the prepared operator's identity -- and
         the cache holds one entry per bond, replaced when the key moves.
 
-        **Dense path**, for every MPO without a table: right environment, then ``W2``,
-        then ``W1``, then the left environment -- YASTN's ``Env_mps_mpo_mps.Heff2`` order
+        **Dense branch**, for an MPO with no description at all
+        ([from_w][tenet.network.MPO.from_w] or bare site tensors): right environment, then
+        ``W2``, then ``W1``, then the left environment -- YASTN's ``Env_mps_mpo_mps.Heff2`` order
         (``_env.py``:496-518) with ``precompute=False``, which ``_dmrg.py``:102-108
         documents as ``O(D^3 M d + D^2 M^2 d^2)``.
 
