@@ -660,13 +660,19 @@ class Env:
             p = self._prepare2(n)
             key = tuple(aa.legs)
             hit = self._compiled.get(n)
-            # The traced graph is a function of ``key`` alone: at a fixed bond the live
-            # fields of ``p`` are decided by the two sites' edge blocks, which never move,
-            # and every one of their legs is fixed by ``aa``'s two bond legs plus the
-            # operator's own. So the callable outlives a bond revisit and only a moved
+            # The traced graph is a function of ``(n, key)`` alone: at a fixed bond the
+            # live fields of ``p`` are decided by the two sites' edge blocks, which never
+            # move, and every one of their legs is fixed by ``aa``'s two bond legs plus
+            # the operator's own. So the callable outlives a bond revisit and only a moved
             # bond space retraces it. ``p`` itself stays in the entry because its *values*
             # change every visit and because it is what weighs the entry for the byte
             # budget (#202); it is deliberately not part of the key (#225).
+            # One slot per bond, and measured to be enough: over two sweeps of the three
+            # models #224 counted, no bond is ever visited at two bond widths in
+            # alternation, so a second slot compiles nothing extra. What does still
+            # recompile is a bond whose entry the byte budget evicted -- 143 compiles
+            # against 115 distinct keys on C2 at K=26, where the entry is weighed by the
+            # ``_Prepared`` it carries.
             fn = (
                 hit[2]
                 if hit is not None and hit[0] == key

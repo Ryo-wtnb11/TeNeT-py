@@ -3679,6 +3679,124 @@ The split:
   available (34 distinct graphs where 121 traces are taken), and a plan would amortise on the
   NumPy path, where the other 90 % of the sweep already runs.
 
+- **M57** — shipped: one sweep is decomposed phase by phase on the NumPy backend (#225),
+  and the compiled callable stops being re-traced at every bond visit. The measurement is
+  the deliverable; the code change is four lines in `Env.heff2`.
+
+  **Why decompose.** M54 measured the matvec and, by arithmetic on its own numbers, put it
+  at roughly 40 % of an N2 K=16, `chi=128` sweep. The other ~60 % had never been looked at,
+  and M54's narrative attributed it to "the truncating SVD, the environment updates, the
+  two-site assembly" without measuring which. #206 exists for the SVD on the strength of
+  that reading.
+
+  **The instrument.** `benchmarks/bench_sweep_phases.py`, on no CI path. It **wraps call
+  sites** rather than sampling: `tenet.linalg.svd_truncated`, `MPS.__setitem__`,
+  `Env.heff2`, `Env._prepare2`, `Env.update_`, `dmrg.lanczos`, `dmrg.spectrum`, an identity
+  `compile=` stub around `_apply2`, and a proxy over `dmrg.py`'s own `tenet` module global
+  so that the three einsums the *sweep* spells are timed while the hundreds inside the
+  matvec are not. Nested timers are subtracted, so `lanczos` is reported net of `heff2` and
+  `heff2` net of `_prepare2` and `_apply2`. Every point is run in two arms, `plain` (no
+  wrapper at all) and `wrapped`, and both walls are reported; **`residual` is wall minus
+  the phases and is never distributed**, because a residual is the instrument saying a
+  phase is missing.
+
+  One **discarded warm-up sweep** precedes each point. The edge tables, group embeddings
+  and merged cores are all built on a bond's *first* visit, so without it whichever arm ran
+  first would carry the operator's whole construction — measured at 7x on the lattice, an
+  effect larger than anything the table is about. The wall reported is therefore one steady
+  sweep, `Env.setup_` and `MPS.canonize_` excluded, which is why it is smaller than M54's
+  per-sweep figure for the same point.
+
+  Shares are of the wrapped wall. `apply` is `_apply2`, `ncv=3` per solve; `prepare` is
+  `_prepare2`'s environment fold, once per bond visit; `env` is `Env.update_`, i.e.
+  `_fold_last`/`_fold_first`; `write` is the `MPS.__setitem__` write barrier plus the two
+  gauge einsums.
+
+  | model | chi | assemble | lanczos own | prepare | **apply** | heff2 rest | svd | **env** | write | spectrum | residual | wall (wrapped / plain) |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | lattice, N=20, `D_w`=8 | 64 | 1.83 % | 10.30 % | 15.84 % | **45.81 %** | 0.50 % | 3.27 % | **19.90 %** | 1.77 % | 0.23 % | 0.55 % | 0.504 s / 0.506 s |
+  | N2 CAS 6-31G, K=16 | 16 | 0.61 % | 3.87 % | 14.22 % | **59.78 %** | 0.67 % | 1.08 % | **18.76 %** | 0.71 % | 0.07 % | 0.23 % | 1.143 s / 1.148 s |
+  | | 64 | 0.13 % | 1.05 % | 4.76 % | **71.73 %** | 0.26 % | 0.55 % | **21.33 %** | 0.13 % | 0.01 % | 0.05 % | 6.780 s / 7.052 s |
+  | | 128 | 0.05 % | 0.31 % | 2.67 % | **74.61 %** | 0.19 % | 0.37 % | **21.67 %** | 0.07 % | 0.00 % | 0.06 % | 27.780 s / 27.894 s |
+  | C2 CAS cc-pVDZ, K=26 | 16 | 0.51 % | 3.08 % | 13.31 % | **62.37 %** | 0.26 % | 0.89 % | **18.78 %** | 0.55 % | 0.06 % | 0.19 % | 2.315 s / 2.319 s |
+  | | 64 | 0.08 % | 0.56 % | 4.34 % | **73.28 %** | 0.18 % | 0.36 % | **21.10 %** | 0.07 % | 0.01 % | 0.03 % | 19.718 s / 20.190 s |
+  | | 128 | 0.03 % | 0.20 % | 2.68 % | **74.65 %** | 0.18 % | 0.23 % | **21.99 %** | 0.02 % | 0.00 % | 0.02 % | 91.315 s / 92.130 s |
+
+  **The slack is the residual column: at most 0.55 %, and 0.06 % or less at every `chi=128`
+  point.** Nothing is unaccounted for. The wrapping cost is separately bounded: the wrapped
+  wall is between 3.9 % *below* and 0.2 % below the plain wall at every point — never above
+  it — so the instrumentation sits inside run-to-run noise and no arm needs a correction.
+
+  **What the table says, and it is not what M54's narrative implied.**
+
+  1. **The two-site matvec is the sweep, not 40 % of it.** 60 % at `chi=16`, 72–75 % at
+     `chi=64` and `chi=128`, on both quantum-chemistry inputs. M54's ~40 % came from
+     multiplying a steady per-matvec time by a matvec count against a wall that also
+     contained `Env.setup_`, `canonize_` and every bond's first-visit construction; taken
+     against the *steady sweep* the matvec is where the time is. The `chi` trend is the
+     confirmation: the matvec's share **rises** with the bond while every Python-side phase
+     falls away.
+  2. **`svd_truncated` is 0.23–1.08 %, and it falls as `chi` rises.** It is the smallest
+     numerical phase in the table at every point except the lattice, where it is 3.27 %.
+     **#206 is a rounding error on this workload.** M54's own remainder story named it
+     first, and #225 was filed saying "obvious suspect" is exactly the reasoning M54
+     falsified — it was falsified again, on the suspect M54 named. A perfect SVD, free,
+     buys 0.23 % of a C2 `chi=128` sweep. #206 is therefore demoted on the strength of this
+     table; if it is revived it needs a workload where the SVD is not this small.
+  3. **The environment update is the second phase, and it is stable at ~19–22 %
+     everywhere** — every model, every `chi`, lattice included. It is the only phase besides
+     the matvec that does not shrink with `chi`, and nothing was pointing at it. `_fold_last`
+     / `_fold_first` are the same shape of contraction as `_apply2` against a rank-3
+     environment instead of a rank-4 wavefunction, so a matvec win transfers to it — which
+     makes the *engine's contraction*, not the sweep's scaffolding, the whole 95 % that is
+     worth attacking.
+  4. **Everything Python-side is noise at scale.** Assembly, write-back, `spectrum`, the
+     Lanczos recurrence and `heff2`'s own cache lookup sum to **0.61 %** of a C2 `chi=128`
+     sweep and 0.71 % of an N2 one. At `chi=16` they reach 5–6 %, and on the lattice 14 % —
+     the regime split M54 saw in the compiled matvec is visible here in the same direction.
+  5. **`_prepare2`'s fold is a small-bond cost.** 13–16 % at `chi=16` against 2.7 % at
+     `chi=128`: the fold is paid once per bond visit while the matvec is paid `ncv` times
+     and grows faster, so the amortisation M16 argued for gets better, not worse, with
+     `chi`.
+
+  So the next target is the two-site contraction itself on the NumPy path — `_apply2` and
+  the environment folds that share its shape — and not the SVD, not the solver's Python
+  overhead, and not the sweep's scaffolding. What that work *is* is a separate decision with
+  this table as its input; #219's better solver reduces the *number* of matvecs and now has
+  a measured ceiling of 75 %, which is a larger prize than M54's arithmetic suggested.
+
+  **The trace-refetch defect, fixed.** M54 found compiled callables discarded and re-traced
+  on every bond visit — about `2 x sweeps x bonds` in every case — because `env.py`:662
+  rebuilt the cache entry when `hit[1] is not p` and `_prepare2` returns a new `_Prepared`
+  on every visit, so the identity test never held. The compiled callable is now kept
+  whenever the structure key is unchanged. The key was **checked rather than assumed to be
+  complete**: at a fixed bond the live fields of the prepared operator are decided by the
+  two sites' edge blocks, which never move, and every leg of every field is fixed by `aa`'s
+  two bond legs plus the operator's own, so `(bond, tuple(aa.legs))` does determine the
+  traced graph and needed no widening.
+
+  | model, two sweeps at `chi=64` | `n_compile` before | `n_compile` after | distinct keys |
+  |---|---|---|---|
+  | lattice, N=20 | 73 | **57** | 57 |
+  | N2 CAS 6-31G, K=16 | 121 | **35** | 35 |
+  | C2 CAS cc-pVDZ, K=26 | 201 | **143** | 115 |
+
+  Lattice and N2 hit the floor exactly. C2's 28 extra compiles are **not** the identity
+  defect: they are bonds whose `_compiled` entry the M38 byte budget evicted and which then
+  recompiled on the next visit. The entry is weighed by the `_Prepared` it carries, and
+  `_prepared` already holds that same object, so the weight is counted twice across the two
+  caches — `common.payload`'s docstring records that as the safe direction for a budget, and
+  here it is what costs the last 28 traces. Removing `p` from the `_compiled` entry would
+  close the gap and would also take `_compiled` out of the byte budget entirely, which is a
+  change to M38's cache policy and belongs with whoever revisits it, not here.
+
+  `_prepare2`'s own identity discipline is deliberately untouched: the prepared operator's
+  *values* change on every visit, and serving a stale one is the plausible-and-wrong energy
+  `Env`'s docstring names as the worst failure mode a DMRG has. Two tests pin the pair —
+  one counts a stub `compile`'s invocations against the distinct keys of two sweeps, one
+  drives an environment rebuild and checks the operator is rebuilt with it and agrees with a
+  freshly built `Env`.
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
