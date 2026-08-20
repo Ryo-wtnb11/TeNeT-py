@@ -270,7 +270,7 @@ def test_every_two_operand_einsum_is_a_composition(monkeypatch):
     built = [MPO.from_terms(n, terms, cutoff=c) for c in (None, 1e-13)]
     # Both builders now hand back a description (#204), so the third operator is the one
     # that still has none -- a bare container over the compressed sites, which is what
-    # keeps ``update_``'s and ``heff2``'s dense branches on the smoke's path.
+    # keeps ``update_``'s and ``heff2``'s site-tensor branches on the smoke's path.
     built.append(MPO(built[1].sites))
     for h in built:
         h.to_dense()

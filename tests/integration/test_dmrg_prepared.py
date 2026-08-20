@@ -62,7 +62,7 @@ def _cylinder_pairs(n, ly):
 
 def _sweep_worst(n, h, phys, bonds, seed=5):
     """Walk the sweep's gauge with exact SVDs; return the worst prepared-dense gap."""
-    dense = MPO(h.sites)  # same tensors, no table: the dense path on the same input
+    dense = MPO(h.sites)  # same tensors, no table: the site-tensor path on the same input
     psi = MPS.random(phys, bonds, seed=seed).canonize_()
     envs = [Env(psi, h).setup_(), Env(psi, dense).setup_()]
     worst = 0.0
