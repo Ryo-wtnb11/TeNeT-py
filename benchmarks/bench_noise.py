@@ -94,10 +94,10 @@ def run(h, seed_state, *, chi, sweeps, hot, noise, noise_type):
     return energies
 
 
-def table(name, h, seed_state, *, chi, sweeps, hot):
+def table(name, h, seed_state, *, chi, sweeps, hot, settings=SETTINGS):
     print(f"\n== {name}: chi={chi}, {sweeps} sweeps, noise on for the first {hot}")
     columns, walls = {}, {}
-    for label, noise, noise_type in SETTINGS:
+    for label, noise, noise_type in settings:
         t0 = time.perf_counter()
         columns[label] = run(
             h, seed_state, chi=chi, sweeps=sweeps, hot=hot, noise=noise, noise_type=noise_type
@@ -121,12 +121,25 @@ def main():
     ap.add_argument("--sweeps", type=int, default=8)
     ap.add_argument("--hot", type=int, default=5, help="sweeps the noise is on for")
     ap.add_argument("--sites", type=int, default=20, help="Heisenberg chain length")
+    ap.add_argument(
+        "--settings", nargs="*", choices=[s[0] for s in SETTINGS],
+        help="run just these columns; an hour-long table is worth resuming rather than redoing",
+    )  # fmt: skip
     a = ap.parse_args()
     sys.stdout.reconfigure(line_buffering=True)
     wanted = a.only or ["n2", "heisenberg"]
+    chosen = tuple(s for s in SETTINGS if a.settings is None or s[0] in a.settings)
     if "n2" in wanted:
         h, seed_state = n2_model(a.chi)
-        table("N2.CAS.6-31G (K=16)", h, seed_state, chi=a.chi, sweeps=a.sweeps, hot=a.hot)
+        table(
+            "N2.CAS.6-31G (K=16)",
+            h,
+            seed_state,
+            chi=a.chi,
+            sweeps=a.sweeps,
+            hot=a.hot,
+            settings=chosen,
+        )
     if "heisenberg" in wanted:
         h, seed_state = heisenberg_model(a.sites)
         table(
@@ -136,6 +149,7 @@ def main():
             chi=a.chi,
             sweeps=a.sweeps,
             hot=a.hot,
+            settings=chosen,
         )
 
 
