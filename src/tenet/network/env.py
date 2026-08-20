@@ -272,7 +272,7 @@ def _apply2(p: _Prepared, aa: SymmetricTensor) -> SymmetricTensor:
     key -- so it is traceable and is what [Env.heff2][tenet.network.Env.heff2] hands to
     ``compile=``. Four
     contractions for a string-built Hamiltonian -- the identity-through pair plus one
-    one-sided field per anchor -- against the dense path's four over the full
+    one-sided field per anchor -- against the compatibility entry's four over the full
     ``D_w``-wide ``W`` pair, and only the first pair still carries an MPO-bond leg.
 
     The one-sided ``caf``/``abf`` terms use the two-site sweep's mixed-canonical gauge,
@@ -589,17 +589,27 @@ class Env:
 
         Notes
         -----
-        **One engine path, and it is the prepared one.** Every MPO that carries an edge
-        description -- [from_terms][tenet.network.MPO.from_terms] and
+        **The engine is one path: the prepared, symbolic, term-family matvec.** Every MPO
+        that carries an edge description -- [from_terms][tenet.network.MPO.from_terms] and
         [from_arrays][tenet.network.MPO.from_arrays], at *either* cutoff since #204 --
-        goes through it. This is block2's own engine design in tenet's form: its
-        ``EffectiveHamiltonian`` dispatches a symbolic ``OpSum`` term by term against the
-        wavefunction (``effective_hamiltonian.hpp``:230-243), never forms the effective
-        Hamiltonian, and has no dense-``W``-pair contraction to fall back on. There is no
-        runtime dispatch here either -- no bond-width threshold, no ``chi`` threshold, no
-        ``path=`` keyword. The dense branch below is the escape hatch for an MPO that has
-        no symbols at all, which is [from_w][tenet.network.MPO.from_w] and an ``MPO``
-        built from bare site tensors, and nothing else.
+        goes through it, and **later parallelism and accelerator work attaches here and
+        nowhere else**. This is block2's engine design in tenet's form: its
+        ``EffectiveHamiltonian`` never forms the effective Hamiltonian and instead
+        dispatches the symbolic operator sum term by term against the wavefunction
+        (``effective_hamiltonian.hpp``:230-243). There is no runtime dispatch here either
+        -- no bond-width threshold, no ``chi`` threshold, no ``path=`` keyword.
+
+        **The dense branch below is not a second engine; it is a compatibility entry.**
+        It exists for an MPO that carries no symbols at all --
+        [from_w][tenet.network.MPO.from_w] and an ``MPO`` built from bare site tensors --
+        and nothing else routes to it. Recovering symbols from a numeric ``W`` is not
+        possible in general: #141 measured that a compressed ``W`` retains no edge
+        structure to recover. So the entry cannot be closed without refusing
+        externally-built MPOs, which is a decision about the public surface and not one
+        this milestone makes. block2 has no equivalent because block2 is a
+        quantum-chemistry *program* and never receives an operator from outside; tenet is
+        a library, and essentially every MPO in the literature is written as a ``W``
+        matrix. Adopt block2's engine, not block2's role.
 
         **The knob that does exist is ``cutoff``, at build time.** ``cutoff=None`` keeps
         the exact finite-state machine, whose bond is already minimal for a finite-range
@@ -630,14 +640,16 @@ class Env:
         key -- the tuple of ``aa``'s legs plus the prepared operator's identity -- and
         the cache holds one entry per bond, replaced when the key moves.
 
-        **Dense branch**, for an MPO with no description at all
-        ([from_w][tenet.network.MPO.from_w] or bare site tensors): right environment, then
+        **The compatibility entry**, for an MPO with no description at all
+        ([from_w][tenet.network.MPO.from_w] or bare site tensors), and no accelerator work
+        targets it: right environment, then
         ``W2``, then ``W1``, then the left environment -- YASTN's ``Env_mps_mpo_mps.Heff2`` order
         (``_env.py``:496-518) with ``precompute=False``, which ``_dmrg.py``:102-108
         documents as ``O(D^3 M d + D^2 M^2 d^2)``.
 
-        The two paths agree as operators but sum their terms in a different order, so
-        they agree to solver precision, never bitwise. In and out on ``(left bond OUT, p
+        The engine and the compatibility entry agree as operators but sum their terms in
+        a different order, so they agree to solver precision, never bitwise. In and out
+        on ``(left bond OUT, p
         OUT, q OUT, right bond IN)``: the *bra* legs of the two environments become the
         output's bonds while the *ket* legs close against the input's, which is why the
         result has ``aa``'s structure exactly and [lanczos][tenet.network.lanczos] can add

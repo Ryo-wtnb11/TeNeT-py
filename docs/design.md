@@ -3446,7 +3446,8 @@ The split:
   **Gate 2 — a full DMRG at `chi=16`, three sweeps, per operator route.** `fsm` is the
   prepared path on the uncompressed FSM bond, which is M38's row and the number to beat;
   `pinned` is this milestone; `free-dense` is gate 2's honest baseline, the freely
-  compressed sites handed over in a bare `MPO` so that `heff2` takes the escape hatch —
+  compressed sites handed over in a bare `MPO` so that `heff2` takes the compatibility
+  entry —
   the alternative that needs no new code at all. It is a *measurement*, not a shipped
   route: a `from_terms` operator always carries its description and always runs the one
   engine path, and reaching this row means deliberately throwing the description away.
@@ -3488,19 +3489,29 @@ The split:
   the whole 52-site prepared operator fits under the M38 byte budget, so the caches stop
   evicting and M38's recompute tax is gone for exactly the workload that paid it.
 
-  **The engine is single-path by design, and this is where that is settled.** `Env.heff2`
-  takes the prepared path for every MPO that carries an edge description — `from_terms`
-  and `from_arrays`, at either cutoff — and the dense branch is the escape hatch for an
-  MPO that has no symbols at all, which is `from_w` and an `MPO` built from bare site
-  tensors. **That is block2's engine design adopted rather than re-invented**: its
-  `EffectiveHamiltonian` dispatches a symbolic `OpSum` term by term against the
-  wavefunction (`effective_hamiltonian.hpp`:230-243), never forms the effective
-  Hamiltonian, and has no dense-`W`-pair contraction to fall back on; the only thing it
-  materialises is `diag`, for the preconditioner. A runtime dispatch between two matvec
-  paths was measured, built and then **removed**: block2's algorithm choice is a build-time
+  **The engine is one path, and this is where that is settled.** `Env.heff2` runs the
+  prepared, symbolic, term-family matvec for every MPO that carries an edge description —
+  `from_terms` and `from_arrays`, at either cutoff. **That is block2's engine design
+  adopted rather than re-invented**: its `EffectiveHamiltonian` never forms the effective
+  Hamiltonian and dispatches the symbolic operator sum term by term against the
+  wavefunction (`effective_hamiltonian.hpp`:230-243); the only thing it materialises is
+  `diag`, for the preconditioner. A runtime dispatch between two matvec paths was
+  measured, built and then **removed**: block2's algorithm choice is a build-time
   argument, and tenet's is `cutoff`. Everything later — parallelism, GPU execution, a
-  Davidson preconditioner, one-site DMRG — attaches to this one path, which is the reason
-  it had to stop moving before any of that starts.
+  Davidson preconditioner, one-site DMRG — attaches to this one path and to nothing else,
+  which is the reason it had to stop moving before any of that starts.
+
+  **The dense branch is not a second engine; it is a compatibility entry.** It exists for
+  an MPO that carries no symbols at all — `from_w` and a bare `MPO(sites)` — and no
+  accelerator work targets it. It cannot be closed by recovering symbols from a numeric
+  `W`, because in general there are none to recover: #141 measured that a compressed `W`
+  retains no edge structure. Closing it would mean *refusing* externally-built MPOs, which
+  is a decision about the public surface and not part of #204. block2 has no equivalent
+  because block2 is a quantum-chemistry **program** and never receives an operator from
+  outside; tenet is a library, and essentially every MPO in the literature is written as a
+  `W` matrix, so refusing one would close the library in a way block2 never has to
+  consider. This is the same class of judgement that kept disk spilling and the operator
+  vocabulary out: adopt block2's engine, not block2's role.
 
   **The `chi` scaling grid, as information rather than as a decision.** Two DMRG sweeps
   per point, the two routes selected the only way a caller can select them (the operator
@@ -3531,9 +3542,9 @@ The split:
   against 3.53 s. On ab initio integrals the ratio **narrows in `chi` on the widest bond**,
   reaching 0.97x on C2 at `chi=64`: the per-bond cores do amortise as the two-site tensor
   grows, which is the question the M38-era `chi=16` measurement could not answer. That is
-  the honest position of the engine today — a constant factor against a dense contraction
-  at small `chi`, at parity by `chi=64` where the bond is widest — and where the
-  optimisation work goes is *inside* this path, not into a second one.
+  the honest position of the engine today — a constant factor against the compatibility
+  entry's dense contraction at small `chi`, at parity by `chi=64` where the bond is widest
+  — and where the optimisation work goes is *inside* this one path, never into a second.
 
   **The constant factor on a lattice model at a float cutoff is real and is not engineered
   around.** N=20 U(1) Heisenberg, `chi=64`, four sweeps: `cutoff=None` **1.96 s**, default

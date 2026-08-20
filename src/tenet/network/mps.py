@@ -2355,7 +2355,8 @@ class MPO:
         decomposes as ``IdL (+) open (+) IdR`` and still has a table -- one open state per
         cut rather than one per open string. [from_w][tenet.network.MPO.from_w] never had
         a description and returns ``None``, which routes
-        [Env.heff2][tenet.network.Env.heff2] onto its dense path.
+        [Env.heff2][tenet.network.Env.heff2] onto its compatibility entry, which is what
+        that branch is for.
 
         Since #200 the table is *built* here rather than stored here: the call goes
         through to ``EdgeTable.edge_blocks``, which places one
