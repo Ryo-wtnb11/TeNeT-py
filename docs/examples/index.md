@@ -18,7 +18,5 @@ stale page fails the test suite.
 `tenet.network`:
 
 - [Toy DMRG](toy-dmrg.md) — `examples/toy_codes/dmrg.py`
-- [Toy CTMRG](toy-ctmrg.md) — `examples/toy_codes/ctmrg.py` (needs JAX; the one file
-  still calling `tenet.network`, recorded as an exemption in
-  [`examples/toy_codes/README.md`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/README.md))
+- [Toy CTMRG](toy-ctmrg.md) — `examples/toy_codes/ctmrg.py` (needs JAX)
 - [Toy VMC on an MPS](toy-vmc-mps.md) — `examples/toy_codes/vmc_mps.py` (needs JAX)

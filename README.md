@@ -107,15 +107,14 @@ writes each algorithm out on `tenet`'s *tensor* layer (`SymmetricTensor`, `tenet
 `tenet.linalg`) and **imports nothing from `tenet.network`**, so its files are named for
 the *algorithm* — while `examples/` **uses what the library does own** — it calls
 `tenet.network`, so its files are named for the *model*. The rule is a test
-(`tests/test_examples.py`), with one recorded exemption: `ctmrg.py`, which calls the CTMRG
-core #114 promoted out of it and is rewritten in #187. Every file in both lanes
+(`tests/test_examples.py`), with no exemptions. Every file in both lanes
 is executed by the test suite and checked against a named exact oracle; the SU(2)
 coefficient conventions themselves are pinned by vendored fixtures.
 
 | Teaching lane | What it does | Oracle |
 | --- | --- | --- |
 | [`examples/toy_codes/dmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/dmrg.py) | finite two-site DMRG written out — MPS, canonical form, environment cache, Lanczos, sweep | exact diagonalization |
-| [`examples/toy_codes/ctmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/ctmrg.py) | differentiable CTMRG, then a U(1)/SU(2) iPEPS gradient (the recorded lane exemption — it still calls `tenet.network.ctmrg`) | Onsager's closed-form free energy |
+| [`examples/toy_codes/ctmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/ctmrg.py) | C4v CTMRG written out — corner, edge, absorbers, projector, move, sweep — then a U(1)/SU(2) iPEPS gradient | Onsager's closed-form free energy |
 | [`examples/toy_codes/vmc_mps.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/vmc_mps.py) | symmetric MPS → pytree → `jax.grad` → SGD step | variational energy decrease |
 
 | Usage lane | What it does | Oracle |
