@@ -24,7 +24,7 @@ import pytest
 import racah
 
 import tenet
-from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
 from tenet.symmetry.base import (
     AssociatorData,
     BendingCoefficients,
@@ -349,10 +349,10 @@ def test_z_matrix_shape_unitarity_and_frobenius_schur(a_name):
 def cup(out_space, partner, *, dual):
     """``1 -> V (x) W`` with the single block set to 1, as ``test_su2_dual`` builds it."""
     legs = (Leg(out_space, OUT), Leg(partner, OUT, dual=dual))
-    t = SymmetricTensor.zeros(legs)
-    blocks = tuple(np.ones_like(b) for b in t.blocks)
-    assert len(blocks) == 1 and blocks[0].shape == (1, 1)
-    return np.asarray(SymmetricTensor.from_legs(legs, blocks).to_dense())
+    structure = TensorStructure(legs)
+    (key,) = structure.block_order  # `1 -> V (x) W` has exactly one fusion channel
+    cup = SymmetricTensor.from_blocks(legs, {key: np.ones(structure.block_shape(key))})
+    return np.asarray(cup.to_dense())
 
 
 @pytest.mark.parametrize("a_name", ["THREE", "THREEBAR", "SIX"])

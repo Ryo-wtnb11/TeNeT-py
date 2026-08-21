@@ -791,6 +791,53 @@ def test_ad_leaves_torch_alone():
         ad.uninstall()
 
 
+# --- astype / to_backend(dtype=) / keyed blocks (#207, #208) ----------------------
+
+
+@pytest.mark.parametrize("spelling", ["complex128", np.complex128])
+def test_astype_takes_a_numpy_dtype_or_a_name(spelling):
+    """autoray's torch ``astype`` wants a dtype *name*, so ``astype`` normalizes to one.
+
+    Without that, ``t.astype(np.complex128)`` — the spelling that works on NumPy and
+    JAX — is a ``TypeError`` on torch, and the method would mean two different things
+    depending on where the blocks live.
+    """
+    t = tt(LEGS["su2"], seed=1)
+    c = t.astype(spelling)
+    assert is_torch(c)
+    assert c.dtype == torch.complex128
+    for got, want in zip(c.blocks, t.blocks, strict=True):
+        assert torch.equal(got.real, want)
+
+
+def test_to_backend_dtype_lands_on_torch():
+    a = nt(LEGS["su2"], seed=1)
+    t = a.to_backend("torch", dtype=np.complex128)
+    assert is_torch(t)
+    assert t.dtype == torch.complex128
+    for got, want in zip(t.blocks, a.to_backend("torch").blocks, strict=True):
+        assert torch.equal(got.real, want)
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
+def test_from_blocks_and_with_blocks_stay_on_torch(name):
+    t = tt(LEGS[name], seed=1)
+    key = t.structure.block_order[0]
+
+    built = SymmetricTensor.from_blocks(t.legs, {key: t.block(key)})
+    assert is_torch(built)  # the zero fill follows the supplied block's backend
+    assert built.dtype == torch.float64
+    assert torch.equal(built.block(key), t.block(key))
+    assert all(not bool(b.any()) for k, b in built.items() if k != key)
+
+    zeroed = t.with_blocks({key: torch.zeros_like(t.block(key))})
+    assert is_torch(zeroed)
+    assert not bool(zeroed.block(key).any())
+    for other, block in zeroed.items():
+        if other != key:
+            assert torch.equal(block, t.block(other))
+
+
 # --- the core still imports neither backend --------------------------------------
 
 

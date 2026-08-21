@@ -1,6 +1,9 @@
 """Tests for the array-style properties of SymmetricTensor — issue #19."""
 
 import dataclasses
+import os
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -188,3 +191,96 @@ def test_repr_is_single_line_and_block_free():
 
 def test_repr_of_block_free_tensor_does_not_raise():
     assert "blocks=0" in repr(SymmetricTensor.zeros(BLOCK_FREE_LEGS))
+
+
+# --- astype / to_backend(dtype=) -- issue #207 -----------------------------------
+
+
+def test_astype_round_trips_float64_and_complex128_keeping_structure_and_legs():
+    t = SymmetricTensor.random(SU2_LEGS, seed=6)
+    assert t.dtype == np.float64
+
+    c = t.astype(np.complex128)
+    assert c.dtype == np.complex128
+    assert all(b.dtype == np.complex128 for b in c.blocks)
+    assert c.structure == t.structure and c.legs == t.legs
+
+    back = c.astype(np.float64)
+    assert back.dtype == np.float64
+    assert back.structure == t.structure and back.legs == t.legs
+    assert back == t  # exact: the cast is lossless in both directions
+
+
+def test_astype_leaves_the_original_alone():
+    t = SymmetricTensor.random(SU2_LEGS, seed=6)
+    t.astype(np.complex128)
+    assert t.dtype == np.float64
+
+
+def test_astype_and_to_backend_dtype_refuse_a_block_free_tensor():
+    t = SymmetricTensor.zeros(BLOCK_FREE_LEGS)
+    with pytest.raises(ValueError, match="no blocks"):
+        t.astype(np.complex128)
+    with pytest.raises(ValueError, match="no blocks"):
+        t.to_backend("numpy", dtype=np.complex128)
+    assert t.to_backend("numpy").blocks == ()  # the dtype-free form still passes it through
+
+
+def test_to_backend_without_dtype_is_unchanged():
+    t = SymmetricTensor.random(SU2_LEGS, seed=7, dtype=np.float32)
+    moved = t.to_backend("numpy")
+    assert moved.dtype == np.float32
+    assert moved == t
+
+
+def test_to_backend_dtype_casts_after_the_move():
+    t = SymmetricTensor.random(SU2_LEGS, seed=7, dtype=np.float32)
+    c = t.to_backend("numpy", dtype=np.complex128)
+    assert c.backend == "numpy"
+    assert all(b.dtype == np.complex128 for b in c.blocks)
+    for a, b in zip(t.blocks, c.blocks, strict=True):
+        np.testing.assert_allclose(np.asarray(b).real, a, rtol=0.0, atol=0.0)
+        np.testing.assert_array_equal(np.asarray(b).imag, np.zeros_like(a))
+
+
+def test_to_backend_jax_with_dtype_keeps_float64_under_x64():
+    """``conftest.py`` enables ``jax_enable_x64`` session-wide; see the no-x64 test below."""
+    pytest.importorskip("jax")
+    t = SymmetricTensor.random(SU2_LEGS, seed=8, dtype=np.float32)
+    j = t.to_backend("jax", dtype=np.float64)
+    assert j.backend == "jax"
+    assert all(b.dtype == np.float64 for b in j.blocks)
+    np.testing.assert_allclose(np.asarray(j.blocks[0]), t.blocks[0], rtol=0.0, atol=0.0)
+
+
+# Run in a fresh interpreter: ``tests/conftest.py`` turns x64 on session-wide and
+# JAX makes that switch irreversible, so the unset state is only reachable here.
+_NO_X64_PROBE = """
+import warnings
+warnings.simplefilter("ignore")
+import numpy as np
+import jax
+assert not jax.config.jax_enable_x64
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet.symmetry import SU2, SU2Sector
+V = GradedSpace.new(SU2, {SU2Sector(1): 2})
+legs = (Leg(V, OUT), Leg(V, IN))
+t = SymmetricTensor.random(legs, seed=0)
+print(t.to_backend("jax", dtype=np.float64).dtype,
+      t.to_backend("jax", dtype=np.complex128).dtype)
+"""
+
+
+def test_to_backend_jax_dtype_cannot_defeat_a_disabled_x64():
+    """Pins the sharp edge ``to_backend``'s Notes names, in a fresh process without x64.
+
+    JAX has no per-array escape from ``jax_enable_x64``: ``astype(np.float64)``
+    truncates to float32 exactly as ``array(...)`` does, so ``dtype=`` overrides
+    the backend's *choice* of dtype and not its *refusal*.
+    """
+    pytest.importorskip("jax")
+    env = {k: v for k, v in os.environ.items() if k != "JAX_ENABLE_X64"}
+    out = subprocess.run(
+        [sys.executable, "-c", _NO_X64_PROBE], capture_output=True, text=True, env=env, check=True
+    )
+    assert out.stdout.split() == ["float32", "complex64"]
