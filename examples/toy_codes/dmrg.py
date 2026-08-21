@@ -118,7 +118,6 @@ and the loop runs at one ``chi``, which is what a first reading wants.
 See :func:`lanczos` for the no-reorthogonalization and numpy-``eigh`` notes.
 """
 
-import string
 from typing import NamedTuple
 
 import autoray as ar
@@ -168,20 +167,24 @@ def scalar(t: SymmetricTensor):
 
 
 def inner(a: SymmetricTensor, b: SymmetricTensor):
-    """``<a|b>``: contract every axis but the first, then :func:`scalar` the rest.
+    """``<a|b> = sum_tau qdim(c_tau) * <A_tau, B_tau>``, block by block, at any rank.
 
-    Works at any rank, which is what lets :func:`lanczos` be a plain vector-space
-    algorithm: the adjoint flips every leg, so axis 0 of ``adjoint(a)`` is IN and axis 0
-    of ``b`` is OUT, and the leftover rank-2 map is exactly what :func:`scalar` traces.
-    ``tenet.inner`` (#126) is this function verbatim.
+    ``tenet.inner`` (#126) is this function verbatim, and it is ``tenet.norm``'s body
+    with the square replaced by a conjugated pair -- which is why ``inner(a, a)`` *is*
+    ``norm(a)**2`` rather than merely equalling it numerically, and why
+    :func:`lanczos` can be a plain vector-space algorithm at any rank.
 
-    A sesquilinear pairing is **not** a composition, and this is the module's one
-    contraction that is not: ``adjoint`` turns every leg around, so the *domain* wires of
-    a rank-3 vector meet OUT against IN here by construction. That is the pairing's own
-    arithmetic, and ``tenet.inner`` writes the identical einsum.
+    A sesquilinear pairing is **not** a composition, and it is not a diagram either:
+    drawn as one (contract every axis but the first, close axis 0 with :func:`scalar`)
+    the open axis-0 lines cross the contracted ones, and on a graded provider each
+    crossing of two odd lines pays -1 -- which flipped the sign of every odd-sector
+    block until M62/#236. Coefficient space has no crossing to pay for.
     """
-    rest = string.ascii_lowercase[1 : a.ndim]
-    return scalar(tenet.einsum(f"L{rest},l{rest}->lL", tenet.adjoint(a), b))
+    qdim = a.provider.qdim
+    return sum(
+        qdim(key.coupled) * ar.do("sum", ar.do("conj", x) * y)
+        for (key, x), y in zip(a.items(), b.blocks, strict=True)
+    )
 
 
 def spectrum(s: SymmetricTensor) -> list[float]:
