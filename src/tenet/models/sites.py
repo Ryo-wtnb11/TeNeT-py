@@ -18,7 +18,6 @@ from tenet.space import GradedSpace
 from tenet.symmetry import (
     SU2,
     U1,
-    FusionRules,
     FZ2Sector,
     SU2Sector,
     Trivial,
@@ -26,6 +25,15 @@ from tenet.symmetry import (
     U1Sector,
     fZ2,
 )
+
+# ``_DualFusionRules`` is how a provider parameter is spelled throughout the core
+# (``ops/cast.py::to_symmetry``, ``space.py``, ``leg.py``); the docstrings say
+# ``FusionRules``, which is the public name of the same contract. A *concrete* provider
+# narrows ``dual``/``fusion`` to its own sector type, which is not assignable to the
+# protocol's ``Sector`` under ty's contravariance -- so every mention of one by name
+# carries an ignore. This module is the first place in ``src/`` that names providers at
+# all; everywhere else they arrive off a leg already typed as the protocol.
+from tenet.symmetry.base import _DualFusionRules
 from tenet.tensor import SymmetricTensor
 
 # The spin-1/2 matrices in the ``2 S^z`` order (|down>, |up>), which is the canonical
@@ -110,7 +118,7 @@ def _build(
     return Site(phys, ops, {name: m for name, (m, _) in table.items()} | dict(extra))
 
 
-def spin_half(symmetry: FusionRules = U1) -> Site:
+def spin_half(symmetry: _DualFusionRules = U1) -> Site:  # ty: ignore[invalid-parameter-default]
     """The spin-1/2 site, graded by ``U1`` (``2 S^z``) or by ``SU2``.
 
     Parameters
@@ -162,7 +170,10 @@ def spin_half(symmetry: FusionRules = U1) -> Site:
     """
     if symmetry is U1:
         return _build(
-            GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1}),
+            GradedSpace.new(
+                U1,
+                {U1Sector(-1): 1, U1Sector(1): 1},
+            ),
             {
                 "Sz": (_SZ, U1Sector(0)),
                 "S+": (_SP, U1Sector(-2)),
@@ -171,7 +182,13 @@ def spin_half(symmetry: FusionRules = U1) -> Site:
             {"S.S": _SS},
         )
     if symmetry is SU2:
-        return _build(GradedSpace.new(SU2, {SU2Sector(1): 1}), {"S.S": (_SS, None)})
+        return _build(
+            GradedSpace.new(
+                SU2,
+                {SU2Sector(1): 1},
+            ),
+            {"S.S": (_SS, None)},
+        )
     raise ValueError(
         f"spin_half: the shipped gradings are U1 (charge 2 S^z) and SU2, got {symmetry!r}"
     )
@@ -202,7 +219,10 @@ def spinless_fermion() -> Site:
     Hamiltonian.
     """
     return _build(
-        GradedSpace.new(fZ2, {FZ2Sector(0): 1, FZ2Sector(1): 1}),
+        GradedSpace.new(
+            fZ2,  # ty: ignore[invalid-argument-type]
+            {FZ2Sector(0): 1, FZ2Sector(1): 1},
+        ),
         {
             "c": (_A, FZ2Sector(1)),
             "c+": (_A.T, FZ2Sector(1)),
@@ -244,7 +264,10 @@ def spinful_fermion() -> Site:
     """
     n_up, n_dn = _C_UP.T @ _C_UP, _C_DN.T @ _C_DN
     return _build(
-        GradedSpace.new(fZ2, {FZ2Sector(0): 2, FZ2Sector(1): 2}),
+        GradedSpace.new(
+            fZ2,  # ty: ignore[invalid-argument-type]
+            {FZ2Sector(0): 2, FZ2Sector(1): 2},
+        ),
         {
             "c_up": (_C_UP, FZ2Sector(1)),
             "c+_up": (_C_UP.T, FZ2Sector(1)),
@@ -258,7 +281,7 @@ def spinful_fermion() -> Site:
     )
 
 
-def hard_core_boson(symmetry: FusionRules = U1) -> Site:
+def hard_core_boson(symmetry: _DualFusionRules = U1) -> Site:  # ty: ignore[invalid-parameter-default]
     """The hard-core boson site, ``{|0>, |1>}``, graded by ``U1`` (the number) or ungraded.
 
     Parameters
@@ -296,14 +319,20 @@ def hard_core_boson(symmetry: FusionRules = U1) -> Site:
     ``D=1`` trivial leg and ``MPO.from_terms`` works unchanged.
     """
     if symmetry is U1:
-        phys = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+        phys = GradedSpace.new(
+            U1,
+            {U1Sector(0): 1, U1Sector(1): 1},
+        )
         # q(p_out) + q(charge) = q(p_in): ``b`` lowers the occupation, so it emits +1.
         return _build(
             phys,
             {"b": (_A, U1Sector(1)), "b+": (_A.T, U1Sector(-1)), "n": (_A.T @ _A, U1Sector(0))},
         )
     if symmetry is Trivial:
-        phys = GradedSpace.new(Trivial, {TrivialSector(): 2})
+        phys = GradedSpace.new(
+            Trivial,
+            {TrivialSector(): 2},
+        )
         unit = TrivialSector()
         return _build(phys, {"b": (_A, unit), "b+": (_A.T, unit), "n": (_A.T @ _A, unit)})
     raise ValueError(

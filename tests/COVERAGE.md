@@ -52,6 +52,7 @@ in CI**; every empty cell is a decision, not a constraint.
 | 12 | network MPS/MPO/Env/dmrg/ctmrg | `{u1, su2, z2, su3, fz2}` (fermionic MPO/DMRG since #147; ctmrg stays bosonic) | `tests/network/test_mps.py:24-32`; `tests/network/test_mpo.py`; `tests/network/test_hubbard.py`; `tests/network/test_heff2.py:110-125`; `tests/network/test_deferred.py` (the deferred instantiation boundary, `{u1, fz2}` incl. spinful Hubbard); `tests/network/test_density_matrix.py` (M61 Stage C's second decimation and `Env.heff2_families`, `{u1, fz2, su2}`); `tests/network/test_two_state_env.py` and `tests/integration/test_dmrg_excited.py` (M61 Stage D's `Env(bra=)`, `Env.project2`, `MPO.identity` and `dmrg_(orthogonal_to=)`, `{u1, fz2, su2}`); `tests/network/test_ctmrg.py` |
 | 13 | map view | `{su2, u1, trivial}` + jax | `tests/ops/test_map.py:143-166`, `:347-364` |
 | 14 | `map_diagonal` / `zip_blocks` (#232) | `{u1, fz2, fz2 Hubbard d=4, su2}` for the diagonal; `{trivial, u1, su2, fz2, product}` for `zip_blocks` (+ torch row below) | `tests/ops/test_map_diagonal.py:102-121` (the formed-dense oracle on all four), `:138-166` (the constructed SU(2) two-inner-line case); `tests/ops/test_blocks.py:386-447` |
+| 15 | `tenet.models` sites (#198) | `{u1, su2, fz2, trivial}` -- every grading the layer ships | `tests/models/test_sites.py`: the algebra oracles (spin commutators, fermion anticommutators, the hard-core relations) read off the **built** tensors, the SU(2) answer and its two refusals, and the end-to-end `MPO.from_arrays` / `MPO.from_terms` call shapes against dense Jordan-Wigner oracles |
 
 ## The third axis: backend × mode
 
@@ -79,6 +80,15 @@ in CI**; every empty cell is a decision, not a constraint.
   public operation that does not.
 - **torch autograd** — `test_torch.py` eager-backward section, `{u1, su2}`.
   `torch.compile` / `torch.func` refused in #95.
+- **`tenet.models` × torch/jax — out of contract, and E1 does not fire on it.**
+  Row 15 has no backend cell to fill: every site's operators are built by
+  `local_op` from a NumPy matrix written in `src/tenet/models/sites.py`, so the
+  layer produces no kernel of its own and the tensors it returns reach a
+  backend only through the same `SymmetricTensor` operations rows 1–14 already
+  cover on torch. Nothing in `tenet.models` is exported from `tenet.__all__`
+  either (it is an explicitly-imported subpackage, deliberately: see
+  `tests/network/test_hygiene.py::test_no_module_imports_tenet_models`), so E1
+  neither requires nor would notice a `test_torch.py` row for it.
 
 ## Empty cells, classified
 
