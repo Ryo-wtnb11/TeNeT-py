@@ -5357,6 +5357,170 @@ left that list with M61 Stage D above.
   numerically low-rank in a way the graph cannot see (a power law, an integral file); a
   `W` somebody sat down and wrote is the bond they chose. An operator that wants the sweeps
   wants `from_terms`, which is where the knob lives.
+- **M64** — **measured, not shipped**: tenet against YASTN, head to head, on the U(1)
+  Heisenberg chain and the fermionic Hubbard chain (#245). `benchmarks/bench_vs_yastn.py`
+  is the whole deliverable; there is no `src/` change and YASTN is **not** a dependency of
+  this project — not core, not dev, not test. The script's header carries the one-line
+  install and the `uv run --no-sync` that keeps a later sync from removing it again, which
+  is the packaging statement `REPOSITORY_RULES.md` asks for: a benchmark's opponent
+  library is not something `uv sync` should ever fetch.
+
+  YASTN is the fairest available opponent. Both are pure Python over NumPy, both block by
+  symmetry sector, both run two-site DMRG with an `ncv = 3` Lanczos — tenet's default was
+  deliberately YASTN's. Against block2 a gap would be a C++/MKL constant factor and would
+  say nothing; against YASTN what is left is design.
+
+  **The conditions, and the one that could not be matched.** Every knob below is a knob
+  that, left unmatched, makes the numbers a lie, so each is stated rather than assumed.
+
+  | condition | how it is held equal |
+  |---|---|
+  | Hamiltonian | one term list, `(amplitude, [(op, site), ...])`, translated per arm — tenet `MPO.from_terms`, YASTN `Hterm` + `generate_mpo`. The #213/#244 correspondence, exercised. |
+  | truncation | `chi` only, on both sides: tenet `chi=chi, cutoff=0.0`, YASTN `opts_svd={'D_total': chi}`. See the rule mapping below. |
+  | Lanczos | `ncv=3` both; YASTN `opts_eigs={'hermitian': True, 'ncv': 3, 'which': 'SR'}`. |
+  | method | `'2site'` both, and one sweep means the same thing: left-to-right then right-to-left (tenet `sweep_`, YASTN `_dmrg_sweep_2site_`). |
+  | convergence | **disabled**, so the comparison is per sweep and not per "convergence": YASTN `energy_tol=None, Schmidt_tol=None`; tenet `energy_tol=0.0, schmidt_tol=0.0` (`denergy` is an absolute value, so `< 0.0` never fires). |
+  | initial state | one `bond_charges` spec — charge to degeneracy, per bond — and both arms seed a random MPS on exactly those spaces, full rank from sweep one so `chi` means what it says. The realized bond dimensions are recorded per point and **match bond for bond** on every point of both grids. |
+  | threads | `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS`, `VECLIB_MAXIMUM_THREADS`, `NUMEXPR_NUM_THREADS` all set to `1` **in the process, before NumPy is imported**; one process per point. The #224/#226 discipline. |
+  | measurement | first sweep discarded (it carries canonization and environment setup on both sides); steady wall is the mean of the last four; peak RSS is `resource.getrusage(RUSAGE_SELF)`; one JSONL row appended the moment a point finishes, so a kill loses at most one point and a rerun skips what is already recorded. |
+
+  **The one mismatch: the random *entries*.** The bond spaces are identical by
+  construction, but the two libraries have different generators and there is no way to make
+  one draw the other's. That costs nothing in the wall column — the arithmetic sees block
+  shapes, and those match — and shows up in the energy column only as the residual
+  convergence difference at a fixed sweep count, which is what the `dE` column measures.
+
+  **The truncation rule, mapped.** YASTN's `tol` keeps `sigma > tol * max|sigma|`
+  (`yastn/tensor/linalg.py`, `truncation_mask`: `ff(S.data) > tol * backend.max_abs(S.data)`).
+  That is **exactly** tenet's `cutoff_mode="rel"` (`ops/linalg.py::_admissible`:
+  `sigma > cutoff * spectrum[0][0]`) — the same rule, not a near neighbour. tenet's sweep
+  does not expose `cutoff_mode` and uses the `"rsum2"` default, which is a *different*
+  rule (a discarded-weight budget, not a threshold on the largest value). Rather than
+  compare two rules, the cutoff is switched **off on both sides** — `cutoff=0.0` admits
+  the whole spectrum in `rsum2`, YASTN's `tol` defaults to `-inf` — leaving `chi` /
+  `D_total` as the only rule acting. Those two *are* the same rule: both keep the largest
+  values up to a total kept count, and on U(1) and Z2 every sector has quantum dimension
+  1, so tenet's `qdim`-weighted dense budget is a plain count. A run wanting both knobs at
+  once would have to reach past `dmrg_` to `svd_truncated` for `cutoff_mode="rel"`, which
+  is a `src/` question and not this measurement's.
+
+  **The fermionic grading, and what it costs the comparison.** tenet grades the Hubbard
+  site by **fZ2** — the Jordan-Wigner string *is* the braiding (M21/#147) — so the `d = 4`
+  site is two blocks of 2, even `{|0>, |ud>}` and odd `{|u>, |d>}`. YASTN is run through
+  `SpinfulFermions(sym='Z2')`, whose site is the same two blocks of 2 in the same basis
+  order. **Z2 and not U(1)xU(1) on purpose**: U(1)xU(1) grades by `(n_up, n_dn)` and would
+  hand YASTN four blocks of 1 on the site and correspondingly finer virtual blocks, i.e.
+  strictly less arithmetic for the same `chi`. That would be a comparison of gradings, not
+  of implementations, and the reader should not have to infer it: **YASTN is deliberately
+  run at the coarser of the two gradings it offers, the one tenet has.**
+
+  **The anchor: the two term lists are the same Hamiltonian.** Exact diagonalization is out
+  of reach at every grid point (the smallest is `N = 16` spinful, i.e. `4**16`), so the ED
+  check is a separate small run whose only job is to prove the translation. Both arms, both
+  models, against a dense oracle built independently in the benchmark — the fermionic one
+  on `tests/network/test_hubbard.py`'s on-site matrices, which that module checks against
+  the two-mode `kron` construction before any chain is built:
+
+  | model | N | chi | E tenet | E YASTN | E dense | tenet − ED | YASTN − ED |
+  |---|---|---|---|---|---|---|---|
+  | Heisenberg | 10 | 32 | -4.258035207282879 | -4.258035207282889 | -4.258035207282894 | 1.5e-14 | 5e-15 |
+  | Hubbard `U/t=4` | 4 | 16 | -2.624942271510865 | -2.624942271510864 | -2.624942271510848 | 1.7e-14 | 1.6e-14 |
+
+  **U(1) Heisenberg**, `J = 1`, nearest neighbour, `S^z_tot = 0`, 30 sweeps; steady wall is
+  the mean of the last four and is flat to the reported precision on both arms, `run` is
+  the whole 30-sweep wall including the transient. Apple M4 Max, macOS 15.5,
+  single-threaded Accelerate, NumPy 2.5.2, Python 3.12.11, YASTN 1.6.2.dev401+gb0187c49b.
+
+  | N | chi | sweeps | E tenet | E YASTN | dE | steady tenet | steady YASTN | steady x | run tenet | run YASTN | run x | RSS tenet | RSS YASTN | RSS x |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | 32 | 64 | 30 | -13.997315618 | -13.997315618 | 3e-13 | 1.14 s | 0.49 s | **2.32x** | 75 s | 17 s | **4.5x** | 0.68 G | 0.14 G | 5x |
+  | 32 | 128 | 30 | -13.997315618 | -13.997315618 | 5e-15 | 1.28 s | 0.58 s | **2.23x** | 102 s | 20 s | **5.2x** | 1.11 G | 0.19 G | 6x |
+  | 32 | 256 | 30 | -13.997315618 | -13.997315618 | 1e-13 | 1.63 s | 0.75 s | **2.17x** | 119 s | 25 s | **4.7x** | 1.56 G | 0.34 G | 5x |
+  | 64 | 64 | 30 | -28.175424807 | -28.175424807 | 1e-10 | 2.45 s | 1.06 s | **2.31x** | 377 s | 41 s | **9.1x** | 3.40 G | 0.20 G | 17x |
+  | 64 | 128 | 30 | -28.175424860 | -28.175424860 | 2e-13 | 3.19 s | 1.46 s | **2.18x** | 573 s | 57 s | **10.0x** | 4.94 G | 0.28 G | 18x |
+  | 64 | 256 | 30 | -28.175424860 | -28.175424860 | 3e-13 | 4.40 s | 2.11 s | **2.08x** | 649 s | 77 s | **8.4x** | 6.03 G | 0.48 G | 13x |
+
+  **Spinful Hubbard**, `U/t = 4`, `t = 1`, even total parity, 20 sweeps. tenet on fZ2,
+  YASTN on `SpinfulFermions(sym='Z2')` — the *same* grading, chosen as above; a U(1)xU(1)
+  YASTN run would have smaller blocks and is not what is compared here.
+
+  | N | chi | sweeps | E tenet | E YASTN | dE | steady tenet | steady YASTN | steady x | run tenet | run YASTN | run x | RSS tenet | RSS YASTN | RSS x |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | 16 | 64 | 20 | -12.541897371 | -12.541897073 | 3e-07 | 0.61 s | 0.18 s | **3.42x** | 13 s | 4 s | **3.3x** | 1.23 G | 0.12 G | 11x |
+  | 16 | 128 | 20 | -12.541951444 | -12.541951446 | 2e-09 | 1.78 s | 0.50 s | **3.54x** | 36 s | 11 s | **3.3x** | 2.75 G | 0.49 G | 6x |
+  | 16 | 256 | 20 | -12.541952157 | -12.541952157 | 3e-11 | 6.88 s | 1.79 s | **3.84x** | 139 s | 37 s | **3.8x** | 4.07 G | 0.76 G | 5x |
+  | 32 | 64 | 20 | -25.693800734 | -25.693803905 | 3e-06 | 1.41 s | 0.45 s | **3.14x** | 29 s | 9 s | **3.1x** | 1.89 G | 0.19 G | 10x |
+  | 32 | 128 | 20 | -25.695279169 | -25.695279118 | 5e-08 | 4.44 s | 1.49 s | **2.98x** | 90 s | 29 s | **3.1x** | 3.48 G | 0.52 G | 7x |
+  | 32 | 256 | 20 | -25.695370428 | -25.695370431 | 2e-09 | 19.43 s | 5.50 s | **3.53x** | 391 s | 111 s | **3.5x** | 4.49 G | 0.88 G | 5x |
+
+  Every point completed inside its budget; nothing is recorded as unfinished and nothing
+  was dropped. **The energies agree**: 5e-15 – 1e-10 on Heisenberg, and on Hubbard
+  3e-6 – 3e-11 falling monotonically with `chi` at fixed `N`, which is the signature of a
+  residual *convergence* difference between two different random seeds rather than of a
+  Hamiltonian difference — the ED anchor closes that question at 1.7e-14.
+
+  **The verdict, in three parts.**
+
+  **1. Per sweep, the lattice lane is at parity within a small constant factor: tenet is
+  2.1–2.3x slower on U(1) Heisenberg and 3.0–3.8x slower on fZ2 Hubbard.** The factor is
+  **flat in `chi` over 64 → 256** on both models — a 4x `chi` is roughly 64x the arithmetic
+  per block, and the ratio does not move. That is the informative part: a gap that were
+  fixed Python dispatch cost per block would *collapse* toward 1 as the blocks grew, and it
+  does not. The gap scales with the arithmetic, so it lives in the contraction path rather
+  than in per-call overhead. M57's per-phase instrument, re-run on a U(1) chain at
+  `N ∈ {32, 64}` and `chi ∈ {64, 256}` (`benchmarks/bench_sweep_phases.py --model lattice`;
+  that fixture carries an extra `J2` term, so `D_w = 8` against the head-to-head's
+  `D_w = 5`, and it is cited for *where the time is*, not for the wall itself), says where:
+
+  | N | chi | `heff2_apply` | `env_update` | `heff2_prepare` | `lanczos_own` | `svd` | assemble + writeback + spectrum | residual |
+  |---|---|---|---|---|---|---|---|---|
+  | 32 | 64 | 51.1 % | 20.3 % | 14.7 % | 5.5 % | 3.6 % | 4.1 % | 0.6 % |
+  | 32 | 256 | 50.2 % | 20.2 % | 12.6 % | 5.5 % | 7.2 % | 3.7 % | 0.6 % |
+  | 64 | 64 | 55.7 % | 18.8 % | 12.1 % | 5.2 % | 3.5 % | 4.2 % | 0.5 % |
+  | 64 | 256 | 55.0 % | 18.9 % | 10.6 % | 5.2 % | 5.7 % | 4.1 % | 0.5 % |
+
+  (`heff2_other` is under 0.05 % on every row and is left out of the table rather than
+  rounded into a neighbour.) **83–87 % of a tenet sweep is the two-site matvec plus the two
+  environment folds**, and the driver's own bookkeeping — assemble, writeback, spectrum,
+  residual — is under 5 %. Any 2–4x therefore has to be found in `_apply2`, `_prepare2` and
+  `Env.update_` and nowhere else: the sweep around them has no 2x to give.
+
+  **2. The transient is the bigger number, and it is invisible in the per-sweep column.**
+  On the fZ2 Hubbard the run ratio equals the steady ratio (3.1–3.8x against 3.0–3.8x):
+  there is no transient. On the U(1) Heisenberg they diverge — the steady ratio is
+  2.1–2.3x but the **whole-run ratio is 4.5–10.0x**, and at `N = 64` tenet's first sweep is
+  140–147 s against YASTN's 4–5 s and does not reach steady state for roughly ten sweeps.
+  Charged properly: 30 sweeps at `N = 64`, `chi = 256` cost tenet 649 s, of which about
+  520 s is approach and 130 s is steady state, against YASTN's 77 s of which about 14 s is
+  approach. The distinguishing feature is the *sector count on the bond*: fZ2 has two
+  sectors and its bond structure is fixed from sweep one, while a U(1) bond at `N = 64`
+  carries up to 33 sectors whose degeneracies the truncating SVD redistributes every sweep
+  until the state settles — and every new bond structure is a new structural plan. This is
+  the same object #227/M58 measured from the inside, as a distinct-structure-key count,
+  seen here from the outside and on a lattice model rather than a quantum-chemistry one.
+
+  A benchmark that reported only the steady sweep would have reported parity and been
+  wrong about the thing a user waits for. **Both columns are in the tables for that
+  reason**, and the run column is the one a fixed-sweep-count production run pays.
+
+  **3. Memory is the material gap: tenet's peak RSS is 5–18x YASTN's**, and unlike the wall
+  it does **not** track the state. At `chi = 64` the Heisenberg state is a few tens of MiB,
+  yet tenet peaks at 0.68 GiB at `N = 32` and 3.40 GiB at `N = 64` while YASTN moves 0.14 →
+  0.20 GiB. RSS growing with `N` at fixed `chi`, on a sweep whose working set does not, is
+  per-bond state rather than the two-site tensor: `Env` holds two per-bond caches,
+  `_prepared` and `_cores`, each bounded by `common.CACHE_BUDGET = 1 GiB` (#202), so 2 GiB
+  of the gap is a designed and deliberate trade — bought, per M58, to stop re-preparing an
+  operator the sweep is about to ask for again. What is measured here is that the trade is
+  priced in gibibytes on a *lattice* model where the thing it buys is worth about 2x, and
+  that the budget is a constant rather than a fraction of what the run can afford.
+
+  **What is not claimed.** No optimisation was attempted in response; that is the
+  follow-up's business, with the number attached. Nothing here says the 2–4x is
+  irreducible, and nothing here says it is easy: the phase table names three functions and
+  says the rest of the sweep has no room in it, which is a starting point and not a
+  diagnosis. The comparison is at a *matched grading*, so it does not speak to what YASTN
+  would do on U(1)xU(1) Hubbard, and it does not speak to the non-Abelian lane at all,
+  where YASTN has no counterpart to compare against.
 
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
