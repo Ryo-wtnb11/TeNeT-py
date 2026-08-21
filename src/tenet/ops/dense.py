@@ -63,7 +63,25 @@ from tenet.symmetry.base import (
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["Cell", "DensePlan", "dense_plan", "from_dense", "to_dense"]
+__all__ = ["PROJECT", "Cell", "DensePlan", "dense_plan", "from_dense", "to_dense"]
+
+PROJECT: float = math.inf
+"""The ``atol`` that means "project onto the symmetric subspace, do not check".
+
+Pass it wherever an ``atol`` is accepted — [from_dense][tenet.SymmetricTensor.from_dense],
+[restrict][tenet.restrict], [to_symmetry][tenet.to_symmetry] — to skip the concrete-value
+check those functions otherwise run, which is what makes them traceable:
+
+>>> import math, tenet
+>>> tenet.PROJECT is math.inf
+True
+
+It **is** ``math.inf``, not a distinct object: infinity is the limit of a tolerance, "any
+residual acceptable", so the mode and the tolerance value coincide and every existing
+``atol=math.inf`` call site keeps working unchanged. The name exists because a call site
+reading ``atol=tenet.PROJECT`` says which of the two operations is happening, while one
+reading ``atol=math.inf`` requires the reader to know the idiom (#210).
+"""
 
 Array = Any
 
@@ -329,8 +347,9 @@ def from_dense(
     The check is a concrete-value question, so it raises JAX's own
     ``ConcretizationTypeError`` under a trace. The projection itself is pure
     slicing, ``reshape``, ``transpose`` and one matmul, hence traceable and
-    differentiable: ``atol=math.inf`` is the documented spelling for "project,
-    don't check", and it is the form that goes inside ``jit``.
+    differentiable: ``atol=tenet.PROJECT`` is the spelling for "project, don't
+    check", and it is the form that goes inside ``jit``. [PROJECT][tenet.PROJECT]
+    is exactly ``math.inf``, so ``atol=math.inf`` is the same call.
     """
     from tenet.tensor import SymmetricTensor
 
@@ -358,14 +377,14 @@ def from_dense(
         coeffs = mat @ ar.do("array", cell.adjoint, like=mat)
         for k, i in enumerate(cell.block_indices):
             blocks[i] = ar.do("reshape", coeffs[:, k], cell.degens)
-        if atol != math.inf:
+        if atol != PROJECT:
             # what the cell's CG span could not reproduce, taken as a difference
             # rather than as ‖mat‖² − ‖repro‖²: Pythagoras holds exactly in real
             # arithmetic but cancels to sqrt(eps) in floating point, which is the
             # same size as the default tolerance it would be compared against
             residuals[cell.sectors] = mat - coeffs @ ar.do("array", cell.matrix, like=mat)
 
-    if atol != math.inf:
+    if atol != PROJECT:
         _check_symmetric(dense, plan, residuals, atol)
     return SymmetricTensor(structure, tuple(blocks))
 
@@ -418,5 +437,5 @@ def _check_symmetric(
             f"from_dense: array is not symmetric — residual {residual:.6g} exceeds "
             f"atol {atol:.6g}; the worst sector tuple is {worst[1]} "
             f"(mass {math.sqrt(worst[0]):.6g}). Pass a larger atol to accept it, or "
-            "atol=math.inf to project without checking"
+            "atol=tenet.PROJECT (== math.inf) to project without checking"
         )

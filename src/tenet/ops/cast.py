@@ -67,7 +67,8 @@ def to_symmetry(
         and have one-dimensional irreps (i.e. be abelian).
     atol : float or None, optional
         Forwarded to ``from_dense``'s symmetry check; ``None`` (the default)
-        uses ``from_dense``'s own relative tolerance, and ``atol=math.inf``
+        uses ``from_dense``'s own relative tolerance, and
+        [``atol=tenet.PROJECT``][tenet.PROJECT] (which is exactly ``math.inf``)
         skips the check entirely.
 
     Returns
@@ -106,7 +107,7 @@ def to_symmetry(
     ``atol`` is forwarded to ``from_dense``, whose default
     symmetry check is the free correctness oracle here — a wrong branching or a
     wrong sort produces an array that is not ``target``-symmetric and is refused.
-    ``atol=math.inf`` skips it, which is what makes ``to_symmetry`` traceable.
+    ``atol=tenet.PROJECT`` skips it, which is what makes ``to_symmetry`` traceable.
 
     Forgetting is not invertible: the result has strictly more free parameters
     than its source, so there is no inverse cast in this direction.

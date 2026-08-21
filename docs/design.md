@@ -2607,8 +2607,10 @@ projects a dense carrier-basis array back onto the symmetric subspace. `legs` is
 required — a dense array carries no categorical information. Input that is not
 symmetric to `atol` (default `sqrt(eps) * ‖dense‖`, relative) is **refused**,
 naming the residual and the offending sector tuple, never silently projected;
-`atol=math.inf` is the documented "project, don't check" spelling, and the only
-one that traces (the comparison is a concrete-value question).
+`atol=tenet.PROJECT` is the "project, don't check" spelling, and the only one that
+traces (the comparison is a concrete-value question). `tenet.PROJECT` **is**
+`math.inf` — the mode is the limit of the tolerance — so the two spellings are one
+call, and `restrict` and `to_symmetry` take it in the same position (#210).
 
 ---
 

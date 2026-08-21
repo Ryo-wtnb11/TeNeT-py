@@ -19,6 +19,8 @@ The operations group by what a caller comes for: arithmetic and reductions
 [apply_blocks][tenet.apply_blocks]).
 [save][tenet.save] / [load][tenet.load] persist one tensor, and anything that would change
 block structure raises [StructureChangingError][tenet.StructureChangingError].
+Every function that validates against an ``atol`` takes [PROJECT][tenet.PROJECT] there to
+mean "project, don't check" instead.
 
 Submodules with their own pages: ``tenet.linalg`` (decompositions), ``tenet.network``
 (DMRG and CTMRG), ``tenet.symmetry`` (providers and sector labels), and the opt-in JAX
@@ -36,6 +38,7 @@ from tenet.map_view import (
     to_matrices,
 )
 from tenet.ops import (
+    PROJECT,
     add,
     adjoint,
     allclose,
@@ -98,6 +101,7 @@ from tenet import (
 __all__ = [
     "IN",
     "OUT",
+    "PROJECT",
     "FusionBlockKey",
     "FusionTree",
     "GradedSpace",
