@@ -4677,6 +4677,56 @@ The split:
   (`heisenberg.py`, `su2_heisenberg.py`, `bench_dmrg.py`) lose 42 lines and gain 27.
   `examples/toy_codes/` is untouched on purpose — writing the operators out is part of
   what a toy code teaches, which is the same lane rule #183 drew.
+- **M58** — shipped: `Env._compiled` leaves the byte budget, and the compile count is the
+  distinct-structure-key count at every budget (#227, the defect M57 measured and filed).
+
+  **The decision, of the three #227 offered: `_compiled` does not belong under the byte
+  budget.** Its entry was `(structure key, _Prepared, callable)` and it is now
+  `(structure key, callable)` — the `_Prepared` was never read from it, only weighed, and
+  it is the same object `Env._prepared` holds for that bond. `common.payload` walks each
+  cache independently, so those arrays were charged twice, and an eviction on a doubled
+  weight threw away the one thing in the entry that is expensive to rebuild. What is left
+  weighs nothing: `payload(dict(env._compiled)) == 0` on any run, asserted. So the cache is
+  a plain `dict`, bounded by the bond count and by nothing else.
+
+  **The two rejected options, and why.** Teaching `payload` to deduplicate by identity
+  across caches is the general fix and it is the wrong one here: it makes a cache's weight
+  depend on what the *other* caches hold, and each `Recent` being independent is M38's
+  whole appeal — the policy is one number in one place precisely because no cache has to
+  ask another one anything. A per-`Env` budget shared by an accumulator is the same
+  coupling with a nicer name, and it would also change what M38 measured for the two
+  caches that genuinely hold gibibytes, which is a re-measurement and not a defect fix.
+  Neither is needed once the entry stops holding a borrowed reference: the double count
+  was not incidental, it was systematic and structural, and removing the reference removes
+  it at the source. `payload`'s conservative over-estimate for *genuinely* different
+  objects is untouched and still correct.
+
+  **The memory the budget bounds is unchanged, and the number is zero.** M38's
+  charged-once table at K=16 (N2 CAS 6-31G, 19.19 GiB resident, 7.34 GiB at a 4 GiB budget)
+  charges each array buffer to the first cache that reaches it, and `_compiled` was never
+  in that column: everything it held, `_prepared` held first. Taking it out of the budget
+  therefore removes nothing from the resident total — it removes an eviction pressure that
+  bought nothing. The four caches that hold tensors (`EdgeTable._table`,
+  `EdgeTable._embeds`, `Env._cores`, `Env._prepared`) are `Recent()` exactly as before.
+
+  **The counting result.** M57's table read 143 compiles against 115 distinct keys on C2
+  CAS cc-pVDZ at K=26 — 28 recompiles, at 181–378 ms of `jax.jit` tracing apiece (M54), so
+  roughly 10 s of wasted tracing per two sweeps. The 28 were bonds whose `_compiled` entry
+  the budget evicted, and the floor is now reached on every model. The regression test does
+  not need C2: a `CACHE_BUDGET` of zero reproduces the eviction on a six-site chain, and
+  `test_a_squeezed_budget_no_longer_recompiles_a_bond_it_evicted` asserts
+  `n_compile == n_distinct_keys` at a budget of 0 and at 1 TiB alike. Before the change it
+  failed at both — at zero on the count, at 1 TiB on the payload.
+
+  **One existing test changed, and it is the one #227 named.**
+  `test_the_sweep_caches_never_grow_past_the_budget` asserted `set(lengths) == {2}` over
+  *five* caches, i.e. that all five evict to the two-entry floor. It now asserts that over
+  the four byte-budgeted caches, and asserts separately that `_compiled` is not a `Recent`,
+  holds one slot per bond at both ends of the budget, and weighs zero. That is strictly
+  more than it pinned before. `test_the_compiled_cache_keeps_one_entry_per_bond_across_two_chis`
+  changed one literal, `len(entry) == 3` to `== 2`, which is the entry shape and nothing
+  else. `_prepare2`'s identity discipline — the guarantee a stale environment can never be
+  served — is untouched, and so is the test M57 added for it.
 
 Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
 left that list with M61 Stage D above.

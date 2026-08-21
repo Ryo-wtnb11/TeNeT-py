@@ -513,16 +513,21 @@ class Env:
         # the application level (``examples/bench_dmrg.py``); this layer names no
         # accelerator and ``None`` runs the plain Python function.
         self.compile = compile
-        # Three per-bond caches, all held to one byte budget by ``common.CACHE_BUDGET``
-        # (#202). The merged cores are environment-free and so are never *invalidated* --
-        # but a sweep visits every bond, so an unbounded cache of them holds the whole
-        # prepared operator at once, which is the memory the deferred instantiation
-        # boundary exists not to spend. Recency, not correctness, is what decides an
-        # eviction here; the environments in ``F`` keep their own invalidation discipline
-        # and are untouched by this.
+        # Two per-bond caches hold tensors, and both are held to one byte budget by
+        # ``common.CACHE_BUDGET`` (#202). The merged cores are environment-free and so are
+        # never *invalidated* -- but a sweep visits every bond, so an unbounded cache of
+        # them holds the whole prepared operator at once, which is the memory the deferred
+        # instantiation boundary exists not to spend. Recency, not correctness, is what
+        # decides an eviction here; the environments in ``F`` keep their own invalidation
+        # discipline and are untouched by this.
         self._prepared: dict[int, tuple] = Recent()  # bond -> (GL, GR, _Prepared, fields)
         self._cores: dict[int, _Cores] = Recent()  # bond -> environment-free merged blocks
-        self._compiled: dict[int, tuple] = Recent()  # bond -> (leg key, _Prepared, callable)
+        # The compiled matvecs are a plain dict, bounded by the bond count and by nothing
+        # else (#227). An entry is a tuple of legs and a callable: no backend array is
+        # reachable from it, so a byte budget can only ever evict it on a weight it does
+        # not carry -- which is what it did, because the entry used to hold the
+        # ``_Prepared`` that ``_prepared`` holds anyway and was charged for it twice.
+        self._compiled: dict[int, tuple] = {}  # bond -> (leg key, callable)
         self._eye_p: SymmetricTensor | None = None  # the physical identity, for field padding
         n = len(psi)
         kl, kr = psi[0].legs[0], psi[n - 1].legs[2]
@@ -732,21 +737,17 @@ class Env:
             # live fields of ``p`` are decided by the two sites' edge blocks, which never
             # move, and every one of their legs is fixed by ``aa``'s two bond legs plus
             # the operator's own. So the callable outlives a bond revisit and only a moved
-            # bond space retraces it. ``p`` itself stays in the entry because its *values*
-            # change every visit and because it is what weighs the entry for the byte
-            # budget (#202); it is deliberately not part of the key (#225).
-            # One slot per bond, and measured to be enough: over two sweeps of the three
-            # models #224 counted, no bond is ever visited at two bond widths in
-            # alternation, so a second slot compiles nothing extra. What does still
-            # recompile is a bond whose entry the byte budget evicted -- 143 compiles
-            # against 115 distinct keys on C2 at K=26, where the entry is weighed by the
-            # ``_Prepared`` it carries.
+            # bond space retraces it (#225). It is one slot per bond, and measured to be
+            # enough: over two sweeps of the three models #224 counted, no bond is ever
+            # visited at two bond widths in alternation, so a second slot compiles nothing
+            # extra. The prepared operator is *not* in the entry -- ``_prepared`` holds it
+            # and this cache never reads it (#227).
             fn = (
-                hit[2]
+                hit[1]
                 if hit is not None and hit[0] == key
                 else (_apply2 if self.compile is None else self.compile(_apply2))
             )
-            self._compiled[n] = (key, p, fn)
+            self._compiled[n] = (key, fn)
             return fn(p, aa)
         return _heff2_full(self.h, self.F[n - 1, n], self.F[n + 2, n + 1], n, aa)
 

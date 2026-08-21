@@ -263,13 +263,12 @@ def test_the_deferred_and_numeric_heff2_paths_agree(model, chi):
 
 
 def _sweep_caches(h, env):
-    """Every per-bond cache the sweep fills, by the name its owner gives it."""
+    """Every per-bond cache the sweep fills that holds tensors, by its owner's name."""
     return {
         "EdgeTable._table": h.edges._table,
         "EdgeTable._embeds": h.edges._embeds,
         "Env._cores": env._cores,
         "Env._prepared": env._prepared,
-        "Env._compiled": env._compiled,
     }
 
 
@@ -294,21 +293,33 @@ def test_the_sweep_caches_never_grow_past_the_budget(monkeypatch):
     zero every cache falls to the two-entry floor a two-site bond needs, and the same
     sweep with the budget effectively infinite holds one entry per bond, which is what
     makes the first half a real bound rather than a statement about a small model.
+
+    **``Env._compiled`` left the budget in #227 and is asserted about separately below.**
+    Four caches hold tensors and are bounded by bytes; the fifth holds a tuple of legs and
+    a callable, weighs nothing, and is bounded by the bond count. Weighing it was not
+    conservative but systematically wrong: its entry used to carry the very ``_Prepared``
+    ``Env._prepared`` holds, so those bytes were charged twice and evicted a callable
+    whose whole purpose is to outlive the visit.
     """
     n, held = 12, {}
     for tag, budget in (("evicting", 0), ("unbounded", 1 << 40)):
         monkeypatch.setattr(common, "CACHE_BUDGET", budget)
-        caches = _sweep_caches(*_swept(n, 8))
+        h, env = _swept(n, 8)
+        caches = _sweep_caches(h, env)
         assert set(caches) == {  # a cache added later must make this list or explain itself
             "EdgeTable._table",
             "EdgeTable._embeds",
             "Env._cores",
             "Env._prepared",
-            "Env._compiled",
         }
         held[tag] = {name: len(cache) for name, cache in caches.items()}
         for name, cache in caches.items():
             assert isinstance(cache, common.Recent), name
+        # The one cache outside the budget: a plain dict, one slot per bond at both ends
+        # of the budget, and no backend array reachable from any entry.
+        assert not isinstance(env._compiled, common.Recent)
+        assert len(env._compiled) == n - 1
+        assert common.payload(dict(env._compiled)) == 0
     assert set(held["evicting"].values()) == {2}
     assert min(held["unbounded"].values()) > 2
 
