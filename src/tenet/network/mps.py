@@ -1129,20 +1129,31 @@ def _w_entry(value: Any, key: Any, n: int) -> tuple[Any, SymmetricTensor | None]
     ``MPOTensor``, ``Missing`` or ``Number`` (``mpohamiltonian.jl``'s matrix constructor)
     -- with ``None`` for ``Missing`` and the pair form added because a ``W`` matrix is
     usually written as a coefficient times a named operator.
+
+    The forms are told apart by what they *have*, not by ``isinstance``:
+    ``tests/network/test_hygiene.py`` allows this package one ``isinstance``, on ``int``,
+    so that no module can dispatch on a provider class. A tensor is the thing with
+    ``legs``, a number is the thing ``complex()`` accepts, and a pair is the thing that
+    unpacks into two.
     """
     if value is None:
         return 1.0, None
-    if isinstance(value, SymmetricTensor):
+    if getattr(value, "legs", None) is not None:
         return 1.0, value
-    if isinstance(value, tuple):
-        if len(value) != 2 or not isinstance(value[1], SymmetricTensor):
+    if type(value) is tuple:
+        if len(value) != 2 or getattr(value[1], "legs", None) is None:
             raise ValueError(
                 f"from_entries: entry {key} of site {n} is a tuple, so it is the pair "
                 f"(coefficient, operator) with the operator from local_op; got {value!r}"
             )
         return value
-    if isinstance(value, (int, float, complex, np.number)):
-        return value, None
+    if type(value) is not str:
+        try:
+            complex(value)
+        except (TypeError, ValueError):
+            pass
+        else:
+            return value, None
     raise ValueError(
         f"from_entries: entry {key} of site {n} is None (the identity), a number (that "
         f"multiple of the identity), a rank-3 operator from local_op, or the pair "
@@ -2902,12 +2913,13 @@ class MPO:
         for n, row in enumerate(rows):
             out = {}
             for key, value in row.items():
-                if not (isinstance(key, tuple) and len(key) == 2):
+                try:
+                    i, j = key
+                except (TypeError, ValueError):
                     raise ValueError(
                         f"from_entries: site {n} has the key {key!r}; a W entry is keyed by "
                         "the pair (row, column) of bond indices"
-                    )
-                i, j = key
+                    ) from None
                 if not (isinstance(i, int) and isinstance(j, int)):
                     raise ValueError(
                         f"from_entries: entry {key} of site {n} is not a pair of ints; a bond "
