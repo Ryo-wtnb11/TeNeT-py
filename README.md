@@ -75,7 +75,7 @@ traced — so autodiff and `jit` compose straight through:
 ```python
 import jax
 
-import tenet.pytree  # noqa: F401  # registration is the import's side effect
+tenet.enable_jax()  # registers SymmetricTensor as a pytree; idempotent
 
 g = jax.jit(jax.grad(lambda t: tenet.norm(t) ** 2))(a)
 print(g.legs == a.legs)

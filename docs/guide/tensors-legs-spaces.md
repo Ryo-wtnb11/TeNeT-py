@@ -205,7 +205,7 @@ of fusion channels, each channel's
 [block_shape][tenet.TensorStructure.block_shape], the out/in axis split. Two
 tensors with equal structures are element-wise compatible; the structure is
 hashable and is exactly what stays static under `jax.jit` while the blocks are
-traced (the pytree split, `tenet.pytree`):
+traced (the pytree split, turned on by `tenet.enable_jax()`):
 
 ```python
 >>> t.structure.num_blocks == len(t.blocks)

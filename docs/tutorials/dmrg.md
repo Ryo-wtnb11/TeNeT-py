@@ -219,7 +219,9 @@ names no accelerator:
 
 ```python
 import jax                       # pip install "tenet-py[jax]"
-import tenet.pytree              # registers SymmetricTensor as a JAX pytree
+import tenet
+
+tenet.enable_jax()               # registers SymmetricTensor as a JAX pytree
 
 dmrg_(psi, h, chi=64)                    # the plain run, NumPy, no extra
 dmrg_(psi, h, chi=64, compile=jax.jit)   # the same run, matvec compiled

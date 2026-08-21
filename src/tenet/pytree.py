@@ -1,5 +1,8 @@
 """Opt-in JAX PyTree registration. ``import tenet.pytree``; core never imports this.
 
+[tenet.enable_jax][] is the one-call spelling of that import, and is what the docs
+teach; this module stays importable directly and its effect is unchanged.
+
 The contract: the leaves of a [SymmetricTensor][tenet.SymmetricTensor] are its ``blocks``, in
 ``structure.block_order``; the aux data (the treedef) is its ``structure``, which is
 frozen, hashable and array-free (invariant 8) and therefore a sound JIT cache key.

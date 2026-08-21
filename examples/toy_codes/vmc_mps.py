@@ -8,7 +8,7 @@ What this demonstrates, entirely with library code that already exists (no new
 ``src/tenet`` module, no ``optax``, no ``quimb``):
 
 * a symmetric open-boundary MPS whose parameters are :class:`~tenet.SymmetricTensor`
-  blocks, i.e. a JAX pytree the moment ``tenet.pytree`` is imported;
+  blocks, i.e. a JAX pytree the moment ``tenet.enable_jax()`` has been called;
 * an objective -- the Rayleigh quotient ``<psi|h|psi> / <psi|psi>`` -- built from a
   left-to-right chain of *pairwise* ``tenet.einsum`` calls (three or more operands
   need a contraction path, which is a separate concern);
@@ -193,7 +193,7 @@ def main(n_sites: int = 4, steps: int = 20, seed: int = 5, provider: str = "u1",
     both providers. On a converged plateau consecutive energies differ by less than
     float64 resolution and "strictly decreasing" stops meaning anything.
     """
-    import tenet.pytree  # noqa: F401  # registration is the import's side effect
+    tenet.enable_jax()  # registers SymmetricTensor as a JAX pytree; idempotent
 
     mps, h = build_mps(n_sites, provider=provider, seed=seed), build_h(provider)
     trace = []

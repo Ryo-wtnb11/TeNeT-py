@@ -684,10 +684,10 @@ def main(chi_ising: int = 16, chi_ipeps: dict | None = None, k: int = 4, steps: 
     """Print both halves: Ising against Onsager with its gradient, then the iPEPS trace."""
     import jax
 
-    import tenet.ad
-    import tenet.pytree  # noqa: F401  # registration is the import's side effect
-
-    tenet.ad.install()
+    # the pytree registration plus tenet.ad's broadened SVD/eigh VJPs, which the
+    # degenerate CTM spectra below need; `ad=True` is opted into by name because
+    # that half is process-global (tenet.ad's module docstring)
+    tenet.enable_jax(ad=True)
 
     for beta in (0.3, 0.4, 0.5):
         env = converge(*single_layer_ctm(ising_bulk(beta)), chi=chi_ising)

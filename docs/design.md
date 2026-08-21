@@ -1342,8 +1342,12 @@ For users driving raw `jax.jit` / `jax.grad` / `jax.vmap` without quimb, a
 small opt-in module registers the tensor as a PyTree:
 
 ```python
-import tenet.pytree  # requires jax; import-guarded, never imported by core
+import tenet                 # requires jax; import-guarded, never imported by core
+tenet.enable_jax()
 ```
+
+(`import tenet.pytree` is what that call runs, and remains a working spelling; see
+M46 below for why the `tenet.ad` half is a keyword rather than part of the default.)
 
 after which
 
@@ -4927,6 +4931,77 @@ The split:
   agrees with `Env.measure()` to 1e-10 on U(1), SU(2) and fZ2, and the variance of a
   converged N=8 Heisenberg state falls to below 1e-8 as `chi` goes 2 -> 32. The variance is
   additionally checked against a dense `<H^2> - <H>^2` oracle under SU(2) and fZ2.
+- **M45** — shipped: the "project, don't check" mode of `from_dense`, `restrict` and
+  `to_symmetry` has a name, `tenet.PROJECT` (#210).
+
+  **The choice, and why it was the third option.** #210 offered three: split
+  `from_dense` into a second entry point `project_dense`; split all three, adding
+  `project_restrict` and `project_to_symmetry`; or name the sentinel. The counter-argument
+  in the issue is real — `atol=math.inf` was documented in all three docstrings *and* in
+  the two error messages, so it was never an undocumented magic value, and unlike the `-1`
+  bond sentinel `svd_truncated` refuses, `inf` is not an arbitrary code: it is the limit of
+  the parameter it is passed as, "any residual acceptable". The mode and the tolerance
+  value genuinely coincide.
+
+  That is exactly what makes the third option the right one. A split would have created a
+  second function whose body is `from_dense(..., atol=math.inf)`, i.e. two names for one
+  code path, and doing it consistently means three of them — three names, three docstrings
+  and three error-message families for one concept. Naming the value costs one name, one
+  line of code and no branch, applies to all three functions at once (so the consistency
+  criterion is met without any inconsistency to state), and leaves every existing call site
+  and test working *identically* rather than merely compatibly: `tenet.PROJECT is math.inf`
+  is an assertion in the suite, not a promise in prose.
+
+  **What it does not fix, honestly.** `atol=tenet.PROJECT` still reads as passing a
+  tolerance, because it is one. What changes is that the reader of a call site no longer
+  has to know the idiom to see which of the two operations — validating construction, or
+  projection — is happening. If a caller ever needs projection to differ from validation in
+  more than the check (a different residual convention, say), that is the point at which a
+  separate entry point earns its name; it does not today.
+
+  **Surface.** One addition, `tenet.PROJECT: float`. No signature changed anywhere:
+  `atol` keeps its `float | None` type and its `None` default in `from_dense`, `restrict`
+  and `to_symmetry`. The two error messages now name `atol=tenet.PROJECT (== math.inf)`,
+  and `tests/ops/test_embed.py:649` — which asserts on that message — moved with them.
+
+- **M46** — shipped: `tenet.enable_jax()`, one public entry for the JAX-facing features
+  (#211).
+
+  **One function, and the invasive half is a keyword.** The three statements it replaces
+  were `import tenet.pytree`, `import tenet.ad`, `tenet.ad.install()`. They are not one
+  feature: the pytree registration is local — it registers *our* type with JAX and changes
+  nothing about anyone else's — while `install()` writes
+  `autoray.register_function("jax", "linalg.svd", ...)`, which is process-global and
+  reaches quimb and every other autoray user in the process. `tenet.ad`'s module docstring
+  records the rule that follows: mutating another library's dispatch table is the user's
+  act, not an import's.
+
+  `enable_jax()` complies with that rule — it is an explicit call, which is the user's act
+  the rule demands — but complying is not enough on its own, because a *default* is not an
+  act. The two documented use cases decide the signature: the pytree alone is the common
+  case (`README`, the VMC tutorial), and the broadened VJPs matter only for degenerate
+  spectra (the CTMRG example). So `ad` is a keyword defaulting to `False`: the common call
+  does the benign half, and the process-global half is opted into by name,
+  `tenet.enable_jax(ad=True)`. A single call doing both by default would have made the
+  invasive half a consequence of asking for the benign one, which is the thing the rule
+  exists to prevent; two separate functions would have been a second name for a one-line
+  body.
+
+  **Idempotent, and loud without JAX.** Re-importing `tenet.pytree` is a `sys.modules`
+  hit and `install()` documents itself idempotent, so repeat calls change nothing — pinned
+  by a test that compares the observable registry state across a second and a third call.
+  Without JAX the function raises its own `ImportError` naming `tenet-py[jax]` before it
+  touches `tenet.pytree`, so a JAX-less user gets a sentence rather than a traceback out
+  of a submodule; the test blocks `jax` with a meta-path finder in a subprocess and asserts
+  the raise came from `tenet/__init__.py`.
+
+  **Nothing is deprecated.** `import tenet.pytree` and `tenet.ad.install()` are what
+  `enable_jax` runs — one implementation of each — and `install()`'s signature and
+  docstring are byte-identical. `tenet.ad`'s and `tenet.pytree`'s *module* docstrings gained
+  a pointer at `enable_jax`; the docs (README, the VMC and DMRG tutorials, the guide, and
+  the CTMRG and VMC examples) now teach the one-call spelling and no longer the
+  three-statement one. JAX stays an optional extra: `pyproject.toml` is untouched and core
+  still imports nothing from it.
 
 Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
 left that list with M61 Stage D above.

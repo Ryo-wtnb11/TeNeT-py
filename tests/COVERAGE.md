@@ -53,6 +53,13 @@ in CI**; every empty cell is a decision, not a constraint.
 | 13 | map view | `{su2, u1, trivial}` + jax | `tests/ops/test_map.py:143-166`, `:347-364` |
 | 14 | `map_diagonal` / `zip_blocks` (#232) | `{u1, fz2, fz2 Hubbard d=4, su2}` for the diagonal; `{trivial, u1, su2, fz2, product}` for `zip_blocks` (+ torch row below) | `tests/ops/test_map_diagonal.py:102-121` (the formed-dense oracle on all four), `:138-166` (the constructed SU(2) two-inner-line case); `tests/ops/test_blocks.py:386-447` |
 | 15 | `tenet.models` sites (#198) | `{u1, su2, fz2, trivial}` -- every grading the layer ships | `tests/models/test_sites.py`: the algebra oracles (spin commutators, fermion anticommutators, the hard-core relations) read off the **built** tensors, the SU(2) answer and its two refusals, and the end-to-end `MPO.from_arrays` / `MPO.from_terms` call shapes against dense Jordan-Wigner oracles |
+| 15 | `enable_jax` (#211) | provider-independent, JAX only | `tests/test_enable_jax.py` — the pytree half, the `ad=True` half, idempotence and the JAX-absent refusal, each in a fresh subprocess (0.85 s for the module) |
+
+`tenet.PROJECT` (#210) adds no row: it is the *name* of the `atol=math.inf` mode of rows
+1, 9 and 10 and is exactly that value, so the cells it runs in are theirs. It is pinned by
+the identity assertion plus a both-spellings comparison in `tests/ops/test_dense.py` and
+`tests/ops/test_to_symmetry.py`, and by the refusal-message assertions in
+`tests/ops/test_dense.py` and `tests/ops/test_embed.py:649`.
 
 ## The third axis: backend × mode
 
@@ -133,6 +140,12 @@ contract** (with the refusal test), **(d) blocked** (with what blocks it).
   the matrix-valued `FMatrixData`/`RMatrixData`/`BMatrixData` are the
   capabilities that do — which is why a5
   was (a) and these are (b).
+- **b6. `enable_jax` × every provider, and × torch.** It takes no tensor: it
+  registers `SymmetricTensor` with JAX and, on request, `tenet.ad`'s VJPs with
+  autoray. No provider, no block and no backend kernel enters it, so a per-provider
+  cell would execute the same two registrations. It is in
+  `tests/test_coverage.py`'s `NOT_ON_TORCH` for the same reason — eager torch needs
+  no registration of its own (`docs/design.md`, "What \"PyTorch backend\" means").
 - **b5. `embed`/`restrict`/`direct_sum` × SU(3).** Those act on degeneracy
   multiplicities inside a coupled sector; a fusion-vertex multiplicity is a row
   count inside the same block, orthogonal to the containment check.
