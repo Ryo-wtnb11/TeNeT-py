@@ -4459,10 +4459,27 @@ The split:
   | Hubbard N=4 `U/t=4` | -2.6249422715108660 | -2.6249422715108650 | 1.0e-15 |
   | Hubbard N=6 `U/t=4` | -4.4220711477587550 | -4.4220711477587580 | 3.0e-15 |
 
-  Every delta is at or below the 9.4e-14 the unmodified baseline differs from *itself* by
-  (M61 Stage C's threaded-LAPACK measurement), so no oracle's pinned number moved and no
-  test was edited. The excited-state suite is the one that had to change behaviour and did
-  not: it passes through plain `inner`, which is the point.
+  Every converged energy above is at or below the 9.4e-14 the unmodified baseline differs
+  from *itself* by (M61 Stage C's threaded-LAPACK measurement), and the excited-state
+  suite — the one that had to change behaviour — passes through plain `inner`, which is
+  the point.
+
+  **What did move is the sweep count on fZ2 Hubbard, and it is a convergence rate rather
+  than an answer.** `H_eff` is Hermitian in the fixed pairing and was *not* Hermitian in
+  the twisted one — measured directly at a bulk bond of the N=4 Hubbard chain,
+  `<b, H a>` against `<H b, a>`: `-18.06754764272969` against `-18.06754764272969` fixed,
+  `3.9213134766` against `3.6686612016` twisted. The base was therefore running Lanczos on
+  an operator non-symmetric in its own pairing, and its three-term recurrence picked a
+  different (here, luckier) direction. With the correct pairing the N=4 chain still reaches
+  ED exactly, in more sweeps: `U/t=2` needs 72 sweeps against 13, `U/t=4` under a
+  perturbative mixer needs 20 against 12, and the errors at convergence are -1.3e-15 and
+  -1.6e-14. Two tests whose sweep budgets were set to the old rate therefore stop short:
+  `tests/network/test_hubbard.py::test_hubbard_dmrg_matches_ed_across_the_u_sweep`
+  (`max_sweeps=40`, off by 1.3e-9 at `U/t=2`) and
+  `tests/network/test_density_matrix.py::test_the_hubbard_ground_state_is_unchanged_with_the_mixer_on`
+  (`max_sweeps=6`, off by 2.5e-4 at `U/t=4`). Neither number was pinned — both oracles are
+  exact diagonalization computed in the test — and neither test is edited here; the rate
+  is the finding.
 
   **`_dot` is deleted rather than kept as a synonym.** M61 Stage D's workaround spelled
   the norm-inducing pairing directly through `compose`/`full_trace` so the projector
