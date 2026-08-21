@@ -29,7 +29,6 @@ from tenet.ops.dense import to_dense
 from tenet.symmetry import (
     SU2,
     U1,
-    CapabilityError,
     FZ2Sector,
     ProductProvider,
     ProductSector,
@@ -441,12 +440,11 @@ def test_full_trace_and_inner(name):
     assert isinstance(ft, torch.Tensor)
     assert float(ft) == pytest.approx(float(tenet.full_trace(t.to_backend("numpy"))), rel=1e-14)
     a, b = tt(legs, seed=44), tt(legs, seed=45)
-    if name == "product":
-        # `inner` bends every leg past the first through `adjoint`, and a product
-        # provider forwards no BendingCoefficients (#40) — the refusal is the cell.
-        with pytest.raises(CapabilityError):
-            tenet.inner(a, b)
-        return
+    # Until M62 the product row asserted a CapabilityError: the old `inner` bent
+    # every leg past the first through `adjoint`, and a product provider forwards
+    # no BendingCoefficients (#40). The coefficient-space `inner` bends nothing,
+    # so the refusal fell away — a strict capability widening, and the row now
+    # takes the same path as every other provider.
     got = tenet.inner(a, b)
     assert isinstance(got, torch.Tensor)
     want = tenet.inner(a.to_backend("numpy"), b.to_backend("numpy"))
