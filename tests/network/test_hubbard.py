@@ -145,7 +145,11 @@ def test_hubbard_dmrg_matches_ed_across_the_u_sweep():
         ed = _ed_even(4, u)
         for terms in (_rank3_terms(4, u), _ksite_terms(4, u)):
             h = MPO.from_terms(4, terms)
-            out = dmrg_(_state(4, 8, 8, seed=1), h, chi=16, cutoff=1e-14)
+            # max_sweeps raised from the default's implicit sufficiency: the pre-M62
+            # twisted pairing made H_eff non-Hermitian in lanczos' own metric, and its
+            # recurrence happened to pick a fast direction here; the correct pairing
+            # needs the larger budget (M62 measured 72 sweeps to 1e-15 at U/t=2).
+            out = dmrg_(_state(4, 8, 8, seed=1), h, chi=16, cutoff=1e-14, max_sweeps=100)
             assert out.energy == pytest.approx(ed, abs=1e-10), f"U={u}"
 
 

@@ -54,7 +54,6 @@ No ``to_dense``, no NumPy and no provider branching here (invariants 8/9).
 """
 
 import operator
-import string
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -65,7 +64,8 @@ import autoray as ar
 
 from tenet.leg import IN, OUT, Leg
 from tenet.map_view import check_square, to_matrices
-from tenet.ops.map import adjoint, compose, identity
+from tenet.ops.basic import _check_same_structure
+from tenet.ops.map import compose, identity
 from tenet.ops.permutation import transpose
 from tenet.ops.repartition import repartition
 from tenet.structure import TensorStructure
@@ -515,7 +515,7 @@ def full_trace(t: "SymmetricTensor") -> Any:
 
 
 def inner(a: "SymmetricTensor", b: "SymmetricTensor") -> Any:
-    """``<a|b>``: contract every axis but the first, then [full_trace][tenet.full_trace] the rest.
+    """``<a|b> = Σ_τ qdim(c_τ) · <A_τ, B_τ>`` — [norm][tenet.norm]'s sesquilinear sibling.
 
     Parameters
     ----------
@@ -533,12 +533,14 @@ def inner(a: "SymmetricTensor", b: "SymmetricTensor") -> Any:
     Raises
     ------
     ValueError
-        From the underlying [einsum][tenet.einsum]/[full_trace][tenet.full_trace]
-        chain when the structures do not match, or at rank 27 and above.
+        If the structures do not match — different providers, different ``ndim``,
+        or a differing leg; the message names the first differing axis and both
+        legs, exactly as [zip_blocks][tenet.zip_blocks] and [add][tenet.add] do,
+        since the aligned-blocks precondition is the same one.
     CapabilityError
-        If the provider does not implement
-        [QuantumDimensionData][tenet.symmetry.QuantumDimensionData] (through
-        [full_trace][tenet.full_trace]).
+        If ``a``'s provider does not implement
+        [QuantumDimensionData][tenet.symmetry.QuantumDimensionData] (the ``qdim``
+        weight).
 
     Examples
     --------
@@ -552,18 +554,39 @@ def inner(a: "SymmetricTensor", b: "SymmetricTensor") -> Any:
 
     Notes
     -----
-    Sesquilinear in ``a``, and [norm][tenet.norm]'s sibling — ``inner(a, a)`` is
-    ``norm(a)**2``. Works at any rank, which is what lets
-    [lanczos][tenet.network.lanczos] be a plain vector-space algorithm: the adjoint flips
-    every leg, so axis 0 of ``adjoint(a)`` is IN and axis 0 of ``b`` is OUT, and the
-    leftover rank-2 map is exactly what [full_trace][tenet.full_trace] closes.
+    **Coefficient space, per fusion-tree block, ``qdim``-weighted — no diagram.**
+    This is literally [norm][tenet.norm]'s body with the square replaced by a
+    conjugated pair, so ``inner(a, a) == norm(a) ** 2`` holds *identically* rather
+    than numerically, and the dense ``Σ conj(a) · b`` over ``to_dense`` is its
+    oracle. It is TensorKit's spelling as well
+    (``src/tensors/vectorinterface.jl``: ``Σ_c dim(c) · inner(block(t1, c), block(t2, c))``
+    in both fusion-style branches), i.e. the pairing MPSKit's Krylov machinery runs on.
 
-    The ``string.ascii_lowercase`` labelling caps this at rank 26, above which
-    [einsum][tenet.einsum]'s own parser raises with a clear message. A rank-27 tensor has other
-    problems.
+    Drawing the pairing instead is what M62 removed. The old body was
+    ``full_trace(einsum("L{rest},l{rest}->lL", adjoint(a), b))``: contracting every
+    axis but the first makes the still-open axis-0 lines *cross* the contracted ones,
+    and on a graded provider each crossing of two odd lines pays ``-1``. An invariant
+    scalar has (axis-0 sector) = (sector of the rest), so exactly the odd-sector blocks
+    entered the sum with the wrong sign and ``inner(t, t) != norm(t) ** 2`` whenever
+    axis 0 carried an odd sector (#236). No diagram, no crossing, no twist — and no
+    rank cap either: the old ``string.ascii_lowercase`` labelling stopped at rank 26,
+    this works at any rank.
+
+    Returns the backend's own scalar, so the whole function stays traceable and
+    differentiable, as [norm][tenet.norm] is.
     """
-    rest = string.ascii_lowercase[1 : a.ndim]
-    return full_trace(einsum(f"L{rest},l{rest}->lL", adjoint(a), b))
+    provider = a.provider
+    requires(provider, QuantumDimensionData)
+    _check_same_structure(a, b, "inner")
+    if not a.blocks:
+        return 0.0
+    # No float(): concretizing here makes `inner` unusable under jit/grad/vmap.
+    return sum(
+        # requires() above; raise-based check does not narrow
+        provider.qdim(key.coupled)  # ty: ignore[unresolved-attribute]
+        * ar.do("sum", ar.do("conj", x) * y)
+        for (key, x), y in zip(a.items(), b.blocks, strict=True)
+    )
 
 
 def _parse(equation: str, operands: tuple["SymmetricTensor", ...]) -> tuple[list[str], str]:

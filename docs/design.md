@@ -4402,6 +4402,102 @@ The split:
   argument is one of two that implement it — block2 ships both — while `orthogonal_to`
   names the result, which is the same under either.
 
+- **M62** — shipped: `tenet.inner` is the Frobenius pairing on every provider, and
+  `network/dmrg.py::_dot` is deleted (#236, the defect M61 Stage D found and filed).
+
+  **The pairing is not a diagram.** The old body drew it —
+  `full_trace(einsum("L{rest},l{rest}->lL", adjoint(a), b))` — contracting every axis but
+  the first and closing axis 0 with the categorical trace. Contracting the rest *first*
+  makes the still-open axis-0 lines cross the contracted ones, and on a graded provider
+  each crossing of two odd lines pays `-1`. An invariant scalar has
+  (axis-0 sector) = (sector of the rest), so exactly the odd-sector blocks entered the
+  sum with a flipped sign: `inner(t, t) != norm(t)**2` whenever axis 0 carried an odd
+  sector, which is every two-site tensor of a fermionic sweep away from the boundary.
+
+  **The fix is `norm`'s body with the square replaced by a conjugated pair**:
+  `<a|b> = Σ_τ qdim(c_τ) · <A_τ, B_τ>`, coefficient space, per fusion-tree block, no
+  diagram and therefore no crossing to pay for. That is also TensorKit's spelling —
+  `src/tensors/vectorinterface.jl` computes `Σ_c dim(c) · inner(block(t1, c), block(t2, c))`
+  in both fusion-style branches — i.e. the pairing MPSKit's Krylov machinery runs on.
+  `inner(a, a) == norm(a)**2` now holds *identically* rather than numerically, since the
+  two functions iterate the same blocks with the same weight, and the dense
+  `Σ conj(a)·b` over `to_dense` is the acceptance oracle. Two surface consequences: the
+  structure precondition is now checked here (`_check_same_structure`, the same refusal
+  `zip_blocks` and `add` raise) rather than inherited from `einsum`, and `PivotalData` is
+  no longer required — `full_trace` is off the path, `QuantumDimensionData` alone carries
+  the weight. The rank-26 cap the `string.ascii_lowercase` labelling imposed is gone with
+  the einsum.
+
+  **The reproduction, base against fix** — the rank-4 tensor on `(W OUT, V OUT, V OUT, W IN)`
+  with `W` carrying both parities, `inner(t, t)` against the dense sum of squares:
+
+  | provider | `inner` before | `inner` after | dense `Σ conj·` |
+  |---|---|---|---|
+  | fZ2, `W` = {even 2, odd 2} | 19.070505659 | 39.603850021 | 39.603850021 |
+  | fZ2 Hubbard `d=4`, `W` = {3, 3} | 41.796480230 | 291.241165763 | 291.241165763 |
+  | U(1) | 29.337177840 | 29.337177840 | 29.337177840 |
+  | SU(2) | 66.531665748 | 66.531665748 | 66.531665748 |
+
+  The ungraded rows are the control: nothing crosses with a sign there, and the SU(2) row
+  also pins that the `qdim` weight survived the rewrite.
+
+  **What moved in the solvers: nothing beyond reproducibility noise, measured rather than
+  asserted.** The one-state solve was self-consistent in the twisted form — `lanczos`
+  built its tridiagonal from the same pairing its normalization used — so the metric
+  entered symmetrically and the Ritz values were already exact. Re-running the graded
+  oracles on the base commit and on the fix:
+
+  | run | base | fix | delta |
+  |---|---|---|---|
+  | U(1) Heisenberg N=8 ground | -3.3749325986878906 | -3.3749325986878920 | 1.3e-15 |
+  | U(1) Heisenberg N=8 first excited | -2.9822404877628850 | -2.9822404877628850 | 0.0 |
+  | fZ2 free fermions N=12 ground | -7.2962298105587484 | -7.2962298105587528 | 4.4e-15 |
+  | fZ2 free fermions N=12 first excited | -6.8140830895374433 | -6.8140830895374575 | 1.4e-14 |
+  | SU(2) Heisenberg N=8 ground | -3.3749325986877710 | -3.3749325986877743 | 3.3e-15 |
+  | SU(2) Heisenberg N=8 second singlet | -2.3338038644955366 | -2.3338038644955390 | 2.4e-15 |
+  | Hubbard N=4 `U/t=0` | -4.4721359549995790 | -4.4721359549995805 | 1.5e-15 |
+  | Hubbard N=4 `U/t=4` | -2.6249422715108660 | -2.6249422715108650 | 1.0e-15 |
+  | Hubbard N=6 `U/t=4` | -4.4220711477587550 | -4.4220711477587580 | 3.0e-15 |
+
+  Every converged energy above is at or below the 9.4e-14 the unmodified baseline differs
+  from *itself* by (M61 Stage C's threaded-LAPACK measurement), and the excited-state
+  suite — the one that had to change behaviour — passes through plain `inner`, which is
+  the point.
+
+  **What did move is the sweep count on fZ2 Hubbard, and it is a convergence rate rather
+  than an answer.** `H_eff` is Hermitian in the fixed pairing and was *not* Hermitian in
+  the twisted one — measured directly at a bulk bond of the N=4 Hubbard chain,
+  `<b, H a>` against `<H b, a>`: `-18.06754764272969` against `-18.06754764272969` fixed,
+  `3.9213134766` against `3.6686612016` twisted. The base was therefore running Lanczos on
+  an operator non-symmetric in its own pairing, and its three-term recurrence picked a
+  different (here, luckier) direction. With the correct pairing the N=4 chain still reaches
+  ED exactly, in more sweeps: `U/t=2` needs 72 sweeps against 13, `U/t=4` under a
+  perturbative mixer needs 20 against 12, and the errors at convergence are -1.3e-15 and
+  -1.6e-14. Two tests whose sweep budgets were set to the old rate therefore stop short:
+  `tests/network/test_hubbard.py::test_hubbard_dmrg_matches_ed_across_the_u_sweep`
+  (`max_sweeps=40`, off by 1.3e-9 at `U/t=2`) and
+  `tests/network/test_density_matrix.py::test_the_hubbard_ground_state_is_unchanged_with_the_mixer_on`
+  (`max_sweeps=6`, off by 2.5e-4 at `U/t=4`). Neither number was pinned — both oracles are
+  exact diagonalization computed in the test — and neither test is edited here; the rate
+  is the finding.
+
+  **`_dot` is deleted rather than kept as a synonym.** M61 Stage D's workaround spelled
+  the norm-inducing pairing directly through `compose`/`full_trace` so the projector
+  `1 - |v><v|` was built in the pairing the state is normalized in. With `inner` fixed the
+  two are one pairing, and two spellings of one pairing is exactly the split this
+  repository removes — `_orthonormal` and `_project_out` now call `tenet.inner`, as
+  `lanczos` already did. `examples/toy_codes/dmrg.py`'s hand-written `inner` is rewritten
+  the same way: it is U(1)-only, where the twist is invisible, but its docstring claimed to
+  be `tenet.inner` verbatim and a reader copying it for a fermionic model would have copied
+  the sign error.
+
+  **The other call sites, and why none of them was wrong.** `lanczos`'s `alpha` is the one
+  place the twist could reach a graded provider, and it reached it symmetrically —
+  self-consistent, as above. `Env.project2`'s docstring pairs its output with a bra-side
+  two-site tensor and its doctest is U(1). `tests/ops/test_embed.py` carries its own
+  `qdim_inner` helper deliberately: it pairs tensors on *different* structures, which
+  `inner`'s precondition forbids.
+
 Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
 left that list with M61 Stage D above.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic

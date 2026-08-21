@@ -15,7 +15,16 @@ import pytest
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-from tenet.symmetry import SU2, U1, CapabilityError, SU2Sector, TrivialSector, U1Sector
+from tenet.symmetry import (
+    SU2,
+    U1,
+    CapabilityError,
+    FZ2Sector,
+    SU2Sector,
+    TrivialSector,
+    U1Sector,
+    fZ2,
+)
 
 HALF, ONE = SU2Sector(1), SU2Sector(2)
 V = GradedSpace.new(SU2, {HALF: 4, ONE: 3})
@@ -128,6 +137,48 @@ def test_inner_with_itself_is_the_norm_squared(legs):
     identity, not a DMRG one, and ``lanczos`` is only its first caller."""
     a = SymmetricTensor.random(legs, seed=5)
     assert float(tenet.inner(a, a)) == pytest.approx(float(tenet.norm(a)) ** 2, rel=1e-12)
+
+
+#: ``(W, V)`` per provider for the #236 reproduction: the rank-4 tensor is laid out on
+#: ``(W OUT, V OUT, V OUT, W IN)``, a sweep's two-site tensor, and ``W`` carries the odd
+#: sector the old ``inner`` mis-signed.
+TWO_SITE_SPACES = {
+    "fz2": (
+        GradedSpace.new(fZ2, {FZ2Sector(0): 2, FZ2Sector(1): 2}),
+        GradedSpace.new(fZ2, {FZ2Sector(0): 1, FZ2Sector(1): 1}),
+    ),
+    # the Hubbard physical space, d=4 with both parities (tests/network/test_hubbard.py)
+    "hubbard": (
+        GradedSpace.new(fZ2, {FZ2Sector(0): 3, FZ2Sector(1): 3}),
+        GradedSpace.new(fZ2, {FZ2Sector(0): 2, FZ2Sector(1): 2}),
+    ),
+    "u1": (
+        GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 2}),
+        GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1}),
+    ),
+    # SU(2) is where the qdim weight is not 1, so it is what pins the weight
+    "su2": (GradedSpace.new(SU2, {HALF: 2, ONE: 1}), GradedSpace.new(SU2, {HALF: 1})),
+}
+
+
+@pytest.mark.parametrize("provider", list(TWO_SITE_SPACES))
+def test_inner_of_a_two_site_tensor_is_the_dense_frobenius_sum(provider):
+    """#236: the old ``inner`` closed axis 0 through ``full_trace``, which crosses the
+    open axis-0 lines over the contracted ones and flips the sign of every odd-sector
+    block. The dense sum is the oracle; ``norm ** 2`` is the promised contract."""
+    w, v = TWO_SITE_SPACES[provider]
+    t = SymmetricTensor.random((Leg(w, OUT), Leg(v, OUT), Leg(v, OUT), Leg(w, IN)), seed=3)
+    dense = t.to_dense()
+    want = float(np.sum(np.conj(dense) * dense).real)
+    assert float(tenet.inner(t, t)) == pytest.approx(want, rel=1e-12)
+    assert float(tenet.inner(t, t)) == pytest.approx(float(tenet.norm(t)) ** 2, rel=1e-14)
+
+
+def test_inner_refuses_a_structure_mismatch():
+    a = SymmetricTensor.random((Leg(V, OUT), Leg(W, IN)), seed=11)
+    b = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=11)
+    with pytest.raises(ValueError, match="inner"):
+        tenet.inner(a, b)
 
 
 def test_inner_is_sesquilinear_in_the_first_argument():

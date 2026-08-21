@@ -67,24 +67,6 @@ class Sweep(NamedTuple):
     noise_type: str = "wavefunction"
 
 
-def _dot(a: SymmetricTensor, b: SymmetricTensor) -> float:
-    """``<a|b>`` as the Hilbert-Schmidt pairing, through ``compose``/``full_trace``.
-
-    Not [tenet.inner][], and the difference is measurable rather than stylistic: on a
-    **graded** provider ``inner(t, t)`` and ``norm(t)**2`` disagree for a two-site tensor
-    whose left bond carries an odd sector -- ``inner`` leaves axis 0 open and closes it
-    with ``full_trace``, which puts a twist on that wire. A projector has to be built
-    from the pairing the *state* is normalized in, which is ``norm``'s, so this spells
-    that one directly: one map composed with another's adjoint, closed by the qdim-weighted
-    trace -- the same two primitives ``_rho`` uses, for the same reason (no operand order
-    is left to state). It agrees with ``inner`` on every ungraded provider.
-    """
-    m = tenet.repartition(a, (0, 1), (2, 3))
-    return float(
-        tenet.full_trace(tenet.compose(tenet.adjoint(m), tenet.repartition(b, (0, 1), (2, 3))))
-    )
-
-
 def _orthonormal(
     vectors: Sequence[SymmetricTensor],
 ) -> tuple[tuple[SymmetricTensor, float], ...]:
@@ -100,7 +82,7 @@ def _orthonormal(
     basis: list[tuple[SymmetricTensor, float]] = []
     for t in vectors:
         t = _project_out(t, basis)
-        gram = _dot(t, t)
+        gram = float(tenet.inner(t, t))
         if abs(gram) > 1e-24 and float(tenet.norm(t)) > 1e-12:
             basis.append((t, gram))
     return tuple(basis)
@@ -109,19 +91,15 @@ def _orthonormal(
 def _project_out(
     t: SymmetricTensor, basis: Sequence[tuple[SymmetricTensor, float]]
 ) -> SymmetricTensor:
-    """``t - sum_k b_k <b_k,t>/<b_k,b_k>`` in [tenet.inner][]'s own pairing.
+    """``t - sum_k b_k <b_k,t>/<b_k,b_k>`` in [tenet.inner][]'s pairing.
 
-    Divided by ``<b_k, b_k>`` rather than pre-normalized by
-    [tenet.norm][]: the two are the same number on an ungraded provider and are
-    **not** on a graded one, where ``inner`` carries the string the sweep's own
-    solve carries -- ``lanczos`` builds its tridiagonal from ``inner`` and
-    ``Env.heff2`` returns its image in the same pairing, so the eigenproblem is
-    self-consistent in that pairing and the projector has to be too. Mixing the two
-    (normalizing with ``norm`` and projecting with ``inner``) makes the projector
-    non-idempotent exactly on the odd-parity bonds.
+    Divided by ``<b_k, b_k>`` rather than pre-normalized by [tenet.norm][]: the two
+    are the same number -- ``inner`` is ``norm``'s sesquilinear sibling on every
+    provider since M62/#236 -- and the explicit Gram denominator is what makes the
+    projector idempotent without depending on that.
     """
     for b, gram in basis:
-        t = tenet.subtract(t, b * (_dot(b, t) / gram))
+        t = tenet.subtract(t, b * (float(tenet.inner(b, t)) / gram))
     return t
 
 
