@@ -53,7 +53,7 @@ in CI**; every empty cell is a decision, not a constraint.
 | 13 | map view | `{su2, u1, trivial}` + jax | `tests/ops/test_map.py:143-166`, `:347-364` |
 | 14 | `map_diagonal` / `zip_blocks` (#232) | `{u1, fz2, fz2 Hubbard d=4, su2}` for the diagonal; `{trivial, u1, su2, fz2, product}` for `zip_blocks` (+ torch row below) | `tests/ops/test_map_diagonal.py:102-121` (the formed-dense oracle on all four), `:138-166` (the constructed SU(2) two-inner-line case); `tests/ops/test_blocks.py:386-447` |
 | 15 | `tenet.models` sites (#198) | `{u1, su2, fz2, trivial}` -- every grading the layer ships | `tests/models/test_sites.py`: the algebra oracles (spin commutators, fermion anticommutators, the hard-core relations) read off the **built** tensors, the SU(2) answer and its two refusals, and the end-to-end `MPO.from_arrays` / `MPO.from_terms` call shapes against dense Jordan-Wigner oracles |
-| 15 | `enable_jax` (#211) | provider-independent, JAX only | `tests/test_enable_jax.py` — the pytree half, the `ad=True` half, idempotence and the JAX-absent refusal, each in a fresh subprocess (0.85 s for the module) |
+| 16 | `enable_jax` (#211) | provider-independent, JAX only | `tests/test_enable_jax.py` — the pytree half, the `ad=True` half, idempotence and the JAX-absent refusal, each in a fresh subprocess (0.85 s for the module) |
 
 `tenet.PROJECT` (#210) adds no row: it is the *name* of the `atol=math.inf` mode of rows
 1, 9 and 10 and is exactly that value, so the cells it runs in are theirs. It is pinned by
