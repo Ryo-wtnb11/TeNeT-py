@@ -5,32 +5,30 @@ Run it standalone::
     uv run python examples/su2_heisenberg.py
 
 Under SU(2), ``S^z`` alone is symmetry-forbidden -- only the invariant two-site
-``S . S`` is a term, so :func:`tenet.network.local_op` takes the ``np.kron`` array with
-``charge=None`` and ``MPO.from_terms`` splits it, deriving the graded MPO bond from the
-operator's own blocks. The seed is :meth:`MPS.random`: ``MPS.product`` refuses
-non-Abelian symmetries by construction (a single spin-up is not an SU(2) multiplet).
+``S . S`` is a term, and it is the *entire* operator set
+:func:`tenet.models.spin_half` returns for this grading. ``MPO.from_terms`` splits it,
+deriving the graded MPO bond from the operator's own blocks. The seed is
+:meth:`MPS.random`: ``MPS.product`` refuses non-Abelian symmetries by construction (a
+single spin-up is not an SU(2) multiplet).
 The point is the printed table -- same energy as the U(1) run this file computes by
 importing ``examples/heisenberg.py``, from a mid-chain bond of far fewer multiplets
 than the dense states ``chi`` counts.
 """
 
 import heisenberg
-import numpy as np
 
 from tenet import GradedSpace
-from tenet.network import MPO, MPS, dmrg_, local_op
+from tenet.models import spin_half
+from tenet.network import MPO, MPS, dmrg_
 from tenet.symmetry import SU2, SU2Sector
 
-PHYS = GradedSpace.new(SU2, {SU2Sector(1): 1})  # one spin-1/2 multiplet, dense dim 2
+SITE = spin_half(SU2)  # one spin-1/2 multiplet, dense dim 2
+PHYS = SITE.phys
 
 
 def su2_mpo(n_sites: int) -> MPO:
     """``H = sum_i S_i . S_{i+1}`` as one invariant two-site term per bond."""
-    ss = (
-        np.kron(heisenberg.SZ, heisenberg.SZ)
-        + (np.kron(heisenberg.SP, heisenberg.SP.T) + np.kron(heisenberg.SP.T, heisenberg.SP)) / 2
-    )
-    op = local_op(ss, phys=PHYS)  # charge=None: an invariant k-site term
+    op = SITE.ops["S.S"]  # the site's whole SU(2) operator set: one invariant term
     return MPO.from_terms(n_sites, [(1.0, [(op, (i, i + 1))]) for i in range(n_sites - 1)])
 
 

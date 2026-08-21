@@ -10,7 +10,10 @@ a test below:
   private helpers (``mps._as_site``, ``dmrg._schmidt_change``, ``ctmrg._spectrum_change``) are its
   own business; importing someone else's is not;
 * no **numerical** use of ``t.blocks``. Reduced blocks are the library's storage, and a
-  driver that reads them is doing arithmetic below the public API.
+  driver that reads them is doing arithmetic below the public API;
+* no import of ``tenet.models`` (M36/#198). The operator-zoo rule is a statement about
+  this package, so the optional site layer above it may be imported by callers and
+  never by the driver.
 
 **The one named exception**, spelled out because it is a line and not a loophole:
 reading ``t.provider`` and the provider's ``qdim``, ``unit``, ``fusion``, ``dual`` and
@@ -79,6 +82,30 @@ def test_no_module_imports_a_forbidden_dependency(path):
         elif isinstance(node, ast.ImportFrom) and node.module:
             roots.add(node.module.split(".")[0])
     assert not roots & FORBIDDEN, sorted(roots & FORBIDDEN)
+
+
+@pytest.mark.parametrize("path", MODULES, ids=lambda p: p.name)
+def test_no_module_imports_tenet_models(path):
+    """M36 (#198): the operator-zoo rule survives verbatim because this edge holds.
+
+    #112/#133 put the operator zoo in the caller, and ``local_op``'s docstring says the
+    matrices are physics and stay there. ``tenet.models`` ships the standard ones as a
+    *separate, optional* layer, which changes nothing about that rule only for as long
+    as the driver layer cannot see it: no site set, no operator name, no default
+    physical space may reach a decision inside this package. The dependency runs one
+    way, ``tenet.models`` -> ``tenet.network``, and this is the assertion that keeps it
+    there.
+    """
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        module = node.module if isinstance(node, ast.ImportFrom) else None
+        names = (
+            [alias.name for alias in node.names] if isinstance(node, ast.Import) else [module or ""]
+        )
+        for name in names:
+            assert name != "tenet.models" and not name.startswith("tenet.models."), (
+                f"{path.name} imports {name}"
+            )
 
 
 @pytest.mark.parametrize("path", MODULES, ids=lambda p: p.name)
