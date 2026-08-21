@@ -4802,6 +4802,72 @@ The split:
   bond `GradedSpace` is chosen (#209), `dmrg_`'s convergence test, and the segment/mutual-
   information reads (`mutinf_two_site`, `get_rho_segment`) that have no caller here.
 
+- **M48** — shipped: the public measurement API over the two-state `Env` (#213). `overlap`,
+  `measure_mpo`, `correlation_function` and `expectation_profile`.
+
+  **The engine half was M61 Stage D and is not repeated here.** `Env(psi, h, bra=phi)`
+  exists, `Env.measure()` on it *is* `<phi|H|psi>`, and `MPO.identity` makes it the plain
+  overlap. What was still missing was a name a user could find: `Env`'s first positional
+  argument is the *ket*, which is the constructor's shape and not a measurement's, and
+  `_braket` — the two-state transfer pass, whose own docstring already said the two chains
+  may carry different bond spaces — was private.
+
+  **`overlap(bra, ket)`, undivided.** YASTN's `measure_overlap`/`vdot` and TenPy's
+  `MPS.overlap` are both undivided, and so is `Env.measure`; a fidelity is
+  `overlap(phi, psi) / (phi.norm() * psi.norm())` and the caller spells the division. The
+  divided readings are the ones named `expectation_*`, which is the distinction M11c already
+  drew. `MPS.norm` is now `overlap(psi, psi) ** 0.5` — expressed *through* it rather than
+  beside it, so the one-state and two-state readings of the same pass cannot drift, and a
+  source-reading test pins that `norm` contains no `einsum` of its own.
+
+  **`measure_mpo(bra, h, ket)`**, YASTN's name and argument order, over
+  `Env(ket, h, bra=bra).measure()`. With the identity MPO it agrees with `overlap` to 1e-10
+  on two different converged states — two genuinely different contractions, one transfer
+  pass and one environment sweep, meeting.
+
+  **`correlation_function(psi, a, b, pairs=None)`**, TenPy's name because it is the term of
+  art; the house's `_2site` vocabulary stays with `expectation_2site`, whose signature and
+  adjacent-pair contract are untouched. The operators are `local_op`'s **rank-3 charged**
+  form, which is the form `MPO.from_terms` takes and the only form a fermionic `c` has.
+
+  **Fermions are correct because nothing new decides their sign.** Each pair is measured as
+  a one-term MPO through `from_terms` plus `Env.measure`: the Jordan-Wigner string across
+  the sites between `i` and `j` is the fZ2 braiding the term builder inserts and #147's
+  explicit-JW oracle pins, and the contractions are the ones M23/#160 audited for the
+  composition rule. A hand-written transfer walk carrying the charge leg would be faster and
+  would re-decide that sign outside the audited machinery, which is exactly how #147
+  happened. The test measures `<c+_up,i c_up,j>` on a converged N=4 Hubbard state against
+  `_dense_c`, which writes the parity string out site by site, at every separation including
+  `j - i >= 2` where a missing sign is a different number rather than a rounding.
+  **The cost is stated rather than hidden**: one build and one pass per pair, so the
+  all-pairs default is `O(N**2)` builds. `pairs=` is the way around it, and YASTN's cached
+  transfer walk (`_measure.py`:130, a ~75-line body) is the named upgrade.
+
+  **`expectation_profile(psi, o)` is the `O(N**2) -> O(N)` half.** `expectation_1site` ends
+  in two full-chain transfer passes, so the `<S^z_n>` profile every DMRG user writes — and
+  `examples/heisenberg.py` does write — is `O(N)` passes over an `O(N)` chain. The profile
+  canonizes a copy, walks the orthogonality centre right by a `qr` per site and reads the
+  operator off the centre, which a canonical MPS makes exact because both halves of the
+  transfer close to the identity. Both references do exactly this. **Counted, not claimed**:
+  at N=24 the test monkeypatches `tenet.einsum` and asserts the per-site loop spends more
+  calls than `N**2` while the profile spends fewer than `8 N`, measured at 2280 against 72.
+
+  **Where the four live, and why not one module.** `overlap` and `expectation_profile` sit
+  in `mps.py` next to `_braket`, which is their machinery; `measure_mpo` and
+  `correlation_function` sit in `env.py`, because they read an `Env` and `env.py` imports
+  `mps.py`, not the other way. A `network/measure.py` holding all four cannot exist while
+  `MPS.norm` is written through `overlap` — that is a cycle — and it would cost a third
+  entry in the hygiene test's module list for no reader's benefit. The comment `mps.py`
+  already carried about a future `measure.py` is updated to say so.
+
+  Unchanged: `expectation_1site` and `expectation_2site` signatures and semantics, `Env`'s
+  constructor, and the property that a measurement builds its own pass and never writes into
+  a sweep's cache — asserted by identity on the caller's `F` entries.
+
+  Out of scope: `H|psi>` and the variance (#214, which builds on `overlap`), excited states
+  (#216, shipped as M61 Stage D), the Schmidt spectrum (#215, a canonical-form SVD and not a
+  transfer pass), sampling and reduced density matrices, and infinite boundary conditions.
+
 Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
 left that list with M61 Stage D above.
 - **M55** — **measured, not shipped**: the pre-placement basis choice — M39's named successor,

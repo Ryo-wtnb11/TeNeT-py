@@ -36,7 +36,9 @@ __all__ = [
     "EdgeTable",
     "expectation_1site",
     "expectation_2site",
+    "expectation_profile",
     "local_op",
+    "overlap",
     "spectrum",
 ]
 
@@ -361,13 +363,11 @@ class MPS:
         -----
         No dense expansion and no environment object: two ``tenet.einsum`` calls per site,
         the same pairwise shape [Env.update_][tenet.network.Env.update_] uses with the MPO row
-        removed.
+        removed. Written *through* [overlap][tenet.network.overlap] rather than beside it
+        (#213), so the one-state and two-state readings of the same transfer pass cannot
+        drift.
         """
-        t = tenet.einsum("apR,apr->Rr", tenet.adjoint(self[0]), self[0])
-        for n in range(1, len(self)):
-            t = tenet.einsum("Rr,rps->Rps", t, self[n])
-            t = tenet.einsum("RpS,Rps->Ss", tenet.adjoint(self[n]), t)
-        return float(tenet.full_trace(t)) ** 0.5
+        return overlap(self, self) ** 0.5
 
     def to_dense(self) -> Any:
         """The full ``d**N`` amplitude array, ``D=1`` boundaries dropped.
@@ -688,11 +688,13 @@ def _as_site(t: SymmetricTensor) -> SymmetricTensor:
 # --- measurement --------------------------------------------------------------------
 #
 # Module-level, not methods and not a ``network/measure.py``: a measurement is not
-# container state, and a new module for ~30 lines buys a second entry in
-# ``tests/network/test_hygiene.py``'s module list and nothing else. Simplification: the day
-# ``correlation``, ``sample`` or ``rdm`` land, ``network/measure.py`` is the module and
-# YASTN's ``_measure.py`` the design -- ``measure_1site`` (:76) has a ~40-line body and
-# ``measure_2site`` (:130) a ~75-line one, which is the argument for not starting it now.
+# container state. #213 added ``overlap`` and ``expectation_profile`` here and put
+# ``measure_mpo`` and ``correlation_function`` in ``env.py``, and the split is forced
+# rather than chosen: those two read an ``Env`` and ``env.py`` imports this module, while
+# ``MPS.norm`` is written through ``overlap``, so a single ``network/measure.py`` holding
+# all four would be a cycle. Simplification: the day ``sample`` or ``rdm`` land -- neither
+# of which touches ``MPS.norm`` -- ``network/measure.py`` is the module and YASTN's
+# ``_measure.py`` the design.
 
 
 def _braket(bra: Sequence[SymmetricTensor], ket: Sequence[SymmetricTensor]) -> Any:
@@ -707,6 +709,66 @@ def _braket(bra: Sequence[SymmetricTensor], ket: Sequence[SymmetricTensor]) -> A
         t = tenet.einsum("Rr,rps->Rps", t, ket[n])
         t = tenet.einsum("RpS,Rps->Ss", tenet.adjoint(bra[n]), t)
     return tenet.full_trace(t)
+
+
+def overlap(bra: MPS, ket: MPS) -> float:
+    """``<bra|ket>`` by one transfer pass, **undivided** by either state's norm.
+
+    Parameters
+    ----------
+    bra : MPS
+        The state that is conjugated; any gauge, any norm.
+    ket : MPS
+        The state that is not; any gauge, any norm. The two may carry different bond
+        spaces, and must have the same number of sites.
+
+    Returns
+    -------
+    float
+        ``<bra|ket>``.
+
+    Raises
+    ------
+    ValueError
+        If the two states have different lengths.
+
+    Examples
+    --------
+    >>> from tenet import GradedSpace
+    >>> from tenet.network import MPS, overlap
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1)])
+    >>> phi = MPS.product(phys, [U1Sector(1), U1Sector(-1)])
+    >>> round(overlap(phi, psi), 12)
+    1.0
+    >>> round(overlap(psi, psi) - psi.norm() ** 2, 12)
+    0.0
+
+    Notes
+    -----
+    **Undivided**, the convention [Env.measure][tenet.network.Env.measure] already keeps and
+    the one both references keep for this function -- YASTN's ``measure_overlap(bra, ket)``
+    and ``vdot``, TenPy's ``MPS.overlap(other)``. A fidelity is
+    ``overlap(phi, psi) / (phi.norm() * psi.norm())`` and the caller spells the division,
+    because the two states it needs are the caller's.
+    [expectation_1site][tenet.network.expectation_1site] divides and says so in its own
+    name; a ``measure_``-shaped name here would make one verb mean two things.
+
+    The two chains may carry **different bond spaces**: the transfer tensor holds one index
+    from each, which is the same fact ``Env(psi, h, bra=phi)`` rests on one level up. Two
+    states whose *boundary* legs sit in different sectors have no coupled sector at all and
+    the overlap is structurally zero rather than numerically small.
+
+    [MPS.norm][tenet.network.MPS.norm] is ``overlap(psi, psi) ** 0.5``, and
+    ``Env(psi, MPO.identity(len(psi), phys), bra=phi).measure()`` is this number computed
+    the long way, through the environment cache; both agreements are tested.
+    """
+    if len(bra) != len(ket):
+        raise ValueError(
+            f"an overlap needs two states of the same length, got {len(bra)} and {len(ket)}"
+        )
+    return float(_braket(bra.sites, ket.sites))
 
 
 def _check(psi: MPS, o: SymmetricTensor, n: int, ndim: int, last: int) -> None:
@@ -765,6 +827,76 @@ def expectation_1site(psi: MPS, o: SymmetricTensor, n: int) -> float:
     ket = list(psi)
     ket[n] = tenet.einsum("Pq,aqr->aPr", o, ket[n])
     return float(_braket(psi.sites, ket) / _braket(psi.sites, psi.sites))
+
+
+def expectation_profile(psi: MPS, o: SymmetricTensor) -> list[float]:
+    """``<psi|o_n|psi> / <psi|psi>`` at **every** site, in one pass over the chain.
+
+    Parameters
+    ----------
+    psi : MPS
+        The state; any gauge, any norm, and **not** modified -- the walk runs on a copy.
+    o : SymmetricTensor
+        The operator, rank 2 on ``(phys OUT, phys IN)`` --
+        [local_op][tenet.network.local_op]'s invariant one-site form, exactly as
+        [expectation_1site][tenet.network.expectation_1site] takes it.
+
+    Returns
+    -------
+    list of float
+        One normalized expectation value per site, in site order.
+
+    Raises
+    ------
+    ValueError
+        If ``o`` is not rank 2.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tenet import GradedSpace
+    >>> from tenet.network import MPS, expectation_profile, local_op
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1), U1Sector(1)])
+    >>> sz = local_op(np.diag([-0.5, 0.5]), phys=phys)
+    >>> [round(v, 6) for v in expectation_profile(psi, sz)]
+    [0.5, -0.5, 0.5]
+
+    Notes
+    -----
+    **One pass, not one pass per site.** ``[expectation_1site(psi, o, n) for n in
+    range(len(psi))]`` is the same numbers and costs two *full-chain* transfer passes per
+    site, i.e. ``O(N**2)`` transfer contractions for the profile every DMRG user plots.
+    This walks the chain once, moving the orthogonality centre right by a ``qr`` at each
+    step and reading the operator off the centre -- which a canonical MPS makes exact,
+    because everything left of the centre is left-orthonormal and everything right of it
+    right-orthonormal, so both halves of the transfer close to the identity and
+    ``<o_n> = <A_n|o|A_n>``. Both references do exactly this
+    (YASTN ``measure_1site(..., sites=None)``, TenPy ``expectation_value(ops)``), and
+    ``tests/network/test_measure.py`` counts the contractions rather than claiming them.
+
+    ``psi.copy().canonize_(0)`` first, so no gauge is assumed of the input and the input is
+    not re-gauged: the same choice
+    [MPS.schmidt_values][tenet.network.MPS.schmidt_values] makes, for the same reason. The
+    normalization is then free -- ``canonize_`` leaves a unit-norm state -- which is why no
+    second transfer pass computes ``<psi|psi>``.
+
+    Divided by ``<psi|psi>``, matching
+    [expectation_1site][tenet.network.expectation_1site]; the reason the divided and
+    undivided readings carry different names is stated there.
+    """
+    _check(psi, o, 0, 2, len(psi) - 1)
+    walk = psi.copy().canonize_(0)
+    out = []
+    for n in range(len(walk)):
+        a = walk[n]
+        out.append(float(tenet.inner(a, tenet.einsum("Pq,aqr->aPr", o, a))))
+        if n + 1 < len(walk):
+            q, r = tenet.linalg.qr(a, ((0, 1), (2,)))
+            walk[n] = q
+            walk[n + 1] = tenet.einsum("xy,yqr->xqr", r, walk[n + 1])
+    return out
 
 
 def expectation_2site(psi: MPS, o: SymmetricTensor, n: int) -> float:

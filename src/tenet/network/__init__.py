@@ -54,8 +54,16 @@ from tenet.network.ctmrg import (
     single_layer_ctm,
 )
 from tenet.network.dmrg import DMRG_out, Sweep, dmrg_, lanczos, sweep_
-from tenet.network.env import Env
-from tenet.network.mps import MPO, MPS, expectation_1site, expectation_2site, local_op
+from tenet.network.env import Env, correlation_function, measure_mpo
+from tenet.network.mps import (
+    MPO,
+    MPS,
+    expectation_1site,
+    expectation_2site,
+    expectation_profile,
+    local_op,
+    overlap,
+)
 
 __all__ = [
     "MPO",
@@ -66,6 +74,7 @@ __all__ = [
     "DMRG_out",
     "Env",
     "Sweep",
+    "correlation_function",
     "ctmrg",
     "ctmrg_unrolled",
     "dmrg_",
@@ -74,13 +83,16 @@ __all__ = [
     "entropy",
     "expectation_1site",
     "expectation_2site",
+    "expectation_profile",
     "init_env",
     "lanczos",
     "layers",
     "local_op",
+    "measure_mpo",
     "move",
     "normalized",
     "ones",
+    "overlap",
     "ring",
     "single_layer",
     "single_layer_ctm",

@@ -263,6 +263,40 @@ canonical or not — unlike `Env.measure()`, which returns the unnormalized `<ps
 **maximum**: one answers "how much of my state did I throw away", the other "which bond is
 the convergence diagnostic".
 
+### Measuring the converged state
+
+Four more calls take the state where the ones above take one site of it:
+
+```python
+from tenet.network import correlation_function, expectation_profile, measure_mpo, overlap
+
+print(expectation_profile(psi, sz))        # <S^z_n> for every n, in ONE pass over the chain
+print(overlap(phi, psi))                   # <phi|psi>, undivided
+print(measure_mpo(phi, h, psi))            # <phi|H|psi>, undivided
+print(correlation_function(psi, sz3, sz3, pairs=[(0, j) for j in range(1, len(psi))]))
+```
+
+- **`expectation_profile` is the one to reach for over a list comprehension.** Writing
+  `[expectation_1site(psi, sz, n) for n in range(len(psi))]` costs two full-chain transfer
+  passes *per site*; the profile moves the orthogonality centre once along the chain and
+  reads the operator off it, which a canonical MPS makes exact. Same numbers, `O(N)`
+  instead of `O(N²)`.
+- **`overlap` and `measure_mpo` do not divide**, matching `Env.measure()`. A fidelity is
+  `overlap(phi, psi) / (phi.norm() * psi.norm())` and the caller writes the division; the
+  divided readings are the ones whose names say `expectation`.
+- **`correlation_function` takes the rank-3 charged operators** `MPO.from_terms` takes —
+  the form a fermionic `c` has to have — and returns `{(i, j): value}` for `i < j`, every
+  pair by default. The Jordan-Wigner string across the sites between `i` and `j` is the
+  fZ2 braiding the term builder already inserts, so a fermionic correlator at a distance is
+  correct rather than refused. It costs one MPO build and one pass **per pair**, so pass
+  `pairs=` for the row or the distance you actually want rather than taking all `N²`.
+
+`Env(psi, h, bra=phi)` is the object all of this stands on, and `measure_mpo(phi, h, psi)`
+is its one-line spelling. `Env.heff2` refuses on a two-state environment — the prepared
+matvec reads the `IdL`/`IdR` channels as gauge identities, true of a canonical chain
+against itself and false of a mixed transfer — which is why measurement and the sweep are
+different entry points into the same cache.
+
 ### The entanglement profile
 
 The fifth call is the one a DMRG user plots. The entanglement entropy across each cut is
