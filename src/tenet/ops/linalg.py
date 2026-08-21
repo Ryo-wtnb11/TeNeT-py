@@ -53,6 +53,7 @@ __all__ = [
     "BondSelection",
     "eig",
     "eigh",
+    "eigh_truncated",
     "eigvals",
     "expm",
     "left_null",
@@ -314,7 +315,21 @@ def _dagger(mat: "Array") -> "Array":
     return ar.do("conj", ar.do("transpose", mat))
 
 
-def eigh(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "SymmetricTensor"]:
+def _largest(w: "Array", v: "Array", k: int) -> tuple["Array", "Array"]:
+    """The ``k`` eigenpairs of largest ``|w|``, descending, signs kept.
+
+    A gather over ``argsort(-|w|)``, because ``eigh``'s output is ascending and signed:
+    the kept set of a magnitude truncation is not a prefix of it. ``k`` is a Python int,
+    so the shape is static and this survives a trace; only the *permutation* is
+    value-dependent.
+    """
+    order = ar.do("argsort", -ar.do("abs", w))[:k]
+    return w[order], v[:, order]
+
+
+def eigh(
+    t: "SymmetricTensor", axes: Axes = None, *, bond: GradedSpace | None = None
+) -> tuple["SymmetricTensor", "SymmetricTensor"]:
     """``T = V ∘ W ∘ V†`` for a self-adjoint ``T``. Returns ``(W, V)``.
 
     Parameters
@@ -327,20 +342,33 @@ def eigh(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "S
         ``(left, right)`` in ``t``'s own numbering, as in
         [svd][tenet.ops.linalg.svd]; ``None`` (the default) uses the current
         partition.
+    bond : GradedSpace or None, optional
+        ``None`` (the default) is the full diagonalization: every eigenvalue,
+        in the backend's ascending order. ``bond=B`` keeps the
+        ``B.degeneracy(c)`` eigenvalues of **largest magnitude** in each sector
+        ``c`` and drops every sector absent from ``B``; ``B`` must be a
+        **subspace** of the untruncated bond, and is typically taken from a
+        prior [eigh_truncated][tenet.ops.linalg.eigh_truncated] run. Exactly
+        [svd][tenet.ops.linalg.svd]'s keyword, with the same meaning and the
+        same refusal — see Notes for the one place the mirror is not literal.
 
     Returns
     -------
     W : SymmetricTensor
         Legs ``(bond OUT, bond IN)``, diagonal, real even for complex input.
-        Eigenvalues are in the backend's order — ascending within each
-        coupled sector.
+        At ``bond=None`` the eigenvalues are in the backend's order — ascending
+        within each coupled sector; at ``bond=B`` they are the kept ones, in
+        descending order of ``|w|``. **Their signs are kept either way.**
     V : SymmetricTensor
         Legs ``(*left legs, bond IN)``, the eigenvectors.
 
     Raises
     ------
     ValueError
-        If the map is not square space-wise (``check_square``'s refusal), or
+        If the map is not square space-wise (``check_square``'s refusal); if
+        ``bond`` asks for more eigenvalues in some sector than the untruncated
+        bond degeneracy there (``_keep_counts``' refusal, shared with
+        [svd][tenet.ops.linalg.svd] and worded for it); or
         [repartition][tenet.SymmetricTensor.repartition]'s axis refusals through the lowering.
     CapabilityError
         Inherited from the lowering when the partition needs a braid or bend
@@ -375,22 +403,48 @@ def eigh(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "S
 
     run once, outside the hot loop.
 
-    **Eigenvalues come back in the backend's order — ascending within each coupled
-    sector** (LAPACK's), in deliberate contrast to [svd][tenet.ops.linalg.svd]'s descending ``S``.
-    Re-sorting would be a cosmetic permutation of ``W`` and of ``V``'s columns, and
-    would still buy nothing across sectors, where no global order exists either way.
-    ``W`` is real even for complex input.
+    **At ``bond=None`` eigenvalues come back in the backend's order — ascending within
+    each coupled sector** (LAPACK's), in deliberate contrast to [svd][tenet.ops.linalg.svd]'s
+    descending ``S``. Re-sorting would be a cosmetic permutation of ``W`` and of ``V``'s
+    columns, and would still buy nothing across sectors, where no global order exists
+    either way. ``W`` is real even for complex input.
+
+    **``bond=B`` is where the mirror of [svd][tenet.ops.linalg.svd]'s keyword stops being
+    literal, in exactly one place: the kept set is not a prefix.** ``svd`` slices ``[:k]``
+    because ``sigma_c`` comes back descending; eigenvalues come back ascending and
+    *signed*, so "the ``k`` largest" is an ``argsort`` over ``|w|`` and a gather, not a
+    slice. A gather is a value-dependent *permutation*, never a value-dependent *shape*,
+    so it traces: ``eigh(t, axes, bond=B)`` is as jittable and differentiable as
+    ``eigh(t, axes)``, and [svd][tenet.ops.linalg.svd]'s sentence applies unchanged — what
+    #64 refused to make a keyword is the *decision*; what is a keyword here is the
+    decision's *result*.
+
+    **The sign is kept.** Only the *ordering key* is ``|w|``; ``W``'s retained entries are
+    the signed eigenvalues, so ``V @ W @ adjoint(V)`` reconstructs an indefinite operator
+    with its signs intact. That is the whole reason the Hermitian route exists beside the
+    SVD, which returns ``|w|`` and throws away which of them were negative.
+
+    The gradient needed no new code, for [svd][tenet.ops.linalg.svd]'s reason: reverse
+    mode differentiates the gather generically, and the *matrix* ``eigh`` underneath is
+    [tenet.ad][]'s broadened one, whose ``1/(w_i - w_j)`` factors are stabilized alongside
+    the SVD's. The bond degeneracy is ``min(rows_c, cols_c)`` — for a square map, the
+    fused domain — and never the numerical rank, so the discarded space never leaves the
+    factorization.
     """
-    m, bond, mats = _lower(t, axes)
+    m, untruncated, mats = _lower(t, axes)
     check_square(m, "eigh")
-    parts = {c: ar.do("linalg.eigh", b) for c, b in mats.items()}
+    keep = _keep_counts(bond, untruncated)  # structural; before any block is diagonalized
+    space = untruncated if bond is None else bond
+    parts = {c: ar.do("linalg.eigh", mats[c]) for c in keep}
+    if bond is not None:
+        parts = {c: _largest(parts[c][0], parts[c][1], k) for c, k in keep.items()}
     return (
         from_matrices(
-            TensorStructure((Leg(bond, OUT), Leg(bond, IN))),
+            TensorStructure((Leg(space, OUT), Leg(space, IN))),
             {c: ar.do("diag", p[0]) for c, p in parts.items()},
         ),
         from_matrices(
-            TensorStructure((*m.codomain, Leg(bond, IN))), {c: p[1] for c, p in parts.items()}
+            TensorStructure((*m.codomain, Leg(space, IN))), {c: p[1] for c, p in parts.items()}
         ),
     )
 
@@ -1554,5 +1608,141 @@ def svd_truncated(
         from_matrices(
             TensorStructure((Leg(bond, OUT), *m.domain)),
             {c: parts[c][2][:k, :] for c, k in keep_count.items()},
+        ),
+    )
+
+
+def eigh_truncated(
+    t: "SymmetricTensor",
+    axes: Axes = None,
+    *,
+    max_bond: int | None = None,
+    cutoff: float | None = None,
+    cutoff_mode: str = "rsum2",
+    renorm: bool = False,
+) -> tuple["SymmetricTensor", "SymmetricTensor"]:
+    """``W, V`` on a *truncated* bond space, selected by ``|w|``. **NOT jittable.**
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The self-adjoint map to diagonalize and truncate. Square space-wise, and
+        Hermiticity of the numbers is the caller's responsibility, exactly as in
+        [eigh][tenet.ops.linalg.eigh].
+    axes : tuple of two axis sequences, or None, optional
+        ``(left, right)`` in ``t``'s own numbering, as in
+        [svd][tenet.ops.linalg.svd]; ``None`` (the default) uses the current
+        partition.
+    max_bond : int or None, optional
+        A bound on the **dense** bond dimension ``Sum_c qdim(c)*m_c``, with the
+        same documented undershoot as
+        [svd_truncated][tenet.ops.linalg.svd_truncated]. ``None`` (the default)
+        means no dimension bound.
+    cutoff : float or None, optional
+        The truncation threshold on ``|w|``, interpreted by ``cutoff_mode``.
+        ``None`` (the default) means no cutoff; passing neither ``max_bond``
+        nor ``cutoff`` is refused.
+    cutoff_mode : {"abs", "rel", "sum2", "rsum2", "sum1", "rsum1"}, optional
+        Quimb's six names and quimb's semantics, read on ``|w|``; the table is
+        [svd_truncated][tenet.ops.linalg.svd_truncated]'s. Default ``"rsum2"``.
+    renorm : bool, optional
+        ``True`` scales the kept eigenvalues by
+        ``sqrt(Sum_all qdim |w|**2 / Sum_kept qdim |w|**2)``, preserving
+        ``tenet.norm``. A bool, not quimb's p-norm power. Default ``False``.
+
+    Returns
+    -------
+    W : SymmetricTensor
+        Legs ``(bond OUT, bond IN)``, diagonal, on the truncated bond; the
+        **signed** kept eigenvalues, in descending order of ``|w|``. The bond
+        space — the input to ``eigh(t, axes, bond=...)`` — is
+        ``W.structure.legs[0].space``.
+    V : SymmetricTensor
+        Legs ``(*left legs, bond IN)``, the matching eigenvectors.
+
+    Raises
+    ------
+    StructureChangingError
+        Under ``jax.jit``/``jax.grad``/``jax.vmap``: the output structure
+        depends on the block values, so decide the bond out here and use
+        ``eigh(..., bond=...)`` inside.
+    ValueError
+        If the map is not square space-wise; if neither ``max_bond`` nor
+        ``cutoff`` is given; if ``max_bond`` is not positive; if ``cutoff`` is
+        negative; if ``cutoff_mode`` is not one of the six strings; if the map
+        has no eigenvalues at all; or if every eigenvalue is dropped.
+    TypeError
+        If ``renorm`` is not a bool.
+    CapabilityError
+        If the provider does not implement
+        [QuantumDimensionData][tenet.symmetry.QuantumDimensionData], plus the
+        lowering's refusals as in [svd][tenet.ops.linalg.svd].
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> h = a @ tenet.adjoint(a) - tenet.identity((Leg(V, OUT),))  # indefinite
+    >>> w, v = tenet.linalg.eigh_truncated(h, max_bond=2)
+    >>> w.shape
+    (2, 2)
+    >>> bond = w.structure.legs[0].space  # feed this to eigh(..., bond=...) inside jit
+    >>> bond.sectors
+    ((U1Sector(charge=0), 1), (U1Sector(charge=1), 1))
+
+    Notes
+    -----
+    [svd_truncated][tenet.ops.linalg.svd_truncated]'s twin, factor for factor: the same
+    six ``cutoff_mode`` strings, the same ``qdim``-weighted cost and weight, the same
+    single global spectrum, the same greedy walk under a **dense** ``max_bond`` with the
+    same undershoot, the same
+    [StructureChangingError][tenet.symmetry.StructureChangingError] under a trace. Both
+    call one shared keep rule, so there is no second truncation policy here — see
+    [select_bond][tenet.ops.linalg.select_bond], whose
+    [BondSelection][tenet.ops.linalg.BondSelection] this function consumes.
+
+    Two places where the mirror is not literal, and they are the reason the Hermitian
+    route exists at all:
+
+    * **the ordering key is ``|w|`` and the kept set is not a prefix.** Eigenvalues come
+      back ascending, so selecting by magnitude is a gather rather than a slice; the
+      per-sector indices are carried through the selection and gathered at the end.
+    * **the sign survives.** ``W``'s retained entries are the signed eigenvalues, so
+      ``V @ W @ adjoint(V)`` reconstructs an *indefinite* operator correctly. An SVD of
+      the same operator returns ``|w|`` and no record of which were negative, which is a
+      structural defect and not a tolerance: no care at the ``svd_truncated`` call site
+      recovers it.
+
+    On a positive-definite input the two agree exactly — same bond, same magnitudes, and
+    the same subspace up to the gauge each factorization leaves free — which is what
+    ``tests/ops/test_eigh_truncated.py`` pins on U(1), fermionic parity and SU(2).
+    """
+    _validate(max_bond, cutoff, cutoff_mode, renorm, "eigh_truncated")
+    m, _, mats = _lower(t, axes)
+    check_square(m, "eigh_truncated")
+    provider = m.provider
+    requires(provider, QuantumDimensionData)
+
+    parts = {c: ar.do("linalg.eigh", b) for c, b in mats.items()}
+    spectrum = _spectrum({c: ar.do("abs", p[0]) for c, p in parts.items()}, "eigh_truncated")
+    selection = _decide(spectrum, provider, max_bond, cutoff, cutoff_mode, renorm, "eigh_truncated")
+
+    # selection.kept is globally descending in |w|, so grouping by sector preserves that
+    # order within each sector -- these are the gather indices, not a prefix length.
+    picked: dict = {}
+    for _, c, i in selection.kept:
+        picked.setdefault(c, []).append(i)
+    scale = selection.scale
+    return (
+        from_matrices(
+            TensorStructure((Leg(selection.bond, OUT), Leg(selection.bond, IN))),
+            {c: ar.do("diag", parts[c][0][idx] * scale) for c, idx in picked.items()},
+        ),
+        from_matrices(
+            TensorStructure((*m.codomain, Leg(selection.bond, IN))),
+            {c: parts[c][1][:, idx] for c, idx in picked.items()},
         ),
     )
