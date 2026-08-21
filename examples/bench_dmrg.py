@@ -18,28 +18,18 @@ import pathlib
 import sys
 import time
 
-import numpy as np
-
 import tenet
 from tenet import GradedSpace
-from tenet.network import MPO, MPS, Env, local_op
-from tenet.symmetry import SU2, SU2Sector, U1Sector
+from tenet.models import spin_half
+from tenet.network import MPO, MPS, Env
+from tenet.symmetry import SU2, SU2Sector
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent / "toy_codes"))
 import dmrg as example  # noqa: E402  (examples/toy_codes, same pattern as the tests)
 
 
-def u1_ops():
-    _, sz, sp, sm = example._spin_half()
-    return (
-        local_op(sz, phys=example.PHYS, charge=U1Sector(0)),
-        local_op(sp, phys=example.PHYS, charge=U1Sector(-2)),
-        local_op(sm, phys=example.PHYS, charge=U1Sector(2)),
-    )
-
-
 def pair_terms(pairs):
-    op_sz, op_sp, op_sm = u1_ops()
+    op_sz, op_sp, op_sm = (spin_half().ops[name] for name in ("Sz", "S+", "S-"))
     terms = []
     for i, j in pairs:
         terms += [
@@ -64,9 +54,9 @@ def models(n, ly):
     heis = MPO.from_terms(n, pair_terms([(i, i + 1) for i in range(n - 1)]), cutoff=None)
     yield "u1-heisenberg", heis, example.PHYS, example.bond_spaces(n)
 
-    su2_phys = GradedSpace.new(SU2, {SU2Sector(1): 1})
-    _, sz, sp, sm = example._spin_half()
-    ss = local_op(np.kron(sz, sz) + (np.kron(sp, sm) + np.kron(sm, sp)) / 2, phys=su2_phys)
+    su2_site = spin_half(SU2)
+    su2_phys = su2_site.phys
+    ss = su2_site.ops["S.S"]
     su2 = MPO.from_terms(n, [(1.0, [(ss, (i, i + 1))]) for i in range(n - 1)], cutoff=None)
     tri = GradedSpace.new(SU2, {SU2Sector(0): 1})
     mid = GradedSpace.new(SU2, {SU2Sector(0): 2, SU2Sector(1): 2, SU2Sector(2): 1})

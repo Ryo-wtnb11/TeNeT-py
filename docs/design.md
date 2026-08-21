@@ -4597,6 +4597,86 @@ The split:
   characters and a structure of any size cannot have its whole `block_order` in an
   exception message. A wrong-shaped block is left to `__post_init__`, whose existing
   message already names both the expected shape and the key.
+- **M36** — shipped: `tenet.models`, the standard local operator sets, so a Hamiltonian
+  stops starting with a hand-written numpy matrix (#198). The layer ships **sites**, not
+  models: `spin_half(U1|SU2)`, `spinless_fermion()`, `spinful_fermion()` and
+  `hard_core_boson(U1|Trivial)`, each returning a `Site` — a physical `GradedSpace`, an
+  `ops` mapping of name to `local_op`-built term operator, and the dense `matrices`
+  behind them. Nothing in the package calls `SymmetricTensor.from_dense`; every operator
+  goes through `local_op` and therefore arrives with its refusals attached, which a test
+  asserts by AST rather than by review.
+
+  **Why this does not reopen the operator-zoo rule.** #112 and #133 put the zoo in the
+  caller and `local_op`'s docstring says the matrices are physics and stay there. That is
+  a statement about `tenet.network` and the core deciding what a caller's operators
+  *mean* — not a prohibition on a separate, optional layer offering the standard ones,
+  which is what every reference does. It survives verbatim because the dependency runs
+  one way, and `tests/network/test_hygiene.py::test_no_module_imports_tenet_models` is
+  what keeps it there. `tenet.models` is also not re-exported from `tenet.__all__`: it is
+  imported explicitly, which is the same statement said in the import graph.
+
+  **The naming survey, read rather than recalled.** tenpy's `Site` (`networks/site.py`)
+  is a class with `get_op(name)`, `add_op`, `opnames` and `state_labels`, and `get_op`
+  **splits its name on whitespace** and contracts the factors — `"Sp Sm"` is a legal
+  operator name. Its spinful site names are `Cu, Cdu, Cd, Cdd, Nu, Nd, Ntot, NuNd`,
+  where `Cd` is *spin-down annihilation* and creation is `Cdu`/`Cdd`; that collision is
+  precisely the name that needs a paragraph, and #120/#185's bar rejects it. YASTN's
+  `yastn/operators/` is classes with methods — `Spin12(sym='U1').sp()`, `sm()`, `sz()`,
+  `I()`; `SpinlessFermions().c()`, `cp()`, `n()`; `SpinfulFermions().c(spin='u')` — with
+  the spin as a *keyword*, and `to_dict()` flattening it back to `'cu'`, `'cpu'`.
+  MPSKitModels is free functions with the symmetry as a positional type,
+  `S_z(U1Irrep; spin=1//2)`, `e_number_updown(T, particle_symmetry, spin_symmetry)`.
+  What is taken: **free functions** returning one record (MPSKitModels' shape, tenet's
+  own `local_op`/`from_terms` style), a **mapping** rather than attributes (it is
+  literally `from_arrays`'s `ops` argument), and the operator names spelled as the
+  field's own symbols — `Sz`, `S+`, `S-`, `S.S`, `c`, `c+`, `n`, `c_up`, `c+_up`,
+  `n_up n_dn`. The whitespace product `"n_up n_dn"` is not an invention: it is tenpy's
+  `get_op` convention and `mps.py::_expr_names` already parses block expressions the
+  same way, so the *same spelling* names the pre-multiplied on-site operator in
+  `from_terms` and a two-name coincident block in `from_arrays`.
+
+  **The SU(2) case, answered concretely: the site returns `{S.S}` and no irreducible
+  tensor operator.** `S+` is absent because the API cannot hold it, not by preference —
+  `local_op`'s charge-leg form reshapes a `(d, d)` array to `(d, d, 1)`, so the emitted
+  sector must have dense dimension 1, and the only leg a spin-1 tensor operator could
+  emit onto is the `j=1` multiplet, whose dense dimension is 3. `local_op(sz, phys=phys,
+  charge=SU2Sector(2))` therefore raises on the shape, and there is nothing to hand back.
+  What exists is M13b's invariant *k*-site form, and `S.S` is one whole Heisenberg bond
+  term whose coupling lives inside its own blocks. This is also where MPSKitModels lands:
+  its single SU(2) method in `spinoperators.jl` is `S_exchange` (alias `SS`), built from
+  two three-leg tensors through a spin-1 auxiliary space, while `S_z`/`S_plus` under
+  `SU2Irrep` simply have no method. tenpy and YASTN do not reach the question at all —
+  both are abelian-only (`yastn/sym/` has no non-abelian module; `site.py` never mentions
+  SU(2)). The same `S.S` matrix is invariant under U(1) too, where it sits in `matrices`
+  rather than `ops`, because `from_arrays` gives one site index per name and refuses a
+  rank-4 entry: `ops` is rank-3 exactly when the grading is abelian, and the SU(2) site's
+  `ops` is a `from_terms` table and nothing else.
+
+  **The two end-to-end call shapes** (#197's `ops` argument is what this populates):
+  U(1) Heisenberg is `MPO.from_arrays(n, spin_half().ops, [("Sz Sz", bond, ...),
+  ("S+ S-", bond, ...), ("S- S+", bond, ...)])`; spinful Hubbard is the same call on
+  `spinful_fermion().ops` with `("c+_up c_up", fwd|bwd, -t)` per flavour and
+  `("n_up n_dn", [(m, m), ...], U)` — the coincident pair the merge multiplies. Both are
+  tested against dense Jordan-Wigner oracles, and the `from_terms` route over the same
+  `ops` is tested to agree. There is **no `JW` operator** in any fermionic site and no
+  place for one: the string is the `fZ2` braiding an odd MPO bond pays crossing a
+  physical line (M21/#147).
+
+  **What is deliberately not shipped, and the argument that keeps the layer finite.** No
+  lattice geometry, no model Hamiltonians (`heisenberg(L)` returning an MPO), no
+  parameter sweeps. The set of standard *sites* is closed by the physics — a local
+  Hilbert space and its grading — and a model zoo is closed by nothing; tenpy's own
+  `models/` directory is the demonstration, and it grows with every paper. The
+  Hamiltonian stays the caller's term list, which is also the only form in which #197's
+  array front end and #191/#193's assembler are reachable. `Site` carries `matrices`
+  alongside `ops` for the one honest gap: `expectation_1site` wants rank 2 and
+  `expectation_2site` wants rank 4, neither of which is a term form, so the matrix is
+  there rather than a second operator mapping.
+
+  Measured as a diff: the three usage-lane examples that hand-wrote these operators
+  (`heisenberg.py`, `su2_heisenberg.py`, `bench_dmrg.py`) lose 42 lines and gain 27.
+  `examples/toy_codes/` is untouched on purpose — writing the operators out is part of
+  what a toy code teaches, which is the same lane rule #183 drew.
 
 Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
 left that list with M61 Stage D above.

@@ -30,6 +30,7 @@ nav:
       - Tensors, legs and spaces: guide/tensors-legs-spaces.md
       - Symmetries and providers: guide/symmetries-and-providers.md
       - Contraction: guide/contraction.md
+      - Building a Hamiltonian from a site: guide/models-and-sites.md
   - Tutorials:
       - DMRG: tutorials/dmrg.md
       - CTMRG: tutorials/ctmrg.md
@@ -46,6 +47,7 @@ nav:
   - API:
       - tenet: api/tenet.md
       - tenet.linalg: api/linalg.md
+      - tenet.models: api/models.md
       - tenet.network: api/network.md
       - tenet.symmetry: api/symmetry.md
       - tenet.ad: api/ad.md

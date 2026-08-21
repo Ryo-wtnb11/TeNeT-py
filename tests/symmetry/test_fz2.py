@@ -477,7 +477,18 @@ def test_no_provider_identity_branching_outside_fz2():
     # kind <-> type registry to rebuild a provider from JSON. That is a dict lookup
     # on ``type(provider)``, not a behavioural branch on provider identity — the
     # ``isinstance``/``==`` assertions below still apply to it.
-    naming_allowed = ("__init__.py", "serialize.py")
+    #
+    # models/sites.py (M36/#198) names providers too, and its job is to: a *site* is a
+    # local Hilbert space together with the grading it carries, so ``spinless_fermion``
+    # cannot exist without writing ``fZ2`` down, any more than ``spin_half(SU2)`` can
+    # exist without ``SU2``. What this test forbids is a *core* operation deciding its
+    # own behaviour from which provider it was handed; ``tenet.models`` is the opposite
+    # arrangement -- an optional layer above the core that the core cannot see, which
+    # ``tests/network/test_hygiene.py::test_no_module_imports_tenet_models`` enforces.
+    # The ``isinstance``/``==`` assertions below still apply to it, and its dispatch is
+    # an ``is`` comparison against the module singleton followed by a refusal, not a
+    # behavioural branch inside a shared code path.
+    naming_allowed = ("__init__.py", "serialize.py", "sites.py")
     for path in SRC.rglob("*.py"):
         if path.name == "fz2.py":
             continue
