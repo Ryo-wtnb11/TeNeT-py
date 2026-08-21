@@ -37,6 +37,8 @@ in CI**; every empty cell is a decision, not a constraint.
 | # | family | covered on | evidence |
 |---|--------|------------|----------|
 | 1 | construction / `from_dense` / `to_dense` | all 8 | `tests/ops/test_dense.py:43` (`UU`); `tests/symmetry/test_z2.py:299-317`; `tests/symmetry/test_su3_multiplicity.py:143-155`; `tests/symmetry/test_sun.py:316-328` |
+| 1b | keyed construction: `from_blocks` / `with_blocks` (#208) | `{u1, su2, su3}`; the other five are (b6) below | `tests/test_tensor_keyed.py` (round trip through `items`, absent-key zero fill, the two refusals, the frozen/pytree contracts); the two cups it replaced, `tests/symmetry/test_sun.py:349-355` and `tests/symmetry/test_su2_dual.py:189-195` |
+| 1c | dtype and backend moves: `astype` / `to_backend(dtype=)` (#207) | `{su2}` × `{numpy, jax}`; provider-independent, (b6) below | `tests/test_tensor_properties.py` (float64↔complex128 round trip, the block-free refusal, and the subprocess that pins what `dtype=` cannot do to a JAX without `jax_enable_x64`) |
 | 2 | `transpose` / braiding | all 8 | `tests/ops/test_permutation.py`; `tests/symmetry/test_z2.py:264-298`; `tests/symmetry/test_fz2.py`; `tests/symmetry/test_product.py`; `tests/symmetry/test_su3_multiplicity.py:157-171`; `tests/symmetry/test_sun.py:330-345` |
 | 3 | `repartition` / `bend` | all 8 | `tests/ops/test_repartition.py`; `tests/ops/test_repartition_plan.py:51` (`UF`); `tests/symmetry/test_z2.py:330-357`; `tests/symmetry/test_su3_multiplicity.py:174-207`; `tests/symmetry/test_sun.py:350-382` |
 | 4 | `fuse` / `unfuse` | `{su2, u1, trivial, fz2}` | `tests/ops/test_fusion.py:49` (`ALL_LEGS`; fZ2 joined in #146); dense oracles at `:245-262` |
@@ -124,6 +126,14 @@ contract** (with the refusal test), **(d) blocked** (with what blocks it).
 - **b5. `embed`/`restrict`/`direct_sum` × SU(3).** Those act on degeneracy
   multiplicities inside a coupled sector; a fusion-vertex multiplicity is a row
   count inside the same block, orthogonal to the containment check.
+- **b6. Rows 1b and 1c across the remaining providers.** `from_blocks`,
+  `with_blocks`, `astype` and `to_backend(dtype=)` consume no fusion
+  coefficient: the first two are a `block_order` membership test plus a
+  positional fill, the last two are one `ar.do` per block. Provider enters only
+  through `block_order`, and the three columns run already cover the shapes it
+  takes — one channel (`u1`), several channels per coupled sector (`su2`), and a
+  vertex multiplicity (`su3`). A Z2 or Trivial column would execute the same
+  lines on shorter tuples.
 
 ### (c) out of contract — the cell is a refusal test, and it exists
 

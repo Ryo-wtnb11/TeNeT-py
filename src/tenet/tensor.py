@@ -15,7 +15,7 @@ That convention, fixed once and depended on downstream: axis ``i`` has length
 order; within sector ``a``'s slab the index is ``alpha * d_a + m``.
 """
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -35,6 +35,28 @@ __all__ = ["SymmetricTensor"]
 
 Array = Any
 """Milestone 1 keeps blocks NumPy; ``autoray`` dispatch is Milestone 2."""
+
+
+# A FusionBlockKey reprs to ~200 characters, so a structure of any size cannot have
+# its whole block_order in an exception message; name a few and say where the rest is.
+_KEYS_IN_MESSAGE = 3
+
+
+def _reject_foreign_keys(
+    structure: TensorStructure, blocks: "Mapping[FusionBlockKey, Array]"
+) -> None:
+    """Raise naming the legal keys if any key of ``blocks`` is not in ``block_order``."""
+    legal = structure.block_order
+    foreign = [key for key in blocks if key not in set(legal)]
+    if not foreign:
+        return
+    shown = "; ".join(map(str, legal[:_KEYS_IN_MESSAGE]))
+    rest = "" if len(legal) <= _KEYS_IN_MESSAGE else f" (and {len(legal) - _KEYS_IN_MESSAGE} more)"
+    raise KeyError(
+        f"{len(foreign)} key(s) foreign to this structure, the first being {foreign[0]}. "
+        f"The legal keys are TensorStructure(legs).block_order, which here begins "
+        f"{shown}{rest}."
+    )
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -108,6 +130,82 @@ class SymmetricTensor:
             The assembled tensor; the constructor validates counts and shapes.
         """
         return cls(TensorStructure(tuple(legs)), tuple(blocks))
+
+    @classmethod
+    def from_blocks(
+        cls, legs: Sequence[Leg], blocks: "Mapping[FusionBlockKey, Array]"
+    ) -> "SymmetricTensor":
+        """Build from public legs by **naming** fusion-block keys; absent keys are zero.
+
+        The keyed counterpart of [from_legs][tenet.SymmetricTensor.from_legs]:
+        where that one wants every block, in ``block_order``, this one wants only
+        the blocks the caller has an opinion about. The keys come from
+        ``TensorStructure(legs).block_order`` — no throwaway tensor is needed to
+        discover the layout.
+
+        Parameters
+        ----------
+        legs : sequence of Leg
+            The legs, in public axis order.
+        blocks : mapping of FusionBlockKey to array
+            The blocks to set. Every key must belong to
+            ``TensorStructure(legs).block_order``; keys left out are filled with
+            zeros of the supplied blocks' dtype and backend.
+
+        Returns
+        -------
+        SymmetricTensor
+            The assembled tensor; the constructor validates every block's shape.
+
+        Raises
+        ------
+        KeyError
+            If a key is foreign to the structure. The message names the legal
+            keys (the first few, plus the count) and where to read the rest.
+        ValueError
+            If ``blocks`` is empty — the zero fill has no dtype or backend to
+            take from. [zeros][tenet.SymmetricTensor.zeros] is that tensor.
+            Also if a supplied block has the wrong shape, from the ordinary
+            constructor, naming the expected shape and the key.
+
+        Notes
+        -----
+        **An absent key is zero, not an error.** The convenience is not the
+        argument — strictness would be worth the inconvenience if it caught
+        mistakes, and here it does not: a mistyped key is an *unknown* key, not
+        a missing one, so it raises either way. Demanding every key would only
+        penalise the case the constructor exists for, which is naming one block
+        of many.
+
+        Examples
+        --------
+        >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
+        >>> from tenet.symmetry import SU2, SU2Sector
+        >>> V = GradedSpace.new(SU2, {SU2Sector(1): 1})       # one spin-1/2 multiplet
+        >>> legs = (Leg(V, OUT), Leg(V, OUT, dual=True))      # the evaluation cup
+        >>> structure = TensorStructure(legs)
+        >>> key, = structure.block_order                      # exactly one fusion channel
+        >>> t = SymmetricTensor.from_blocks(legs, {key: np.ones(structure.block_shape(key))})
+        >>> t.blocks
+        (array([[1.]]),)
+        """
+        structure = TensorStructure(tuple(legs))
+        _reject_foreign_keys(structure, blocks)
+        if not blocks:
+            raise ValueError(
+                "from_blocks needs at least one block to take a dtype and backend from; "
+                "for an all-zero tensor use SymmetricTensor.zeros(legs, dtype)"
+            )
+        ref = next(iter(blocks.values()))
+        return cls(
+            structure,
+            tuple(
+                blocks[key]
+                if key in blocks
+                else ar.do("zeros", structure.block_shape(key), dtype=ref.dtype, like=ref)
+                for key in structure.block_order
+            ),
+        )
 
     @classmethod
     def zeros(cls, legs: Sequence[Leg], dtype: Any = np.float64) -> "SymmetricTensor":
@@ -249,6 +347,53 @@ class SymmetricTensor:
             Each key with its stored block.
         """
         return zip(self.structure.block_order, self.blocks, strict=True)
+
+    def with_blocks(self, blocks: "Mapping[FusionBlockKey, Array]") -> "SymmetricTensor":
+        """Same structure, the named blocks replaced and the rest carried over.
+
+        The immutable spelling of assigning to one block: ``self`` is untouched
+        and a new tensor is returned. The keys are this tensor's own, from
+        ``self.structure.block_order`` or [items][tenet.SymmetricTensor.items].
+
+        Parameters
+        ----------
+        blocks : mapping of FusionBlockKey to array
+            The blocks to replace. Keys absent from the mapping keep the block
+            they already have; an empty mapping is a no-op copy.
+
+        Returns
+        -------
+        SymmetricTensor
+            A new tensor over the same structure.
+
+        Raises
+        ------
+        KeyError
+            If a key is foreign to this tensor's structure — the same message
+            [from_blocks][tenet.SymmetricTensor.from_blocks] raises.
+        ValueError
+            From the ordinary constructor, if a replacement has the wrong shape
+            (naming the expected shape and the key) or a dtype the other blocks
+            do not share.
+
+        Examples
+        --------
+        >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> V = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+        >>> t = SymmetricTensor.zeros((Leg(V, OUT), Leg(V, IN)))
+        >>> key = t.structure.block_order[0]
+        >>> u = t.with_blocks({key: np.ones(t.structure.block_shape(key))})
+        >>> u.block(key)
+        array([[1., 1.],
+               [1., 1.]])
+        >>> t.block(key).any()          # the original is untouched
+        np.False_
+        """
+        _reject_foreign_keys(self.structure, blocks)
+        return SymmetricTensor(
+            self.structure, tuple(blocks.get(key, block) for key, block in self.items())
+        )
 
     # --- array-style properties -----------------------------------------------
 

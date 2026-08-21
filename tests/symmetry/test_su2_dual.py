@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from test_su2 import spin_matrices  # same directory, pytest's prepend import mode
 
-from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
 from tenet.symmetry import SU2, CapabilityError, DualBasis, SU2Sector
 
 
@@ -190,10 +190,9 @@ def cup(dj: int, *, dual: bool) -> np.ndarray:
     """``1 -> V_j (x) V_j`` (or ``V_j (x) V_j^*``) with the single block set to 1."""
     space = GradedSpace.new(SU2, {SU2Sector(dj): 1})
     legs = (Leg(space, OUT), Leg(space, OUT, dual=dual))
-    t = SymmetricTensor.zeros(legs)
-    blocks = tuple(np.ones_like(b) for b in t.blocks)
-    assert len(blocks) == 1 and blocks[0].shape == (1, 1)
-    return SymmetricTensor.from_legs(legs, blocks).to_dense()
+    structure = TensorStructure(legs)
+    (key,) = structure.block_order  # `1 -> V_j (x) V_j` has exactly one fusion channel
+    return SymmetricTensor.from_blocks(legs, {key: np.ones(structure.block_shape(key))}).to_dense()
 
 
 @pytest.mark.parametrize("dj", [1, 2, 3])

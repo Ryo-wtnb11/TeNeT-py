@@ -4535,6 +4535,60 @@ The split:
   condition is what the criterion ruled out. `to_backend` without `dtype` still passes a
   block-free tensor through untouched, since the move is well defined where the cast is not.
 
+- **M43** — shipped: `SymmetricTensor.from_blocks(legs, mapping)` and
+  `tensor.with_blocks(mapping)`, the keyed counterparts of `items()` (#208). Reading a
+  tensor's blocks was keyed and writing them was positional-and-total; both halves now
+  take a `FusionBlockKey -> array` mapping, and `from_legs`' sequence form is untouched.
+
+  **The spelling was chosen by writing the workarounds in each candidate first.** The
+  issue named three: the SU(3) cup (`tests/symmetry/test_sun.py`), the SU(2) cup
+  (`tests/symmetry/test_su2_dual.py`) — both `zeros` → `ones_like` → a hand-written
+  `assert len(blocks) == 1 and blocks[0].shape == (1, 1)` — and `dualize_axis`
+  (`tests/symmetry/test_su2_dual.py`:155).
+
+  | candidate | the SU(3) cup, written out | verdict |
+  |---|---|---|
+  | `from_blocks(legs, mapping)` | `structure = TensorStructure(legs)`; `(key,) = structure.block_order`; `from_blocks(legs, {key: np.ones(structure.block_shape(key))})` | taken |
+  | `from_legs` also accepting a `Mapping` | the same three lines, spelled `from_legs` | refused |
+  | `zeros(...)` + a per-key functional update | `t = zeros(legs)`; `(key,) = t.structure.block_order`; `t.with_blocks({key: np.ones(...)})` | refused as *the* answer, kept as the second half |
+
+  All three delete the assertion, so the assertion is not what separates them. What
+  separates them is this. The `Mapping` overload cannot be built at all without changing
+  `from_legs`' signature and docstring, which the issue's own criteria freeze — and the
+  reason those criteria are right is #120's one-name-one-thing rule: a constructor that
+  dispatches on `isinstance(blocks, Mapping)` gives one name two argument grammars with
+  two different rules for what a missing block means. The `zeros`-first form keeps
+  exactly the step the issue set out to remove — building a zero tensor to learn the
+  layout — and it decides dtype and backend from `zeros`' NumPy-float64 default rather
+  than from the blocks the caller actually has. `from_blocks` needs neither: the layout
+  comes from `TensorStructure(legs)`, which is public and now what the guide points at,
+  and the dtype and backend come from the supplied blocks.
+
+  **`with_blocks` is kept anyway**, because replacement is a genuinely separate need —
+  changing one block previously meant reproducing all of them in order — and because it
+  and `from_blocks` share their key validation, so they are one decision. `dualize_axis`
+  is **not** rewritten: it is not the same workaround. It carries a tensor's blocks onto a
+  *different* structure, where the correspondence is positional by construction; the keyed
+  spelling would be `dict(zip(block_order, t.blocks))`, i.e. the positional assumption
+  written out at greater length. It is `from_legs`' sequence form working as intended.
+
+  **An absent key is zero, not an error.** Both readings are defensible on convenience
+  grounds, and convenience is not what settles it: strictness would earn its cost if it
+  caught the mistake the deleted assertions were guarding against, and it does not. A
+  mistyped key is an *unknown* key, not a missing one, so it raises under either rule.
+  Requiring every key would only tax the case the constructor exists for.
+
+  **An empty mapping raises** rather than defaulting to NumPy float64, because the zero
+  fill has nothing to take a dtype and backend from and guessing would put a silent
+  backend choice inside a constructor. The message names `zeros`, which is that tensor.
+
+  **The refusals borrow rather than duplicate.** A foreign key raises `KeyError` — the
+  class `index_of` and `block` already raise — naming the first few legal keys and
+  pointing at `block_order` for the rest, because a `FusionBlockKey` reprs to roughly 200
+  characters and a structure of any size cannot have its whole `block_order` in an
+  exception message. A wrong-shaped block is left to `__post_init__`, whose existing
+  message already names both the expected shape and the key.
+
 Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
 left that list with M61 Stage D above.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic

@@ -121,9 +121,60 @@ symmetry-forbidden entries are never materialized. Constructors:
 [zeros][tenet.SymmetricTensor.zeros],
 [from_dense][tenet.SymmetricTensor.from_dense] (which *refuses* a
 non-symmetric dense array rather than silently projecting it), and
-[from_legs][tenet.SymmetricTensor.from_legs] for blocks you already have.
-[to_dense][tenet.SymmetricTensor.to_dense] is the inverse of `from_dense` and
-the standard self-check.
+[from_legs][tenet.SymmetricTensor.from_legs] for blocks you already have — every
+block, in `block_order`. [to_dense][tenet.SymmetricTensor.to_dense] is the
+inverse of `from_dense` and the standard self-check.
+
+### Naming a block instead of counting it
+
+When you hold only *some* of the blocks, name them.
+[from_blocks][tenet.SymmetricTensor.from_blocks] takes a mapping from
+[FusionBlockKey][tenet.FusionBlockKey] to array and fills the keys you leave out
+with zeros; the keys come from `TensorStructure(legs).block_order`, so nothing
+has to be built first to find out what the layout is.
+
+This matters most away from Abelian symmetries, where the reduced block per
+fusion tree is the natural datum and the dense array is the derived object. The
+SU(2) evaluation cup `V_½ ⊗ V_½* → 1` has exactly one fusion channel, and its
+whole content is that the channel carries coefficient 1:
+
+```python
+>>> import numpy as np
+>>> from tenet import SymmetricTensor, TensorStructure
+>>> from tenet.symmetry import SU2, SU2Sector
+>>> S = GradedSpace.new(SU2, {SU2Sector(1): 1})       # one spin-1/2 multiplet
+>>> legs = (Leg(S, OUT), Leg(S, OUT, dual=True))
+>>> structure = TensorStructure(legs)
+>>> key, = structure.block_order                       # the one allowed channel
+>>> key.coupled                                        # it couples to the singlet
+SU2Sector(two_j=0)
+>>> cup = SymmetricTensor.from_blocks(legs, {key: np.ones(structure.block_shape(key))})
+>>> np.round(cup.to_dense() * np.sqrt(2), 12)          # the identity, as the cup should be
+array([[1., 0.],
+       [0., 1.]])
+
+```
+
+Writing that positionally means reconstructing the full `block_order` sequence
+and checking by hand that the block you meant landed where you assumed.
+
+To *change* blocks rather than build them,
+[with_blocks][tenet.SymmetricTensor.with_blocks] takes the same mapping and
+carries every other block over — the immutable spelling of assigning to one
+block, since a `SymmetricTensor` is frozen:
+
+```python
+>>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+>>> k = t.structure.block_order[0]
+>>> u = t.with_blocks({k: np.zeros(t.structure.block_shape(k))})
+>>> bool(u.block(k).any()), bool(t.block(k).any())     # t is untouched
+(False, True)
+
+```
+
+Both refuse a key that is not in `block_order`, with a message naming where the
+legal keys live, and both let the ordinary constructor refuse a block of the
+wrong shape, naming the shape it expected.
 
 Moving between dtypes and backends is blockwise and returns a new tensor:
 [astype][tenet.SymmetricTensor.astype] casts every block, and
