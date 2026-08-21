@@ -11,9 +11,8 @@ The library's own version of each algorithm lives in `tenet.network`, and the us
 (`examples/`) calls it: `examples/heisenberg_walkthrough.py` is `dmrg.py`'s chain through
 `MPS`/`MPO`/`dmrg_`, and `examples/ising2d.py` is `ctmrg.py`'s Ising through `ctmrg()`.
 
-**One recorded exemption:** `ctmrg.py` still imports `tenet.network` — #114 promoted its
-CTMRG core into the library and the file kept calling it. It is exempted by name in
-`tests/test_examples.py::_LANE_EXEMPT` and is rewritten in #187, not widened into
-here. `vmc_mps.py` and `dmrg.py` obey the rule.
+**No exemptions.** `ctmrg.py` was the last file with one — #114 promoted its CTMRG core
+into the library and the file kept calling it — and #187 rewrote it on the tensor layer,
+so the rule above is now true of every file here with nothing excused.
 
 For the lane rule and the file table, see the root [README](../../README.md#examples).

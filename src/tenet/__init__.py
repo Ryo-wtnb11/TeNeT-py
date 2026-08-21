@@ -10,11 +10,11 @@ The operations group by what a caller comes for: arithmetic and reductions
 ([add][tenet.add], [multiply][tenet.multiply], [norm][tenet.norm], [trace][tenet.trace],
 [inner][tenet.inner], [allclose][tenet.allclose]); contraction ([einsum][tenet.einsum],
 [tensordot][tenet.tensordot], [compose][tenet.compose]); leg and axis moves
-([transpose][tenet.transpose], [repartition][tenet.SymmetricTensor.repartition], [bend][tenet.bend],
+([transpose][tenet.transpose], [repartition][tenet.repartition], [bend][tenet.bend],
 [fuse][tenet.fuse] / [unfuse][tenet.unfuse], [conj][tenet.conj],
 [adjoint][tenet.adjoint]); construction ([identity][tenet.identity],
 [isometry][tenet.isometry], [from_matrices][tenet.from_matrices],
-[direct_sum][tenet.direct_sum], [embed][tenet.SymmetricTensor.embed],
+[direct_sum][tenet.direct_sum], [embed][tenet.embed],
 [to_symmetry][tenet.to_symmetry]); and block access ([to_matrices][tenet.to_matrices],
 [apply_blocks][tenet.apply_blocks]).
 [save][tenet.save] / [load][tenet.load] persist one tensor, and anything that would change
@@ -48,7 +48,6 @@ from tenet.ops import (
     direct_sum,
     divide,
     einsum,
-    embed,
     flip_dual,
     full_trace,
     fuse,
@@ -61,7 +60,6 @@ from tenet.ops import (
     negative,
     norm,
     random_isometry,
-    repartition,
     restrict,
     subtract,
     tensordot,
@@ -71,6 +69,14 @@ from tenet.ops import (
     unfuse,
     zip_blocks,
 )
+
+# `embed` and `repartition` are imported from their defining modules, not from
+# `tenet.ops`, because each shares its name with the submodule that defines it. In
+# `tenet.ops`'s namespace the submodule wins, so a documentation tool following
+# `from tenet.ops import embed` lands on the module and the function drops off the
+# `tenet` API page. Naming the leaf module resolves to the function (#173).
+from tenet.ops.embed import embed
+from tenet.ops.repartition import repartition
 from tenet.serialize import load, save
 from tenet.space import GradedSpace, ProductSpace
 from tenet.structure import FusionBlockKey, TensorStructure

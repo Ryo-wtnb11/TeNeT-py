@@ -11,13 +11,15 @@ uv run --extra jax python examples/toy_codes/ctmrg.py
 
 ## Two physical problems, one CTMRG core
 
-The core is the library's: `tenet.network.ctmrg` owns `Absorb`,
-`single_layer`/`double_layer`, `move`, `ctmrg` and `ctmrg_unrolled`, with the
-`svd_truncated`-outside / `svd(bond=)`-inside pairing, the leg conventions and the four
-environment ceilings (truncated backprop, no checkpointing, no pre-QR, `svd` rather than
-`eigh`) documented on it.
+The core is written out in the file, because that is the teaching lane's rule: `Absorb`,
+`single_layer`/`double_layer`, `init_env`, `move`, `converge` and `unrolled` are all there
+on `tenet`'s tensor layer, with the `svd_truncated`-outside / `svd(bond=)`-inside pairing,
+the leg conventions and the four environment ceilings (truncated backprop, no
+checkpointing, no pre-QR, `svd` rather than `eigh`) documented on them. The library ships
+the same algorithm as `tenet.network.ctmrg`, and `examples/ising2d.py` is the Ising half
+through it; `tests/test_examples.py` checks the two agree to `1e-12`.
 
-What stays in the example is what the library must **not** decide: which bulk tensor
+Around the core sits what the library must **not** decide: which bulk tensor
 (`ising_bulk`), which ansatz (`c4v` — a library that symmetrized its input would be
 silently editing the user's state), and what to measure (`_halves`/`energy` are a
 C4v-and-1×1-and-2×1 reduced density matrix with one geometry and one caller, i.e. a

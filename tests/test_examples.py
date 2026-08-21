@@ -9,7 +9,8 @@ N=20 ED energy, the U(1) run ``su2_heisenberg`` computes in the same process, an
 
 The **lane rule itself** is asserted here too (#183): a file in ``examples/toy_codes/``
 writes its algorithm on ``tenet``'s tensor layer and imports nothing from
-``tenet.network``, with one named exemption carrying its own issue.
+``tenet.network``. There is no exemption -- #187 rewrote ``ctmrg.py``, the last file that
+had one.
 """
 
 import ast
@@ -148,12 +149,32 @@ def test_ising2d_page_output_is_current(ising_run):
     check_example_page("ising2d.md", _STDOUT["ising2d"])
 
 
-# The teaching lane's rule: a toy code writes its algorithm on tenet's *tensor* layer, so
-# it imports nothing from ``tenet.network``. ``ctmrg.py`` predates the rule -- #114
-# promoted its CTMRG core into the library and the file kept calling it -- and is exempted
-# by name until #187 rewrites it. The exemption is a one-entry ledger, and
-# ``test_the_lane_exemption_ledger_is_the_one_recorded_file`` is what stops it growing.
-_LANE_EXEMPT = {"ctmrg.py"}
+def test_toy_ctmrg_reproduces_the_library_environment():
+    """#187's acceptance: the rewritten toy code is the library's CTMRG, not a lookalike.
+
+    ``examples/toy_codes/ctmrg.py`` now writes the corner, the edge, the two absorbers, the
+    projector and the sweep out on the tensor layer, so the thing that has to be checked is
+    that it still lands where ``tenet.network.ctmrg`` lands. Two statements at ``beta=0.4``,
+    ``chi=8``: the converged environments carry the same graded bond and the same corner
+    spectrum, and the toy's own free energy reads the same number off either environment.
+    The contractions are the same arithmetic in the same order, so the tolerance is
+    ``1e-12`` -- float64 round-off, not an algorithmic allowance.
+    """
+    import tenet.network as net
+
+    sys.path.insert(0, str(EXAMPLES / "toy_codes"))
+    import ctmrg as toy
+
+    beta, chi = 0.4, 8
+    bulk = toy.ising_bulk(beta)
+    toy_env = toy.converge(*toy.single_layer_ctm(bulk), chi=chi, tol=1e-12)
+    lib = net.ctmrg(*net.single_layer_ctm(bulk), chi=chi, tol=1e-12).env
+
+    assert toy_env[2] == lib.bond
+    assert toy.spectrum(toy_env[0]) == pytest.approx(net.spectrum(lib.c), abs=1e-12)
+    assert float(toy.beta_free_energy(beta, toy_env)) == pytest.approx(
+        float(toy.beta_free_energy(beta, lib)), abs=1e-12
+    )
 
 
 def _imports(path):
@@ -181,20 +202,7 @@ def test_a_toy_code_imports_nothing_from_the_network_layer(path):
     before #183.
     """
     offenders = sorted(name for name in _imports(path) if name.startswith("tenet.network"))
-    if path.name in _LANE_EXEMPT:
-        # The exemption is asserted in the *positive* direction on purpose: when #187
-        # rewrites this file the entry must be deleted, and a stale ledger fails loudly
-        # rather than quietly excusing a file that no longer needs excusing.
-        assert offenders, (
-            f"{path.name} no longer needs its exemption -- delete it from _LANE_EXEMPT"
-        )
-        return
     assert not offenders, f"{path.name} imports {offenders} from the algorithm layer"
-
-
-def test_the_lane_exemption_ledger_is_the_one_recorded_file():
-    """One exemption, named, with #187 behind it. A second would be a silent lane leak."""
-    assert _LANE_EXEMPT == {"ctmrg.py"}
 
 
 def test_lane_basenames_are_disjoint():
