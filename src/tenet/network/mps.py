@@ -1141,7 +1141,7 @@ def _w_entry(value: Any, key: Any, n: int) -> tuple[Any, SymmetricTensor | None]
                 f"(coefficient, operator) with the operator from local_op; got {value!r}"
             )
         return value
-    if np.ndim(value) == 0:
+    if isinstance(value, (int, float, complex, np.number)):
         return value, None
     raise ValueError(
         f"from_entries: entry {key} of site {n} is None (the identity), a number (that "
@@ -3025,18 +3025,21 @@ class MPO:
             walk.stops,
             walk.spectators,
         )
+        # A channel is dead at a *bond* whenever a term running through it there would
+        # fall off one of the two ends -- which is ordinary for any range > 1 coupling
+        # near the boundaries, and is what pruning is for. What is a caller error is a
+        # channel index that carries nothing at any bond at all: a typo, or a state
+        # nothing ever opens or closes.
         live = set().union(*tab.ordered)
         dead = sorted(
-            (c, i)
-            for (c, i), k in label.items()
-            if k not in (_IDL, _IDR) and 0 < c < n_sites and k not in live
+            {i for (_c, i), k in label.items() if k not in (_IDL, _IDR)}
+            - {i for (_c, i), k in label.items() if k in live}
         )
         if dead:
-            c, i = dead[0]
             raise ValueError(
-                f"from_entries: state {i} of bond {c} is dead -- it cannot be reached from "
-                f"IdL at bond 0, or cannot reach IdR at bond {n_sites}, so nothing that runs "
-                "through it is part of the operator"
+                f"from_entries: state {dead[0]} carries nothing -- at every bond where it is "
+                f"named it is either unreachable from IdL at bond 0 or unable to reach IdR at "
+                f"bond {n_sites}, so no part of the operator runs through it"
             )
         return cls(edges=tab)
 
