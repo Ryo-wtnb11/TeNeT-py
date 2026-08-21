@@ -5282,6 +5282,82 @@ left that list with M61 Stage D above.
   reported here because no production change shipped to measure one on. The refusal of a
   max-flow (#138, re-measured twice) is untouched and remains a refusal.
 
+- **M52** — shipped: `MPO.from_entries` builds an MPO from the **non-zero entries of each
+  site's `W`**, and what it produces is an `EdgeTable` rather than a list of site tensors —
+  so a hand-built operator is indistinguishable to `Env` from a `from_terms` one and runs
+  on M39's single prepared engine path (#217, over #204's engine and #200's boundary).
+
+  **The fixed constraint decided the shape.** The point was never convenience alone:
+  `from_w` produces a numeric MPO with no symbols, and that is *why* `Env.heff2` needs a
+  compatibility entry at all — symbols cannot be recovered from a numeric `W` (#141
+  measured that a compressed one retains no edge structure). So the builder had to fill
+  the same five structures `_edge_table` consumes — `states`, `order`, `moves`, `stops`,
+  `spectators` — and a per-site sparse `{(i, j): entry}` mapping matches `moves[n]`'s
+  `{(state_l, state_r): W}` one for one. It does more than match it: the builder *drives*
+  `_Walk` itself, so the fused running charge, the per-state `GradedSpace`, the `dual`
+  convention and the fermionic R-coefficient on the site's own physical line are the same
+  code the term list runs, not a second copy of it.
+
+  **The spelling: per-site sparse dicts, against the three references.** MPSKit is the
+  closest fit and was already cited twice in `mps.py` — its matrix constructor takes
+  entries that are `MPOTensor`, `Missing` or `Number`, which is exactly the vocabulary
+  `moves`/`stops`/`spectators` already carry, so tenet's four spellings are `None` (the
+  identity, a spectator ride on `(i, i)`), a number (that multiple of it), a rank-3
+  `local_op` operator, and the pair `(coefficient, operator)` — the pair added because a
+  `W` is written on paper as a coefficient times a named operator. TenPy's `MPOGraph`
+  (`{keyL: {keyR: [(opname, strength)]}}`) is the same graph keyed by arbitrary hashables
+  and reached the same conclusion from the other side; its `from_grids` dense nested lists
+  are what this builder exists not to make anyone write. **YASTN's contribution is a
+  negative result**: between a fully formed tensor (`A[n] = t`) and a term list (`Hterm`,
+  `generate_mpo`) it offers nothing at all, which is the gap being filled. A flat
+  `(site, i, j, op)` iterable was refused — it loses the visual correspondence with the
+  printed `W`, which is the whole reason a caller reaches for this entry — and a builder
+  object was refused as an interface with one implementation and one call site.
+
+  **`IdL` and `IdR` are by convention: bond index `0` and bond index `-1`.** MPSKit fixes
+  the same two by position (`V[1] = V[end] = _rightunit`, the `(1 C D; . A B; . . 1)`
+  partition `EdgeBlocks` implements) and tenet's own layout already assumes it — `_merge`
+  direct-sums a cut in `[_IDL, *open, _IDR]` order and M39's pinning reads the two corners
+  off the first and last slot of the bond's unit sector. TenPy carries `IdL`/`IdR`
+  *explicitly* because its graph keys are arbitrary hashables with no order to lean on;
+  here an explicit pair would be a second source of truth that `_merge` could contradict,
+  which is the same argument `from_terms` makes for having no `phys=`. Python's `-1` is
+  what makes the convention free: **no bond width is ever declared or inferred**, because
+  the last index needs no width to name, and the caller's channel numbering is the
+  textbook's rather than the grading's (`from_w`'s dense rows have to be ordered by charge
+  to line up with `GradedSpace`; these do not). The convention is then made
+  *self-enforcing* rather than assumed: an entry into `IdL`, an entry out of `IdR`, or a
+  non-identity on either corner is refused by name — which is the same four zeros the
+  corner-exactness property asserts, so the refusals and the property are one statement.
+
+  **An invariant rank-2k operator is refused**, with `from_arrays`' argument and a pointer
+  to `from_terms`: one `W` entry sits on one site, and `local_op`'s invariant form spans
+  *k* of them through an SVD, so it has nowhere to put the other *k*−1 indices.
+
+  **The two boundary bonds are `D=1`** and are trimmed by the finite-state machine's own
+  reachability pruning rather than by slicing — bond `0` keeps only `IdL` and the last bond
+  only `IdR` — which is `from_w`'s `start` row and `end` column and is what lets one bulk
+  mapping be handed over for every site including the ends. A dead channel therefore raises
+  only when it is dead at **every** bond it is named at: a range-2 coupling's channel is
+  legitimately dead at the last bond, and refusing that would refuse every finite-range `W`.
+
+  **`from_w` is kept, unchanged, and is not deprecated.** Its input is a *dense array*,
+  which is what you have when the `W` comes out of a paper or another library — there the
+  entries are numbers, no charge can be recovered from them, and the caller must supply the
+  grading. `from_entries` cannot take one. Deprecating `from_w` would also not close the
+  compatibility entry in `Env.heff2`, because `MPO(sites)` is public and equally
+  symbol-free; closing that branch means refusing externally-built MPOs, which is a
+  public-surface decision of its own and stays out of scope. What changes is the
+  *recommendation*: `from_entries` is the way to hand-build, and `docs/guide/models-and-sites.md`
+  and `examples/heisenberg_walkthrough.py` say so while showing both — the walkthrough
+  still leads with the 5×5 `W` a textbook prints, because that is what teaches what an MPO
+  is, and now runs all three routes to the same twelve digits.
+
+  **No `cutoff`.** `from_terms`' two compressing sweeps exist because a term list can be
+  numerically low-rank in a way the graph cannot see (a power law, an integral file); a
+  `W` somebody sat down and wrote is the bond they chose. An operator that wants the sweeps
+  wants `from_terms`, which is where the knob lives.
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,

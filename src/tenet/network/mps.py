@@ -2857,7 +2857,7 @@ class MPO:
         hands over a grading by hand -- and what comes back is numeric, with no edge
         description, so it routes onto [Env.heff2][tenet.network.Env.heff2]'s
         compatibility entry. This builder takes the *same* ``W``, named entry by entry,
-        and produces an [EdgeTable][tenet.network.EdgeTable]: the very object
+        and produces an ``EdgeTable``: the very object
         [from_terms][tenet.network.MPO.from_terms] produces, indistinguishable to
         [Env][tenet.network.Env], on the one engine path. **The bond spaces are derived,
         never declared** -- the charge is on the operator's third leg, each state's
