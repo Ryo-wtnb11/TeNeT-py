@@ -109,6 +109,39 @@ That is the whole reason the decision is a returned object. A U(1) user reads
 `BondSelection` as a convergence log; an SU(2) user reads it as the answer to
 "why is my bond smaller than I asked for".
 
+## The Hermitian route
+
+An SVD of a self-adjoint operator returns `|w|` and throws away which eigenvalues
+were negative, so `U @ S @ adjoint(U)` reconstructs an indefinite operator with
+every sign flipped positive. That is structural, not a tolerance: no care at the
+call site recovers it. [tenet.ops.linalg.eigh_truncated][] is
+[tenet.ops.linalg.svd_truncated][]'s twin for that case — same keyword set, same
+keep rule, same refusal under a trace — and
+[tenet.ops.linalg.eigh][]'s `bond=` is the jittable half:
+
+```python
+>>> x = SymmetricTensor.random((Leg(W, OUT), Leg(W, IN)), seed=3)
+>>> herm = (x + tenet.transpose(tenet.adjoint(x), (1, 0))) / 2  # indefinite
+>>> ew, ev = tenet.linalg.eigh_truncated(herm, max_bond=2)
+>>> [round(float(z), 6) for z in tenet.to_matrices(ew)[U1Sector(0)].diagonal()]
+[2.422876, -0.949726]
+>>> ew2, ev2 = tenet.linalg.eigh(herm, bond=ew.structure.legs[0].space)
+>>> bool(tenet.allclose(ev @ ew @ tenet.adjoint(ev), ev2 @ ew2 @ tenet.adjoint(ev2)))
+True
+
+```
+
+Two places where it is not a literal mirror of the SVD, both deliberate:
+
+- **the kept set is not a prefix.** Singular values come back descending, so `svd`
+  slices; eigenvalues come back *ascending and signed*, so the `k` largest by
+  `|w|` is an `argsort` and a gather. A gather is a value-dependent permutation,
+  never a value-dependent shape, so `eigh(..., bond=)` still traces.
+- **the sign survives.** Only the ordering key is `|w|`; `W`'s retained entries
+  are the signed eigenvalues.
+
+On a positive-definite input the two routes agree factor for factor.
+
 ## The record
 
 | field | meaning |

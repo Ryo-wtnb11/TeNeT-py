@@ -614,6 +614,27 @@ def test_select_bond_decides_the_same_bond_on_torch(name):
     assert selection.bond == tenet.linalg.svd_truncated(t, axes, max_bond=4)[1].legs[0].space
 
 
+@pytest.mark.parametrize("name", ["u1", "su2"])
+def test_eigh_truncated_and_bond(name):
+    """#205's pair on torch blocks. The gather is `argsort` over `abs`, which is the
+    only backend call `eigh_truncated` makes that `svd_truncated` does not."""
+    t = tt(LEGS[name], seed=31)
+    axes = ((0, 1), (2, 3))
+    m = tenet.repartition(t, *axes)
+    h = m @ tenet.adjoint(m)
+    ax = ((0, 1), (2, 3))
+
+    w, v = tenet.linalg.eigh_truncated(h, ax, max_bond=4)
+    assert is_torch(w) and is_torch(v)
+    bond = w.structure.legs[0].space
+    reference = tenet.linalg.eigh_truncated(h.to_backend("numpy"), ax, max_bond=4)[0]
+    close(w, reference, atol=1e-12)
+
+    projected = tenet.linalg.eigh(t=h, axes=ax, bond=bond)
+    assert is_torch(projected[0])
+    same(projected[0], w)
+
+
 # --- the bit-identical table (issue #95, all eight measured at 0.0) ---------------
 
 
