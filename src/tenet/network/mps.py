@@ -25,7 +25,7 @@ import numpy as np
 
 import tenet
 from tenet import IN, OUT, FusionTree, GradedSpace, Leg, SymmetricTensor
-from tenet.network.common import Recent, spectrum
+from tenet.network.common import Recent, entropy, ones, spectrum, spectrum_sectors
 from tenet.symmetry import Sector
 
 __all__ = [
@@ -36,7 +36,9 @@ __all__ = [
     "EdgeTable",
     "expectation_1site",
     "expectation_2site",
+    "expectation_profile",
     "local_op",
+    "overlap",
     "spectrum",
 ]
 
@@ -361,13 +363,11 @@ class MPS:
         -----
         No dense expansion and no environment object: two ``tenet.einsum`` calls per site,
         the same pairwise shape [Env.update_][tenet.network.Env.update_] uses with the MPO row
-        removed.
+        removed. Written *through* [overlap][tenet.network.overlap] rather than beside it
+        (#213), so the one-state and two-state readings of the same transfer pass cannot
+        drift.
         """
-        t = tenet.einsum("apR,apr->Rr", tenet.adjoint(self[0]), self[0])
-        for n in range(1, len(self)):
-            t = tenet.einsum("Rr,rps->Rps", t, self[n])
-            t = tenet.einsum("RpS,Rps->Ss", tenet.adjoint(self[n]), t)
-        return float(tenet.full_trace(t)) ** 0.5
+        return overlap(self, self) ** 0.5
 
     def to_dense(self) -> Any:
         """The full ``d**N`` amplitude array, ``D=1`` boundaries dropped.
@@ -434,6 +434,133 @@ class MPS:
             self[n + 1] = tenet.einsum("xy,yqr->xqr", s, self[n + 1])
         self.center = len(self) - 1
         return max(total, 0.0) ** 0.5  # an untruncated bond lands on -1e-17, not on 0
+
+    # --- entanglement ---------------------------------------------------------------
+
+    def _bond_svds(self) -> dict[int, SymmetricTensor]:
+        """Every bond's normalized singular-value tensor, off a **canonical copy**.
+
+        [compress_][tenet.network.MPS.compress_]'s body with the truncation removed, run on
+        ``self.copy()``: a caller reading a state must not have it re-gauged underneath, and
+        the values of a non-canonical gauge are not Schmidt values at all. So this canonizes
+        first, always -- the choice ``compress_`` makes for the same reason -- and pays one
+        ``lq`` pass for it whatever ``center`` says.
+        """
+        psi = self.copy().canonize_(0)
+        out: dict[int, SymmetricTensor] = {}
+        for n in range(len(psi) - 1):
+            aa = tenet.einsum("apx,xqr->apqr", psi[n], psi[n + 1])
+            u, s, vh = tenet.linalg.svd(aa, ((0, 1), (2, 3)))
+            out[n] = s = s / tenet.norm(s)
+            psi[n], psi[n + 1] = u, vh  # the write barrier bends ``vh`` back
+            psi[n + 1] = tenet.einsum("xy,yqr->xqr", s, psi[n + 1])
+        return out
+
+    def schmidt_values(self) -> dict[int, list[float]]:
+        """The Schmidt values across every bond, flattened and descending.
+
+        Returns
+        -------
+        dict of int to list of float
+            One entry per internal bond, keyed by the bond's **left site** -- the key
+            [sweep_][tenet.network.sweep_]'s ``schmidt`` dict already uses -- holding that
+            cut's values, ``sqrt(qdim)``-weighted, normalized and sorted descending. A
+            one-site state has no internal bond and gives ``{}``. The SVD here is the
+            exact [tenet.linalg.svd][tenet.ops.linalg.svd], so a sector the bond carries
+            but the state does not occupy contributes an explicit ``0.0`` rather than
+            being dropped the way a truncating sweep drops it.
+
+        Examples
+        --------
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPS
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1), U1Sector(1)])
+        >>> {n: [round(v, 6) for v in vals] for n, vals in psi.schmidt_values().items()}
+        {0: [1.0, 0.0], 1: [1.0, 0.0]}
+
+        Notes
+        -----
+        YASTN's ``get_Schmidt_values`` and TenPy's ``entanglement_spectrum(by_charge=False)``.
+        Both are methods on the state rather than outputs of an algorithm, and so is this:
+        the sweep computes the same numbers at every bond of every sweep and reports only
+        how much they *moved*, which is a convergence diagnostic and not an answer about the
+        converged state (#215).
+
+        A canonical **copy** is taken first, so this never re-gauges the state it reads and
+        never reports the values of a non-canonical gauge. Each of the three readers here
+        pays its own SVD sweep; a caller wanting two of them on a large state should keep
+        the first result rather than call twice.
+        """
+        return {n: spectrum(s) for n, s in self._bond_svds().items()}
+
+    def schmidt_sectors(self) -> dict[int, dict[Sector, list[float]]]:
+        """[schmidt_values][tenet.network.MPS.schmidt_values], resolved by symmetry sector.
+
+        Returns
+        -------
+        dict of int to (dict of Sector to list of float)
+            One entry per internal bond, keyed by the bond's left site; each is that cut's
+            spectrum split by coupled sector, values descending within a sector.
+
+        Examples
+        --------
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPS
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1), U1Sector(1)])
+        >>> [(sector.charge, len(vals)) for sector, vals in psi.schmidt_sectors()[0].items()]
+        [(-2, 1), (0, 1)]
+
+        Notes
+        -----
+        TenPy's ``entanglement_spectrum(by_charge=True)``, and the read a graded bond is
+        *for*: which sector carries the entanglement is a question a flat list cannot answer
+        and a labelled bond answers for free. The ``sqrt(qdim)`` weight is applied in
+        [spectrum_sectors][tenet.network.spectrum_sectors] and nowhere else.
+        """
+        return {n: spectrum_sectors(s) for n, s in self._bond_svds().items()}
+
+    def entanglement_entropy(self, *, alpha: float = 1.0) -> dict[int, float]:
+        """The entanglement entropy across every bond, in **nats**.
+
+        Parameters
+        ----------
+        alpha : float, optional
+            The Renyi index handed to [entropy][tenet.network.entropy]. Default ``1.0``,
+            the von Neumann entropy. Keyword-only.
+
+        Returns
+        -------
+        dict of int to float
+            One entropy per internal bond, keyed by the bond's left site.
+
+        Examples
+        --------
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPS
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1)])
+        >>> psi.entanglement_entropy()  # a product state is unentangled
+        {0: -0.0}
+
+        Notes
+        -----
+        Nats, not bits: the convention is stated on [entropy][tenet.network.entropy], which
+        does the arithmetic, because the two references disagree about it. The multiplet
+        weight that makes an SU(2) state agree with the same state under U(1) is stated
+        there too.
+
+        TenPy's ``entanglement_entropy(n=1)`` and YASTN's ``get_entropy(alpha=1)``. Both
+        return one value per cut including the two trivial boundary cuts; this returns the
+        ``N - 1`` internal bonds only, because a boundary cut of a finite open chain is
+        zero by construction and the key here is a bond's left site, which a boundary cut
+        does not have.
+        """
+        return {n: entropy(s, alpha=alpha) for n, s in self._bond_svds().items()}
 
     # --- serialization --------------------------------------------------------------
 
@@ -561,11 +688,13 @@ def _as_site(t: SymmetricTensor) -> SymmetricTensor:
 # --- measurement --------------------------------------------------------------------
 #
 # Module-level, not methods and not a ``network/measure.py``: a measurement is not
-# container state, and a new module for ~30 lines buys a second entry in
-# ``tests/network/test_hygiene.py``'s module list and nothing else. Simplification: the day
-# ``correlation``, ``sample`` or ``rdm`` land, ``network/measure.py`` is the module and
-# YASTN's ``_measure.py`` the design -- ``measure_1site`` (:76) has a ~40-line body and
-# ``measure_2site`` (:130) a ~75-line one, which is the argument for not starting it now.
+# container state. #213 added ``overlap`` and ``expectation_profile`` here and put
+# ``measure_mpo`` and ``correlation_function`` in ``env.py``, and the split is forced
+# rather than chosen: those two read an ``Env`` and ``env.py`` imports this module, while
+# ``MPS.norm`` is written through ``overlap``, so a single ``network/measure.py`` holding
+# all four would be a cycle. Simplification: the day ``sample`` or ``rdm`` land -- neither
+# of which touches ``MPS.norm`` -- ``network/measure.py`` is the module and YASTN's
+# ``_measure.py`` the design.
 
 
 def _braket(bra: Sequence[SymmetricTensor], ket: Sequence[SymmetricTensor]) -> Any:
@@ -580,6 +709,66 @@ def _braket(bra: Sequence[SymmetricTensor], ket: Sequence[SymmetricTensor]) -> A
         t = tenet.einsum("Rr,rps->Rps", t, ket[n])
         t = tenet.einsum("RpS,Rps->Ss", tenet.adjoint(bra[n]), t)
     return tenet.full_trace(t)
+
+
+def overlap(bra: MPS, ket: MPS) -> float:
+    """``<bra|ket>`` by one transfer pass, **undivided** by either state's norm.
+
+    Parameters
+    ----------
+    bra : MPS
+        The state that is conjugated; any gauge, any norm.
+    ket : MPS
+        The state that is not; any gauge, any norm. The two may carry different bond
+        spaces, and must have the same number of sites.
+
+    Returns
+    -------
+    float
+        ``<bra|ket>``.
+
+    Raises
+    ------
+    ValueError
+        If the two states have different lengths.
+
+    Examples
+    --------
+    >>> from tenet import GradedSpace
+    >>> from tenet.network import MPS, overlap
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1)])
+    >>> phi = MPS.product(phys, [U1Sector(1), U1Sector(-1)])
+    >>> round(overlap(phi, psi), 12)
+    1.0
+    >>> round(overlap(psi, psi) - psi.norm() ** 2, 12)
+    0.0
+
+    Notes
+    -----
+    **Undivided**, the convention [Env.measure][tenet.network.Env.measure] already keeps and
+    the one both references keep for this function -- YASTN's ``measure_overlap(bra, ket)``
+    and ``vdot``, TenPy's ``MPS.overlap(other)``. A fidelity is
+    ``overlap(phi, psi) / (phi.norm() * psi.norm())`` and the caller spells the division,
+    because the two states it needs are the caller's.
+    [expectation_1site][tenet.network.expectation_1site] divides and says so in its own
+    name; a ``measure_``-shaped name here would make one verb mean two things.
+
+    The two chains may carry **different bond spaces**: the transfer tensor holds one index
+    from each, which is the same fact ``Env(psi, h, bra=phi)`` rests on one level up. Two
+    states whose *boundary* legs sit in different sectors have no coupled sector at all and
+    the overlap is structurally zero rather than numerically small.
+
+    [MPS.norm][tenet.network.MPS.norm] is ``overlap(psi, psi) ** 0.5``, and
+    ``Env(psi, MPO.identity(len(psi), phys), bra=phi).measure()`` is this number computed
+    the long way, through the environment cache; both agreements are tested.
+    """
+    if len(bra) != len(ket):
+        raise ValueError(
+            f"an overlap needs two states of the same length, got {len(bra)} and {len(ket)}"
+        )
+    return float(_braket(bra.sites, ket.sites))
 
 
 def _check(psi: MPS, o: SymmetricTensor, n: int, ndim: int, last: int) -> None:
@@ -638,6 +827,76 @@ def expectation_1site(psi: MPS, o: SymmetricTensor, n: int) -> float:
     ket = list(psi)
     ket[n] = tenet.einsum("Pq,aqr->aPr", o, ket[n])
     return float(_braket(psi.sites, ket) / _braket(psi.sites, psi.sites))
+
+
+def expectation_profile(psi: MPS, o: SymmetricTensor) -> list[float]:
+    """``<psi|o_n|psi> / <psi|psi>`` at **every** site, in one pass over the chain.
+
+    Parameters
+    ----------
+    psi : MPS
+        The state; any gauge, any norm, and **not** modified -- the walk runs on a copy.
+    o : SymmetricTensor
+        The operator, rank 2 on ``(phys OUT, phys IN)`` --
+        [local_op][tenet.network.local_op]'s invariant one-site form, exactly as
+        [expectation_1site][tenet.network.expectation_1site] takes it.
+
+    Returns
+    -------
+    list of float
+        One normalized expectation value per site, in site order.
+
+    Raises
+    ------
+    ValueError
+        If ``o`` is not rank 2.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tenet import GradedSpace
+    >>> from tenet.network import MPS, expectation_profile, local_op
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1), U1Sector(1)])
+    >>> sz = local_op(np.diag([-0.5, 0.5]), phys=phys)
+    >>> [round(v, 6) for v in expectation_profile(psi, sz)]
+    [0.5, -0.5, 0.5]
+
+    Notes
+    -----
+    **One pass, not one pass per site.** ``[expectation_1site(psi, o, n) for n in
+    range(len(psi))]`` is the same numbers and costs two *full-chain* transfer passes per
+    site, i.e. ``O(N**2)`` transfer contractions for the profile every DMRG user plots.
+    This walks the chain once, moving the orthogonality centre right by a ``qr`` at each
+    step and reading the operator off the centre -- which a canonical MPS makes exact,
+    because everything left of the centre is left-orthonormal and everything right of it
+    right-orthonormal, so both halves of the transfer close to the identity and
+    ``<o_n> = <A_n|o|A_n>``. Both references do exactly this
+    (YASTN ``measure_1site(..., sites=None)``, TenPy ``expectation_value(ops)``), and
+    ``tests/network/test_measure.py`` counts the contractions rather than claiming them.
+
+    ``psi.copy().canonize_(0)`` first, so no gauge is assumed of the input and the input is
+    not re-gauged: the same choice
+    [MPS.schmidt_values][tenet.network.MPS.schmidt_values] makes, for the same reason. The
+    normalization is then free -- ``canonize_`` leaves a unit-norm state -- which is why no
+    second transfer pass computes ``<psi|psi>``.
+
+    Divided by ``<psi|psi>``, matching
+    [expectation_1site][tenet.network.expectation_1site]; the reason the divided and
+    undivided readings carry different names is stated there.
+    """
+    _check(psi, o, 0, 2, len(psi) - 1)
+    walk = psi.copy().canonize_(0)
+    out = []
+    for n in range(len(walk)):
+        a = walk[n]
+        out.append(float(tenet.inner(a, tenet.einsum("Pq,aqr->aPr", o, a))))
+        if n + 1 < len(walk):
+            q, r = tenet.linalg.qr(a, ((0, 1), (2,)))
+            walk[n] = q
+            walk[n + 1] = tenet.einsum("xy,yqr->xqr", r, walk[n + 1])
+    return out
 
 
 def expectation_2site(psi: MPS, o: SymmetricTensor, n: int) -> float:
@@ -2840,3 +3099,153 @@ class MPO:
         n_sites, d = len(self), self[0].legs[1].space.dim
         order = list(range(0, 2 * n_sites, 2)) + list(range(1, 2 * n_sites, 2))
         return out.to_dense()[0, ..., 0].transpose(order).reshape(d**n_sites, d**n_sites)
+
+    def apply(self, psi: MPS) -> MPS:
+        """``H|psi>`` as a new [MPS][tenet.network.MPS], **untruncated**; ``psi`` is untouched.
+
+        Parameters
+        ----------
+        psi : MPS
+            The state; any gauge, any norm. Not modified -- the product is built from its
+            frozen tensors into a new container.
+
+        Returns
+        -------
+        MPS
+            The product state, on the site convention ``MPS.__setitem__`` enforces. Its
+            bond at every cut is the **fusion** of this operator's bond with ``psi``'s, so
+            the bond dimension is the product of the two and the result is exact.
+
+        Raises
+        ------
+        ValueError
+            If the operator and the state have different lengths.
+
+        Examples
+        --------
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPO, MPS, overlap
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1), U1Sector(1)])
+        >>> ident = MPO.identity(3, phys)
+        >>> round(overlap(psi, ident.apply(psi)), 12)
+        1.0
+
+        Notes
+        -----
+        **Truncation is not hidden here and is not a keyword: it is
+        [MPS.compress_][tenet.network.MPS.compress_], by name.**
+
+            phi = h.apply(psi)
+            discarded = phi.compress_(chi=64, cutoff=1e-12)
+
+        That call already takes the ``chi``/``cutoff`` pair [Sweep][tenet.network.Sweep] and
+        the sweep take and already returns the **total** discarded weight
+        ``sqrt(sum_bond dw)``, which is the convention this question wants and which
+        [sweep_][tenet.network.sweep_]'s per-bond *maximum* deliberately is not. Giving
+        ``apply`` its own ``chi=`` would put a second name on that number and be the one
+        place the two conventions could blur. Simplification: the untruncated product costs
+        ``D_w`` times ``psi``'s bond, so for a wide operator compress promptly rather than
+        holding the product; the zip-up apply that truncates *during* the sweep (YASTN's
+        ``zipper``, TenPy's ``apply_zipup``) is the named upgrade and is a change with a
+        measurement attached.
+
+        **A deferred operator is materialised, site by site, through ``MPO.__getitem__``** --
+        so an ``MPO`` built at
+        ``cutoff=None``, which carries an edge description and no tensors, pays one full
+        ``W`` per site here. That is stated rather than avoided: this is a whole-state
+        product, not a sweep step, and there is no bond at which a symbolic operator could
+        be kept symbolic. The sweep's own path (#200, #204) is untouched.
+
+        **The virtual leg is turned around once, and that is the whole graded content.**
+        The operator's bond and the state's bond cross a site in *opposite* directions --
+        the fact ``docs/design.md`` "Milestone 11" spends a section on -- so they cannot be
+        fused until one of them is turned. Turning the operator's left virtual leg is a
+        duality relabel, [tenet.flip_dual][], which charges ``chi * theta`` per fusion tree:
+        ``+1`` on every bosonic sector and ``-1`` on an odd fermionic one, which is exactly
+        the sign that is missing if the fusion is written without it. The direction is fixed
+        by the leg rather than by the flag: ``inv=not dual`` charges the same categorical
+        map whether the leg was written dual or plain, and it has to be, because
+        [from_terms][tenet.network.MPO.from_terms]'s two representations write that flag
+        differently -- compressed bonds come back ``dual``, a deferred table's do not.
+        Charging by the flag instead would make ``H|psi>`` depend on which representation
+        built ``H``, silently and only for fermions. Both are tested against the dense
+        oracle, under fermionic parity and under SU(2).
+        """
+        if len(self) != len(psi):
+            raise ValueError(
+                f"MPO.apply needs an operator and a state of the same length, got "
+                f"{len(self)} and {len(psi)}"
+            )
+        sites, last = [], len(psi) - 1
+        for n in range(len(psi)):
+            w = self[n]
+            w = tenet.flip_dual(w, (0,), inv=not w.legs[0].dual)
+            w = tenet.repartition(w, (0, 1), (2, 3))  # (x OUT, P OUT | p IN, m IN)
+            t = tenet.einsum("xPpm,apr->axPrm", w, psi[n])
+            if n == 0:  # the operator's own D=1 boundary, capped rather than fused
+                cap = ones((Leg(t.legs[1].space, IN, t.legs[1].dual),))
+                t = tenet.einsum("x,axPrm->aPrm", cap, t)
+            else:
+                t = tenet.fuse(t, (0, 1))
+            if n == last:
+                cap = ones((Leg(t.legs[3].space, OUT, t.legs[3].dual),))
+                t = tenet.einsum("aPrm,m->aPr", t, cap)
+            else:
+                t = tenet.fuse(t, (2, 3))
+            sites.append(t)
+        return MPS(sites)
+
+    def variance(self, psi: MPS) -> float:
+        """``<psi|H^2|psi> / <psi|psi> - E**2`` -- the convergence check that is not a change test.
+
+        Parameters
+        ----------
+        psi : MPS
+            The state, normally a converged [DMRG_out][tenet.network.DMRG_out]'s ``psi``;
+            any gauge, any norm, and not modified.
+
+        Returns
+        -------
+        float
+            The energy variance. Zero for an exact eigenstate, and it falls as ``chi``
+            grows for a state that is converging on one.
+
+        Examples
+        --------
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPO, MPS
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1)])
+        >>> round(MPO.identity(2, phys).variance(psi), 12)  # every state is an eigenstate of 1
+        0.0
+
+        Notes
+        -----
+        TenPy names the same quantity ``MPO.variance(psi, exp_val=None)``. ``dmrg_``'s own
+        convergence test (``network/dmrg.py``) is a **change** test -- the energy stopped
+        moving and the Schmidt values stopped moving -- and both references say plainly that
+        a change test can be satisfied by a run stuck on a wrong bond structure. This is the
+        check that is not a change test, and ``docs/tutorials/dmrg.md`` shows it beside the
+        convergence discussion.
+
+        **One line over [apply][tenet.network.MPO.apply] and
+        [overlap][tenet.network.overlap], and no ``MPO @ MPO``.** With ``|Hpsi> = H|psi>``
+        exact, ``<psi|H^2|psi>`` is ``<Hpsi|Hpsi>`` and ``<psi|H|psi>`` is
+        ``<psi|Hpsi>`` -- three overlaps and one product. Expanding ``H**2`` as a term list
+        would be quadratic in the term count and would ask the caller to multiply every
+        operator pair by hand, which is why #214 is about the apply and not about an
+        operator algebra.
+
+        The product is **untruncated**, so this is the variance of ``psi`` under the exact
+        ``H`` and not of a compressed approximation to it; the cost is one state of bond
+        ``D_w`` times ``psi``'s. ``<psi|H|psi>`` read this way agrees with
+        [Env.measure][tenet.network.Env.measure] to solver precision, which is tested and is
+        the statement that the apply is the operator it claims to be.
+        """
+        hpsi = self.apply(psi)
+        norm2 = overlap(psi, psi)
+        energy = overlap(psi, hpsi) / norm2
+        return overlap(hpsi, hpsi) / norm2 - energy * energy

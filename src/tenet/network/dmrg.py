@@ -591,6 +591,20 @@ class DMRG_out(NamedTuple):
     [Sweep][tenet.network.Sweep] per sweep run -- ``zip(out.schedule, out.history)`` is
     exact, and ``out.schedule`` alone answers whether a run actually reached its final
     ``chi`` or converged earlier. ``psi`` is the converged [MPS][tenet.network.MPS].
+
+    **No Schmidt-spectrum field, decided rather than omitted** (#215). The sweep computes
+    the spectrum at every bond and this record reports ``max_dSchmidt``, how much it
+    *moved*, which is the convergence criterion and is all this record is for. The spectrum
+    itself is a property of the state, not of the run that produced it, and
+    [MPS.schmidt_values][tenet.network.MPS.schmidt_values],
+    [MPS.schmidt_sectors][tenet.network.MPS.schmidt_sectors] and
+    [MPS.entanglement_entropy][tenet.network.MPS.entanglement_entropy] answer for ``psi``
+    exactly and in any gauge. Carrying the sweep's dict here instead would publish a
+    *truncated* spectrum taken at whichever direction happened to visit the bond last, and
+    would freeze the convergence test's internal shape into the public output for a number
+    the state already gives. TenPy reports a per-sweep ``S`` in ``sweep_stats`` because its
+    ``max_S_err`` criterion is computed from it; tenet's criterion is the Schmidt *change*
+    and it is already reported.
     """
 
     sweeps: int

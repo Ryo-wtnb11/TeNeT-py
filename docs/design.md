@@ -4677,6 +4677,254 @@ The split:
   (`heisenberg.py`, `su2_heisenberg.py`, `bench_dmrg.py`) lose 42 lines and gain 27.
   `examples/toy_codes/` is untouched on purpose — writing the operators out is part of
   what a toy code teaches, which is the same lane rule #183 drew.
+- **M58** — shipped: `Env._compiled` leaves the byte budget, and the compile count is the
+  distinct-structure-key count at every budget (#227, the defect M57 measured and filed).
+
+  **The decision, of the three #227 offered: `_compiled` does not belong under the byte
+  budget.** Its entry was `(structure key, _Prepared, callable)` and it is now
+  `(structure key, callable)` — the `_Prepared` was never read from it, only weighed, and
+  it is the same object `Env._prepared` holds for that bond. `common.payload` walks each
+  cache independently, so those arrays were charged twice, and an eviction on a doubled
+  weight threw away the one thing in the entry that is expensive to rebuild. What is left
+  weighs nothing: `payload(dict(env._compiled)) == 0` on any run, asserted. So the cache is
+  a plain `dict`, bounded by the bond count and by nothing else.
+
+  **The two rejected options, and why.** Teaching `payload` to deduplicate by identity
+  across caches is the general fix and it is the wrong one here: it makes a cache's weight
+  depend on what the *other* caches hold, and each `Recent` being independent is M38's
+  whole appeal — the policy is one number in one place precisely because no cache has to
+  ask another one anything. A per-`Env` budget shared by an accumulator is the same
+  coupling with a nicer name, and it would also change what M38 measured for the two
+  caches that genuinely hold gibibytes, which is a re-measurement and not a defect fix.
+  Neither is needed once the entry stops holding a borrowed reference: the double count
+  was not incidental, it was systematic and structural, and removing the reference removes
+  it at the source. `payload`'s conservative over-estimate for *genuinely* different
+  objects is untouched and still correct.
+
+  **The memory the budget bounds is unchanged, and the number is zero.** M38's
+  charged-once table at K=16 (N2 CAS 6-31G, 19.19 GiB resident, 7.34 GiB at a 4 GiB budget)
+  charges each array buffer to the first cache that reaches it, and `_compiled` was never
+  in that column: everything it held, `_prepared` held first. Taking it out of the budget
+  therefore removes nothing from the resident total — it removes an eviction pressure that
+  bought nothing. The four caches that hold tensors (`EdgeTable._table`,
+  `EdgeTable._embeds`, `Env._cores`, `Env._prepared`) are `Recent()` exactly as before.
+
+  **The counting result.** M57's table read 143 compiles against 115 distinct keys on C2
+  CAS cc-pVDZ at K=26 — 28 recompiles, at 181–378 ms of `jax.jit` tracing apiece (M54), so
+  roughly 10 s of wasted tracing per two sweeps. The 28 were bonds whose `_compiled` entry
+  the budget evicted, and the floor is now reached on every model. The regression test does
+  not need C2: a `CACHE_BUDGET` of zero reproduces the eviction on a six-site chain, and
+  `test_a_squeezed_budget_no_longer_recompiles_a_bond_it_evicted` asserts
+  `n_compile == n_distinct_keys` at a budget of 0 and at 1 TiB alike. Before the change it
+  failed at both — at zero on the count, at 1 TiB on the payload.
+
+  **One existing test changed, and it is the one #227 named.**
+  `test_the_sweep_caches_never_grow_past_the_budget` asserted `set(lengths) == {2}` over
+  *five* caches, i.e. that all five evict to the two-entry floor. It now asserts that over
+  the four byte-budgeted caches, and asserts separately that `_compiled` is not a `Recent`,
+  holds one slot per bond at both ends of the budget, and weighs zero. That is strictly
+  more than it pinned before. `test_the_compiled_cache_keeps_one_entry_per_bond_across_two_chis`
+  changed one literal, `len(entry) == 3` to `== 2`, which is the entry shape and nothing
+  else. `_prepare2`'s identity discipline — the guarantee a stale environment can never be
+  served — is untouched, and so is the test M57 added for it.
+
+- **M50** — shipped: the per-bond Schmidt spectrum and the entanglement entropy are
+  readable **from the state** (#215). `MPS.schmidt_values`, `MPS.schmidt_sectors` and
+  `MPS.entanglement_entropy`, over `network/common.spectrum_sectors` and
+  `network/common.entropy`.
+
+  **The datum existed twice and was returned nowhere.** `sweep_` writes
+  `schmidt[n] = spectrum(s)` at every bond of every sweep and `dmrg_` uses that dict only
+  to compute `max_dSchmidt` — how much the spectrum *moved* — and drops it; `compress_`
+  computes the same SVD and returns only the discarded weight. A user asking the most
+  ordinary question about a converged state had to canonize, merge every adjacent pair,
+  call `svd` and re-derive the `sqrt(qdim)` weight by hand.
+
+  **The readers are on the state, and they canonize a copy.** Both references put these on
+  the container (YASTN `get_Schmidt_values`/`get_entropy`, TenPy
+  `entanglement_spectrum`/`entanglement_entropy`) rather than on an algorithm's output, and
+  the reason is that the answer is a property of the state. `compress_`
+  (`mps.py`:417-419) established that a non-canonical gauge's values are not Schmidt values
+  and must be canonized first; the difference here is that a *reader* must not re-gauge what
+  it reads, so `MPS._bond_svds` runs `compress_`'s body, minus the truncation, on
+  `self.copy()`. `center` is therefore never consulted and never a refusal: the cost is one
+  `lq` pass, which is what a correct answer costs anyway. Three readers each pay their own
+  sweep; a caller wanting two of them keeps the first result.
+
+  **The keys are the bond's left site, `0 .. N-2`.** That is the key `sweep_`'s `schmidt`
+  dict already uses, so the vocabulary is the package's own. Both references return `N + 1`
+  values including the two boundary cuts of a finite open chain; those are zero by
+  construction and a boundary cut has no left site to key on.
+
+  **Nats, stated on the callable, because the references disagree** — YASTN's `get_entropy`
+  is base 2, TenPy's `entanglement_entropy` natural. Natural is taken: `S = (c/6) log(x)`
+  is what a central-charge fit wants, and every other logarithm here is natural.
+
+  **The multiplet weight is the part that is not bookkeeping.** On a `GradedSpace` bond a
+  sector of quantum dimension `d` holds `d` copies of each reduced value in the dense
+  Schmidt spectrum, so with `p_i` the `sqrt(qdim)`-weighted value squared,
+
+  ```
+  S       = -Σ_i p_i log(p_i / d_i)
+  S_alpha = log(Σ_i d_i (p_i / d_i)**alpha) / (1 - alpha)
+  ```
+
+  Reading `-Σ p log p` off the flattened spectrum instead reports **0** for an SU(2)
+  two-site singlet, whose entropy is `log 2` and whose whole entanglement lives in one
+  `j = 1/2` multiplet. `tests/network/test_entanglement.py` pins both halves: the naive sum
+  is asserted to be zero (so a regression names itself) and the SU(2) profile is asserted
+  equal to the U(1) profile of the same state, at `alpha = 1` and `alpha = 2`, at `N = 2`
+  and `N = 6`. Equality against the *other grading of the same state* is what says the
+  weight is right rather than merely self-consistent; a dense `numpy.linalg.svd` oracle on
+  the `2**6` amplitude vector pins the absolute number at every cut.
+
+  **The `sqrt(qdim)` weight is written once**, in `spectrum_sectors`. `spectrum` keeps its
+  signature and its two callers and is now literally the flatten of it — the sorted
+  concatenation — so the flat convergence diagnostic (#120, reaffirmed #185) is unchanged
+  and there is no second copy of the weight to drift. `entropy` asks the provider for
+  `qdim` itself, because a Renyi sum needs the multiplet *count* and that is not recoverable
+  from an already-weighted value. A source-reading test pins the split.
+
+  **The sector resolution is the read a graded bond is for**, and is TenPy's
+  `entanglement_spectrum(by_charge=True)`. It is a second method rather than a `by_sector=`
+  flag on the first: the return types differ, and a boolean that changes a return type is
+  the kind of signature a checker cannot narrow and a reader has to run to understand.
+
+  **`DMRG_out` carries no spectrum field, decided rather than omitted.** `out.psi` answers
+  for itself, exactly and in any gauge. The sweep's dict is a *truncated* spectrum taken at
+  whichever direction visited the bond last, and publishing it would freeze the convergence
+  test's internal shape into the public record for a number the state already gives. TenPy
+  reports a per-sweep `S` in `sweep_stats` because its `max_S_err` criterion is computed
+  from it; tenet converges on the Schmidt *change*, which `max_dSchmidt` already reports.
+  The reason is written on `DMRG_out` itself, where a reader looking for the field will be.
+
+  Out of scope and unchanged: `spectrum`'s signature and callers, `svd_truncated` and how a
+  bond `GradedSpace` is chosen (#209), `dmrg_`'s convergence test, and the segment/mutual-
+  information reads (`mutinf_two_site`, `get_rho_segment`) that have no caller here.
+
+- **M48** — shipped: the public measurement API over the two-state `Env` (#213). `overlap`,
+  `measure_mpo`, `correlation_function` and `expectation_profile`.
+
+  **The engine half was M61 Stage D and is not repeated here.** `Env(psi, h, bra=phi)`
+  exists, `Env.measure()` on it *is* `<phi|H|psi>`, and `MPO.identity` makes it the plain
+  overlap. What was still missing was a name a user could find: `Env`'s first positional
+  argument is the *ket*, which is the constructor's shape and not a measurement's, and
+  `_braket` — the two-state transfer pass, whose own docstring already said the two chains
+  may carry different bond spaces — was private.
+
+  **`overlap(bra, ket)`, undivided.** YASTN's `measure_overlap`/`vdot` and TenPy's
+  `MPS.overlap` are both undivided, and so is `Env.measure`; a fidelity is
+  `overlap(phi, psi) / (phi.norm() * psi.norm())` and the caller spells the division. The
+  divided readings are the ones named `expectation_*`, which is the distinction M11c already
+  drew. `MPS.norm` is now `overlap(psi, psi) ** 0.5` — expressed *through* it rather than
+  beside it, so the one-state and two-state readings of the same pass cannot drift, and a
+  source-reading test pins that `norm` contains no `einsum` of its own.
+
+  **`measure_mpo(bra, h, ket)`**, YASTN's name and argument order, over
+  `Env(ket, h, bra=bra).measure()`. With the identity MPO it agrees with `overlap` to 1e-10
+  on two different converged states — two genuinely different contractions, one transfer
+  pass and one environment sweep, meeting.
+
+  **`correlation_function(psi, a, b, pairs=None)`**, TenPy's name because it is the term of
+  art; the house's `_2site` vocabulary stays with `expectation_2site`, whose signature and
+  adjacent-pair contract are untouched. The operators are `local_op`'s **rank-3 charged**
+  form, which is the form `MPO.from_terms` takes and the only form a fermionic `c` has.
+
+  **Fermions are correct because nothing new decides their sign.** Each pair is measured as
+  a one-term MPO through `from_terms` plus `Env.measure`: the Jordan-Wigner string across
+  the sites between `i` and `j` is the fZ2 braiding the term builder inserts and #147's
+  explicit-JW oracle pins, and the contractions are the ones M23/#160 audited for the
+  composition rule. A hand-written transfer walk carrying the charge leg would be faster and
+  would re-decide that sign outside the audited machinery, which is exactly how #147
+  happened. The test measures `<c+_up,i c_up,j>` on a converged N=4 Hubbard state against
+  `_dense_c`, which writes the parity string out site by site, at every separation including
+  `j - i >= 2` where a missing sign is a different number rather than a rounding.
+  **The cost is stated rather than hidden**: one build and one pass per pair, so the
+  all-pairs default is `O(N**2)` builds. `pairs=` is the way around it, and YASTN's cached
+  transfer walk (`_measure.py`:130, a ~75-line body) is the named upgrade.
+
+  **`expectation_profile(psi, o)` is the `O(N**2) -> O(N)` half.** `expectation_1site` ends
+  in two full-chain transfer passes, so the `<S^z_n>` profile every DMRG user writes — and
+  `examples/heisenberg.py` does write — is `O(N)` passes over an `O(N)` chain. The profile
+  canonizes a copy, walks the orthogonality centre right by a `qr` per site and reads the
+  operator off the centre, which a canonical MPS makes exact because both halves of the
+  transfer close to the identity. Both references do exactly this. **Counted, not claimed**:
+  at N=24 the test monkeypatches `tenet.einsum` and asserts the per-site loop spends more
+  calls than `N**2` while the profile spends fewer than `8 N`, measured at 2280 against 72.
+
+  **Where the four live, and why not one module.** `overlap` and `expectation_profile` sit
+  in `mps.py` next to `_braket`, which is their machinery; `measure_mpo` and
+  `correlation_function` sit in `env.py`, because they read an `Env` and `env.py` imports
+  `mps.py`, not the other way. A `network/measure.py` holding all four cannot exist while
+  `MPS.norm` is written through `overlap` — that is a cycle — and it would cost a third
+  entry in the hygiene test's module list for no reader's benefit. The comment `mps.py`
+  already carried about a future `measure.py` is updated to say so.
+
+  Unchanged: `expectation_1site` and `expectation_2site` signatures and semantics, `Env`'s
+  constructor, and the property that a measurement builds its own pass and never writes into
+  a sweep's cache — asserted by identity on the caller's `F` entries.
+
+  Out of scope: `H|psi>` and the variance (#214, which builds on `overlap`), excited states
+  (#216, shipped as M61 Stage D), the Schmidt spectrum (#215, a canonical-form SVD and not a
+  transfer pass), sampling and reduced density matrices, and infinite boundary conditions.
+
+- **M49** — shipped: `MPO.apply` produces `H|psi>` as a new `MPS`, and `MPO.variance` is the
+  convergence check that is not a change test (#214, over M48's `overlap`).
+
+  **The variance is why the apply exists.** `dmrg_` stops when the energy stopped moving and
+  the Schmidt values stopped moving, and both references say plainly that a change test can
+  be satisfied by a run stuck on a wrong bond structure. `<psi|H^2|psi> - E^2` is the check
+  that is not one, and it needed either `H @ H` or `H|psi>`. `H|psi>` is the smaller of the
+  two — with the product exact, `<psi|H^2|psi>` is `<Hpsi|Hpsi>` and `<psi|H|psi>` is
+  `<psi|Hpsi>`, so the whole thing is one apply and three overlaps. **No `MPO @ MPO`
+  shipped**, and no `MPS.add`, `MPO.dagger`, `plus_identity` or `is_hermitian` either:
+  every one is real in the references, none has a caller here, and a test asserts their
+  absence so that "added for symmetry" is a decision rather than a drift.
+
+  **The graded content is one turn-around.** The operator's virtual bond and the state's
+  cross a site in *opposite* directions — the fact the Milestone 11 section spends a page on
+  — so they cannot be fused until one is turned. Turning the operator's left virtual leg is
+  a duality relabel, `tenet.flip_dual`, which charges `chi * theta` per fusion tree: `+1` on
+  every bosonic sector, `-1` on an odd fermionic one. Writing the fusion without it gives a
+  state that is wrong only under fZ2, and wrong by a *number* rather than by an error —
+  measured at 1.1 against a scale of 1.5 on an N=4 Hubbard state before the flip was added.
+
+  **The direction is fixed by the leg, not by the flag**: `inv = not leg.dual`. This is not
+  a nicety. `MPO.from_terms`' two representations write that flag differently — a compressed
+  table's internal bonds come back `dual=True`, a deferred table's `dual=False` — and
+  charging by the flag would make `H|psi>` depend on which representation built `H`,
+  silently and only for fermions. A brute force over every per-site flip pattern found the
+  compressed rule ("flip exactly one of the two legs meeting at each bond") and found *no*
+  pattern at all for the deferred table until `inv` entered; with `inv = not dual` both
+  representations agree with the dense oracle and with each other, at N=2, 4 and 6, under
+  U(1), SU(2) and fZ2, from `from_terms` at either cutoff and from `from_w`.
+
+  **The operator's D=1 boundary legs are capped, not fused.** Fusing them would give the
+  product a boundary leg that is the state's own written in the *other* dual convention, and
+  `overlap(psi, h.apply(psi))` then refuses to contract — which is how the doctest found it.
+  Capping with a `network.ones` vector, the same move `MPO.to_dense` makes by slicing
+  `[0, ..., 0]`, leaves the product's boundary legs identical to `psi`'s, which is the
+  property the variance rests on. A test asserts leg identity at both ends.
+
+  **A deferred operator is materialised through `MPO.__getitem__`, and the docstring says
+  so.** This is a whole-state product, not a sweep step: there is no bond at which the
+  operator could stay symbolic, so one full `W` per site is what it costs and the cost is
+  stated at the call. The sweep's own deferred path (#200, #204) is untouched.
+
+  **Truncation is `MPS.compress_`, by name, and `apply` takes no `chi`.** `compress_`
+  already takes the `chi`/`cutoff` pair the sweep takes and already returns the **total**
+  discarded weight `sqrt(sum_bond dw)` — the convention this question wants, and the one
+  `sweep_`'s per-bond *maximum* deliberately is not. Giving `apply` its own `chi=` would put
+  a second name on that number and be the one place the two conventions could blur. The
+  untruncated product is therefore the only thing `apply` returns, and the two-call form is
+  the truncating one. Simplification: the zip-up apply that truncates *during* the sweep
+  (YASTN's `zipper`, TenPy's `apply_zipup`) is the named upgrade and is a change with a
+  measurement attached; the variance does not need it.
+
+  Verified the two ways #214 names: `<psi|H|psi>` read through the apply plus `overlap`
+  agrees with `Env.measure()` to 1e-10 on U(1), SU(2) and fZ2, and the variance of a
+  converged N=8 Heisenberg state falls to below 1e-8 as `chi` goes 2 -> 32. The variance is
+  additionally checked against a dense `<H^2> - <H>^2` oracle under SU(2) and fZ2.
 
 Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
 left that list with M61 Stage D above.

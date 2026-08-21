@@ -14,7 +14,7 @@ import heisenberg_walkthrough as example  # noqa: E402  (see conftest.py)
 import pytest
 
 import tenet
-from tenet.network import MPO, MPS, Env, lanczos, local_op, sweep_
+from tenet.network import MPO, MPS, Env, common, lanczos, local_op, sweep_
 from tenet.network import env as env_module
 from tenet.symmetry import U1Sector
 
@@ -191,7 +191,8 @@ def test_the_compiled_cache_keeps_one_entry_per_bond_across_two_chis():
     sweep_(psi, h, env, {}, chi=16, cutoff=1e-14)
     assert set(env._compiled) <= set(range(5))  # one slot per bond index, nothing else
     assert any(env._compiled[n][0] != first[n] for n in first)  # replaced, not appended
-    assert all(len(entry) == 3 for entry in env._compiled.values())
+    # ``(leg key, callable)`` since #227: the prepared operator is not in the entry.
+    assert all(len(entry) == 2 for entry in env._compiled.values())
 
 
 def test_compile_is_called_once_per_structure_key_and_its_result_is_used():
@@ -244,6 +245,38 @@ def test_a_sweep_compiles_once_per_distinct_structure_key(monkeypatch):
         sweep_(psi, h, env, {}, chi=8, cutoff=1e-14)
     visits = 2 * 2 * (len(h) - 1)  # two sweeps, both directions, every bond
     assert len(compiled) == len(keys) < visits
+
+
+@pytest.mark.parametrize("budget", [0, 1 << 40])
+def test_a_squeezed_budget_no_longer_recompiles_a_bond_it_evicted(monkeypatch, budget):
+    """#227: the compile count is the distinct-key count at *both* ends of the budget.
+
+    C2 CAS cc-pVDZ at K=26 was the one model #226 measured that did not reach its floor --
+    143 compiles against 115 distinct structure keys -- and the 28 extras were bonds whose
+    ``_compiled`` entry the byte budget evicted. It evicted them on the ``_Prepared`` the
+    entry carried, which ``Env._prepared`` holds too, so the same arrays were charged to
+    two caches. A budget of zero reproduces that eviction on a six-site chain in a test
+    suite: before the fix this parametrization compiled every bond visit at ``budget=0``
+    and only ``len(keys)`` times at ``budget=1 << 40``; now the two agree, and both equal
+    the number of distinct keys.
+    """
+    monkeypatch.setattr(common, "CACHE_BUDGET", budget)
+    h = MPO.from_terms(6, _heis(6), cutoff=None)
+    psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=2).canonize_()
+    compiled, keys = [], set()
+    original = Env.heff2
+
+    def recording(self, n, aa):
+        keys.add((n, tuple(aa.legs)))
+        return original(self, n, aa)
+
+    monkeypatch.setattr(Env, "heff2", recording)
+    env = Env(psi, h, compile=lambda fn: compiled.append(fn) or fn).setup_()
+    for _ in range(2):
+        sweep_(psi, h, env, {}, chi=8, cutoff=1e-14)
+    assert len(compiled) == len(keys) < 2 * 2 * (len(h) - 1)
+    # And the cache the budget no longer weighs holds no backend array to weigh.
+    assert common.payload(dict(env._compiled)) == 0
 
 
 def test_a_moved_environment_still_rebuilds_the_prepared_operator():

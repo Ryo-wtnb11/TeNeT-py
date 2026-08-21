@@ -235,7 +235,16 @@ def test_every_two_operand_einsum_is_a_composition(monkeypatch):
 
     import tenet
     from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-    from tenet.network import MPO, MPS, Env, dmrg_, expectation_1site, expectation_2site, local_op
+    from tenet.network import (
+        MPO,
+        MPS,
+        Env,
+        dmrg_,
+        expectation_1site,
+        expectation_2site,
+        expectation_profile,
+        local_op,
+    )
     from tenet.symmetry import U1, U1Sector
 
     reached, violations = set(), []
@@ -310,10 +319,13 @@ def test_every_two_operand_einsum_is_a_composition(monkeypatch):
             (Leg(phys, OUT), Leg(phys, OUT), Leg(phys, IN), Leg(phys, IN)),
         )
         expectation_1site(psi, sz2, 1)
+        expectation_profile(psi, sz2)  # M48's centre walk, the O(N) whole-chain read
         expectation_2site(psi, zz4, 1)
         Env(psi.copy(), h).measure()
         dmrg_(psi, h, chi=8, cutoff=1e-12, max_sweeps=2)
+        h.apply(psi)  # M49's product state, boundary caps and bond fusion included
     psi.compress_(chi=4)
+    psi.entanglement_entropy()  # M50's bond walk, the second place an SVD sweep is spelled
 
     assert not violations, "\n".join(violations)
 

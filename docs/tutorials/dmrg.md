@@ -263,6 +263,103 @@ canonical or not — unlike `Env.measure()`, which returns the unnormalized `<ps
 **maximum**: one answers "how much of my state did I throw away", the other "which bond is
 the convergence diagnostic".
 
+### Measuring the converged state
+
+Four more calls take the state where the ones above take one site of it:
+
+```python
+from tenet.network import correlation_function, expectation_profile, measure_mpo, overlap
+
+print(expectation_profile(psi, sz))        # <S^z_n> for every n, in ONE pass over the chain
+print(overlap(phi, psi))                   # <phi|psi>, undivided
+print(measure_mpo(phi, h, psi))            # <phi|H|psi>, undivided
+print(correlation_function(psi, sz3, sz3, pairs=[(0, j) for j in range(1, len(psi))]))
+```
+
+- **`expectation_profile` is the one to reach for over a list comprehension.** Writing
+  `[expectation_1site(psi, sz, n) for n in range(len(psi))]` costs two full-chain transfer
+  passes *per site*; the profile moves the orthogonality centre once along the chain and
+  reads the operator off it, which a canonical MPS makes exact. Same numbers, `O(N)`
+  instead of `O(N²)`.
+- **`overlap` and `measure_mpo` do not divide**, matching `Env.measure()`. A fidelity is
+  `overlap(phi, psi) / (phi.norm() * psi.norm())` and the caller writes the division; the
+  divided readings are the ones whose names say `expectation`.
+- **`correlation_function` takes the rank-3 charged operators** `MPO.from_terms` takes —
+  the form a fermionic `c` has to have — and returns `{(i, j): value}` for `i < j`, every
+  pair by default. The Jordan-Wigner string across the sites between `i` and `j` is the
+  fZ2 braiding the term builder already inserts, so a fermionic correlator at a distance is
+  correct rather than refused. It costs one MPO build and one pass **per pair**, so pass
+  `pairs=` for the row or the distance you actually want rather than taking all `N²`.
+
+`Env(psi, h, bra=phi)` is the object all of this stands on, and `measure_mpo(phi, h, psi)`
+is its one-line spelling. `Env.heff2` refuses on a two-state environment — the prepared
+matvec reads the `IdL`/`IdR` channels as gauge identities, true of a canonical chain
+against itself and false of a mixed transfer — which is why measurement and the sweep are
+different entry points into the same cache.
+
+### The entanglement profile
+
+The fifth call is the one a DMRG user plots. The entanglement entropy across each cut is
+what says whether the chain is critical or gapped, what a central-charge fit consumes, and
+what tells you the bond dimension is saturating:
+
+```python
+entropy = out.psi.entanglement_entropy()       # {bond: S}, keyed by the bond's left site
+renyi2 = out.psi.entanglement_entropy(alpha=2)  # the Renyi family, same keys
+values = out.psi.schmidt_values()              # the spectrum the entropy is derived from
+sectors = out.psi.schmidt_sectors()[3]         # bond 3's spectrum, split by symmetry sector
+```
+
+Three things worth knowing before reading a number off them:
+
+- **The unit is nats**, not bits. `S = (c/6) log(x)` on an open chain wants the natural
+  log; divide by `log(2)` for bits. The two references disagree here — YASTN's
+  `get_entropy` is base 2 — so the convention is stated on `tenet.network.entropy`.
+- **The key is the bond's left site**, `0 .. N-2`, the same key `sweep_`'s `schmidt` dict
+  uses. The two trivial boundary cuts of a finite open chain are zero and are not returned.
+- **`schmidt_sectors` is the read a graded bond is for.** On an SU(2) bond a single `j`
+  multiplet stands for `2j + 1` dense Schmidt values, and the entropy accounts for that —
+  which is why the two-site singlet reports `log 2` under SU(2) and under U(1) alike, while
+  `-sum p log p` over the *flattened* SU(2) spectrum would report `0`.
+
+Each of the three readers canonizes a **copy** of the state and runs its own SVD sweep, so
+they never re-gauge the state you hand them and a non-canonical `psi` is not silently read
+in the wrong gauge. Keep the result rather than calling twice on a large state.
+
+`DMRG_out` carries no spectrum field: `out.psi` answers for itself, exactly and in any
+gauge, where the sweep's own per-bond dict is a truncated convergence diagnostic taken at
+whichever direction visited the bond last.
+
+### Converged, or only plateaued?
+
+`dmrg_` stops on a **change** test — the energy stopped moving (`energy_tol`) and the
+Schmidt values stopped moving (`schmidt_tol`). A change test can be satisfied by a run
+stuck on a wrong bond structure: nothing moved because nothing *could* move. The check that
+is not a change test is the energy variance:
+
+```python
+h.apply(psi)        # H|psi> as a new MPS, exact; bond = MPO bond x psi's bond
+h.variance(out.psi)  # <psi|H^2|psi> / <psi|psi> - E^2, zero for an exact eigenstate
+```
+
+Run it at two bond dimensions. A state converging on an eigenstate has a variance that falls
+towards zero as `chi` grows; a state that has plateaued on the wrong structure has one that
+does not.
+
+`apply` takes **no** `chi` or `cutoff`. The product is exact, and truncation is
+`compress_`, by name:
+
+```python
+phi = h.apply(psi)
+discarded = phi.compress_(chi=64, cutoff=1e-12)   # the TOTAL discarded weight
+```
+
+That is deliberate. `compress_` returns `sqrt(sum_bond dw)` where `sweep_` returns the
+per-bond **maximum**, two conventions the package keeps apart by name; giving `apply` its
+own `chi=` would put a third name on one of them. The cost of the exact product is the
+operator's bond dimension times the state's, so compress promptly on a wide operator rather
+than holding the untruncated product.
+
 ## Deliberate limits
 
 - **Two-site DMRG only.** Single-site plus subspace expansion (Hubig–McCulloch–

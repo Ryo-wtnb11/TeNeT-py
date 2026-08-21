@@ -6,7 +6,7 @@ Promoted from ``examples/toy_codes/dmrg.py`` (#110) with no arithmetic change: `
 capability in M11a.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -14,9 +14,9 @@ import numpy as np
 import tenet
 from tenet import IN, OUT, Leg, SymmetricTensor
 from tenet.network.common import Recent, ones
-from tenet.network.mps import MPO, MPS, EdgeBlocks, EdgeTable
+from tenet.network.mps import MPO, MPS, EdgeBlocks, EdgeTable, overlap
 
-__all__ = ["Env"]
+__all__ = ["Env", "correlation_function", "measure_mpo"]
 
 
 class _Prepared(NamedTuple):
@@ -513,16 +513,21 @@ class Env:
         # the application level (``examples/bench_dmrg.py``); this layer names no
         # accelerator and ``None`` runs the plain Python function.
         self.compile = compile
-        # Three per-bond caches, all held to one byte budget by ``common.CACHE_BUDGET``
-        # (#202). The merged cores are environment-free and so are never *invalidated* --
-        # but a sweep visits every bond, so an unbounded cache of them holds the whole
-        # prepared operator at once, which is the memory the deferred instantiation
-        # boundary exists not to spend. Recency, not correctness, is what decides an
-        # eviction here; the environments in ``F`` keep their own invalidation discipline
-        # and are untouched by this.
+        # Two per-bond caches hold tensors, and both are held to one byte budget by
+        # ``common.CACHE_BUDGET`` (#202). The merged cores are environment-free and so are
+        # never *invalidated* -- but a sweep visits every bond, so an unbounded cache of
+        # them holds the whole prepared operator at once, which is the memory the deferred
+        # instantiation boundary exists not to spend. Recency, not correctness, is what
+        # decides an eviction here; the environments in ``F`` keep their own invalidation
+        # discipline and are untouched by this.
         self._prepared: dict[int, tuple] = Recent()  # bond -> (GL, GR, _Prepared, fields)
         self._cores: dict[int, _Cores] = Recent()  # bond -> environment-free merged blocks
-        self._compiled: dict[int, tuple] = Recent()  # bond -> (leg key, _Prepared, callable)
+        # The compiled matvecs are a plain dict, bounded by the bond count and by nothing
+        # else (#227). An entry is a tuple of legs and a callable: no backend array is
+        # reachable from it, so a byte budget can only ever evict it on a weight it does
+        # not carry -- which is what it did, because the entry used to hold the
+        # ``_Prepared`` that ``_prepared`` holds anyway and was charged for it twice.
+        self._compiled: dict[int, tuple] = {}  # bond -> (leg key, callable)
         self._eye_p: SymmetricTensor | None = None  # the physical identity, for field padding
         n = len(psi)
         kl, kr = psi[0].legs[0], psi[n - 1].legs[2]
@@ -732,21 +737,17 @@ class Env:
             # live fields of ``p`` are decided by the two sites' edge blocks, which never
             # move, and every one of their legs is fixed by ``aa``'s two bond legs plus
             # the operator's own. So the callable outlives a bond revisit and only a moved
-            # bond space retraces it. ``p`` itself stays in the entry because its *values*
-            # change every visit and because it is what weighs the entry for the byte
-            # budget (#202); it is deliberately not part of the key (#225).
-            # One slot per bond, and measured to be enough: over two sweeps of the three
-            # models #224 counted, no bond is ever visited at two bond widths in
-            # alternation, so a second slot compiles nothing extra. What does still
-            # recompile is a bond whose entry the byte budget evicted -- 143 compiles
-            # against 115 distinct keys on C2 at K=26, where the entry is weighed by the
-            # ``_Prepared`` it carries.
+            # bond space retraces it (#225). It is one slot per bond, and measured to be
+            # enough: over two sweeps of the three models #224 counted, no bond is ever
+            # visited at two bond widths in alternation, so a second slot compiles nothing
+            # extra. The prepared operator is *not* in the entry -- ``_prepared`` holds it
+            # and this cache never reads it (#227).
             fn = (
-                hit[2]
+                hit[1]
                 if hit is not None and hit[0] == key
                 else (_apply2 if self.compile is None else self.compile(_apply2))
             )
-            self._compiled[n] = (key, p, fn)
+            self._compiled[n] = (key, fn)
             return fn(p, aa)
         return _heff2_full(self.h, self.F[n - 1, n], self.F[n + 2, n + 1], n, aa)
 
@@ -949,3 +950,147 @@ class Env:
 
     def __contains__(self, key: Any) -> bool:
         return key in self.F
+
+
+# --- the measurement API on top of the two-state environment (#213) --------------------
+#
+# Here and not in ``mps.py`` for one mechanical reason: both of these read an ``Env``, and
+# ``env.py`` imports ``mps.py``. [overlap][tenet.network.overlap] and
+# [expectation_profile][tenet.network.expectation_profile] are the half of the same API
+# that needs no environment, so they stay next to ``_braket`` where the transfer pass is.
+# Simplification: the day ``sample`` or ``rdm`` land, ``network/measure.py`` is the module
+# and YASTN's ``_measure.py`` the design; four functions across two modules that each
+# already own their machinery do not pay for a third module and its hygiene-list entry.
+
+
+def measure_mpo(bra: MPS, h: MPO, ket: MPS) -> float:
+    """``<bra|H|ket>`` -- an MPO between two states, **undivided** by either norm.
+
+    Parameters
+    ----------
+    bra : MPS
+        The state that is conjugated; any gauge, any norm.
+    h : MPO
+        The operator.
+    ket : MPS
+        The state that is not; any gauge, any norm.
+
+    Returns
+    -------
+    float
+        ``<bra|H|ket>``.
+
+    Examples
+    --------
+    >>> from tenet import GradedSpace
+    >>> from tenet.network import MPO, MPS, measure_mpo
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> states = [U1Sector(1), U1Sector(-1), U1Sector(1), U1Sector(-1)]
+    >>> psi = MPS.product(phys, states)
+    >>> phi = MPS.product(phys, states)
+    >>> round(measure_mpo(phi, MPO.identity(4, phys), psi), 12)  # the plain overlap
+    1.0
+
+    Notes
+    -----
+    YASTN's ``measure_mpo(bra, op, ket)``, argument order included; TenPy spells the same
+    thing ``MPOEnvironment(bra, H, ket).full_contraction(0)``. It is one line over
+    [Env][tenet.network.Env] -- ``Env(ket, h, bra=bra).measure()`` -- and exists because
+    that spelling requires a reader to know that ``Env``'s first positional argument is the
+    *ket*, which is the constructor's shape and not a measurement's.
+
+    Undivided, for [overlap][tenet.network.overlap]'s reason, stated there. With ``h`` the
+    identity ([MPO.identity][tenet.network.MPO.identity]) this **is** ``overlap(bra, ket)``,
+    computed the long way through the environment cache; the agreement is tested rather
+    than assumed. No gauge is assumed of either state, and the pass is built in a fresh
+    [Env][tenet.network.Env], so a measurement never writes into a sweep's cache.
+    """
+    return Env(ket, h, bra=bra).measure()
+
+
+def correlation_function(
+    psi: MPS,
+    a: SymmetricTensor,
+    b: SymmetricTensor,
+    *,
+    pairs: Sequence[tuple[int, int]] | None = None,
+) -> dict[tuple[int, int], float]:
+    """``<psi|a_i b_j|psi> / <psi|psi>`` at a distance, for the pairs a caller asks for.
+
+    Parameters
+    ----------
+    psi : MPS
+        The state; any gauge, any norm, and not modified.
+    a : SymmetricTensor
+        The left operator, in [local_op][tenet.network.local_op]'s **rank-3** charged form
+        ``(phys OUT, phys IN, charge OUT)`` -- the form
+        [MPO.from_terms][tenet.network.MPO.from_terms] takes, and the form a fermionic
+        operator has to have, since ``c`` is not invariant as a rank-2 tensor.
+    b : SymmetricTensor
+        The right operator, same form.
+    pairs : Sequence of (int, int) or None, optional
+        The ``(i, j)`` pairs to measure, ``0 <= i < j < len(psi)``. Default ``None``,
+        meaning every such pair -- YASTN's ``measure_2site(bonds='<')``. Keyword-only.
+
+    Returns
+    -------
+    dict of (int, int) to float
+        One normalized value per requested pair, keyed by the pair.
+
+    Raises
+    ------
+    ValueError
+        If any requested pair is not ``0 <= i < j < len(psi)``.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from tenet import GradedSpace
+    >>> from tenet.network import MPS, correlation_function, local_op
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> sz = local_op(np.diag([-0.5, 0.5]), phys=phys, charge=U1Sector(0))
+    >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1), U1Sector(1)])
+    >>> {k: round(v, 6) for k, v in correlation_function(psi, sz, sz).items()}
+    {(0, 1): -0.25, (0, 2): 0.25, (1, 2): -0.25}
+
+    Notes
+    -----
+    YASTN's ``measure_2site(bra, O, P, ket, bonds='<')`` and TenPy's
+    ``correlation_function(ops1, ops2, sites1, sites2)``. The name is TenPy's because it is
+    the term of art; the house's own ``_2site`` vocabulary is already spoken for by
+    [expectation_2site][tenet.network.expectation_2site], which takes one *invariant rank-4*
+    operator on an adjacent pair and keeps its signature untouched.
+
+    **Fermions are correct here because nothing new decides their sign.** Each pair is one
+    two-operator term through [MPO.from_terms][tenet.network.MPO.from_terms], measured with
+    [Env][tenet.network.Env]: the Jordan-Wigner string across the sites between ``i`` and
+    ``j`` is the fermionic-parity braiding the term builder already inserts and #147's explicit
+    Jordan-Wigner oracle already pins, and the composition rule (#160) is obeyed by the
+    contractions that were audited for it. A hand-written transfer walk carrying the charge
+    leg between the two sites would be the faster route and would re-decide that sign
+    outside the machinery that was audited, which is how #147 happened.
+
+    **The cost, stated rather than hidden**: one ``from_terms`` build and one
+    [Env.measure][tenet.network.Env.measure] pass per requested pair, so the default
+    all-pairs call is ``O(N**2)`` builds and ``O(N**3)`` transfer contractions. That is the
+    ceiling; ``pairs=`` is the way around it for the row or the distance a caller actually
+    wants. The upgrade is YASTN's cached transfer walk (``_measure.py``:130, a ~75-line
+    body) and it is a change with a measurement attached, not a rewrite this needs.
+    """
+    n = len(psi)
+    wanted = [(i, j) for i in range(n) for j in range(i + 1, n)] if pairs is None else list(pairs)
+    for i, j in wanted:
+        if not 0 <= i < j < n:
+            raise ValueError(
+                f"correlation_function takes pairs with 0 <= i < j < {n}, got {(i, j)}; "
+                "an adjacent same-site or reversed pair is expectation_1site's or "
+                "expectation_2site's question, not this one"
+            )
+    norm2 = overlap(psi, psi)
+    out = {}
+    for i, j in wanted:
+        h = MPO.from_terms(n, [(1.0, [(a, i), (b, j)])], cutoff=None)
+        out[i, j] = float(Env(psi, h).measure() / norm2)
+    return out
