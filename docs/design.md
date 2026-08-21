@@ -5522,6 +5522,106 @@ left that list with M61 Stage D above.
   would do on U(1)xU(1) Hubbard, and it does not speak to the non-Abelian lane at all,
   where YASTN has no counterpart to compare against.
 
+- **M64b** — **measured, not shipped**: the same head-to-head with a third arm, tenet on the
+  **site-tensor path** (#245, follow-up to M64). `benchmarks/bench_vs_yastn.py` gains
+  `--arm tenet-sites`, identical to `--arm tenet` in every respect but one: the operator
+  handed to `dmrg_` is `MPO(h.sites)` — the same tensors `from_terms` built, with the edge
+  description dropped — so `Env.heff2`, which routes on `self.h.edges is not None` and on
+  nothing else, takes the **compatibility entry** (YASTN's `Heff2` contraction order)
+  instead of the prepared, block-shaped one. Same state from the same `bond_charges` spec
+  and the same seed, same `chi`, `ncv = 3`, cutoff off, same sweep counts (30 / 20),
+  single-threaded, one process per point, warm-up discarded, steady = last four. The
+  realized bond dimensions match the prepared arm's bond for bond at every one of the
+  twelve points, and the two arms' energies agree to **3e-13 or better everywhere**, which
+  is the operator identity the routing claim needs. The `tenet` and `yastn` columns below
+  are **#247's own rows, not re-run** — same machine, same session, same conditions.
+
+  **Why the arm.** Two earlier measurements already priced the prepared path against the
+  site-tensor path *internally*: M16/#141 measured a full sweep 1.5–2.6x **slower** on the
+  prepared path on plain NumPy at small bond dimension, and M39/#218's `chi` grid put the
+  lattice ratio flat in `chi` at **~3.2x** at `D_w = 8`. M64 then measured tenet 2.1–2.3x
+  (U(1)) and 3.0–3.8x (fZ2) slower than YASTN — and every M64 tenet point went through
+  `from_terms`, i.e. through the prepared path. The arm separates the two factors:
+  `tenet-sites / yastn` prices tenet's contraction path against YASTN's, and
+  `tenet / tenet-sites` prices the prepared machinery on its own, on the same run.
+
+  **U(1) Heisenberg**, 30 sweeps. `dE` is against the prepared arm at the same point.
+
+  | N | chi | steady sites | steady YASTN | sites/YASTN | tenet/sites | run sites | run YASTN | run x | RSS sites | RSS YASTN | RSS x | E sites | dE |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | 32 | 64 | 0.55 s | 0.49 s | **1.13x** | 2.06x | 28 s | 17 s | 1.65x | 0.26 G | 0.14 G | 1.8x | -13.997315618007 | 5e-14 |
+  | 32 | 128 | 0.65 s | 0.58 s | **1.12x** | 1.98x | 38 s | 20 s | 1.93x | 0.42 G | 0.19 G | 2.2x | -13.997315618224 | 2e-15 |
+  | 32 | 256 | 0.91 s | 0.75 s | **1.21x** | 1.80x | 49 s | 25 s | 1.92x | 0.61 G | 0.34 G | 1.8x | -13.997315618224 | 2e-15 |
+  | 64 | 64 | 1.20 s | 1.06 s | **1.13x** | 2.04x | 121 s | 41 s | 2.93x | 1.17 G | 0.20 G | 5.8x | -28.175424807381 | 5e-14 |
+  | 64 | 128 | 1.61 s | 1.46 s | **1.10x** | 1.98x | 182 s | 57 s | 3.19x | 1.73 G | 0.28 G | 6.3x | -28.175424859649 | 7e-15 |
+  | 64 | 256 | 2.70 s | 2.11 s | **1.28x** | 1.63x | 230 s | 77 s | 2.97x | 2.08 G | 0.48 G | 4.4x | -28.175424859743 | 3e-14 |
+
+  **Spinful Hubbard** `U/t = 4`, fZ2 against YASTN's `SpinfulFermions(sym='Z2')`, 20 sweeps.
+
+  | N | chi | steady sites | steady YASTN | sites/YASTN | tenet/sites | run sites | run YASTN | run x | RSS sites | RSS YASTN | RSS x | E sites | dE |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | 16 | 64 | 0.30 s | 0.18 s | **1.68x** | 2.04x | 6 s | 4 s | 1.65x | 0.22 G | 0.12 G | 1.9x | -12.541897370651 | 2e-14 |
+  | 16 | 128 | 0.86 s | 0.50 s | **1.71x** | 2.07x | 18 s | 11 s | 1.66x | 0.59 G | 0.49 G | 1.2x | -12.541951443921 | 9e-15 |
+  | 16 | 256 | 3.40 s | 1.79 s | **1.90x** | 2.02x | 70 s | 37 s | 1.91x | 1.15 G | 0.76 G | 1.5x | -12.541952156541 | 0 |
+  | 32 | 64 | 0.75 s | 0.45 s | **1.66x** | 1.89x | 15 s | 9 s | 1.64x | 0.25 G | 0.19 G | 1.3x | -25.693800734431 | 7e-15 |
+  | 32 | 128 | 2.40 s | 1.49 s | **1.61x** | 1.85x | 49 s | 29 s | 1.70x | 0.68 G | 0.52 G | 1.3x | -25.695279169232 | 1e-14 |
+  | 32 | 256 | 10.17 s | 5.50 s | **1.85x** | 1.91x | 201 s | 111 s | 1.82x | 1.42 G | 0.88 G | 1.6x | -25.695370428286 | 3e-13 |
+
+  Every point completed inside its budget; nothing was dropped.
+
+  **The first ten sweeps at `N = 64`, `chi = 256` U(1)**, all three arms side by side, in
+  seconds — the transient M64's part 2 named, seen on each path:
+
+  | sweep | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+  |---|---|---|---|---|---|---|---|---|---|---|
+  | tenet (prepared) | 146.95 | 73.61 | 67.87 | 64.48 | 61.29 | 51.36 | 43.73 | 27.10 | 14.93 | 7.55 |
+  | tenet-sites | 38.66 | 23.37 | 21.58 | 20.67 | 19.49 | 16.60 | 14.73 | 10.05 | 6.20 | 4.43 |
+  | YASTN | 5.00 | 4.03 | 3.89 | 3.80 | 3.66 | 3.55 | 3.30 | 2.85 | 2.54 | 2.29 |
+
+  Against steady state (2.11 s YASTN, 2.70 s `tenet-sites`, 4.40 s prepared) the first
+  sweep is 2.4x on YASTN, **14.3x on `tenet-sites`** and 33x on the prepared path.
+
+  **The verdict, in three parts.**
+
+  **1. On U(1) the site-tensor path is at parity with YASTN per steady sweep — 1.10–1.28x
+  over the whole `N` x `chi` grid — and the prepared path costs 1.63–2.06x on top of it.**
+  So roughly half of M64's 2.1–2.3x on U(1) is the prepared machinery and the other half
+  is the shared contraction path. On fZ2 the site-tensor path is **1.61–1.90x**, and the
+  prepared surcharge is the same 1.85–2.07x it is on U(1): about half of M64's 3.0–3.8x on
+  fZ2 is **path-independent** and stays where it was — it is not the prepared machinery,
+  and it is inside the contraction path both arms share, which is what #249 is set up to
+  attribute operation by operation. Both readings hold flat in `chi`
+  from 64 to 256, as M64's did.
+
+  **2. The transient does not vanish.** At `N = 64`, `chi = 256` the site-tensor path's
+  first sweep is 38.66 s against YASTN's 5.00 s, and the whole-run ratio is 2.93–3.19x at
+  `N = 64` against a steady ratio of 1.10–1.28x — the same divergence M64 reported, only
+  smaller. The prepared path is a 3.8x multiplier on the transient (146.95 s against
+  38.66 s), not its cause: something that both paths share, in environment construction
+  and `Env.update_`, also pays per bond-structure change. On fZ2, where the bond structure
+  is fixed from sweep one, run ratio equals steady ratio on this arm too (1.64–1.91x
+  against 1.61–1.90x), exactly as in M64.
+
+  **3. Memory falls but does not reach YASTN's order on U(1).** Dropping the description
+  takes peak RSS down by 2.4–2.9x on U(1) and 3.2–7.5x on fZ2 relative to the prepared
+  arm, which puts `tenet-sites` at **1.2–2.2x YASTN** on every point except U(1) at
+  `N = 64`, where it is **4.4–6.3x** (1.17–2.08 G against 0.20–0.48 G). So M64's 5–18x is
+  mostly, but not entirely, the two per-bond caches: at `N = 64`, `chi = 64` the state is a
+  few tens of MiB and this arm still peaks at 1.17 G with no `_prepared` and no `_cores`
+  in play.
+
+  **What is not claimed, and what is not measured.** Nothing here proposes a routing
+  change: which path an MPO with an `EdgeTable` should take is a design decision with
+  consequences beyond wall time — `heff2_families`, and with it `sweep_`'s
+  family-resolved perturbative noise, exists only on the prepared path — and it is the
+  next issue's, with these numbers attached. Nothing here re-opens the ab initio lane,
+  where M39/#218 measured the prepared path reaching **0.97x** on C2 at `chi = 64`: this
+  grid is two lattice models and says nothing about the case the prepared path was built
+  for. No `src/` change was made and no third-arm ED anchor was run — the arm's operator
+  is the prepared arm's own tensors, and the two arms' energies agreeing to 3e-13 is the
+  stronger statement.
+
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,

@@ -11,6 +11,17 @@ for the benchmark only::
 
 and then run with ``uv run --no-sync`` so the sync does not remove it again.
 
+The three arms
+--------------
+``--arm tenet`` builds its Hamiltonian with ``MPO.from_terms``, which keeps an
+``EdgeTable``, so ``Env.heff2`` -- which routes on ``self.h.edges is not None`` -- takes
+the **prepared** path. ``--arm tenet-sites`` is the same run with ``MPO(h.sites)``: the
+same tensors, the description dropped, so the same call takes the **site-tensor** path,
+which is YASTN's ``Heff2`` contraction order. Nothing else differs between the two --
+same state, same seed, same ``chi``, same sweeps -- so ``tenet / tenet-sites`` prices the
+prepared machinery and ``tenet-sites / yastn`` prices the rest. ``--arm yastn`` is YASTN
+itself (#245). The split is the question #247 left open, measured rather than argued.
+
 The conditions, each held equal
 -------------------------------
 Every one of these is a knob that, left unmatched, would make the numbers a lie.
@@ -77,7 +88,7 @@ to prove the two term lists mean the same Hamiltonian:
 Not a test, on no CI path, nothing here is asserted. Run from the repo root::
 
     for m in heisenberg hubbard; do
-      for n in 32 64; do for chi in 64 128 256; do for a in tenet yastn; do
+      for n in 32 64; do for chi in 64 128 256; do for a in tenet tenet-sites yastn; do
         uv run --no-sync python benchmarks/bench_vs_yastn.py \\
             --model $m --n $n --chi $chi --arm $a --out vs_yastn.jsonl
       done; done; done
@@ -99,6 +110,7 @@ for _var in (
     os.environ[_var] = "1"
 
 import argparse  # noqa: E402
+import functools  # noqa: E402
 import json  # noqa: E402
 import pathlib  # noqa: E402
 import resource  # noqa: E402
@@ -230,7 +242,9 @@ def ed_energy(model: str, n: int) -> float:
 # --------------------------------------------------------------------------------------
 
 
-def run_tenet(model: str, n: int, chi: int, sweeps: int, budget: float) -> tuple:
+def run_tenet(
+    model: str, n: int, chi: int, sweeps: int, budget: float, sites: bool = False
+) -> tuple:
     from tenet import GradedSpace
     from tenet.network import MPO, MPS, dmrg_, local_op
     from tenet.symmetry import U1, FZ2Sector, U1Sector, fZ2
@@ -258,6 +272,11 @@ def run_tenet(model: str, n: int, chi: int, sweeps: int, budget: float) -> tuple
 
     terms = [(a, [(ops[name], i) for name, i in prod]) for a, prod in model_terms(model, n)]
     h = MPO.from_terms(n, terms)
+    if sites:
+        # The same tensors, with the edge description dropped: ``Env.heff2`` routes on
+        # ``self.h.edges is not None``, so this is the only difference between the two
+        # tenet arms and it selects the site-tensor path (YASTN's ``Heff2`` order).
+        h = MPO(h.sites)
     bonds = [
         GradedSpace.new(sym, {sector(q): d for q, d in space.items()})
         for space in bond_charges(model, n, chi)
@@ -357,7 +376,11 @@ def run_yastn(model: str, n: int, chi: int, sweeps: int, budget: float) -> tuple
     return energy, walls, dims
 
 
-ARMS = {"tenet": run_tenet, "yastn": run_yastn}
+ARMS = {
+    "tenet": run_tenet,
+    "tenet-sites": functools.partial(run_tenet, sites=True),
+    "yastn": run_yastn,
+}
 
 
 def rss_gib() -> float:
