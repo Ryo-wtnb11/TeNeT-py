@@ -1730,19 +1730,19 @@ def eigh_truncated(
     spectrum = _spectrum({c: ar.do("abs", p[0]) for c, p in parts.items()}, "eigh_truncated")
     selection = _decide(spectrum, provider, max_bond, cutoff, cutoff_mode, renorm, "eigh_truncated")
 
-    # selection.kept is globally descending in |w|, so grouping by sector preserves that
-    # order within each sector -- these are the gather indices, not a prefix length.
-    picked: dict = {}
-    for _, c, i in selection.kept:
-        picked.setdefault(c, []).append(i)
+    # The walk is greedy over one descending global spectrum, so what survives in sector
+    # c is exactly its k_c largest |w| -- the same gather ``eigh(..., bond=)`` performs,
+    # through the same helper, which is what makes the two-call form reproduce this one.
+    keep = dict(selection.bond.sectors)
+    kept = {c: _largest(parts[c][0], parts[c][1], k) for c, k in keep.items()}
     scale = selection.scale
     return (
         from_matrices(
             TensorStructure((Leg(selection.bond, OUT), Leg(selection.bond, IN))),
-            {c: ar.do("diag", parts[c][0][idx] * scale) for c, idx in picked.items()},
+            {c: ar.do("diag", w * scale) for c, (w, _) in kept.items()},
         ),
         from_matrices(
             TensorStructure((*m.codomain, Leg(selection.bond, IN))),
-            {c: parts[c][1][:, idx] for c, idx in picked.items()},
+            {c: v for c, (_, v) in kept.items()},
         ),
     )
