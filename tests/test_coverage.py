@@ -22,6 +22,11 @@ TESTS = pathlib.Path(__file__).parent
 NOT_ON_TORCH = {
     "as_map": "a zero-copy structural view over the tensor's own blocks; no backend kernel",
     "coupled_sectors": "pure sector combinatorics over legs; consumes no array blocks",
+    "enable_jax": (
+        "the JAX opt-in seam (pytree registration, and tenet.ad's broadened VJPs); "
+        "eager torch needs no registration of its own, so there is nothing to run "
+        "on a torch block -- tests/test_enable_jax.py is its suite"
+    ),
     "fusion_trees": "pure sector combinatorics; enumerates trees, consumes no array blocks",
     "map_layout": "static layout metadata computed from the structure alone; no array blocks",
 }

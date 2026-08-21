@@ -646,7 +646,7 @@ def test_refuses_non_zero_data_in_a_dropped_slot_naming_residual_atol_and_worst_
         tenet.restrict(u, t.legs)
     message = str(exc.value)
     assert f"residual {discarded_mass(u, t.structure):.6g}" in message
-    assert "atol" in message and "math.inf" in message
+    assert "atol" in message and "tenet.PROJECT" in message and "math.inf" in message
     assert str(worst_key(u, t.structure)) in message
 
 

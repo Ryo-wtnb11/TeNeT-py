@@ -17,6 +17,7 @@ from tenet.ops.basic import (
 from tenet.ops.blocks import apply_blocks, block_power, block_sqrt, zip_blocks
 from tenet.ops.cast import to_symmetry
 from tenet.ops.contraction import einsum, full_trace, inner, tensordot, trace
+from tenet.ops.dense import PROJECT
 from tenet.ops.embed import direct_sum, embed, restrict
 from tenet.ops.fusion import fuse, unfuse
 from tenet.ops.map import (
@@ -31,6 +32,7 @@ from tenet.ops.permutation import transpose
 from tenet.ops.repartition import bend, flip_dual, repartition
 
 __all__ = [
+    "PROJECT",
     "add",
     "adjoint",
     "allclose",

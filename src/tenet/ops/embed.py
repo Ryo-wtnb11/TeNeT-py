@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 import numpy as np
 
+from tenet.ops.dense import PROJECT
 from tenet.structure import TensorStructure
 from tenet.symmetry.base import QuantumDimensionData, requires
 
@@ -234,8 +235,9 @@ def restrict(
         and never compared.
     atol : float or None, optional
         The largest discarded residual accepted. ``None`` (the default) means
-        ``sqrt(eps(dtype)) * ‖t‖``; ``atol=math.inf`` projects without
-        checking, which is the form that goes inside ``jit``.
+        ``sqrt(eps(dtype)) * ‖t‖``; ``atol=tenet.PROJECT`` (which is exactly
+        ``math.inf``) projects without checking, and is the form that goes
+        inside ``jit``.
 
     Returns
     -------
@@ -252,7 +254,7 @@ def restrict(
     CapabilityError
         If the provider does not implement
         [QuantumDimensionData][tenet.symmetry.QuantumDimensionData], which the
-        residual check needs (``atol=math.inf`` skips it).
+        residual check needs (``atol=tenet.PROJECT`` skips it).
 
     Examples
     --------
@@ -276,10 +278,10 @@ def restrict(
     ``sqrt(‖t‖² - ‖restrict(t)‖²)`` — exact by Pythagoras, since kept and dropped
     occupy disjoint slots under the same ``qdim`` weight — is compared against
     ``atol``, which defaults to ``sqrt(eps(dtype)) * ‖t‖``, the relative spelling
-    ``from_dense`` uses (#82) for the same units reason. ``atol=math.inf``
-    projects without checking, and that is the form that goes inside ``jit``; the
-    comparison is a concrete-value question and raises JAX's own
-    ``ConcretizationTypeError`` under a trace otherwise.
+    ``from_dense`` uses (#82) for the same units reason.
+    [``atol=tenet.PROJECT``][tenet.PROJECT] projects without checking, and that is
+    the form that goes inside ``jit``; the comparison is a concrete-value question
+    and raises JAX's own ``ConcretizationTypeError`` under a trace otherwise.
 
     This is *not* a truncation. The target comes from ``legs``, static metadata
     the caller chose, so ``restrict`` is shape-static and traceable and sits with
@@ -301,7 +303,7 @@ def restrict(
             for key in new.block_order
         ),
     )
-    if atol != math.inf:
+    if atol != PROJECT:
         _refuse_discarded(t, out, atol)
     return out
 
@@ -314,7 +316,7 @@ def _refuse_discarded(t: "SymmetricTensor", kept: "SymmetricTensor", atol: float
     """Refuse a restriction that threw away mass, naming the worst offending key.
 
     The per-key accumulation exists only for that message; it runs on the check
-    path, which is untraceable anyway, so ``atol=math.inf`` pays nothing for it.
+    path, which is untraceable anyway, so ``atol=tenet.PROJECT`` pays nothing for it.
     """
     provider = t.provider
     requires(provider, QuantumDimensionData)
@@ -341,7 +343,8 @@ def _refuse_discarded(t: "SymmetricTensor", kept: "SymmetricTensor", atol: float
         raise ValueError(
             f"restrict: discarded data — residual {residual:.6g} exceeds atol {atol:.6g}; "
             f"the worst block is {worst[1]} (mass {math.sqrt(worst[0]):.6g}). Pass a "
-            "larger atol to accept it, or atol=math.inf to restrict without checking"
+            "larger atol to accept it, or atol=tenet.PROJECT (== math.inf) to "
+            "restrict without checking"
         )
 
 

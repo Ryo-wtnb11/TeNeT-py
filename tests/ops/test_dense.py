@@ -346,6 +346,38 @@ def test_atol_inf_projects_without_checking():
         np.testing.assert_allclose(b, a, atol=1e-12)
 
 
+# --- PROJECT, the named spelling of the sentinel (#210) ---------------------------
+
+
+def test_project_is_exported_and_is_exactly_math_inf():
+    """The whole point of the option chosen in #210: a name, not a second value."""
+    assert "PROJECT" in tenet.__all__
+    assert tenet.PROJECT is math.inf
+
+
+@pytest.mark.parametrize("name", ["u1_4", "su2_3", "fz2_3", "product_3"])
+def test_project_and_atol_inf_are_the_same_call_on_an_asymmetric_array(name):
+    """No behaviour change: the same asymmetric array down both spellings, compared."""
+    slabs, _ = forbidden_cell_slabs(name)
+    d = tensor(name, seed=17).to_dense()
+    d[tuple(s.start for s in slabs)] = 100.0
+    old = SymmetricTensor.from_dense(d, STRUCTURES[name], atol=math.inf)
+    new = SymmetricTensor.from_dense(d, STRUCTURES[name], atol=tenet.PROJECT)
+    assert old.structure == new.structure
+    for a, b in zip(old.blocks, new.blocks, strict=True):
+        np.testing.assert_array_equal(b, a)
+
+
+def test_the_from_dense_refusal_names_the_project_spelling():
+    name = "su2_3"
+    slabs, _ = forbidden_cell_slabs(name)
+    d = tensor(name, seed=18).to_dense()
+    d[tuple(s.start for s in slabs)] = 1.0
+    with pytest.raises(ValueError, match="not symmetric") as exc:
+        SymmetricTensor.from_dense(d, STRUCTURES[name])
+    assert "tenet.PROJECT" in str(exc.value)
+
+
 # --- structural refusals, before any block is read -------------------------------
 
 

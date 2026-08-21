@@ -118,7 +118,6 @@ parameter.
 traced region, and tracing plus compiling them dominates a short run.
 """
 
-import math
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
@@ -172,10 +171,11 @@ def ising_bulk(beta):
     example always had rather than changing any arithmetic.
 
     ``beta`` may be a *traced scalar*: the block is built through ``autoray``, so
-    ``jax.grad`` has something to differentiate. Hence ``atol=math.inf`` -- #82's "project,
-    don't check" spelling, because a symmetry check is a concrete-value question and would
-    raise under a trace. The check is *moved*, not lost: an untraced test runs the same
-    array through ``from_dense`` at the **default** relative ``atol``.
+    ``jax.grad`` has something to differentiate. Hence ``atol=tenet.PROJECT`` -- #82's
+    "project, don't check" spelling (exactly ``math.inf``), because a symmetry check is a
+    concrete-value question and would raise under a trace. The check is *moved*, not lost:
+    an untraced test runs the same array through ``from_dense`` at the **default**
+    relative ``atol``.
 
     Simplification: dense-then-gather at setup on a 16-element array, ceiling ``prod dim_i``.
     """
@@ -184,7 +184,7 @@ def ising_bulk(beta):
     block = ar.do("einsum", "sl,su,sr,sd->lurd", w, w, w, w)
     space = GradedSpace.new(Z2, {Z2Sector(0): 1, Z2Sector(1): 1})
     legs = (Leg(space, OUT), Leg(space, OUT), Leg(space, IN), Leg(space, IN))
-    return SymmetricTensor.from_dense(block, legs, atol=math.inf)
+    return SymmetricTensor.from_dense(block, legs, atol=tenet.PROJECT)
 
 
 def c4v(a: SymmetricTensor) -> SymmetricTensor:
@@ -684,10 +684,10 @@ def main(chi_ising: int = 16, chi_ipeps: dict | None = None, k: int = 4, steps: 
     """Print both halves: Ising against Onsager with its gradient, then the iPEPS trace."""
     import jax
 
-    import tenet.ad
-    import tenet.pytree  # noqa: F401  # registration is the import's side effect
-
-    tenet.ad.install()
+    # the pytree registration plus tenet.ad's broadened SVD/eigh VJPs, which the
+    # degenerate CTM spectra below need; `ad=True` is opted into by name because
+    # that half is process-global (tenet.ad's module docstring)
+    tenet.enable_jax(ad=True)
 
     for beta in (0.3, 0.4, 0.5):
         env = converge(*single_layer_ctm(ising_bulk(beta)), chi=chi_ising)

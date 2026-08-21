@@ -464,6 +464,16 @@ def test_to_symmetry_on_jax_blocks_returns_jax_blocks_with_the_same_values(name)
     )
 
 
+def test_to_symmetry_takes_the_project_spelling_for_the_same_result():
+    """#210: ``atol=tenet.PROJECT`` is ``atol=math.inf``, here as everywhere."""
+    t = tensor("su2_3", seed=22)
+    old = to_symmetry(t, U1, atol=math.inf)
+    new = to_symmetry(t, U1, atol=tenet.PROJECT)
+    assert old.structure == new.structure
+    for a, b in zip(old.blocks, new.blocks, strict=True):
+        np.testing.assert_array_equal(b, a)
+
+
 def test_to_symmetry_traces_only_with_atol_inf():
     """The boundary, both sides on one screen, exactly as #82 pins ``from_dense``."""
     jax = use_jax()

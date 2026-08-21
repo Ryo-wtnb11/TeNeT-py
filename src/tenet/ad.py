@@ -31,12 +31,16 @@ Three things a caller must know:
 Why broadening rather than a hard tolerance, and why ``qr``/``lq``/``polar`` need nothing
 of their own: ``docs/design.md`` "Automatic differentiation".
 
+[tenet.enable_jax][]``(ad=True)`` is the one-call spelling of the three statements
+below, and is what the docs teach. It is the same explicit act this docstring demands --
+``ad`` is opted into by name there, never defaulted on, precisely because of the
+process-global reach above -- and it runs this module's ``install()`` unchanged.
+
 Usage::
 
-    import tenet.pytree  # SymmetricTensor as a pytree
-    import tenet.ad
+    import tenet
 
-    tenet.ad.install()
+    tenet.enable_jax(ad=True)  # pytree registration + the broadened VJPs
 
     def objective(t):
         u, s, vh = tenet.linalg.svd(t)   # per coupled sector

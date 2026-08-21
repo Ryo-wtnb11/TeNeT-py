@@ -146,7 +146,7 @@ def main(argv=None):
     if args.backend == "jax" or args.jit:
         import jax  # application level: the network layer never names an accelerator
 
-        import tenet.pytree  # noqa: F401  (registers SymmetricTensor as a JAX pytree)
+        tenet.enable_jax()  # registers SymmetricTensor as a JAX pytree
 
         sync = jax.block_until_ready  # async dispatch would otherwise flatter the clock
         if args.jit:

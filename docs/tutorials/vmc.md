@@ -17,7 +17,7 @@ Entirely with library code that already exists — no new `src/tenet` module, no
 no `quimb`:
 
 - a **symmetric open-boundary MPS whose parameters are `SymmetricTensor` blocks**, i.e. a
-  JAX pytree the moment `tenet.pytree` is imported;
+  JAX pytree the moment `tenet.enable_jax()` has been called;
 - an objective — the Rayleigh quotient `<ψ|h|ψ> / <ψ|ψ>` — built from a left-to-right
   chain of *pairwise* `tenet.einsum` calls (three or more operands need a contraction
   path, which is a separate concern);
@@ -52,5 +52,6 @@ operator when a physics result — not a plumbing result — is wanted.
 
 ## Reference
 
-- [`tenet.pytree`](../api/pytree.md) — the registration whose side effect is the pytree
+- [`tenet.enable_jax`](../api/tenet.md#tenet.enable_jax) — the one call that turns the
+  JAX features on; [`tenet.pytree`](../api/pytree.md) is the registration it performs
 - [`tenet.linalg`](../api/linalg.md) — `svd`, `svd_truncated`
