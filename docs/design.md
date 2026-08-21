@@ -4868,6 +4868,64 @@ The split:
   (#216, shipped as M61 Stage D), the Schmidt spectrum (#215, a canonical-form SVD and not a
   transfer pass), sampling and reduced density matrices, and infinite boundary conditions.
 
+- **M49** — shipped: `MPO.apply` produces `H|psi>` as a new `MPS`, and `MPO.variance` is the
+  convergence check that is not a change test (#214, over M48's `overlap`).
+
+  **The variance is why the apply exists.** `dmrg_` stops when the energy stopped moving and
+  the Schmidt values stopped moving, and both references say plainly that a change test can
+  be satisfied by a run stuck on a wrong bond structure. `<psi|H^2|psi> - E^2` is the check
+  that is not one, and it needed either `H @ H` or `H|psi>`. `H|psi>` is the smaller of the
+  two — with the product exact, `<psi|H^2|psi>` is `<Hpsi|Hpsi>` and `<psi|H|psi>` is
+  `<psi|Hpsi>`, so the whole thing is one apply and three overlaps. **No `MPO @ MPO`
+  shipped**, and no `MPS.add`, `MPO.dagger`, `plus_identity` or `is_hermitian` either:
+  every one is real in the references, none has a caller here, and a test asserts their
+  absence so that "added for symmetry" is a decision rather than a drift.
+
+  **The graded content is one turn-around.** The operator's virtual bond and the state's
+  cross a site in *opposite* directions — the fact the Milestone 11 section spends a page on
+  — so they cannot be fused until one is turned. Turning the operator's left virtual leg is
+  a duality relabel, `tenet.flip_dual`, which charges `chi * theta` per fusion tree: `+1` on
+  every bosonic sector, `-1` on an odd fermionic one. Writing the fusion without it gives a
+  state that is wrong only under fZ2, and wrong by a *number* rather than by an error —
+  measured at 1.1 against a scale of 1.5 on an N=4 Hubbard state before the flip was added.
+
+  **The direction is fixed by the leg, not by the flag**: `inv = not leg.dual`. This is not
+  a nicety. `MPO.from_terms`' two representations write that flag differently — a compressed
+  table's internal bonds come back `dual=True`, a deferred table's `dual=False` — and
+  charging by the flag would make `H|psi>` depend on which representation built `H`,
+  silently and only for fermions. A brute force over every per-site flip pattern found the
+  compressed rule ("flip exactly one of the two legs meeting at each bond") and found *no*
+  pattern at all for the deferred table until `inv` entered; with `inv = not dual` both
+  representations agree with the dense oracle and with each other, at N=2, 4 and 6, under
+  U(1), SU(2) and fZ2, from `from_terms` at either cutoff and from `from_w`.
+
+  **The operator's D=1 boundary legs are capped, not fused.** Fusing them would give the
+  product a boundary leg that is the state's own written in the *other* dual convention, and
+  `overlap(psi, h.apply(psi))` then refuses to contract — which is how the doctest found it.
+  Capping with a `network.ones` vector, the same move `MPO.to_dense` makes by slicing
+  `[0, ..., 0]`, leaves the product's boundary legs identical to `psi`'s, which is the
+  property the variance rests on. A test asserts leg identity at both ends.
+
+  **A deferred operator is materialised through `MPO.__getitem__`, and the docstring says
+  so.** This is a whole-state product, not a sweep step: there is no bond at which the
+  operator could stay symbolic, so one full `W` per site is what it costs and the cost is
+  stated at the call. The sweep's own deferred path (#200, #204) is untouched.
+
+  **Truncation is `MPS.compress_`, by name, and `apply` takes no `chi`.** `compress_`
+  already takes the `chi`/`cutoff` pair the sweep takes and already returns the **total**
+  discarded weight `sqrt(sum_bond dw)` — the convention this question wants, and the one
+  `sweep_`'s per-bond *maximum* deliberately is not. Giving `apply` its own `chi=` would put
+  a second name on that number and be the one place the two conventions could blur. The
+  untruncated product is therefore the only thing `apply` returns, and the two-call form is
+  the truncating one. Simplification: the zip-up apply that truncates *during* the sweep
+  (YASTN's `zipper`, TenPy's `apply_zipup`) is the named upgrade and is a change with a
+  measurement attached; the variance does not need it.
+
+  Verified the two ways #214 names: `<psi|H|psi>` read through the apply plus `overlap`
+  agrees with `Env.measure()` to 1e-10 on U(1), SU(2) and fZ2, and the variance of a
+  converged N=8 Heisenberg state falls to below 1e-8 as `chi` goes 2 -> 32. The variance is
+  additionally checked against a dense `<H^2> - <H>^2` oracle under SU(2) and fZ2.
+
 Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
 left that list with M61 Stage D above.
 - **M55** — **measured, not shipped**: the pre-placement basis choice — M39's named successor,

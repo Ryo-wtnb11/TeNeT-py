@@ -330,6 +330,36 @@ in the wrong gauge. Keep the result rather than calling twice on a large state.
 gauge, where the sweep's own per-bond dict is a truncated convergence diagnostic taken at
 whichever direction visited the bond last.
 
+### Converged, or only plateaued?
+
+`dmrg_` stops on a **change** test — the energy stopped moving (`energy_tol`) and the
+Schmidt values stopped moving (`schmidt_tol`). A change test can be satisfied by a run
+stuck on a wrong bond structure: nothing moved because nothing *could* move. The check that
+is not a change test is the energy variance:
+
+```python
+h.apply(psi)        # H|psi> as a new MPS, exact; bond = MPO bond x psi's bond
+h.variance(out.psi)  # <psi|H^2|psi> / <psi|psi> - E^2, zero for an exact eigenstate
+```
+
+Run it at two bond dimensions. A state converging on an eigenstate has a variance that falls
+towards zero as `chi` grows; a state that has plateaued on the wrong structure has one that
+does not.
+
+`apply` takes **no** `chi` or `cutoff`. The product is exact, and truncation is
+`compress_`, by name:
+
+```python
+phi = h.apply(psi)
+discarded = phi.compress_(chi=64, cutoff=1e-12)   # the TOTAL discarded weight
+```
+
+That is deliberate. `compress_` returns `sqrt(sum_bond dw)` where `sweep_` returns the
+per-bond **maximum**, two conventions the package keeps apart by name; giving `apply` its
+own `chi=` would put a third name on one of them. The cost of the exact product is the
+operator's bond dimension times the state's, so compress promptly on a wide operator rather
+than holding the untruncated product.
+
 ## Deliberate limits
 
 - **Two-site DMRG only.** Single-site plus subspace expansion (Hubig–McCulloch–

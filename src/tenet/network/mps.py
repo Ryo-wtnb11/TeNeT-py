@@ -25,7 +25,7 @@ import numpy as np
 
 import tenet
 from tenet import IN, OUT, FusionTree, GradedSpace, Leg, SymmetricTensor
-from tenet.network.common import Recent, entropy, spectrum, spectrum_sectors
+from tenet.network.common import Recent, entropy, ones, spectrum, spectrum_sectors
 from tenet.symmetry import Sector
 
 __all__ = [
@@ -3099,3 +3099,153 @@ class MPO:
         n_sites, d = len(self), self[0].legs[1].space.dim
         order = list(range(0, 2 * n_sites, 2)) + list(range(1, 2 * n_sites, 2))
         return out.to_dense()[0, ..., 0].transpose(order).reshape(d**n_sites, d**n_sites)
+
+    def apply(self, psi: MPS) -> MPS:
+        """``H|psi>`` as a new [MPS][tenet.network.MPS], **untruncated**; ``psi`` is untouched.
+
+        Parameters
+        ----------
+        psi : MPS
+            The state; any gauge, any norm. Not modified -- the product is built from its
+            frozen tensors into a new container.
+
+        Returns
+        -------
+        MPS
+            The product state, on the site convention ``MPS.__setitem__`` enforces. Its
+            bond at every cut is the **fusion** of this operator's bond with ``psi``'s, so
+            the bond dimension is the product of the two and the result is exact.
+
+        Raises
+        ------
+        ValueError
+            If the operator and the state have different lengths.
+
+        Examples
+        --------
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPO, MPS, overlap
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1), U1Sector(1)])
+        >>> ident = MPO.identity(3, phys)
+        >>> round(overlap(psi, ident.apply(psi)), 12)
+        1.0
+
+        Notes
+        -----
+        **Truncation is not hidden here and is not a keyword: it is
+        [MPS.compress_][tenet.network.MPS.compress_], by name.**
+
+            phi = h.apply(psi)
+            discarded = phi.compress_(chi=64, cutoff=1e-12)
+
+        That call already takes the ``chi``/``cutoff`` pair [Sweep][tenet.network.Sweep] and
+        the sweep take and already returns the **total** discarded weight
+        ``sqrt(sum_bond dw)``, which is the convention this question wants and which
+        [sweep_][tenet.network.sweep_]'s per-bond *maximum* deliberately is not. Giving
+        ``apply`` its own ``chi=`` would put a second name on that number and be the one
+        place the two conventions could blur. Simplification: the untruncated product costs
+        ``D_w`` times ``psi``'s bond, so for a wide operator compress promptly rather than
+        holding the product; the zip-up apply that truncates *during* the sweep (YASTN's
+        ``zipper``, TenPy's ``apply_zipup``) is the named upgrade and is a change with a
+        measurement attached.
+
+        **A deferred operator is materialised, site by site, through ``MPO.__getitem__``** --
+        so an ``MPO`` built at
+        ``cutoff=None``, which carries an edge description and no tensors, pays one full
+        ``W`` per site here. That is stated rather than avoided: this is a whole-state
+        product, not a sweep step, and there is no bond at which a symbolic operator could
+        be kept symbolic. The sweep's own path (#200, #204) is untouched.
+
+        **The virtual leg is turned around once, and that is the whole graded content.**
+        The operator's bond and the state's bond cross a site in *opposite* directions --
+        the fact ``docs/design.md`` "Milestone 11" spends a section on -- so they cannot be
+        fused until one of them is turned. Turning the operator's left virtual leg is a
+        duality relabel, [tenet.flip_dual][], which charges ``chi * theta`` per fusion tree:
+        ``+1`` on every bosonic sector and ``-1`` on an odd fermionic one, which is exactly
+        the sign that is missing if the fusion is written without it. The direction is fixed
+        by the leg rather than by the flag: ``inv=not dual`` charges the same categorical
+        map whether the leg was written dual or plain, and it has to be, because
+        [from_terms][tenet.network.MPO.from_terms]'s two representations write that flag
+        differently -- compressed bonds come back ``dual``, a deferred table's do not.
+        Charging by the flag instead would make ``H|psi>`` depend on which representation
+        built ``H``, silently and only for fermions. Both are tested against the dense
+        oracle, under fermionic parity and under SU(2).
+        """
+        if len(self) != len(psi):
+            raise ValueError(
+                f"MPO.apply needs an operator and a state of the same length, got "
+                f"{len(self)} and {len(psi)}"
+            )
+        sites, last = [], len(psi) - 1
+        for n in range(len(psi)):
+            w = self[n]
+            w = tenet.flip_dual(w, (0,), inv=not w.legs[0].dual)
+            w = tenet.repartition(w, (0, 1), (2, 3))  # (x OUT, P OUT | p IN, m IN)
+            t = tenet.einsum("xPpm,apr->axPrm", w, psi[n])
+            if n == 0:  # the operator's own D=1 boundary, capped rather than fused
+                cap = ones((Leg(t.legs[1].space, IN, t.legs[1].dual),))
+                t = tenet.einsum("x,axPrm->aPrm", cap, t)
+            else:
+                t = tenet.fuse(t, (0, 1))
+            if n == last:
+                cap = ones((Leg(t.legs[3].space, OUT, t.legs[3].dual),))
+                t = tenet.einsum("aPrm,m->aPr", t, cap)
+            else:
+                t = tenet.fuse(t, (2, 3))
+            sites.append(t)
+        return MPS(sites)
+
+    def variance(self, psi: MPS) -> float:
+        """``<psi|H^2|psi> / <psi|psi> - E**2`` -- the convergence check that is not a change test.
+
+        Parameters
+        ----------
+        psi : MPS
+            The state, normally a converged [DMRG_out][tenet.network.DMRG_out]'s ``psi``;
+            any gauge, any norm, and not modified.
+
+        Returns
+        -------
+        float
+            The energy variance. Zero for an exact eigenstate, and it falls as ``chi``
+            grows for a state that is converging on one.
+
+        Examples
+        --------
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPO, MPS
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1)])
+        >>> round(MPO.identity(2, phys).variance(psi), 12)  # every state is an eigenstate of 1
+        0.0
+
+        Notes
+        -----
+        TenPy names the same quantity ``MPO.variance(psi, exp_val=None)``. ``dmrg_``'s own
+        convergence test (``network/dmrg.py``) is a **change** test -- the energy stopped
+        moving and the Schmidt values stopped moving -- and both references say plainly that
+        a change test can be satisfied by a run stuck on a wrong bond structure. This is the
+        check that is not a change test, and ``docs/tutorials/dmrg.md`` shows it beside the
+        convergence discussion.
+
+        **One line over [apply][tenet.network.MPO.apply] and
+        [overlap][tenet.network.overlap], and no ``MPO @ MPO``.** With ``|Hpsi> = H|psi>``
+        exact, ``<psi|H^2|psi>`` is ``<Hpsi|Hpsi>`` and ``<psi|H|psi>`` is
+        ``<psi|Hpsi>`` -- three overlaps and one product. Expanding ``H**2`` as a term list
+        would be quadratic in the term count and would ask the caller to multiply every
+        operator pair by hand, which is why #214 is about the apply and not about an
+        operator algebra.
+
+        The product is **untruncated**, so this is the variance of ``psi`` under the exact
+        ``H`` and not of a compressed approximation to it; the cost is one state of bond
+        ``D_w`` times ``psi``'s. ``<psi|H|psi>`` read this way agrees with
+        [Env.measure][tenet.network.Env.measure] to solver precision, which is tested and is
+        the statement that the apply is the operator it claims to be.
+        """
+        hpsi = self.apply(psi)
+        norm2 = overlap(psi, psi)
+        energy = overlap(psi, hpsi) / norm2
+        return overlap(hpsi, hpsi) / norm2 - energy * energy

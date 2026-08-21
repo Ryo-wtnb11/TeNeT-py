@@ -1066,7 +1066,7 @@ def correlation_function(
     **Fermions are correct here because nothing new decides their sign.** Each pair is one
     two-operator term through [MPO.from_terms][tenet.network.MPO.from_terms], measured with
     [Env][tenet.network.Env]: the Jordan-Wigner string across the sites between ``i`` and
-    ``j`` is the fZ2 braiding the term builder already inserts and #147's explicit
+    ``j`` is the fermionic-parity braiding the term builder already inserts and #147's explicit
     Jordan-Wigner oracle already pins, and the composition rule (#160) is obeyed by the
     contractions that were audited for it. A hand-written transfer walk carrying the charge
     leg between the two sites would be the faster route and would re-decide that sign

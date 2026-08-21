@@ -323,6 +323,7 @@ def test_every_two_operand_einsum_is_a_composition(monkeypatch):
         expectation_2site(psi, zz4, 1)
         Env(psi.copy(), h).measure()
         dmrg_(psi, h, chi=8, cutoff=1e-12, max_sweeps=2)
+        h.apply(psi)  # M49's product state, boundary caps and bond fusion included
     psi.compress_(chi=4)
     psi.entanglement_entropy()  # M50's bond walk, the second place an SVD sweep is spelled
 
