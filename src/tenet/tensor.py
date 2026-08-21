@@ -504,9 +504,10 @@ class SymmetricTensor:
         Parameters
         ----------
         dtype : dtype
-            The target dtype, in any spelling the current backend's ``astype``
-            accepts — a NumPy dtype (``np.complex128``) or a string
-            (``"complex128"``).
+            The target dtype. Any spelling NumPy recognizes — ``np.complex128``,
+            ``"complex128"``, ``np.dtype("complex128")`` — means the same thing on
+            every backend; a backend-native dtype object (``torch.complex128``)
+            is passed through untouched.
 
         Returns
         -------
@@ -541,6 +542,14 @@ class SymmetricTensor:
         True
         """
         self._first_block()  # the empty tensor has no dtype to cast to; same refusal
+        # autoray's torch `astype` routes the dtype through `to_backend_dtype`, which
+        # wants the *name*; NumPy and JAX take the name too, so normalizing every
+        # NumPy-recognized spelling to it is what makes `astype(np.complex128)` mean
+        # one thing on all three backends. A backend-native dtype object is left alone.
+        try:
+            dtype = np.dtype(dtype).name
+        except TypeError:
+            pass
         return SymmetricTensor(
             self.structure, tuple(ar.do("astype", b, dtype) for b in self.blocks)
         )

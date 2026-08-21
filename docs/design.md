@@ -4529,6 +4529,15 @@ The split:
   and pins the table above, so the distinction the `Notes` now draw between a backend's
   choice and its refusal is a test rather than a claim.
 
+  **The dtype spelling is normalized, because otherwise the method meant two things.**
+  autoray's torch `astype` routes its argument through `to_backend_dtype`, which wants a
+  dtype *name*: `t.astype(np.complex128)` — the spelling this issue's own criteria use,
+  and the one that works on NumPy and JAX — raised `TypeError: to() received an invalid
+  combination of arguments` on torch blocks. `astype` therefore normalizes anything NumPy
+  recognizes to `np.dtype(dtype).name` and passes a backend-native dtype object through
+  untouched, so one spelling means one thing on all three backends. The torch suite takes
+  both spellings, which is what would have caught this.
+
   **`astype` refuses a block-free tensor** with `_first_block`'s existing message rather
   than returning an empty tensor of nominal dtype: `dtype` on the result would be as
   undefined as it already is on the input, and inventing a second message for the same
