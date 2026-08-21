@@ -44,7 +44,7 @@ in CI**; every empty cell is a decision, not a constraint.
 | 4 | `fuse` / `unfuse` | `{su2, u1, trivial, fz2}` | `tests/ops/test_fusion.py:49` (`ALL_LEGS`; fZ2 joined in #146); dense oracles at `:245-262` |
 | 5 | `compose` / `tensordot` / `einsum` | `{trivial, u1, su2, fz2, product}`; `einsum_multi` drops product | `tests/ops/test_einsum.py:75`; `tests/ops/test_einsum_multi.py:82`; `tests/ops/test_contraction.py:61` |
 | 6 | `full_trace` / `inner` | `{su2, u1}` (+ torch row below) | `tests/ops/test_full_trace.py:20-23` |
-| 7 | linalg (`svd`/`qr`/`lq`/`polar`/`eigh`/`eig`/`expm`/`*_null`/`svd_truncated`) | `{trivial, u1, su2, fz2}` | `tests/ops/test_linalg.py:52-62`; `tests/ops/test_svd_truncated.py:15-24` imports that same `PROVIDERS` — the reuse pattern the budget rule mandates |
+| 7 | linalg (`svd`/`qr`/`lq`/`polar`/`eigh`/`eig`/`expm`/`*_null`/`svd_truncated`/`select_bond`) | `{trivial, u1, su2, fz2}` | `tests/ops/test_linalg.py:52-62`; `tests/ops/test_svd_truncated.py:15-24` and `tests/ops/test_select_bond.py:18` import that same `PROVIDERS` — the reuse pattern the budget rule mandates |
 | 8 | `flip_dual` (#142) | capability on all 8; numerically `{u1, fz2, su2, su3}` (+ Z2/product spaces) | `tests/symmetry/test_flip_scalar.py:34`; `tests/ops/test_flip_dual.py` |
 | 9 | `embed` / `restrict` / `direct_sum` / `isometry` | `{trivial, u1, su2, fz2, product}` | `tests/ops/test_embed.py:57`; `tests/ops/test_isometry.py:45-61` |
 | 10 | `to_symmetry` | bounded by `BranchingRules`: targets `{SU2, Trivial, fZ2, U1×U1}`; U1-as-source is the refusal | `tests/ops/test_to_symmetry.py:97`, `:386-408` |
@@ -67,7 +67,8 @@ the identity assertion plus a both-spellings comparison in `tests/ops/test_dense
 - **jax eager + jit** — scattered per module, never parametrized over providers:
   `test_blocks.py`, `test_embed.py:384`, `test_einsum.py`,
   `test_contraction_plan.py`, `test_flip_dual.py:325-336`,
-  `test_svd_truncated.py:564-586`, `test_map.py:347-364`, `test_to_symmetry.py`,
+  `test_svd_truncated.py:564-586`, `test_select_bond.py` (#209's refusal, both
+  sides of the trace boundary), `test_map.py:347-364`, `test_to_symmetry.py`,
   `test_dense.py`, `test_basic.py`, `test_adjoint.py`,
   `test_full_trace.py:146-173`. Absent for `fuse`/`unfuse` (jax eager only,
   `test_fusion.py:470-492`), `repartition`/`bend`, `transpose`, core linalg,
@@ -125,7 +126,8 @@ contract** (with the refusal test), **(d) blocked** (with what blocks it).
   would execute the same lines with the same numbers as the U(1) column.
 - **b2. A jit cell per operation.** jit-ability is one property — no
   data-dependent structure decision — and the operations that make one are
-  enumerable and pinned: `svd_truncated` (`test_svd_truncated.py:564-586`,
+  enumerable and pinned: `svd_truncated` and `select_bond`
+  (`test_svd_truncated.py:564-586`, `test_select_bond.py`,
   `tests/network/test_ctmrg.py:203-219`) and the containment-checking
   `embed`/`restrict` refusals (`test_embed.py:384`). Everything else is
   `ar.do` over a static plan, and "no NumPy in the implementation" is asserted

@@ -599,6 +599,21 @@ def test_svd_truncated_and_bond(name):
     same(projected[1], s)
 
 
+@pytest.mark.parametrize("name", ["u1", "su2"])
+def test_select_bond_decides_the_same_bond_on_torch(name):
+    """#209's two-call form on torch blocks: the decision needs Python floats out of a
+    torch tensor, which is the only backend-facing thing ``select_bond`` does."""
+    t = tt(LEGS[name], seed=31)
+    axes = ((0, 1), (2, 3))
+    selection = tenet.linalg.select_bond(t, axes, max_bond=4)
+    assert isinstance(selection, tenet.linalg.BondSelection)
+    reference = tenet.linalg.select_bond(t.to_backend("numpy"), axes, max_bond=4)
+    assert selection.bond == reference.bond
+    assert selection.discarded_weight == pytest.approx(reference.discarded_weight, rel=1e-12)
+    # and it is the bond svd_truncated picks on the same blocks
+    assert selection.bond == tenet.linalg.svd_truncated(t, axes, max_bond=4)[1].legs[0].space
+
+
 # --- the bit-identical table (issue #95, all eight measured at 0.0) ---------------
 
 

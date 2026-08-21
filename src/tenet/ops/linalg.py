@@ -1304,7 +1304,7 @@ def select_bond(
         [svd_truncated][tenet.ops.linalg.svd_truncated]. Default ``"rsum2"``.
     renorm : bool, optional
         ``True`` reports the rescaling in
-        [BondSelection.scale][tenet.linalg.BondSelection]; it changes no
+        [BondSelection.scale][tenet.ops.linalg.BondSelection]; it changes no
         magnitude in the record, which is bare throughout. Default ``False``.
 
     Returns
@@ -1360,7 +1360,7 @@ def select_bond(
     ``svd_truncated(t, axes, **kw)`` returns at ``renorm=False`` — same factors, same
     bond, same numbers — because both go through the one keep rule below. At
     ``renorm=True`` the kept singular values differ by
-    [BondSelection.scale][tenet.linalg.BondSelection], which ``svd(..., bond=)``, being
+    [BondSelection.scale][tenet.ops.linalg.BondSelection], which ``svd(..., bond=)``, being
     a projection and not a rescaling, does not apply.
 
     Selection is over one global spectrum, ``qdim``-weighted in cost and weight, exactly

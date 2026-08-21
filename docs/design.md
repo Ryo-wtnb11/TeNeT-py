@@ -5007,6 +5007,75 @@ The split:
   the CTMRG and VMC examples) now teach the one-call spelling and no longer the
   three-statement one. JAX stays an optional extra: `pyproject.toml` is untouched and core
   still imports nothing from it.
+- **M44** — shipped: the truncation *decision* is a returned object. `tenet.linalg.select_bond`
+  makes the choice `svd_truncated` used to consume and hands it back as a `BondSelection`
+  (#209); `svd(t, axes, bond=selection.bond)` then runs the numerics, jittable as ever.
+
+  **One keep rule, not two.** The private `_decide` now owns the whole selection —
+  `_admissible`'s cutoff prefix, the `qdim`-weighted greedy walk under `max_bond`, the
+  two ValueErrors and the `renorm` factor — and `svd_truncated` is a caller of it. Its
+  signature, docstring and behaviour are unchanged, checked by an `ast`-extracted
+  comparison of every public name in `ops/linalg.py` against the base commit: the diff is
+  `BondSelection` and `select_bond` and nothing else. `_spectrum` now takes `{c: magnitudes}`
+  rather than the SVD tuples and returns the *index* within each sector, so a caller whose
+  kept set is not a prefix can gather by index — that is M40's requirement, paid for here
+  rather than duplicated there. The refusal message is `_not_traceable(caller)`, one
+  sentence pattern for every truncating entry point.
+
+  **The type is a frozen dataclass, and it is deliberately not a pytree.** It sits beside
+  `MapLayout`, the other array-free structural record: immutable, no arrays, decided
+  outside the trace. `pytree.py` registers `SymmetricTensor` and nothing else, so
+  `BondSelection` is neither a registered container nor an intended leaf; a `NamedTuple`
+  was rejected precisely because JAX flattens one *automatically*, which would turn the
+  record's Python floats into leaves the moment it crossed a `jit` boundary — the accident
+  the whole structure/numerics split exists to prevent. Only `.bond`, a hashable
+  `GradedSpace`, is meant to cross. `tests/ops/test_select_bond.py` asserts
+  `tree_leaves(selection) == [selection]`.
+
+  **The discarded singular values are always retained, on the measured size.** One
+  `(sigma, sector, index)` triple costs a measured 116 bytes of Python object; a spectrum
+  of `N` values therefore costs `116 N` against the `8 · Σ_c rows_c · cols_c` bytes the
+  blocks already occupy, a ratio of `14.5 / max(rows_c, cols_c)`:
+
+  | fixture | spectrum `N` | blocks | discarded list | ratio |
+  |---|---|---|---|---|
+  | U(1), three sectors × `m=8` | 24 | 1.5 KB | 2.5 KB | 1.64 |
+  | U(1), three sectors × `m=64` | 192 | 96 KB | 22 KB | 0.23 |
+  | SU(2), `{j=0: 8, j=1/2: 8}` | 16 | 1.0 KB | 1.8 KB | 1.73 |
+  | SU(2), `{j=0: 48, j=1/2: 48}` | 96 | 36 KB | 11 KB | 0.31 |
+
+  The ratio exceeds 1 only where the tensor is a few kilobytes, i.e. where nobody is
+  counting. The case the proposal worried about — a K=26 quantum-chemistry cut computing
+  ~5·10⁴ singular values — is ~6 MB against the 6 GiB that run is measured at in the M39
+  table above: 0.1%. An opt-in flag would recover that at the price of a keyword whose only
+  job is to make the object's contents conditional, and `discarded_weight` walks the same
+  list anyway. Never-retain was refused for the same reason: the weight is the number every
+  DMRG caller actually wants.
+
+  **What the record carries, and why `dense_dim` and `reduced_dim` are separate fields.**
+  `max_bond` bounds `Σ_c qdim(c)·m_c`; callers routinely mean `Σ_c m_c`. For U(1) and fZ2
+  the two coincide and the distinction is invisible, which is exactly why it must be
+  spelled out rather than inferred. `undershoot = max_bond - dense_dim` and
+  `next_multiplet` / `next_dense_cost` make the non-Abelian boundary case readable for the
+  first time. The constructed case, `{j=0: 1, j=1: 3}` at `max_bond=5`
+  (`tests/ops/test_select_bond.py::test_su2_max_bond_landing_inside_a_multiplet_is_reported`):
+  the walk admits one triplet, reaches `dense_dim = 3`, and stops because the next entry is
+  another triplet costing 3 and `3 + 3 > 5`. `undershoot` is 2.0 of a budget of 5 —
+  40% — and `next_multiplet` names the `j=1` multiplet it stopped short of.
+  `max_bond=6` spends the budget exactly. That number was always what `svd_truncated`
+  produced; until now nothing reported it.
+
+  **`renorm` is reported, not applied.** Every magnitude in the record is bare and `scale`
+  carries `sqrt(Σ_all qdim σ² / Σ_kept qdim σ²)`. Mixing rescaled kept values with bare
+  discarded ones would put two units in one object; `svd_truncated` reads `scale` off the
+  same selection, so the rescaling is computed once.
+
+  **The naming.** `select_bond` is verb-then-noun like `map_layout`, `flip_dual` and
+  `to_matrices`; `BondSelection` is a noun-record like `MapLayout` and `CTMEnv`. The
+  keyword set stays quimb's (`max_bond`, `cutoff`, `cutoff_mode`, `renorm`), unchanged from
+  the M8 shim, and M31's naming audit is not reopened — this is an addition to the surface,
+  not a rename of it. M40's `eigh_truncated` consumes this object rather than defining its
+  own, which is why `_decide` takes a magnitude spectrum rather than SVD output.
 
 Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
 left that list with M61 Stage D above.
