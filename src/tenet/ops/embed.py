@@ -280,9 +280,8 @@ def restrict(
     ``atol``, which defaults to ``sqrt(eps(dtype)) * ‖t‖``, the relative spelling
     ``from_dense`` uses (#82) for the same units reason.
     [``atol=tenet.PROJECT``][tenet.PROJECT] projects without checking, and that is
-    the form that goes inside ``jit``; the
-    comparison is a concrete-value question and raises JAX's own
-    ``ConcretizationTypeError`` under a trace otherwise.
+    the form that goes inside ``jit``; the comparison is a concrete-value question
+    and raises JAX's own ``ConcretizationTypeError`` under a trace otherwise.
 
     This is *not* a truncation. The target comes from ``legs``, static metadata
     the caller chose, so ``restrict`` is shape-static and traceable and sits with
