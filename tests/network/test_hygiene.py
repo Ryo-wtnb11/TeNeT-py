@@ -314,6 +314,7 @@ def test_every_two_operand_einsum_is_a_composition(monkeypatch):
         Env(psi.copy(), h).measure()
         dmrg_(psi, h, chi=8, cutoff=1e-12, max_sweeps=2)
     psi.compress_(chi=4)
+    psi.entanglement_entropy()  # M50's bond walk, the second place an SVD sweep is spelled
 
     assert not violations, "\n".join(violations)
 

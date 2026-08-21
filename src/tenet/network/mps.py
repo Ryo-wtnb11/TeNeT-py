@@ -25,7 +25,7 @@ import numpy as np
 
 import tenet
 from tenet import IN, OUT, FusionTree, GradedSpace, Leg, SymmetricTensor
-from tenet.network.common import Recent, spectrum
+from tenet.network.common import Recent, entropy, spectrum, spectrum_sectors
 from tenet.symmetry import Sector
 
 __all__ = [
@@ -434,6 +434,133 @@ class MPS:
             self[n + 1] = tenet.einsum("xy,yqr->xqr", s, self[n + 1])
         self.center = len(self) - 1
         return max(total, 0.0) ** 0.5  # an untruncated bond lands on -1e-17, not on 0
+
+    # --- entanglement ---------------------------------------------------------------
+
+    def _bond_svds(self) -> dict[int, SymmetricTensor]:
+        """Every bond's normalized singular-value tensor, off a **canonical copy**.
+
+        [compress_][tenet.network.MPS.compress_]'s body with the truncation removed, run on
+        ``self.copy()``: a caller reading a state must not have it re-gauged underneath, and
+        the values of a non-canonical gauge are not Schmidt values at all. So this canonizes
+        first, always -- the choice ``compress_`` makes for the same reason -- and pays one
+        ``lq`` pass for it whatever ``center`` says.
+        """
+        psi = self.copy().canonize_(0)
+        out: dict[int, SymmetricTensor] = {}
+        for n in range(len(psi) - 1):
+            aa = tenet.einsum("apx,xqr->apqr", psi[n], psi[n + 1])
+            u, s, vh = tenet.linalg.svd(aa, ((0, 1), (2, 3)))
+            out[n] = s = s / tenet.norm(s)
+            psi[n], psi[n + 1] = u, vh  # the write barrier bends ``vh`` back
+            psi[n + 1] = tenet.einsum("xy,yqr->xqr", s, psi[n + 1])
+        return out
+
+    def schmidt_values(self) -> dict[int, list[float]]:
+        """The Schmidt values across every bond, flattened and descending.
+
+        Returns
+        -------
+        dict of int to list of float
+            One entry per internal bond, keyed by the bond's **left site** -- the key
+            [sweep_][tenet.network.sweep_]'s ``schmidt`` dict already uses -- holding that
+            cut's values, ``sqrt(qdim)``-weighted, normalized and sorted descending. A
+            one-site state has no internal bond and gives ``{}``. The SVD here is the
+            exact [tenet.linalg.svd][tenet.ops.linalg.svd], so a sector the bond carries
+            but the state does not occupy contributes an explicit ``0.0`` rather than
+            being dropped the way a truncating sweep drops it.
+
+        Examples
+        --------
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPS
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1), U1Sector(1)])
+        >>> {n: [round(v, 6) for v in vals] for n, vals in psi.schmidt_values().items()}
+        {0: [1.0, 0.0], 1: [1.0, 0.0]}
+
+        Notes
+        -----
+        YASTN's ``get_Schmidt_values`` and TenPy's ``entanglement_spectrum(by_charge=False)``.
+        Both are methods on the state rather than outputs of an algorithm, and so is this:
+        the sweep computes the same numbers at every bond of every sweep and reports only
+        how much they *moved*, which is a convergence diagnostic and not an answer about the
+        converged state (#215).
+
+        A canonical **copy** is taken first, so this never re-gauges the state it reads and
+        never reports the values of a non-canonical gauge. Each of the three readers here
+        pays its own SVD sweep; a caller wanting two of them on a large state should keep
+        the first result rather than call twice.
+        """
+        return {n: spectrum(s) for n, s in self._bond_svds().items()}
+
+    def schmidt_sectors(self) -> dict[int, dict[Sector, list[float]]]:
+        """[schmidt_values][tenet.network.MPS.schmidt_values], resolved by symmetry sector.
+
+        Returns
+        -------
+        dict of int to (dict of Sector to list of float)
+            One entry per internal bond, keyed by the bond's left site; each is that cut's
+            spectrum split by coupled sector, values descending within a sector.
+
+        Examples
+        --------
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPS
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1), U1Sector(1)])
+        >>> [(sector.charge, len(vals)) for sector, vals in psi.schmidt_sectors()[0].items()]
+        [(-2, 1), (0, 1)]
+
+        Notes
+        -----
+        TenPy's ``entanglement_spectrum(by_charge=True)``, and the read a graded bond is
+        *for*: which sector carries the entanglement is a question a flat list cannot answer
+        and a labelled bond answers for free. The ``sqrt(qdim)`` weight is applied in
+        [spectrum_sectors][tenet.network.spectrum_sectors] and nowhere else.
+        """
+        return {n: spectrum_sectors(s) for n, s in self._bond_svds().items()}
+
+    def entanglement_entropy(self, *, alpha: float = 1.0) -> dict[int, float]:
+        """The entanglement entropy across every bond, in **nats**.
+
+        Parameters
+        ----------
+        alpha : float, optional
+            The Renyi index handed to [entropy][tenet.network.entropy]. Default ``1.0``,
+            the von Neumann entropy. Keyword-only.
+
+        Returns
+        -------
+        dict of int to float
+            One entropy per internal bond, keyed by the bond's left site.
+
+        Examples
+        --------
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPS
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1)])
+        >>> psi.entanglement_entropy()  # a product state is unentangled
+        {0: -0.0}
+
+        Notes
+        -----
+        Nats, not bits: the convention is stated on [entropy][tenet.network.entropy], which
+        does the arithmetic, because the two references disagree about it. The multiplet
+        weight that makes an SU(2) state agree with the same state under U(1) is stated
+        there too.
+
+        TenPy's ``entanglement_entropy(n=1)`` and YASTN's ``get_entropy(alpha=1)``. Both
+        return one value per cut including the two trivial boundary cuts; this returns the
+        ``N - 1`` internal bonds only, because a boundary cut of a finite open chain is
+        zero by construction and the key here is a bond's left site, which a boundary cut
+        does not have.
+        """
+        return {n: entropy(s, alpha=alpha) for n, s in self._bond_svds().items()}
 
     # --- serialization --------------------------------------------------------------
 

@@ -20,6 +20,7 @@ is nonetheless only ever called outside a ``jit``/``grad`` region, because its `
 Python list is driver output, not a tensor.
 """
 
+import math
 from collections.abc import Sequence
 from typing import Any
 
@@ -27,8 +28,9 @@ import autoray as ar
 
 import tenet
 from tenet import Leg, SymmetricTensor
+from tenet.symmetry import Sector
 
-__all__ = ["ones", "spectrum"]
+__all__ = ["entropy", "ones", "spectrum", "spectrum_sectors"]
 
 #: How many bytes of cached tensor payload each of the sweep's per-bond caches may hold.
 #: **This is the whole cache policy and it is one number in one place** (#202):
@@ -185,14 +187,137 @@ def spectrum(s: SymmetricTensor) -> list[float]:
     diagonal by construction, so this reads its diagonal; the ``sqrt(qdim)`` weight is
     the same one [tenet.norm][] carries, and it is 1 throughout for U(1).
     """
+    return sorted(
+        (v for vals in spectrum_sectors(s).values() for v in vals),
+        reverse=True,
+    )
+
+
+def spectrum_sectors(s: SymmetricTensor) -> dict[Sector, list[float]]:
+    """[spectrum][tenet.network.spectrum], resolved by the sector of the bond.
+
+    The same values, unflattened: on a [GradedSpace][tenet.GradedSpace] bond the singular
+    values arrive already labelled, and [spectrum][tenet.network.spectrum] sorts that label
+    away because its two callers -- ``network/dmrg.py`` and ``network/ctmrg.py`` -- both
+    want one flat convergence diagnostic (#120, reaffirmed #185). A user asking *which
+    symmetry sector carries the entanglement* wants the label back, and TenPy spells that
+    ``entanglement_spectrum(by_charge=True)``.
+
+    Parameters
+    ----------
+    s : SymmetricTensor
+        The diagonal singular-value tensor a
+        [tenet.linalg.svd_truncated][tenet.ops.linalg.svd_truncated] returned.
+
+    Returns
+    -------
+    dict of Sector to list of float
+        Per coupled sector, its diagonal values ``sqrt(qdim)``-weighted and sorted
+        descending. Concatenating and re-sorting the values reproduces
+        [spectrum][tenet.network.spectrum] exactly, which is how that function is written.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.network import spectrum_sectors
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 2})
+    >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> _, s, _ = tenet.linalg.svd(t, ((0,), (1,)))
+    >>> sorted((sector.charge, len(vals)) for sector, vals in spectrum_sectors(s).items())
+    [(0, 2), (1, 2)]
+
+    Notes
+    -----
+    **The ``sqrt(qdim)`` weight is applied here and nowhere else in this package.** Both
+    [spectrum][tenet.network.spectrum] and [entropy][tenet.network.entropy] read it off this
+    function, so there is one place where a non-Abelian bond's multiplet weight is decided.
+    It is the weight [tenet.norm][] carries, and it is 1 throughout for U(1).
+    """
     # QuantumDimensionData is checked by svd_truncated before ``s`` can exist
     qdim = s.provider.qdim  # ty: ignore[unresolved-attribute]
-    out = [
-        float(v)
+    return {
+        sector: sorted((float(v) for v in ar.do("diag", m) * qdim(sector) ** 0.5), reverse=True)
         for sector, m in tenet.to_matrices(s).items()
-        for v in ar.do("diag", m) * qdim(sector) ** 0.5
+    }
+
+
+def entropy(s: SymmetricTensor, *, alpha: float = 1.0) -> float:
+    """The entanglement entropy of a bond, in **nats** -- von Neumann at ``alpha=1``.
+
+    Parameters
+    ----------
+    s : SymmetricTensor
+        The diagonal singular-value tensor a
+        [tenet.linalg.svd_truncated][tenet.ops.linalg.svd_truncated] returned, on a bond of
+        a canonical state; its values are normalized here, so an unnormalized ``s`` is
+        read the same way.
+    alpha : float, optional
+        The Renyi index. Default ``1.0``, the von Neumann entropy
+        ``-sum_i p_i log p_i``; any other positive value gives
+        ``log(sum_i p_i**alpha) / (1 - alpha)``. Keyword-only.
+
+    Returns
+    -------
+    float
+        The entropy across the cut, in nats.
+
+    Raises
+    ------
+    ValueError
+        If ``alpha`` is not positive.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.network import entropy
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> s = SymmetricTensor.from_dense(
+    ...     np.eye(2) / 2**0.5, (Leg(V, OUT), Leg(V, IN))
+    ... )
+    >>> round(entropy(s), 6)  # a maximally entangled pair across the cut
+    0.693147
+
+    Notes
+    -----
+    **Nats, and the callable says so because the two references disagree**: YASTN's
+    ``get_entropy`` is base 2, TenPy's ``entanglement_entropy`` is natural. Natural is taken
+    because it is what a central-charge fit wants -- ``S = (c/6) log(x)`` on an open chain --
+    and because every other logarithm in this package is natural. Divide by ``log(2)`` for
+    bits.
+
+    **The multiplet weight is where a non-Abelian bond is easy to get wrong.** A sector of
+    quantum dimension ``d`` holds ``d`` copies of each of its reduced values in the dense
+    Schmidt spectrum, so the probability of one copy is ``p_i / d`` where ``p_i`` is the
+    ``sqrt(qdim)``-weighted value squared, and the sum over copies restores the ``d``:
+
+        ``S = -sum_i p_i log(p_i / d_i)``
+
+        ``S_alpha = log(sum_i d_i (p_i / d_i)**alpha) / (1 - alpha)``
+
+    Reading ``-sum p log p`` off the flattened [spectrum][tenet.network.spectrum] instead
+    would report ``0`` for an SU(2) singlet, whose whole entanglement lives in one
+    ``j = 1/2`` multiplet. That equality -- an SU(2) state and the same state under U(1)
+    giving the same number -- is what pins the weight rather than merely making it
+    consistent, and ``tests/network/test_entanglement.py`` is where it is pinned.
+    """
+    if alpha <= 0.0:
+        raise ValueError(f"the Renyi index must be positive, got alpha={alpha}")
+    qdim = s.provider.qdim  # ty: ignore[unresolved-attribute]
+    weighted = [
+        (float(qdim(sector)), v * v) for sector, vals in spectrum_sectors(s).items() for v in vals
     ]
-    return sorted(out, reverse=True)
+    total = sum(p for _, p in weighted)
+    if total <= 0.0:
+        return 0.0
+    live = [(d, p / total) for d, p in weighted if p > 0.0]
+    if alpha == 1.0:
+        return -sum(p * math.log(p / d) for d, p in live)
+    return math.log(sum(d * (p / d) ** alpha for d, p in live)) / (1.0 - alpha)
 
 
 def ones(legs: Sequence[Leg]) -> SymmetricTensor:

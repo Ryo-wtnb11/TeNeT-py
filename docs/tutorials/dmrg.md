@@ -263,6 +263,39 @@ canonical or not — unlike `Env.measure()`, which returns the unnormalized `<ps
 **maximum**: one answers "how much of my state did I throw away", the other "which bond is
 the convergence diagnostic".
 
+### The entanglement profile
+
+The fifth call is the one a DMRG user plots. The entanglement entropy across each cut is
+what says whether the chain is critical or gapped, what a central-charge fit consumes, and
+what tells you the bond dimension is saturating:
+
+```python
+entropy = out.psi.entanglement_entropy()       # {bond: S}, keyed by the bond's left site
+renyi2 = out.psi.entanglement_entropy(alpha=2)  # the Renyi family, same keys
+values = out.psi.schmidt_values()              # the spectrum the entropy is derived from
+sectors = out.psi.schmidt_sectors()[3]         # bond 3's spectrum, split by symmetry sector
+```
+
+Three things worth knowing before reading a number off them:
+
+- **The unit is nats**, not bits. `S = (c/6) log(x)` on an open chain wants the natural
+  log; divide by `log(2)` for bits. The two references disagree here — YASTN's
+  `get_entropy` is base 2 — so the convention is stated on `tenet.network.entropy`.
+- **The key is the bond's left site**, `0 .. N-2`, the same key `sweep_`'s `schmidt` dict
+  uses. The two trivial boundary cuts of a finite open chain are zero and are not returned.
+- **`schmidt_sectors` is the read a graded bond is for.** On an SU(2) bond a single `j`
+  multiplet stands for `2j + 1` dense Schmidt values, and the entropy accounts for that —
+  which is why the two-site singlet reports `log 2` under SU(2) and under U(1) alike, while
+  `-sum p log p` over the *flattened* SU(2) spectrum would report `0`.
+
+Each of the three readers canonizes a **copy** of the state and runs its own SVD sweep, so
+they never re-gauge the state you hand them and a non-canonical `psi` is not silently read
+in the wrong gauge. Keep the result rather than calling twice on a large state.
+
+`DMRG_out` carries no spectrum field: `out.psi` answers for itself, exactly and in any
+gauge, where the sweep's own per-bond dict is a truncated convergence diagnostic taken at
+whichever direction visited the bond last.
+
 ## Deliberate limits
 
 - **Two-site DMRG only.** Single-site plus subspace expansion (Hubig–McCulloch–

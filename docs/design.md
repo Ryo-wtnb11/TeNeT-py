@@ -4728,6 +4728,80 @@ The split:
   else. `_prepare2`'s identity discipline — the guarantee a stale environment can never be
   served — is untouched, and so is the test M57 added for it.
 
+- **M50** — shipped: the per-bond Schmidt spectrum and the entanglement entropy are
+  readable **from the state** (#215). `MPS.schmidt_values`, `MPS.schmidt_sectors` and
+  `MPS.entanglement_entropy`, over `network/common.spectrum_sectors` and
+  `network/common.entropy`.
+
+  **The datum existed twice and was returned nowhere.** `sweep_` writes
+  `schmidt[n] = spectrum(s)` at every bond of every sweep and `dmrg_` uses that dict only
+  to compute `max_dSchmidt` — how much the spectrum *moved* — and drops it; `compress_`
+  computes the same SVD and returns only the discarded weight. A user asking the most
+  ordinary question about a converged state had to canonize, merge every adjacent pair,
+  call `svd` and re-derive the `sqrt(qdim)` weight by hand.
+
+  **The readers are on the state, and they canonize a copy.** Both references put these on
+  the container (YASTN `get_Schmidt_values`/`get_entropy`, TenPy
+  `entanglement_spectrum`/`entanglement_entropy`) rather than on an algorithm's output, and
+  the reason is that the answer is a property of the state. `compress_`
+  (`mps.py`:417-419) established that a non-canonical gauge's values are not Schmidt values
+  and must be canonized first; the difference here is that a *reader* must not re-gauge what
+  it reads, so `MPS._bond_svds` runs `compress_`'s body, minus the truncation, on
+  `self.copy()`. `center` is therefore never consulted and never a refusal: the cost is one
+  `lq` pass, which is what a correct answer costs anyway. Three readers each pay their own
+  sweep; a caller wanting two of them keeps the first result.
+
+  **The keys are the bond's left site, `0 .. N-2`.** That is the key `sweep_`'s `schmidt`
+  dict already uses, so the vocabulary is the package's own. Both references return `N + 1`
+  values including the two boundary cuts of a finite open chain; those are zero by
+  construction and a boundary cut has no left site to key on.
+
+  **Nats, stated on the callable, because the references disagree** — YASTN's `get_entropy`
+  is base 2, TenPy's `entanglement_entropy` natural. Natural is taken: `S = (c/6) log(x)`
+  is what a central-charge fit wants, and every other logarithm here is natural.
+
+  **The multiplet weight is the part that is not bookkeeping.** On a `GradedSpace` bond a
+  sector of quantum dimension `d` holds `d` copies of each reduced value in the dense
+  Schmidt spectrum, so with `p_i` the `sqrt(qdim)`-weighted value squared,
+
+  ```
+  S       = -Σ_i p_i log(p_i / d_i)
+  S_alpha = log(Σ_i d_i (p_i / d_i)**alpha) / (1 - alpha)
+  ```
+
+  Reading `-Σ p log p` off the flattened spectrum instead reports **0** for an SU(2)
+  two-site singlet, whose entropy is `log 2` and whose whole entanglement lives in one
+  `j = 1/2` multiplet. `tests/network/test_entanglement.py` pins both halves: the naive sum
+  is asserted to be zero (so a regression names itself) and the SU(2) profile is asserted
+  equal to the U(1) profile of the same state, at `alpha = 1` and `alpha = 2`, at `N = 2`
+  and `N = 6`. Equality against the *other grading of the same state* is what says the
+  weight is right rather than merely self-consistent; a dense `numpy.linalg.svd` oracle on
+  the `2**6` amplitude vector pins the absolute number at every cut.
+
+  **The `sqrt(qdim)` weight is written once**, in `spectrum_sectors`. `spectrum` keeps its
+  signature and its two callers and is now literally the flatten of it — the sorted
+  concatenation — so the flat convergence diagnostic (#120, reaffirmed #185) is unchanged
+  and there is no second copy of the weight to drift. `entropy` asks the provider for
+  `qdim` itself, because a Renyi sum needs the multiplet *count* and that is not recoverable
+  from an already-weighted value. A source-reading test pins the split.
+
+  **The sector resolution is the read a graded bond is for**, and is TenPy's
+  `entanglement_spectrum(by_charge=True)`. It is a second method rather than a `by_sector=`
+  flag on the first: the return types differ, and a boolean that changes a return type is
+  the kind of signature a checker cannot narrow and a reader has to run to understand.
+
+  **`DMRG_out` carries no spectrum field, decided rather than omitted.** `out.psi` answers
+  for itself, exactly and in any gauge. The sweep's dict is a *truncated* spectrum taken at
+  whichever direction visited the bond last, and publishing it would freeze the convergence
+  test's internal shape into the public record for a number the state already gives. TenPy
+  reports a per-sweep `S` in `sweep_stats` because its `max_S_err` criterion is computed
+  from it; tenet converges on the Schmidt *change*, which `max_dSchmidt` already reports.
+  The reason is written on `DMRG_out` itself, where a reader looking for the field will be.
+
+  Out of scope and unchanged: `spectrum`'s signature and callers, `svd_truncated` and how a
+  bond `GradedSpace` is chosen (#209), `dmrg_`'s convergence test, and the segment/mutual-
+  information reads (`mutinf_two_site`, `get_rho_segment`) that have no caller here.
+
 Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
 left that list with M61 Stage D above.
 - **M55** — **measured, not shipped**: the pre-placement basis choice — M39's named successor,

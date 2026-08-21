@@ -17,7 +17,11 @@ Two families, independent of each other:
   and [layers][tenet.network.layers] build its absorbers from a bulk tensor or an iPEPS
   ket.
 
-[spectrum][tenet.network.spectrum] and [ones][tenet.network.ones] are shared by both.
+[spectrum][tenet.network.spectrum] and [ones][tenet.network.ones] are shared by both;
+[spectrum_sectors][tenet.network.spectrum_sectors] and [entropy][tenet.network.entropy]
+sit beside them and are what [MPS.schmidt_values][tenet.network.MPS.schmidt_values],
+[MPS.schmidt_sectors][tenet.network.MPS.schmidt_sectors] and
+[MPS.entanglement_entropy][tenet.network.MPS.entanglement_entropy] read a bond with.
 
 **Tracing.** Everything here runs **outside** ``jax.jit``/``jax.grad`` by construction and
 makes no differentiability claim: ``svd_truncated`` re-decides a bond
@@ -32,7 +36,7 @@ public-``tenet``-API-only hygiene rules: ``docs/design.md`` "Milestone 11", enfo
 ``tests/network/test_hygiene.py``.
 """
 
-from tenet.network.common import ones, spectrum
+from tenet.network.common import entropy, ones, spectrum, spectrum_sectors
 from tenet.network.ctmrg import (
     Absorb,
     CTMEnv,
@@ -67,6 +71,7 @@ __all__ = [
     "dmrg_",
     "double_layer",
     "double_layer_ctm",
+    "entropy",
     "expectation_1site",
     "expectation_2site",
     "init_env",
@@ -80,5 +85,6 @@ __all__ = [
     "single_layer",
     "single_layer_ctm",
     "spectrum",
+    "spectrum_sectors",
     "sweep_",
 ]
