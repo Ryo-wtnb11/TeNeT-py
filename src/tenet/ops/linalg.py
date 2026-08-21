@@ -1113,7 +1113,7 @@ class BondSelection:
         what ``svd(t, axes, bond=...)`` consumes.
     dense_dim : float
         ``Sum_c qdim(c)*m_c``, the dimension ``max_bond`` bounds. A float because
-        ``qdim`` is (``2j+1`` on SU(2), ``1`` on U(1) and fZ2, the golden ratio on a
+        ``qdim`` is (``2j+1`` on SU(2), ``1`` on U(1) and fermionic parity, the golden ratio on a
         Fibonacci category, where it is not a dimension at all).
     reduced_dim : int
         ``Sum_c m_c``, what the reduced blocks are actually made of. Kept separate
@@ -1210,7 +1210,7 @@ class BondSelection:
         -------
         float or None
             How much of the dense budget the greedy walk left unspent. Zero for
-            U(1) and fZ2; on SU(2) it is up to ``max qdim(c) - 1``, because the walk
+            U(1) and fermionic parity; on SU(2) it is up to ``max qdim(c) - 1``, because the walk
             stops at the first multiplet that would overflow rather than scanning on
             for a cheaper one that still fits.
         """
@@ -1370,7 +1370,7 @@ def select_bond(
     ``BondSelection`` is where the non-Abelian case stops being invisible.
     ``max_bond`` bounds the dense dimension, so on SU(2) the walk can stop with budget
     left over — ``undershoot`` says how much, ``next_multiplet`` says what it would have
-    bought and ``next_dense_cost`` what that costs. On U(1) and fZ2 the undershoot is
+    bought and ``next_dense_cost`` what that costs. On U(1) and fermionic parity the undershoot is
     always zero and this record is a convergence log; on SU(2) it is the answer to
     "why is my bond smaller than I asked for".
     """
