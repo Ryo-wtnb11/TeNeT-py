@@ -1121,6 +1121,47 @@ def _check_op(op: SymmetricTensor, phys: GradedSpace | None) -> GradedSpace:
     return got
 
 
+def _w_entry(value: Any, key: Any, n: int) -> tuple[Any, SymmetricTensor | None]:
+    """One ``W`` entry as ``(coefficient, operator)``; a ``None`` operator is the identity.
+
+    The four spellings ``MPO.from_entries`` accepts, flattened to the one pair the walk
+    eats. MPSKit's matrix entries are the same vocabulary in Julia's spelling --
+    ``MPOTensor``, ``Missing`` or ``Number`` (``mpohamiltonian.jl``'s matrix constructor)
+    -- with ``None`` for ``Missing`` and the pair form added because a ``W`` matrix is
+    usually written as a coefficient times a named operator.
+
+    The forms are told apart by what they *have*, not by ``isinstance``:
+    ``tests/network/test_hygiene.py`` allows this package one ``isinstance``, on ``int``,
+    so that no module can dispatch on a provider class. A tensor is the thing with
+    ``legs``, a number is the thing ``complex()`` accepts, and a pair is the thing that
+    unpacks into two.
+    """
+    if value is None:
+        return 1.0, None
+    if getattr(value, "legs", None) is not None:
+        return 1.0, value
+    if type(value) is tuple:
+        if len(value) != 2 or getattr(value[1], "legs", None) is None:
+            raise ValueError(
+                f"from_entries: entry {key} of site {n} is a tuple, so it is the pair "
+                f"(coefficient, operator) with the operator from local_op; got {value!r}"
+            )
+        return value
+    if type(value) is not str:
+        try:
+            complex(value)
+        except (TypeError, ValueError):
+            pass
+        else:
+            return value, None
+    raise ValueError(
+        f"from_entries: entry {key} of site {n} is None (the identity), a number (that "
+        f"multiple of the identity), a rank-3 operator from local_op, or the pair "
+        f"(coefficient, operator); got a {type(value).__name__}. A dense matrix becomes an "
+        f"operator through tenet.network.local_op(dense, phys=..., charge=...)"
+    )
+
+
 def _unit_leg(sym, dual: bool) -> Leg:
     """The trivial ``D=1`` MPO boundary leg, ``IN``."""
     return Leg(GradedSpace.new(sym, {sym.unit: 1}), IN, dual)
@@ -2741,6 +2782,278 @@ class MPO:
         bulk = make(w, bond, bond)
         last = make(w[:, :, :, end : end + 1], bond, boundary)
         return cls([first, *[bulk] * (n_sites - 2), last])
+
+    @classmethod
+    def from_entries(cls, entries: Iterable[Mapping[tuple[int, int], Any]]) -> "MPO":
+        """The non-zero ``(i, j)`` entries of each site's ``W``, as a graded MPO with symbols.
+
+        Parameters
+        ----------
+        entries : Iterable of Mapping
+            One mapping per site, left to right, from the ``(row, column)`` index
+            pair of that site's ``W`` to what sits there. ``0`` is the ``IdL``
+            channel of a bond and ``-1`` its ``IdR`` channel, at every bond
+            (see Notes); the open channels are ``1, 2, ...`` and need not be
+            contiguous. Chain length is ``len(entries)``, so a uniform bulk is
+            ``[w] * n_sites``. An entry is
+
+            * ``None`` -- the identity, which on ``(i, i)`` is a spectator ride;
+            * a number ``c`` -- ``c`` times the identity;
+            * a rank-3 charge-leg operator from
+              [local_op][tenet.network.local_op];
+            * the pair ``(c, op)`` -- ``c`` times that operator.
+
+        Returns
+        -------
+        MPO
+            The assembled operator, carrying the per-site
+            [edge_blocks][tenet.network.MPO.edge_blocks] table -- so it takes
+            [Env.heff2][tenet.network.Env.heff2]'s one prepared engine path.
+
+        Raises
+        ------
+        ValueError
+            If ``entries`` is empty, or every entry is an identity (the physical
+            space is read off an operator); if an entry is none of the four
+            forms above, or holds ``local_op``'s invariant rank-2*k* operator,
+            which spans *k* sites and has nowhere to put them in one site's
+            ``W``; if the operators disagree about the physical space; if a key
+            is not a pair of ``int``\\ s, or names a bond index below ``-1``, or
+            enters ``IdL`` (``(i, 0)`` with ``i != 0``) or leaves ``IdR``
+            (``(-1, j)`` with ``j != -1``); if ``(0, 0)`` or ``(-1, -1)`` holds
+            anything but the identity; if two entries reach one bond state with
+            different charges; if a term closing into ``IdR`` has not brought
+            the bond charge back to the unit sector; or if an interior bond
+            state is dead -- unreachable from ``IdL`` or unable to reach
+            ``IdR``.
+
+        Examples
+        --------
+        >>> import numpy as np
+        >>> from tenet import GradedSpace
+        >>> from tenet.network import MPO, local_op
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+        >>> sp = np.array([[0.0, 0.0], [1.0, 0.0]])
+        >>> opp = local_op(sp, phys=phys, charge=U1Sector(-2))
+        >>> opm = local_op(sp.T, phys=phys, charge=U1Sector(2))
+        >>> w = {  # the 3-site XY chain's bulk W, written as the textbook prints it
+        ...     (0, 0): None,
+        ...     (0, 1): (0.5, opp),
+        ...     (1, -1): opm,
+        ...     (0, 2): (0.5, opm),
+        ...     (2, -1): opp,
+        ...     (-1, -1): None,
+        ... }
+        >>> h = MPO.from_entries([w] * 3)
+        >>> len(h), h.to_dense().shape, h.edges is not None
+        (3, (8, 8), True)
+
+        Notes
+        -----
+        **The hand-build entry that keeps its symbols.** [from_w][tenet.network.MPO.from_w]
+        takes a fully-formed rank-4 ``W``, so its caller writes every zero of the
+        finite-state machine out, gets four legs and a ``dual`` convention right, and
+        hands over a grading by hand -- and what comes back is numeric, with no edge
+        description, so it routes onto [Env.heff2][tenet.network.Env.heff2]'s
+        compatibility entry. This builder takes the *same* ``W``, named entry by entry,
+        and produces an ``EdgeTable``: the very object
+        [from_terms][tenet.network.MPO.from_terms] produces, indistinguishable to
+        [Env][tenet.network.Env], on the one engine path. **The bond spaces are derived,
+        never declared** -- the charge is on the operator's third leg, each state's
+        [GradedSpace][tenet.GradedSpace] is the running fused charge, and the bond at a
+        cut is the direct sum over its states -- so there is no grading argument and no
+        ``dual`` convention to state. ``from_w`` is unchanged and is not deprecated: it is
+        the entry for a ``W`` that arrives as a *dense array* (a paper, another library),
+        where the entries are numbers and no charge can be recovered from them (#141).
+
+        **``IdL`` is index ``0`` and ``IdR`` is index ``-1``, by convention, at every
+        bond.** MPSKit fixes the same two by position -- ``V[1] = V[end] = _rightunit``
+        in ``mpohamiltonian.jl``, the ``(1 C D; . A B; . . 1)`` partition
+        ``EdgeBlocks`` implements -- and tenet's own bond layout already assumes it:
+        ``_merge`` direct-sums a cut in ``[_IDL, *open, _IDR]`` order and the pinned
+        sweeps read the two corners off the first and last slot of the unit sector.
+        TenPy carries ``IdL``/``IdR`` *explicitly* alongside its ``W`` list because its
+        ``MPOGraph`` keys are arbitrary hashables with no order to lean on; here an
+        explicit pair would be a second source of truth that ``_merge`` could contradict.
+        Python's ``-1`` is what makes the convention cost nothing: **no bond width is
+        ever declared or inferred**, because the last index needs no width to name. The
+        convention is then made self-enforcing rather than assumed -- an entry into
+        ``IdL`` or out of ``IdR``, or a non-identity on either corner, is refused by
+        name, which is the same four zeros the corner-exactness property asserts.
+
+        **The two boundary bonds are ``D=1``**, so bond ``0`` keeps only its ``IdL``
+        channel and bond ``len(entries)`` only its ``IdR`` one. Everything else at those
+        two bonds is dropped silently -- that is exactly ``from_w``'s ``start`` row and
+        ``end`` column, and it is what lets one bulk ``W`` be handed over for every site
+        including the first and the last. Only *interior* dead states raise.
+
+        **Every operator is rank 3**, for [from_arrays][tenet.network.MPO.from_arrays]'s
+        reason: one ``W`` entry sits on one site, and ``local_op``'s invariant *k*-site
+        form spans ``k`` sites through an SVD, so it is refused with a pointer to
+        ``from_terms``. YASTN is the third reference and its contribution is a negative
+        one: between a fully formed tensor (``A[n] = t``) and a term list (``Hterm``,
+        ``generate_mpo``) it offers nothing at all, which is the gap this builder fills.
+
+        No compressing sweep runs and there is no ``cutoff``: the caller wrote the bond,
+        so there is nothing combinatorial to cut down. ``from_terms``' sweeps exist
+        because *its* finite-state machine is built from a term list and can be
+        numerically low-rank -- a power law, an integral file -- which is a property of
+        the term list, not of a ``W`` somebody sat down and wrote. An operator that wants
+        the sweeps wants ``from_terms``, which is where its ``cutoff`` lives. Outside
+        ``jit``/``grad`` like the rest of this
+        module, because the assembly decides [GradedSpace][tenet.GradedSpace]\\ s.
+        """
+        rows = [dict(e) for e in entries]
+        n_sites = len(rows)
+        if not n_sites:
+            raise ValueError("from_entries: no sites; the chain length is len(entries)")
+        phys = None
+        parsed: list[dict] = []
+        for n, row in enumerate(rows):
+            out = {}
+            for key, value in row.items():
+                try:
+                    i, j = key
+                except (TypeError, ValueError):
+                    raise ValueError(
+                        f"from_entries: site {n} has the key {key!r}; a W entry is keyed by "
+                        "the pair (row, column) of bond indices"
+                    ) from None
+                if not (isinstance(i, int) and isinstance(j, int)):
+                    raise ValueError(
+                        f"from_entries: entry {key} of site {n} is not a pair of ints; a bond "
+                        "index is 0 for IdL, -1 for IdR and 1, 2, ... for the open channels"
+                    )
+                if i < -1 or j < -1:
+                    raise ValueError(
+                        f"from_entries: entry {key} of site {n} names a bond index below -1; "
+                        "only -1 names the IdR channel"
+                    )
+                coeff, op = _w_entry(value, key, n)
+                if i != 0 and j == 0:
+                    raise ValueError(
+                        f"from_entries: entry {key} of site {n} enters the IdL channel, which "
+                        "is index 0 and means 'only identities to the left'; nothing can "
+                        "arrive there"
+                    )
+                if i == -1 and j != -1:
+                    raise ValueError(
+                        f"from_entries: entry {key} of site {n} leaves the IdR channel, which "
+                        "is index -1 and means 'the term is already finished'; nothing can "
+                        "leave it"
+                    )
+                if i == j and i in (0, -1) and (op is not None or coeff != 1):
+                    raise ValueError(
+                        f"from_entries: entry {key} of site {n} is not the identity; the IdL "
+                        "and IdR channels are identities by definition, so both corners hold "
+                        "None (or are simply omitted)"
+                    )
+                if op is not None:
+                    if op.ndim != 3:
+                        raise ValueError(
+                            f"from_entries: entry {key} of site {n} holds a rank-{op.ndim} "
+                            "operator; one W entry sits on one site, so it is local_op's "
+                            "rank-3 charge-leg form. An invariant k-site operator spans k "
+                            "sites through an SVD and has nowhere to put them here -- hand "
+                            "the whole term to MPO.from_terms instead"
+                        )
+                    phys = _check_op(op, phys)
+                out[key] = (coeff, op)
+            parsed.append(out)
+        if phys is None:
+            raise ValueError(
+                "from_entries: every entry is an identity; the physical space is read off an "
+                "operator and there is none"
+            )
+        # No k-site split runs here, so the MPO stays on the non-dual convention, exactly
+        # as ``from_arrays`` does.
+        walk = _Walk(n_sites, phys, False)
+        # ``(bond, index) -> state label``. The two corners are the *same* label at every
+        # bond -- that is what makes them the corners -- and an open index gets a fresh
+        # label per bond, except where a spectator ride carries one across (below).
+        label: dict[tuple[int, int], int] = {}
+        for c in range(n_sites + 1):
+            label[(c, 0)], label[(c, -1)] = _IDL, _IDR
+        charge: dict[int, int] = {_IDL: 0, _IDR: 0}
+        for n, row in enumerate(parsed):
+            # A spectator ride reuses its own label across the cut, which is what
+            # ``spectators`` means: one state whose space runs through the site untouched.
+            for (i, j), (coeff, op) in row.items():
+                if i == j and i not in (0, -1) and op is None and coeff == 1:
+                    carried = label.get((n, i))
+                    if carried is not None and carried in charge:
+                        label[(n + 1, i)] = carried
+            for (i, j), (coeff, op) in sorted(row.items()):
+                left = label.get((n, i))
+                if left is None or left not in charge:
+                    continue  # unreachable from IdL; ``_edge_table`` prunes it either way
+                if i == j and i in (0, -1):
+                    continue  # a corner identity, already implicit in ``walk.spectators``
+                if op is None:
+                    w = _identity_w(Leg(walk.states[left], IN, False), phys)
+                    emitted, space = charge[left], walk.states[left]
+                else:
+                    slot = walk.slot(id(op), op)
+                    key = (slot, charge[left])
+                    edge = walk.trans.get(key) or walk.transition(slot, charge[left], n)
+                    w, emitted, space = edge
+                if coeff != 1:
+                    w = tenet.multiply(w, coeff)
+                if j == -1:
+                    if emitted:
+                        raise ValueError(
+                            f"from_entries: entry {(i, j)} of site {n} closes into IdR at "
+                            f"bond charge {space}; both MPO boundaries are the trivial D=1 "
+                            "leg, so a channel's operator charges must sum to the unit "
+                            "sector before it closes"
+                        )
+                    stops = walk.stops[n]
+                    stops[left] = stops[left] + w if left in stops else w
+                    continue
+                right = label.get((n + 1, j))
+                if right is None:
+                    right = label[(n + 1, j)] = len(walk.order) + 2
+                    walk.order.append(right)
+                if charge.get(right, emitted) != emitted:
+                    raise ValueError(
+                        f"from_entries: state {j} of bond {n + 1} is reached with two "
+                        f"different charges; a bond state carries one GradedSpace, so the "
+                        f"entries writing into it must agree (entry {(i, j)} of site {n} "
+                        f"brings {space})"
+                    )
+                charge[right], walk.states[right] = emitted, space
+                if right == left:
+                    walk.spectators[n].add(right)
+                else:
+                    walk.moves[n][(left, right)] = w
+        tab = _edge_table(
+            n_sites,
+            phys,
+            False,
+            walk.states,
+            walk.order,
+            walk.moves,
+            walk.stops,
+            walk.spectators,
+        )
+        # A channel is dead at a *bond* whenever a term running through it there would
+        # fall off one of the two ends -- which is ordinary for any range > 1 coupling
+        # near the boundaries, and is what pruning is for. What is a caller error is a
+        # channel index that carries nothing at any bond at all: a typo, or a state
+        # nothing ever opens or closes.
+        live = set().union(*tab.ordered)
+        dead = sorted(
+            {i for (_c, i), k in label.items() if k not in (_IDL, _IDR)}
+            - {i for (_c, i), k in label.items() if k in live}
+        )
+        if dead:
+            raise ValueError(
+                f"from_entries: state {dead[0]} carries nothing -- at every bond where it is "
+                f"named it is either unreachable from IdL at bond 0 or unable to reach IdR at "
+                f"bond {n_sites}, so no part of the operator runs through it"
+            )
+        return cls(edges=tab)
 
     @classmethod
     def from_terms(cls, n_sites: int, terms: Iterable, *, cutoff: float | None = 1e-13) -> "MPO":

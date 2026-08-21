@@ -119,6 +119,57 @@ the coupling lives inside the operator's own blocks, so no coupling tree is aske
 `MPO.from_arrays` cannot express this term at all (a block gives one site index per
 name), which is why the SU(2) site's `ops` is a `from_terms` table and nothing else.
 
+## Writing the `W` yourself
+
+Sometimes the Hamiltonian you have is a `W` matrix, not a term list — that is how a paper
+prints one. [`MPO.from_entries`](../api/network.md) takes it as the non-zero entries of
+each site's `W`, one mapping per site, and it is **the way to hand-build an MPO**:
+
+```python
+from tenet.models import spin_half
+from tenet.network import MPO
+
+site = spin_half()
+sz, sp, sm = site.ops["Sz"], site.ops["S+"], site.ops["S-"]
+w = {                      # the Heisenberg W, exactly the eight non-zero channels
+    (0, 0): None,          # I  -- the term has not started
+    (0, 1): (0.5, sm), (1, -1): sp,
+    (0, 2): (0.5, sp), (2, -1): sm,
+    (0, 3): sz,        (3, -1): sz,
+    (-1, -1): None,        # I  -- the term is finished
+}
+h = MPO.from_entries([w] * 8)
+```
+
+`0` is the `IdL` channel of a bond and `-1` its `IdR` channel, at every bond, the way a
+lower-triangular `W` is printed; the open channels are `1, 2, ...`. **No bond width is
+declared**, because `-1` names the last index without one, and **no grading is declared**
+either — the charge is already on `local_op`'s third leg, so each channel's
+`GradedSpace` is derived and the bond at a cut is the direct sum over its channels. There
+is no `dual` convention to get right, because no rank-4 tensor is handed over. An entry is
+`None` (the identity — on `(i, i)` a spectator ride), a number (that multiple of it), an
+operator, or the pair `(coefficient, operator)`. The two boundary bonds are `D = 1`, so
+bond `0` keeps only `IdL` and the last bond only `IdR`: the same bulk mapping serves the
+first and last site too.
+
+What it produces is the *same* edge description a term list produces, so
+[`Env.heff2`](../api/network.md) cannot tell the two apart and both run on its one
+prepared engine path.
+
+[`MPO.from_w`](../api/network.md) is the other hand-build entry and it is unchanged. Use
+it when the `W` arrives as a **dense array** — out of a paper, out of another library —
+because then the entries are numbers, no charge can be recovered from them, and you must
+supply the bond grading yourself. It is also what `examples/heisenberg_walkthrough.py`
+leads with, because writing the 5×5 out is what teaches what an MPO *is*. The price is
+that its result carries no symbols and takes `Env.heff2`'s compatibility entry instead.
+
+| you have | use |
+|---|---|
+| a list of terms | `MPO.from_terms` |
+| many terms over a few patterns | `MPO.from_arrays` |
+| a `W` you are writing by hand | `MPO.from_entries` |
+| a `W` that is already a dense array | `MPO.from_w` |
+
 ## What is not here
 
 No lattice geometry, no `heisenberg(L)` that hands back an MPO, no parameter sweeps.
