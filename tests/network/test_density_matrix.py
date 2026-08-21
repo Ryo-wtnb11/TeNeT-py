@@ -186,7 +186,9 @@ def test_the_hubbard_ground_state_is_unchanged_with_the_mixer_on():
     """N=4 against even-parity ED, at U/t in {0, 4}: a mixer must not move the answer."""
     for u in (0.0, 4.0):
         h = MPO.from_terms(4, hubbard_test._rank3_terms(4, u))
-        out = dmrg_(hubbard_test._state(4, 8, 8, seed=1), h, schedule=_ramp(16), max_sweeps=6)
+        # max_sweeps raised for the same M62 reason as the u-sweep oracle: the budget
+        # was calibrated against the twisted pairing's accidentally fast direction.
+        out = dmrg_(hubbard_test._state(4, 8, 8, seed=1), h, schedule=_ramp(16), max_sweeps=24)
         assert out.energy == pytest.approx(hubbard_test._ed_even(4, u), abs=1e-10), f"U={u}"
 
 
