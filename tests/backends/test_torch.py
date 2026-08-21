@@ -599,6 +599,42 @@ def test_svd_truncated_and_bond(name):
     same(projected[1], s)
 
 
+@pytest.mark.parametrize("name", ["u1", "su2"])
+def test_select_bond_decides_the_same_bond_on_torch(name):
+    """#209's two-call form on torch blocks: the decision needs Python floats out of a
+    torch tensor, which is the only backend-facing thing ``select_bond`` does."""
+    t = tt(LEGS[name], seed=31)
+    axes = ((0, 1), (2, 3))
+    selection = tenet.linalg.select_bond(t, axes, max_bond=4)
+    assert isinstance(selection, tenet.linalg.BondSelection)
+    reference = tenet.linalg.select_bond(t.to_backend("numpy"), axes, max_bond=4)
+    assert selection.bond == reference.bond
+    assert selection.discarded_weight == pytest.approx(reference.discarded_weight, rel=1e-12)
+    # and it is the bond svd_truncated picks on the same blocks
+    assert selection.bond == tenet.linalg.svd_truncated(t, axes, max_bond=4)[1].legs[0].space
+
+
+@pytest.mark.parametrize("name", ["u1", "su2"])
+def test_eigh_truncated_and_bond(name):
+    """#205's pair on torch blocks. The gather is `argsort` over `abs`, which is the
+    only backend call `eigh_truncated` makes that `svd_truncated` does not."""
+    t = tt(LEGS[name], seed=31)
+    axes = ((0, 1), (2, 3))
+    m = tenet.repartition(t, *axes)
+    h = m @ tenet.adjoint(m)
+    ax = ((0, 1), (2, 3))
+
+    w, v = tenet.linalg.eigh_truncated(h, ax, max_bond=4)
+    assert is_torch(w) and is_torch(v)
+    bond = w.structure.legs[0].space
+    reference = tenet.linalg.eigh_truncated(h.to_backend("numpy"), ax, max_bond=4)[0]
+    close(w, reference, atol=1e-12)
+
+    projected = tenet.linalg.eigh(t=h, axes=ax, bond=bond)
+    assert is_torch(projected[0])
+    same(projected[0], w)
+
+
 # --- the bit-identical table (issue #95, all eight measured at 0.0) ---------------
 
 

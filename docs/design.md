@@ -5007,6 +5007,177 @@ The split:
   the CTMRG and VMC examples) now teach the one-call spelling and no longer the
   three-statement one. JAX stays an optional extra: `pyproject.toml` is untouched and core
   still imports nothing from it.
+- **M44** — shipped: the truncation *decision* is a returned object. `tenet.linalg.select_bond`
+  makes the choice `svd_truncated` used to consume and hands it back as a `BondSelection`
+  (#209); `svd(t, axes, bond=selection.bond)` then runs the numerics, jittable as ever.
+
+  **One keep rule, not two.** The private `_decide` now owns the whole selection —
+  `_admissible`'s cutoff prefix, the `qdim`-weighted greedy walk under `max_bond`, the
+  two ValueErrors and the `renorm` factor — and `svd_truncated` is a caller of it. Its
+  signature, docstring and behaviour are unchanged, checked by an `ast`-extracted
+  comparison of every public name in `ops/linalg.py` against the base commit: the diff is
+  `BondSelection` and `select_bond` and nothing else. `_spectrum` now takes `{c: magnitudes}`
+  rather than the SVD tuples and returns the *index* within each sector, so a caller whose
+  kept set is not a prefix can gather by index — that is M40's requirement, paid for here
+  rather than duplicated there. The refusal message is `_not_traceable(caller)`, one
+  sentence pattern for every truncating entry point.
+
+  **The type is a frozen dataclass, and it is deliberately not a pytree.** It sits beside
+  `MapLayout`, the other array-free structural record: immutable, no arrays, decided
+  outside the trace. `pytree.py` registers `SymmetricTensor` and nothing else, so
+  `BondSelection` is neither a registered container nor an intended leaf; a `NamedTuple`
+  was rejected precisely because JAX flattens one *automatically*, which would turn the
+  record's Python floats into leaves the moment it crossed a `jit` boundary — the accident
+  the whole structure/numerics split exists to prevent. Only `.bond`, a hashable
+  `GradedSpace`, is meant to cross. `tests/ops/test_select_bond.py` asserts
+  `tree_leaves(selection) == [selection]`.
+
+  **The discarded singular values are always retained, on the measured size.** One
+  `(sigma, sector, index)` triple costs a measured 116 bytes of Python object; a spectrum
+  of `N` values therefore costs `116 N` against the `8 · Σ_c rows_c · cols_c` bytes the
+  blocks already occupy, a ratio of `14.5 / max(rows_c, cols_c)`:
+
+  | fixture | spectrum `N` | blocks | discarded list | ratio |
+  |---|---|---|---|---|
+  | U(1), three sectors × `m=8` | 24 | 1.5 KB | 2.5 KB | 1.64 |
+  | U(1), three sectors × `m=64` | 192 | 96 KB | 22 KB | 0.23 |
+  | SU(2), `{j=0: 8, j=1/2: 8}` | 16 | 1.0 KB | 1.8 KB | 1.73 |
+  | SU(2), `{j=0: 48, j=1/2: 48}` | 96 | 36 KB | 11 KB | 0.31 |
+
+  The ratio exceeds 1 only where the tensor is a few kilobytes, i.e. where nobody is
+  counting. The case the proposal worried about — a K=26 quantum-chemistry cut computing
+  ~5·10⁴ singular values — is ~6 MB against the 6 GiB that run is measured at in the M39
+  table above: 0.1%. An opt-in flag would recover that at the price of a keyword whose only
+  job is to make the object's contents conditional, and `discarded_weight` walks the same
+  list anyway. Never-retain was refused for the same reason: the weight is the number every
+  DMRG caller actually wants.
+
+  **What the record carries, and why `dense_dim` and `reduced_dim` are separate fields.**
+  `max_bond` bounds `Σ_c qdim(c)·m_c`; callers routinely mean `Σ_c m_c`. For U(1) and fZ2
+  the two coincide and the distinction is invisible, which is exactly why it must be
+  spelled out rather than inferred. `undershoot = max_bond - dense_dim` and
+  `next_multiplet` / `next_dense_cost` make the non-Abelian boundary case readable for the
+  first time. The constructed case, `{j=0: 1, j=1: 3}` at `max_bond=5`
+  (`tests/ops/test_select_bond.py::test_su2_max_bond_landing_inside_a_multiplet_is_reported`):
+  the walk admits one triplet, reaches `dense_dim = 3`, and stops because the next entry is
+  another triplet costing 3 and `3 + 3 > 5`. `undershoot` is 2.0 of a budget of 5 —
+  40% — and `next_multiplet` names the `j=1` multiplet it stopped short of.
+  `max_bond=6` spends the budget exactly. That number was always what `svd_truncated`
+  produced; until now nothing reported it.
+
+  **`renorm` is reported, not applied.** Every magnitude in the record is bare and `scale`
+  carries `sqrt(Σ_all qdim σ² / Σ_kept qdim σ²)`. Mixing rescaled kept values with bare
+  discarded ones would put two units in one object; `svd_truncated` reads `scale` off the
+  same selection, so the rescaling is computed once.
+
+  **The naming.** `select_bond` is verb-then-noun like `map_layout`, `flip_dual` and
+  `to_matrices`; `BondSelection` is a noun-record like `MapLayout` and `CTMEnv`. The
+  keyword set stays quimb's (`max_bond`, `cutoff`, `cutoff_mode`, `renorm`), unchanged from
+  the M8 shim, and M31's naming audit is not reopened — this is an addition to the surface,
+  not a rename of it. M40's `eigh_truncated` consumes this object rather than defining its
+  own, which is why `_decide` takes a magnitude spectrum rather than SVD output.
+
+- **M40** — shipped in the tensor layer, **measured and refused in the driver layer**:
+  `tenet.linalg.eigh_truncated` and `eigh(..., bond=)` exist and are `svd_truncated` /
+  `svd(..., bond=)`'s twins (#205); `network/ctmrg.py` is **unchanged**, and the reason is
+  a measurement rather than a preference.
+
+  **Part 1, the gate: the double-layer corner is indefinite, and the number is large.**
+  `benchmarks/bench_ctm_corner_signs.py` walks six C4v moves per fixture and reports, per
+  move, the corner's Hermiticity defect under both candidate basis pairings, its negative
+  eigenvalues, how many of those sit above the projector's own truncation threshold, and
+  `max_j |u_j - v_j|` between the two isometries `svd_truncated` would produce. That last
+  quantity needs no gauge fixing: the SVD's freedom is a *joint* phase on `(u_j, v_j)`, so
+  the difference is invariant, and it is `2|v_j|` on exactly the columns whose eigenvalue
+  is negative.
+
+  "Eigenvalue" presupposes an endomorphism, and `check_square` refuses every CTM corner —
+  the C4v mirror identifies a space with its *dual*, which is a `flip_dual` and not an
+  equality — so the instrument computes both candidate pairings and reads the spectrum off
+  whichever is Hermitian. `direct` is `move`'s own `ndim // 2` order; `swapped` exchanges
+  the domain's last two axes, i.e. a double-layer corner's ket/bra pair. A within-side
+  transpose is a unitary on the domain, so it leaves `U` and `Sigma` exactly as `move` sees
+  them.
+
+  | fixture | move | herm `direct` | herm `swapped` | negatives | `|w_neg|/w_max` | `sigma_cut/sigma_max` | kept | `max|u-v|` |
+  |---|---|---|---|---|---|---|---|---|
+  | single-layer Ising `beta=0.4` (control) | 0–5 | ≤1.4e-16 | 0.49–0.84 | 0 | 0 | 0.014–0.049 | 0 | ≤6.7e-16 |
+  | c4v iPEPS U(1), `chi=4` | 0 | 8.1e-01 | **0.0** | 1 | 3.87e-01 | 3.87e-01 | **1** | **1.70** |
+  | c4v iPEPS U(1), `chi=4` | 1–5 | 0.59–0.62 | 0.48–0.52 | n/a | n/a | 0.59–0.62 | n/a | n/a |
+  | c4v iPEPS SU(2) seed 1, `chi=6` | 0 | 1.2e+00 | **7.9e-16** | 1 | 6.14e-02 | 2.54e-01 | 0 | 8.3e-16 |
+  | c4v iPEPS SU(2) seed 3, `chi=6` | 0 | 2.0e+00 | **9.2e-16** | 4 | 7.33e-01 | 1.22e-01 | **1** | **2.00** |
+  | c4v iPEPS SU(2) seed 3, `chi=6` | 1–5 | 1.65–1.99 | 1.30–1.99 | n/a | n/a | 0.16–0.21 | n/a | n/a |
+
+  **Verdict: the gate fires.** The single-layer Ising corner is Hermitian to 1.4e-16 at
+  every move and has no negative eigenvalue anywhere — the control reads zero, so the
+  instrument reads zero when there is nothing to read, and #102's Onsager agreement is
+  explained rather than assumed. The double-layer corner is Hermitian at move 0, where
+  nothing has been approximated yet, and **indefinite there**: a negative eigenvalue at 39 %
+  (U(1)) and 73 % (SU(2) seed 3) of the largest, both above the projector's own cut, and
+  `max|u-v|` of 1.70 and 2.00 — 2.00 being the textbook full sign flip. #77's trigger has
+  fired and the defect is not a tolerance.
+
+  **A second finding the issue did not anticipate: from move 1 on the corner is not
+  Hermitian under either pairing** (0.48–1.99 relative), so "negative eigenvalue" stops
+  being defined and the table says `n/a` rather than inventing a number. That is the C4v
+  single-move environment losing self-consistency, and it is *not* repaired by the
+  Hermitian projector — see below.
+
+  **Part 2, the tensor layer, shipped.** `eigh(t, axes, *, bond=B)` is the same keyword
+  with the same meaning and the same `_keep_counts` refusal, and `eigh_truncated` is
+  `svd_truncated`'s signature, its six quimb `cutoff_mode` strings, its `qdim`-weighted
+  cost and weight, and its `StructureChangingError`. Both go through M44's one keep rule:
+  `eigh_truncated` hands `_decide` the magnitudes `|w|` and consumes the returned
+  `BondSelection`, so there is no second truncation policy. Two places where the mirror is
+  deliberately not literal:
+
+  - **the kept set is not a prefix.** `svd` slices `[:k]` because `sigma_c` comes back
+    descending; eigenvalues come back ascending, so "the `k` largest by `|w|`" is an
+    `argsort` and a gather. A gather is a value-dependent *permutation*, never a
+    value-dependent *shape*, so `eigh(..., bond=)` traces exactly as `svd(..., bond=)`
+    does — `jit` and `grad` are both pinned, the latter against central differences.
+    `eigh_truncated` calls the *same* gather helper rather than indexing by the selection's
+    per-sector index list, which is both why the two-call form reproduces the one-call form
+    exactly and why the torch and JAX backends work (a Python list is not an index there).
+  - **the sign survives.** Only the ordering key is `|w|`; `W`'s retained entries are the
+    signed eigenvalues. On a positive-definite input the two routes agree factor for
+    factor; on an indefinite one, keeping everything, `U S U†` is wrong by exactly
+    `Sum_neg qdim(c) (2 w)^2` — asserted as an equality, not a bound, on U(1), fermionic
+    parity and SU(2).
+
+  AD needed no new code, for M44's reason and #77's: `tenet.ad` already broadens
+  `linalg.eigh`'s VJP alongside the SVD's, and the bond degeneracy is `min(rows_c, cols_c)`
+  rather than the numerical rank.
+
+  **Part 2, the CTMRG consumer, built and then withdrawn.** A `move` that routes the
+  corner through `eigh_truncated` / `eigh(..., bond=)` whenever the two index groups pair
+  into an endomorphism — a purely structural test on leg metadata, so identical inside and
+  outside a trace, and one that the single-layer corner fails and the double-layer corner
+  passes after the ket/bra transpose — was implemented and run. It is **not** in this
+  branch, for two independent reasons:
+
+  1. **It changes two pinned numbers in existing tests.** The converged iPEPS energy moves
+     from -0.310993394006 to -0.199164542117 (U(1)) and from -0.038475159359 to
+     -0.032991280629 (SU(2)). Those are `tests/integration/test_ctmrg.py`'s
+     `ENERGY_BASELINE`, #107's migration criterion asserting bit-equality with a deleted
+     implementation, plus the committed output fence of `docs/examples/toy-ctmrg.md`.
+     Everything else in that module passes with the change — the three `double_layer_ctm`
+     tests, the gradient against central differences, the SGD descent, the traced-structure
+     check, and the single-layer Onsager agreement, which the structural branch leaves on
+     the SVD route untouched. A pinned-baseline edit is a decision for whoever owns #107's
+     criterion, not a side effect of this issue.
+  2. **The measurement says it does not deliver what the issue expected.** Re-running the
+     Part 1 instrument with the Hermitian projector in place leaves the corner just as
+     non-Hermitian from move 1 on (0.49–0.51 against 0.48–0.52 on the U(1) fixture). So the
+     sign diagonal is *not* the only thing wrong with a single C4v move on a double layer,
+     and `ctmrg.py`:510-518's precondition and Simplification comment cannot honestly be
+     deleted on the strength of `eigh_truncated` alone. The remaining defect is the one
+     those comments name second — four directional moves — and it stays #205's out-of-scope
+     item with a number behind it now instead of a prose expectation.
+
+  #77's "add both together when a caller needs the Hermitian route" is therefore
+  **discharged**: the caller was found, measured, and the pair it needs is shipped. What is
+  left open is the driver-layer change, which now has its own two-line argument above.
 
 Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
 left that list with M61 Stage D above.
