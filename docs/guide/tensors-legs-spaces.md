@@ -125,6 +125,27 @@ non-symmetric dense array rather than silently projecting it), and
 [to_dense][tenet.SymmetricTensor.to_dense] is the inverse of `from_dense` and
 the standard self-check.
 
+Moving between dtypes and backends is blockwise and returns a new tensor:
+[astype][tenet.SymmetricTensor.astype] casts every block, and
+[to_backend][tenet.SymmetricTensor.to_backend] takes an optional `dtype=`
+applied *after* the move, so the target backend's own choice of dtype does not
+get the last word:
+
+```python
+>>> from tenet import SymmetricTensor
+>>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+>>> t.astype("complex128").dtype
+dtype('complex128')
+>>> t.to_backend("numpy", dtype="complex128").dtype
+dtype('complex128')
+
+```
+
+A backend's *refusal* is a different matter from its choice: JAX has no
+per-array escape from `jax_enable_x64`, so under the default setting a request
+for `float64` truncates to float32 in `astype` exactly as it does in
+`jnp.array`. `to_backend`'s Notes say so.
+
 ## `TensorStructure` — the static half
 
 The structure is the tensor minus its numbers: the leg tuple plus everything

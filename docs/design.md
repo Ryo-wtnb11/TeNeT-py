@@ -4498,6 +4498,43 @@ The split:
   `qdim_inner` helper deliberately: it pairs tensors on *different* structures, which
   `inner`'s precondition forbids.
 
+- **M42** — shipped: `SymmetricTensor.astype(dtype)` and `to_backend(backend, dtype=None)`
+  (#207). Blockwise `ar.do("astype", b, dtype)` — the call `ops/embed.py`'s padding
+  accumulator already made privately — returning a new tensor, so the frozen-dataclass
+  and pytree contracts are untouched. `to_backend`'s single-argument form is byte-identical
+  in behaviour; the keyword defaults to today's.
+
+  **`dtype` runs after the move, not as part of it.** Casting first and moving second lets
+  the backend re-decide: a NumPy complex128 tensor handed to `jnp.array` is still subject
+  to JAX's dtype policy on arrival, so the caller's request would be racing the backend's.
+  Moving first and casting second makes the caller's request the last statement, which is
+  the whole point of the keyword.
+
+  **What that fixes and what it cannot.** It overrides a backend's *choice* — a real tensor
+  moved to JAX and asked for complex arrives complex. It does not override a backend's
+  *refusal*, and the issue's third acceptance criterion asked for exactly that:
+  `to_backend("jax", dtype=np.float64)` keeping float64 with `jax_enable_x64` unset is not
+  achievable, because in that mode JAX has no float64 for `astype` to produce. Measured
+  in a fresh interpreter with x64 off:
+
+  | call | result |
+  |---|---|
+  | `ar.do("array", b, like="jax")` | float32 |
+  | `ar.do("astype", jax_block, np.float64)` | float32 (with JAX's truncation warning) |
+  | `ar.do("astype", jax_block, np.complex128)` | complex64 |
+
+  `jax_enable_x64` is process-global and, once on, irreversible in practice — which is why
+  `tests/conftest.py` sets it session-wide and why the unset state is only reachable from a
+  subprocess. `test_to_backend_jax_dtype_cannot_defeat_a_disabled_x64` runs that subprocess
+  and pins the table above, so the distinction the `Notes` now draw between a backend's
+  choice and its refusal is a test rather than a claim.
+
+  **`astype` refuses a block-free tensor** with `_first_block`'s existing message rather
+  than returning an empty tensor of nominal dtype: `dtype` on the result would be as
+  undefined as it already is on the input, and inventing a second message for the same
+  condition is what the criterion ruled out. `to_backend` without `dtype` still passes a
+  block-free tensor through untouched, since the move is well defined where the cast is not.
+
 Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
 left that list with M61 Stage D above.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic

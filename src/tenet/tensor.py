@@ -353,13 +353,64 @@ class SymmetricTensor:
             )
         return self.blocks[0]
 
-    def to_backend(self, backend: str) -> "SymmetricTensor":
+    def astype(self, dtype: Any) -> "SymmetricTensor":
+        """Same structure and backend, every block cast to ``dtype``.
+
+        Parameters
+        ----------
+        dtype : dtype
+            The target dtype, in any spelling the current backend's ``astype``
+            accepts — a NumPy dtype (``np.complex128``) or a string
+            (``"complex128"``).
+
+        Returns
+        -------
+        SymmetricTensor
+            A new tensor whose blocks all carry ``dtype``. ``self`` is untouched.
+
+        Raises
+        ------
+        ValueError
+            If the tensor has no blocks — there is nothing to cast, and the
+            result's dtype would be undefined, as for
+            [dtype][tenet.SymmetricTensor.dtype].
+
+        Notes
+        -----
+        Blockwise ``ar.do("astype", b, dtype)``, so the backend's own casting
+        rules apply: JAX truncates a request for a dtype its ``jax_enable_x64``
+        setting does not admit, exactly as it does on any other array.
+
+        Examples
+        --------
+        >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> V = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+        >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+        >>> c = t.astype(np.complex128)
+        >>> c.dtype
+        dtype('complex128')
+        >>> c.structure == t.structure and c.legs == t.legs
+        True
+        >>> bool(np.allclose(np.asarray(c.blocks[0]).real, t.blocks[0]))
+        True
+        """
+        self._first_block()  # the empty tensor has no dtype to cast to; same refusal
+        return SymmetricTensor(
+            self.structure, tuple(ar.do("astype", b, dtype) for b in self.blocks)
+        )
+
+    def to_backend(self, backend: str, dtype: Any = None) -> "SymmetricTensor":
         """Same structure, blocks converted with ``ar.do("array", b, like=backend)``.
 
         Parameters
         ----------
         backend : str
             The target autoray backend, e.g. ``"jax"``.
+        dtype : dtype or None, optional
+            Cast the blocks to this dtype **after** the move, via
+            [astype][tenet.SymmetricTensor.astype]. ``None`` (the default) is
+            today's behaviour: whatever dtype the backend chose is kept.
 
         Returns
         -------
@@ -368,12 +419,29 @@ class SymmetricTensor:
 
         Notes
         -----
-        The target backend's own dtype policy applies (JAX demotes float64 to
-        float32 unless ``jax_enable_x64`` is set); no dtype is forced here.
+        The target backend's own dtype policy applies to the move (JAX demotes
+        float64 to float32 unless ``jax_enable_x64`` is set). ``dtype`` runs
+        after that move rather than as part of it, so it overrides a backend's
+        *choice* — e.g. a real tensor moved to JAX and asked for
+        ``np.complex128`` arrives complex — but it cannot override a backend's
+        *refusal*: JAX truncates ``np.float64`` to float32 in ``astype`` too
+        when ``jax_enable_x64`` is unset, because in that mode the dtype does
+        not exist for it to produce. Enabling ``jax_enable_x64`` is the only fix
+        for that one, and it is process-global.
+
+        Examples
+        --------
+        >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> V = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+        >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+        >>> t.to_backend("numpy", dtype=np.complex128).dtype
+        dtype('complex128')
         """
-        return SymmetricTensor(
+        moved = SymmetricTensor(
             self.structure, tuple(ar.do("array", b, like=backend) for b in self.blocks)
         )
+        return moved if dtype is None else moved.astype(dtype)
 
     # --- parameter protocol (quimb / autoray) ---------------------------------
 
