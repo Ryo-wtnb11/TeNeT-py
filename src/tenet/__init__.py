@@ -153,21 +153,24 @@ def enable_jax(*, ad: bool = False) -> None:
     ``tenet.ad.install()`` are what this function runs, and there is one implementation of
     each. JAX stays an optional dependency: nothing here is imported by core.
     """
+    # The submodules carry the guarded JAX import, and this file must not: three source
+    # greps hold "core never imports jax" up by the file walk rather than by review
+    # (tests/array/test_dispatch.py, tests/test_tensor_properties.py,
+    # tests/backends/test_pytree.py). So the failure is caught and re-raised here, which
+    # is also what turns a traceback out of a submodule into one sentence.
     try:
-        import jax  # noqa: F401
+        import tenet.pytree  # noqa: F401  # registration is the import's side effect
+
+        if ad:
+            import tenet.ad
+
+            tenet.ad.install()
     except ImportError as exc:
         raise ImportError(
             "tenet.enable_jax() requires JAX, which is an optional dependency. "
             "Install it with `pip install 'tenet-py[jax]'` or `uv sync --extra jax`. "
             "The core library never imports JAX; get_params/set_params work without it."
         ) from exc
-
-    import tenet.pytree  # registration is the import's side effect
-
-    if ad:
-        import tenet.ad
-
-        tenet.ad.install()
 
 
 __all__ = [

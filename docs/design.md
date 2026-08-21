@@ -4990,10 +4990,15 @@ The split:
   **Idempotent, and loud without JAX.** Re-importing `tenet.pytree` is a `sys.modules`
   hit and `install()` documents itself idempotent, so repeat calls change nothing — pinned
   by a test that compares the observable registry state across a second and a third call.
-  Without JAX the function raises its own `ImportError` naming `tenet-py[jax]` before it
-  touches `tenet.pytree`, so a JAX-less user gets a sentence rather than a traceback out
-  of a submodule; the test blocks `jax` with a meta-path finder in a subprocess and asserts
-  the raise came from `tenet/__init__.py`.
+  Without JAX the function raises its own `ImportError` naming `tenet-py[jax]`, so a
+  JAX-less user gets a sentence rather than a traceback out of a submodule; the test blocks
+  `jax` with a meta-path finder in a subprocess and asserts the raise came from
+  `tenet/__init__.py`. It is written as a re-raise around the submodule imports, *not* as a
+  `try: import jax` of its own, because three source greps
+  (`tests/array/test_dispatch.py`, `tests/test_tensor_properties.py`,
+  `tests/backends/test_pytree.py`) hold "core never imports jax" up by walking the files
+  for that string — `pytree.py` and `ad.py` are the only two names allowed to contain it,
+  and the invariant is worth more than the shape of one guard.
 
   **Nothing is deprecated.** `import tenet.pytree` and `tenet.ad.install()` are what
   `enable_jax` runs — one implementation of each — and `install()`'s signature and
