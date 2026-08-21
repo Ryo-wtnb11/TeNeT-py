@@ -1,10 +1,13 @@
 # Heisenberg, U(1) — the walkthrough
 
-What to look at: the two MPO routes. `MPO.from_w` takes the hand-graded MPO bond the file
-writes out; `MPO.from_terms` derives one from the operators' own charges — and the two
-gradings printed below are the same grading, sector for sector, so the two runs land on
-the same twelve digits. Below them, the seed's bond dimensions are the *reachable* U(1)
-charges at each cut (`1 2 3 4 …`, the whole `S^z_tot = 0` statement) and the final ones
+What to look at: the three MPO routes. `MPO.from_w` takes the hand-graded MPO bond the
+file writes out; `MPO.from_entries` names the same `W`'s eight non-zero entries and
+declares no grading at all; `MPO.from_terms` derives one from the operators' own charges —
+and the two gradings printed below are the same grading, sector for sector, so all three
+runs land on the same twelve digits. The last line says which of the three carries an
+**edge description**, which is what decides whether `Env.heff2` takes the prepared engine
+path or the compatibility entry: writing a `W` by hand no longer costs you the engine.
+Below them, the seed's bond dimensions are the *reachable* U(1) charges at each cut (`1 2 3 4 …`, the whole `S^z_tot = 0` statement) and the final ones
 are what `svd_truncated` decided sweep by sweep. `examples/heisenberg.py` is the same
 chain with none of this spelled out; `examples/toy_codes/dmrg.py` writes the algorithm
 underneath it. The [DMRG tutorial](../tutorials/dmrg.md) walks through the physics.
@@ -29,6 +32,9 @@ from_w      N=12 chi=64  E=-5.142090632841  exact=-5.142090632841
   sweep  5  E=-5.142090632841  dE=8.882e-16  dS=3.492e-10  dw=5.551e-15
 from_terms  N=12 chi=64  E=-5.142090632841
   |E(from_w) - E(from_terms)| = 1.776e-15
+from_entries N=12 chi=64  E=-5.142090632841
+  |E(from_w) - E(from_entries)| = 8.882e-16
+  carries an edge description: {'from_w': False, 'from_entries': True, 'from_terms': True}
   MPO bond, hand-graded: -2:1 +0:3 +2:1
   MPO bond, derived:     -2:1 +0:3 +2:1
   seed bond dims:  [1, 2, 3, 4, 5, 6, 7, 6, 5, 4, 3, 2, 1]

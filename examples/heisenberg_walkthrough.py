@@ -48,15 +48,30 @@ What it demonstrates:
   **every bond of every sweep** inside ``dmrg_``, with the discarded weight reported by
   Pythagoras -- the mirror image of CTMRG's frozen bond.
 
-**Two routes to the same MPO, and why both are here (#133).** :func:`mpo` writes the 5x5
-``W`` out and hands it to ``MPO.from_w`` on :data:`MPO_BOND`; :func:`mpo_from_terms` lists
-the Hamiltonian's terms and hands them to ``MPO.from_terms``, which derives the same bond
-spaces from the operators' own charges. ``from_w`` stays **primary** because the ``W``
-matrix and its channel table are what teach what an MPO *is*, and a reader who has only
-ever seen a term list cannot debug one. The payoff of keeping both is a cross-check no
-single route can produce: a hand-derived grading and a derived one must agree as
-operators, and :func:`main` runs exactly that comparison (``tests/network/test_mpo.py``
-asserts it too, including that ``from_terms`` recovers :data:`MPO_BOND` sector for sector).
+**Three routes to the same MPO, and what each is for (#133, #217).**
+
+* :func:`mpo` writes the 5x5 ``W`` out, grades the bond by hand as :data:`MPO_BOND` and
+  hands the dense array to ``MPO.from_w``. It stays **first** because the ``W`` matrix and
+  its channel table are what teach what an MPO *is*, and a reader who has only ever seen a
+  term list cannot debug one. It is also the entry to use when the ``W`` arrives as an
+  *array* -- out of a paper, out of another library -- because then the entries are
+  numbers and no charge can be recovered from them.
+* :func:`mpo_entries` names the same ``W``'s eight non-zero entries and hands them to
+  ``MPO.from_entries``. **This is the one to reach for when writing an MPO by hand**: same
+  finite-state machine, none of the zeros, and no grading, no boundary vectors and no
+  ``dual`` convention to declare -- the charge is already on the operator.
+* :func:`mpo_from_terms` lists the Hamiltonian's terms and hands them to
+  ``MPO.from_terms``, which derives the same bond spaces from the operators' own charges
+  and never mentions a ``W`` at all.
+
+The payoff of keeping all three is a cross-check no single route can produce: a
+hand-derived grading and two derived ones must agree as *operators*, and :func:`main` runs
+exactly that comparison (``tests/network/test_mpo.py`` asserts it too, including that
+``from_terms`` recovers :data:`MPO_BOND` sector for sector, and
+``tests/network/test_from_entries.py`` is ``from_entries``' own oracle). The last two also
+carry an **edge description** and so run on ``Env.heff2``'s prepared engine path, which
+:func:`main` prints; the ``from_w`` operator carries none and takes the compatibility
+entry.
 
 **Why there is no ``jit`` and no ``grad`` here, and why that is a decision.** DMRG is a
 fixed-point solver whose control flow is data-dependent at every level: the truncation
@@ -180,6 +195,47 @@ def mpo_from_terms(n_sites: int) -> network.MPO:
     return network.MPO.from_terms(n_sites, terms)
 
 
+def mpo_entries(n_sites: int) -> network.MPO:
+    """The same ``W`` as :func:`mpo_array`, named entry by entry instead of written out.
+
+    This is the middle route, and the one to reach for when the ``W`` matrix *is* what you
+    have (M52, #217). Compare it with :func:`mpo_array` above: it is the same finite-state
+    machine, the same eight non-zero channels, minus every zero of the 5x5 and minus all
+    three pieces of symmetry bookkeeping. There is no :data:`MPO_BOND` -- the charge is
+    already on ``local_op``'s third leg, so each channel's :class:`~tenet.GradedSpace` is
+    derived and the bond at each cut is the direct sum over its channels; there is no
+    ``boundary``, ``start`` or ``end``, because ``0`` is the IdL channel and ``-1`` the IdR
+    one at every bond and the two ``D=1`` ends follow; and there is no ``dual`` convention
+    to get right, because no rank-4 tensor is ever handed over.
+
+    The channel numbering is the textbook's, not the grading's. :data:`_START` and friends
+    above are ordered by *charge*, because ``from_w``'s dense rows have to line up with
+    ``GradedSpace``'s ascending sector order -- that constraint is gone here, so ``0`` is
+    the start channel, ``1``/``2``/``3`` are ``S^-``/``S^+``/``S^z`` and ``-1`` is the end,
+    which is how the lower-triangular ``W`` is printed.
+
+    What it buys beyond the writing: the result carries an edge description, so ``Env``
+    cannot tell it from :func:`mpo_from_terms`' operator and it runs on the prepared engine
+    path. :func:`mpo`'s output carries none and takes the compatibility entry instead.
+    """
+    _, sz, sp, sm = _spin_half()
+    op = {
+        q: network.local_op(o, phys=PHYS, charge=U1Sector(q))
+        for q, o in ((0, sz), (-2, sp), (2, sm))
+    }
+    w = {
+        (0, 0): None,  # I -- nothing emitted yet
+        (0, 1): (0.5, op[2]),  # S^-/2 out of the start channel ...
+        (1, -1): op[-2],  # ... closed by S^+
+        (0, 2): (0.5, op[-2]),  # S^+/2 ...
+        (2, -1): op[2],  # ... closed by S^-
+        (0, 3): op[0],  # S^z ...
+        (3, -1): op[0],  # ... closed by S^z
+        (-1, -1): None,  # I -- the term is finished
+    }
+    return network.MPO.from_entries([w] * n_sites)
+
+
 def bond_spaces(n_sites: int) -> list[GradedSpace]:
     """The ``n_sites + 1`` virtual spaces, degeneracy 1 in every reachable sector.
 
@@ -227,6 +283,17 @@ def main(n_sites: int = 12, chi: int = 64):
     terms = network.dmrg_(seeded, mpo_from_terms(n_sites), chi=chi)
     print(f"from_terms  N={n_sites} chi={chi}  E={terms.energy:+.12f}")
     print(f"  |E(from_w) - E(from_terms)| = {abs(out.energy - terms.energy):.3e}")
+
+    seeded = network.MPS.random(PHYS, bond_spaces(n_sites), seed=0)
+    entries = network.dmrg_(seeded, mpo_entries(n_sites), chi=chi)
+    print(f"from_entries N={n_sites} chi={chi}  E={entries.energy:+.12f}")
+    print(f"  |E(from_w) - E(from_entries)| = {abs(out.energy - entries.energy):.3e}")
+    carries = {
+        "from_w": mpo(n_sites).edges is not None,
+        "from_entries": mpo_entries(n_sites).edges is not None,
+        "from_terms": mpo_from_terms(n_sites).edges is not None,
+    }
+    print(f"  carries an edge description: {carries}")
 
     def grading(space: GradedSpace) -> str:
         return " ".join(f"{sector.charge:+d}:{m}" for sector, m in space.sectors)
