@@ -35,13 +35,13 @@ metadata and blocks move only through ``ar.do("transpose", ...)``.
 
 import operator
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
-from tenet.structure import FusionBlockKey, TensorStructure
+from tenet.structure import FusionBlockKey, TensorStructure, _pattern
 from tenet.symmetry.base import (
     BraidingData,
     CapabilityError,
@@ -140,7 +140,25 @@ def permutation_plan(structure: TensorStructure, axes: tuple[int, ...]) -> Permu
 
     ``axes`` must already be a validated permutation ([transpose][tenet.transpose] does that);
     the cache is keyed on the frozen structure and the tuple, nothing else.
+
+    The **body** is cached one level down, on ``_pattern(structure)`` — the same legs with
+    every degeneracy 1 (#248). ``terms`` is block indices and coefficients, which depend on
+    the legs' sectors, sides and duals and never on their degeneracies, so two structures
+    that differ only in degeneracy share one enumeration and this entry holds nothing but
+    ``new_structure``. A DMRG sweep moves a bond's degeneracies at every bond of every
+    sweep until the state settles, and without the split each move rebuilds a plan that is
+    identical term for term.
     """
+    plan = _pattern_plan(_pattern(structure), axes)
+    legs = tuple(structure.legs[i] for i in axes)
+    if legs == plan.new_structure.legs:
+        return plan
+    return replace(plan, new_structure=TensorStructure(legs))
+
+
+@cache
+def _pattern_plan(structure: TensorStructure, axes: tuple[int, ...]) -> PermutationPlan:
+    """[permutation_plan][tenet.permutation_plan]'s body, on a degeneracy-free structure."""
     new_structure = TensorStructure(tuple(structure.legs[i] for i in axes))
     out_perm = _side_perm(axes, structure.out_axes, new_structure.out_axes)
     in_perm = _side_perm(axes, structure.in_axes, new_structure.in_axes)

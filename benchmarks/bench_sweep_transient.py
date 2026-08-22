@@ -69,12 +69,17 @@ SWEEP_EINSUMS = {
 #: The ``functools.cache``d plan layer, ``(module path, attribute)``. Every one is keyed
 #: on a ``TensorStructure`` (or on legs), so every one misses when a bond space moves.
 PLAN_CACHES = (
+    ("tenet.structure", "_pattern"),
+    ("tenet.structure", "_flat"),
     ("tenet.structure", "_block_order"),
     ("tenet.structure", "_index_map"),
     ("tenet.structure", "_axis_sectors_table"),
     ("tenet.structure", "_block_shape_table"),
     ("tenet.ops.contraction", "contraction_plan"),
     ("tenet.ops.repartition", "repartition_plan"),
+    ("tenet.ops.repartition", "_pattern_repartition_plan"),
+    ("tenet.ops.repartition", "_pattern_bend_plan"),
+    ("tenet.ops.permutation", "_pattern_plan"),
     ("tenet.ops.repartition", "bend_plan"),
     ("tenet.ops.fusion", "fusion_plan"),
     ("tenet.ops.fusion", "fuse_spaces"),
