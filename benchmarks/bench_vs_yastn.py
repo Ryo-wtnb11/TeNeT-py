@@ -15,7 +15,8 @@ The three arms
 --------------
 ``--arm tenet`` builds its Hamiltonian with ``MPO.from_terms``, which keeps an
 ``EdgeTable``, so ``Env.heff2`` -- which routes on ``self.h.edges is not None`` -- takes
-the **prepared** path. ``--arm tenet-sites`` is the same run with ``MPO(h.sites)``: the
+the **prepared** path. ``--arm tenet-sites`` is the same run with ``h.materialize()`` --
+M67's recommended lattice spelling, which is what M64b spelled ``MPO(h.sites)``: the
 same tensors, the description dropped, so the same call takes the **site-tensor** path,
 which is YASTN's ``Heff2`` contraction order. Nothing else differs between the two --
 same state, same seed, same ``chi``, same sweeps -- so ``tenet / tenet-sites`` prices the
@@ -276,7 +277,7 @@ def run_tenet(
         # The same tensors, with the edge description dropped: ``Env.heff2`` routes on
         # ``self.h.edges is not None``, so this is the only difference between the two
         # tenet arms and it selects the site-tensor path (YASTN's ``Heff2`` order).
-        h = MPO(h.sites)
+        h = h.materialize()
     bonds = [
         GradedSpace.new(sym, {sector(q): d for q, d in space.items()})
         for space in bond_charges(model, n, chi)

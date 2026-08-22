@@ -27,9 +27,15 @@ Examples
 ...     ("S+ S-", [(i, i + 1) for i in range(n - 1)], [0.5] * (n - 1)),
 ...     ("S- S+", [(i, i + 1) for i in range(n - 1)], [0.5] * (n - 1)),
 ... ]
->>> h = MPO.from_arrays(n, site.ops, blocks)
+>>> h = MPO.from_arrays(n, site.ops, blocks).materialize()
 >>> h.to_dense().shape
 (16, 16)
+
+The [materialize][tenet.network.MPO.materialize] is the lattice lane's spelling and it is
+what ``docs/guide/models-and-sites.md`` teaches: a finite-range model's MPO bond is narrow
+enough that [Env.heff2][tenet.network.Env.heff2]'s prepared, symbolic path costs 1.6-2.1x
+per sweep and returns nothing, so the sites are what the sweep should run on (#251,
+measured in ``docs/design.md`` "M64b"). An ab initio Hamiltonian leaves it off.
 """
 
 from tenet.models.sites import (
