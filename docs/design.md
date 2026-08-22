@@ -5738,6 +5738,145 @@ left that list with M61 Stage D above.
   `tenet-sites` arm now spells `h.materialize()` where it spelled `MPO(h.sites)` — the same
   object, in the name the milestone gives it, so the grid above measures the recommended
   spelling and not a lookalike.
+- **M65** — **shipped**: the U(1) bond-growth transient attributed, and the mechanism it
+  names fixed at the root (#248, on M64b's site-tensor path). M64b left the transient
+  path-independent and unexplained: at `N = 64`, `chi = 256` U(1) the site-tensor path's
+  first sweep is 14x its own steady sweep with none of the prepared machinery running.
+  `benchmarks/bench_sweep_transient.py` is M57's phase instrument re-aimed at that — the
+  same decomposition **per sweep over the first twelve**, on `bench_vs_yastn.py`'s exact
+  fixture (same seed, same `bond_charges` spec, `MPO(h.sites)`, `cutoff = 0.0`, `ncv = 3`,
+  single-threaded BLAS, one process), plus two columns M57 does not have: the wall spent
+  inside the `functools.cache`d **plan layer on a miss**, and the **bond churn**, how many
+  of the `N - 1` internal bonds changed their `GradedSpace` since the previous sweep, split
+  into "the sector set moved" and "only the degeneracies moved". The phase columns
+  partition the wall; the plan-layer column is a *cross-cut* of them (it sits inside
+  `heff2`, `update_` and `svd`), timed at the outermost plan frame only so no second is
+  counted twice. Every point is run in both a wrapped and a `--plain` arm, and both walls
+  are in the table: the instrument costs 12 % on U(1) and 1.6 % on fZ2. The named phases
+  sum to the wall to within 0.7 % on every row of every table below.
+
+  **U(1) Heisenberg `N = 64`, `chi = 256`, site-tensor path, before the change.** Seconds.
+
+  | sweep | wall | plain | assemble | lanczos own | `heff2` | `svd` | `update_` | writeback | rest | plan layer | share | bonds moved | RSS |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | 1 | 35.34 | 31.75 | 1.69 | 0.42 | 22.63 | 0.71 | 9.30 | 0.55 | 0.04 | **31.58** | **89 %** | 47 / 10 | 0.49 G |
+  | 2 | 25.99 | 23.32 | 1.21 | 0.35 | 16.62 | 0.66 | 6.70 | 0.41 | 0.04 | **22.44** | **86 %** | 31 / 16 | 0.75 G |
+  | 3 | 24.11 | 21.55 | 1.11 | 0.34 | 14.78 | 0.63 | 6.83 | 0.37 | 0.04 | **20.66** | **86 %** | 17 / 30 | 0.96 G |
+  | 4 | 23.11 | 20.64 | 1.05 | 0.34 | 14.68 | 0.63 | 6.00 | 0.36 | 0.04 | **19.71** | **85 %** | 17 / 30 | 1.16 G |
+  | 5 | 22.00 | 19.49 | 0.99 | 0.33 | 13.30 | 0.62 | 6.38 | 0.34 | 0.04 | **18.67** | **85 %** | 20 / 27 | 1.37 G |
+  | 6 | 18.39 | 16.64 | 0.85 | 0.32 | 11.60 | 0.60 | 4.68 | 0.30 | 0.04 | **15.18** | **83 %** | 38 / 9 | 1.55 G |
+  | 7 | 16.49 | 14.54 | 1.64 | 0.30 | 9.81 | 0.59 | 3.86 | 0.25 | 0.03 | **13.37** | **81 %** | 34 / 13 | 1.71 G |
+  | 8 | 11.03 | 9.94 | 0.48 | 0.28 | 7.10 | 0.55 | 2.42 | 0.17 | 0.03 | **8.13** | **74 %** | 46 / 1 | 1.86 G |
+  | 9 | 6.99 | 6.25 | 0.25 | 0.27 | 4.41 | 0.49 | 1.44 | 0.11 | 0.03 | **4.24** | **61 %** | 9 / 27 | 1.94 G |
+  | 10 | 5.34 | 4.40 | 0.11 | 0.26 | 3.78 | 0.45 | 0.65 | 0.06 | 0.03 | **2.63** | **49 %** | 0 / 6 | 1.99 G |
+  | 11 | 3.42 | 2.95 | 0.07 | 0.26 | 2.16 | 0.44 | 0.41 | 0.06 | 0.03 | **0.77** | **22 %** | 0 / 2 | 2.02 G |
+  | 12 | 2.97 | 2.53 | 0.06 | 0.25 | 1.89 | 0.43 | 0.25 | 0.05 | 0.03 | **0.38** | **13 %** | 0 / 0 | 2.03 G |
+
+  **fZ2 Hubbard `N = 32`, `chi = 256`, the control — no transient in M64b.** Seconds.
+
+  | sweep | wall | plain | assemble | lanczos own | `heff2` | `svd` | `update_` | writeback | rest | plan layer | share | bonds moved | RSS |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | 1 | 9.90 | 9.84 | 0.06 | 0.53 | 6.30 | 2.54 | 0.38 | 0.03 | 0.06 | **0.18** | **2 %** | 0 / 17 | 1.10 G |
+  | 2 | 9.96 | 9.87 | 0.06 | 0.50 | 6.47 | 2.48 | 0.36 | 0.04 | 0.05 | **0.14** | **1 %** | 0 / 17 | 1.24 G |
+  | 3 | 9.87 | 9.80 | 0.05 | 0.51 | 6.44 | 2.43 | 0.35 | 0.04 | 0.06 | **0.08** | **1 %** | 0 / 5 | 1.28 G |
+  | 4 | 10.01 | 9.85 | 0.05 | 0.52 | 6.51 | 2.46 | 0.36 | 0.04 | 0.07 | **0.07** | **1 %** | 0 / 11 | 1.30 G |
+  | 5 | 9.85 | 9.67 | 0.05 | 0.52 | 6.38 | 2.46 | 0.34 | 0.04 | 0.06 | **0.06** | **1 %** | 0 / 12 | 1.32 G |
+  | 6 | 9.86 | 9.77 | 0.05 | 0.51 | 6.43 | 2.44 | 0.35 | 0.04 | 0.05 | **0.07** | **1 %** | 0 / 7 | 1.35 G |
+  | 7 | 10.03 | 9.94 | 0.05 | 0.52 | 6.54 | 2.47 | 0.34 | 0.04 | 0.06 | **0.06** | **1 %** | 0 / 7 | 1.35 G |
+  | 8 | 10.00 | 9.91 | 0.05 | 0.54 | 6.53 | 2.43 | 0.35 | 0.04 | 0.06 | **0.07** | **1 %** | 0 / 5 | 1.35 G |
+  | 9 | 9.98 | 9.73 | 0.05 | 0.54 | 6.50 | 2.43 | 0.36 | 0.04 | 0.06 | **0.07** | **1 %** | 0 / 10 | 1.36 G |
+  | 10 | 10.06 | 9.82 | 0.05 | 0.55 | 6.57 | 2.44 | 0.35 | 0.04 | 0.06 | **0.07** | **1 %** | 0 / 13 | 1.36 G |
+  | 11 | 10.06 | 9.88 | 0.05 | 0.55 | 6.53 | 2.46 | 0.36 | 0.04 | 0.07 | **0.09** | **1 %** | 0 / 16 | 1.36 G |
+  | 12 | 10.19 | 9.82 | 0.06 | 0.56 | 6.60 | 2.48 | 0.40 | 0.04 | 0.06 | **0.13** | **1 %** | 0 / 13 | 1.39 G |
+
+  **The mechanism, and it is one mechanism.** The plan layer is **89 % of the first sweep**
+  and it decays with the churn column and with nothing else: 89 % → 13 % as the bond spaces
+  stop moving, while every other phase is flat or falls with it. On fZ2, where the bond
+  carries two sectors and the *sector set* never moves, the same column is **0.6–1.8 % and
+  flat** — the degeneracies move there too (5–17 bonds a sweep), so what the cost scales
+  with is churn **times blocks per structure**, not churn alone. Inside the column, on the
+  first sweep: `repartition_plan` 19.7 s, `TensorStructure`'s block enumeration
+  (`_block_order`) 5.9 s, `map_layout` 3.3 s, `_block_shape_table` 1.4 s,
+  `permutation_plan` 0.7 s, `contraction_plan` 0.02 s — attributed to the *outermost* cache,
+  so `repartition_plan`'s figure contains the `permutation_plan`/`bend_plan` chain it calls.
+  6 349 `_block_order` misses on sweep 1, 1 on sweep 12.
+
+  **Why they miss.** A `GradedSpace` hashes its degeneracies, a `Leg` hashes its space, a
+  `TensorStructure` hashes its legs — and every cache in the plan layer is keyed on a
+  `TensorStructure`. So a bond whose degeneracies moved is a new key in all of them, and a
+  truncating SVD moves them at every bond of every sweep until the state settles. What the
+  plans *contain*, though, is block indices and coefficients: `block_order` is a pure
+  function of the legs' **sectors, sides and duals**, and so are the terms of
+  `permutation_plan`, `bend_plan` and `repartition_plan`. The keys were finer than the
+  results.
+
+  **The change** is that split, in the shared functions and with no runtime dispatch on
+  anything. `structure._pattern(s)` is `s` with every degeneracy set to 1 — two structures
+  share a pattern exactly when they have the same `block_order` — and `_block_order`,
+  `_index_map` and `_axis_sectors_table` delegate to it, so a degeneracy move now costs one
+  dict lookup instead of an enumeration over `prod(len(leg.sectors))` assignments.
+  `permutation_plan`, `bend_plan` and `repartition_plan` keep their own cache (a repeat call
+  still returns the same object) but compute their body one level down, on the pattern; the
+  entry then holds nothing but `new_structure`, which is the caller's own legs reordered
+  with `side` and `dual` flipped on each leg that crossed. `_block_shape_table` is the one
+  table that reads a degeneracy and it stays keyed on the structure itself. `map_layout` and
+  `contraction_plan` are untouched — the first genuinely depends on degeneracies (its band
+  offsets are extents), the second measured at 0.02 s.
+
+  **After.** Same fixture, same session, same instrument.
+
+  | sweep | wall | plain | assemble | lanczos own | `heff2` | `svd` | `update_` | writeback | rest | plan layer | share | bonds moved | RSS |
+  |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+  | 1 | 33.95 | 30.50 | 1.61 | 0.41 | 21.98 | 0.64 | 8.80 | 0.47 | 0.04 | **30.32** | **89 %** | 47 / 10 | 0.50 G |
+  | 2 | 21.91 | 19.56 | 0.95 | 0.34 | 13.79 | 0.51 | 6.04 | 0.25 | 0.04 | **18.54** | **85 %** | 31 / 16 | 0.72 G |
+  | 3 | 12.36 | 10.98 | 0.49 | 0.32 | 7.44 | 0.41 | 3.52 | 0.14 | 0.04 | **9.13** | **74 %** | 17 / 30 | 0.84 G |
+  | 4 | 11.94 | 10.40 | 0.44 | 0.32 | 7.35 | 0.42 | 3.23 | 0.14 | 0.04 | **8.73** | **73 %** | 17 / 30 | 0.96 G |
+  | 5 | 12.41 | 10.85 | 0.47 | 0.32 | 7.67 | 0.45 | 3.32 | 0.16 | 0.04 | **9.23** | **74 %** | 20 / 27 | 1.07 G |
+  | 6 | 14.66 | 13.15 | 0.63 | 0.30 | 9.01 | 0.51 | 3.97 | 0.20 | 0.04 | **11.58** | **79 %** | 38 / 9 | 1.23 G |
+  | 7 | 13.86 | 12.15 | 0.57 | 0.29 | 9.03 | 0.52 | 3.25 | 0.17 | 0.03 | **10.88** | **79 %** | 34 / 13 | 1.38 G |
+  | 8 | 8.93 | 8.00 | 0.41 | 0.27 | 6.13 | 0.50 | 1.47 | 0.12 | 0.03 | **6.15** | **69 %** | 46 / 1 | 1.50 G |
+  | 9 | 3.39 | 2.95 | 0.08 | 0.25 | 2.18 | 0.44 | 0.36 | 0.05 | 0.03 | **0.77** | **23 %** | 9 / 27 | 1.55 G |
+  | 10 | 3.07 | 2.60 | 0.06 | 0.25 | 1.97 | 0.43 | 0.28 | 0.05 | 0.03 | **0.44** | **14 %** | 0 / 6 | 1.59 G |
+  | 11 | 2.98 | 2.55 | 0.06 | 0.25 | 1.90 | 0.43 | 0.26 | 0.05 | 0.03 | **0.39** | **13 %** | 0 / 2 | 1.60 G |
+  | 12 | 2.87 | 2.48 | 0.06 | 0.24 | 1.82 | 0.43 | 0.25 | 0.05 | 0.03 | **0.35** | **12 %** | 0 / 0 | 1.60 G |
+
+  **Whole run**, `benchmarks/bench_vs_yastn.py --arm tenet-sites`, both arms re-run in this
+  session against the same code M64b measured (222.2 s / 2.10 G against M64b's 230 s /
+  2.08 G, i.e. the session-to-session spread is about 4 %). YASTN's column is M64b's.
+
+  | fixture | run before | run after | YASTN | steady before | steady after | RSS before | RSS after | energy |
+  |---|---|---|---|---|---|---|---|---|
+  | U(1) Heisenberg `N = 64`, `chi = 256`, 30 sweeps | 222.2 s | **176.8 s** | 77 s | 2.52 s | 2.50 s | 2.10 G | **1.67 G** | -28.17542485974315, both |
+  | fZ2 Hubbard `N = 32`, `chi = 256`, 20 sweeps | 191.9 s | 191.0 s | 111 s | 9.55 s | 9.48 s | 1.46 G | 1.42 G | -25.69537042828647, both |
+
+  The U(1) whole-run ratio against YASTN moves **2.89x → 2.30x** while the steady ratio
+  stays where M64b put it (1.28x → 1.18x here); the realized bond dimensions and the
+  energies are identical before and after, to the last digit printed.
+
+  **What moved and what did not.** The twelve-sweep wall falls **174.0 s → 126.2 s (−27 %)**
+  on the plain arm, and the fall is entirely in sweeps 3–9 — sweep 1 is unchanged
+  (31.7 → 30.5 s), which is the honest reading of the fix: on the first sweep every pattern
+  is genuinely new, and a cache keyed on the right thing still has to build it once. What
+  the change removes is the **re-**building, which is why the effect appears exactly where
+  the churn is degeneracy-only (sweeps 3–5, 30 of 63 bonds: 24.1 → 12.4 s) and not where the
+  sector sets are still moving (sweeps 6–8). Peak RSS at sweep 12 falls **2.03 G → 1.60 G
+  (−21 %)**: the per-structure `block_order` tuples, index maps and plan terms are now shared
+  across every structure with the same pattern, and what remains per structure is a small
+  record. Gap B's U(1) `N = 64` residue is therefore the same mechanism as Gap A seen in
+  memory, as M64b guessed, and it is reduced by the same change with no cache-budget touched.
+  fZ2 is unmoved on both counts (117.9 → 114.7 s over twelve sweeps, RSS 1.39 → 1.41 G),
+  which is what a fix aimed at sector-rich bonds should do to a two-sector one.
+
+  **What is not claimed.** The transient is *reduced, not removed*: the first sweep still
+  costs 12x the steady sweep, and the plan layer is still 89 % of it. The remaining cost is
+  new patterns rather than re-keyed old ones, so closing it further is a different question
+  — whether `repartition_plan`'s transpose-bend-transpose composition has to be O(blocks)
+  per new pattern at all — and it needs its own attribution. Nothing here touches
+  `cutoff=None`, the prepared path or the family-resolved matvec: the change is one level
+  below all of them, in the cache keys, and the energies are bit-identical to the digit
+  before and after at both fixtures. No cache budget was changed, no new dependency, no
+  public surface moved, and #218's single-path engine is untouched — there is no dispatch
+  on churn here, and there is none anywhere else either.
 
 
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
