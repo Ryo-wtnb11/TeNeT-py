@@ -5621,6 +5621,124 @@ left that list with M61 Stage D above.
   is the prepared arm's own tensors, and the two arms' energies agreeing to 3e-13 is the
   stronger statement.
 
+- **M67** — shipped: the lattice lane runs on the **site-tensor path**, and it has a name
+  to spell it with (#251). `MPO.materialize()` returns the same operator holding its rank-4
+  site tensors and no edge description, so `Env.heff2` — which routes on
+  `self.h.edges is not None` and on nothing else — takes the site-tensor contraction.
+  `docs/guide/models-and-sites.md` and `tenet.models`' package example teach it on every
+  lattice model. **No default changed**, in `src/` or anywhere else.
+
+  **What the decision rests on.** M64b's three-arm grid: on U(1) Heisenberg the site-tensor
+  path is 1.10–1.28× YASTN per steady sweep across the whole `N × chi` grid, and the
+  prepared, symbolic path adds 1.63–2.06× on top of that; on the fZ2 Hubbard chain the
+  surcharge is the same 1.85–2.07×. A `D_w = 5` bond does not repay block2's per-bond
+  cores, prepared operator and structure-keyed cache. M39's grid says the opposite at
+  quantum-chemistry width: the prepared path is 0.97× the site-tensor one on C2 at
+  `chi = 64` and is the only route that fits `K = 26` in memory at all. The reference
+  policy above already assigns those two lanes to two references — 1-D interfaces and API
+  shape to tenpy/YASTN, algorithm cores *at quantum-chemistry scale* to block2 — and this
+  is that table applied to the engine rather than only to the structures.
+
+  **#218's scope, restated.** #218 settled the engine as **one path for symbolic
+  operators**: an MPO carrying an edge description gets the prepared term-family matvec at
+  either cutoff, and later parallelism and accelerator work attaches there and nowhere
+  else. That stands, unqualified. What #218 did not decide — and what it was read as
+  deciding — is which *representation* a lattice Hamiltonian should be in before it reaches
+  an engine at all. `from_terms` always yields a description, so "one path for symbolic
+  operators" plus "the builders always build symbolic" silently became "one path", and a
+  Heisenberg chain built the recommended way paid block2's machinery. M67 separates the two
+  statements. The site-tensor path is therefore **the lattice lane's engine**, not a
+  compatibility entry; it remains what an externally built MPO gets as well, because
+  symbols cannot be recovered from a numeric `W` (#141), but that is no longer the only
+  reason it exists.
+
+  **The spelling: a method, not a `symbolic=` keyword on the builders.** The keyword was
+  the other candidate and it is worse on three counts. *Nothing about the assembly
+  changes* — the description is how the site tensors are produced, so `from_terms(...,
+  symbolic=False)` would advertise a different build where there is only a different thing
+  to keep; a method after the fact says exactly what happens, which is that the operator is
+  built once and the caller decides what to hand the engine. *It would have to be answered
+  three times*, on `from_terms`, `from_arrays` and `from_entries`, and kept consistent
+  across them. And *the two builders cannot split the default between them*, which is the
+  shape the issue floated: `from_arrays` is not an ab initio front end only —
+  `docs/guide/models-and-sites.md` teaches it for lattice models too, because a
+  `models.Site`'s `ops` is exactly the table it takes — so flipping `from_terms` while
+  `from_arrays` kept the symbolic default would leave the guide's own recommended route on
+  the path this milestone is moving away from, which is the acceptance criterion failing on
+  the spelling meant to satisfy it. `materialize` is the word `MPO.sites`' own docstring
+  already uses for realising a deferred site tensor, so it is the package's vocabulary and
+  not a new coinage (#120/#185).
+
+  **The default is unchanged, deliberately.** Flipping `from_terms`' default was defensible
+  — its callers really are overwhelmingly the lattice lane — and it was rejected because it
+  buys nothing the guide's one method call does not, while costing a breaking change to
+  every example, tutorial, oracle and benchmark that reads `edges` off a `from_terms`
+  operator, and while leaving the `from_arrays` half of the guide unfixed anyway. A default
+  that is right for one builder's majority and wrong for the other's is a rule a caller has
+  to memorise; "your model decides, and you say which at build time" is a rule they can
+  predict from, and it is the same rule `cutoff=None`-versus-a-float already follows.
+
+  **The grid, re-run on the recommended spelling** (`benchmarks/bench_vs_yastn.py --arm
+  tenet-sites`, which now spells it `h.materialize()`), against M64b's own `tenet-sites`
+  column, same machine:
+
+  | model | N | chi | steady M67 | steady M64b | ratio | E | dE against M64b |
+  |---|---|---|---|---|---|---|---|
+  | Heisenberg U(1) | 32 | 64 | 0.60 s | 0.55 s | 1.09× | -13.997315618007 | 2e-13 |
+  | Heisenberg U(1) | 32 | 256 | 0.95 s | 0.91 s | 1.05× | -13.997315618224 | 4e-13 |
+  | Hubbard fZ2 | 16 | 64 | 0.31 s | 0.30 s | 1.02× | -12.541897370651 | 3e-13 |
+  | Hubbard fZ2 | 16 | 256 | 3.44 s | 3.40 s | 1.01× | -12.541952156541 | 5e-13 |
+
+  Realized bond dimensions match M64b's at every point and the energies agree to the last
+  digit M64b printed; the `dE` column is that printing precision, not a disagreement. The
+  1–9 % on the walls is run-to-run spread on a laptop, and it is below M64b's own
+  arm-to-arm gaps by more than an order of magnitude.
+
+  **What the lattice path gives up, measured rather than asserted.** `edge_blocks` is
+  `None` there, so `Env.heff2_families` has no families to resolve and returns the single
+  vector `H_eff aa`; M61 Stage C's perturbative noise becomes a one-vector mixer. Stage C's
+  own lattice table, re-run on both representations (U(1) Heisenberg N=20 from the `D=1`
+  Neel product seed, `chi=24`, noise on for the first five of eight sweeps — the symbolic
+  columns reproduce Stage C's published table digit for digit):
+
+  | sweep | none | wfn 1e-5 | pert 1e-5, symbolic | pert 1e-5, site tensors | pert 1e-4, symbolic | pert 1e-4, site tensors |
+  |---|---|---|---|---|---|---|
+  | 1 | -8.605141831 | -8.605141724 | **-8.650923250** | -8.605607266 | **-8.655765651** | -8.605104134 |
+  | 2 | -8.681922862 | -8.681922679 | -8.682443457 | -8.681922983 | -8.682456851 | -8.681880637 |
+  | 3 | -8.682473217 | -8.682473215 | -8.682473209 | -8.682473217 | -8.682473193 | -8.682473208 |
+  | 4 | -8.682473226 | -8.682473225 | -8.682473209 | -8.682473226 | -8.682473193 | -8.682473226 |
+  | 8 | -8.682473226 | -8.682473226 | -8.682473226 | -8.682473226 | -8.682473226 | -8.682473226 |
+  | wall s | 7.2 / 2.8 | 4.7 / 2.3 | 6.9 | 2.5 | 7.5 | 3.2 |
+
+  **What is lost is the first-sweep head start, and nothing else.** On the symbolic path
+  the aimed perturbation puts sweep 1 at 5.1e-2 and 4.6e-2 below every other column, which
+  is exactly what Stage C reported; on the site-tensor path that is gone — the single
+  vector is `H_eff aa` itself, which is not a *resolution* of anything and enriches the
+  bond no better than the plain sweep. By sweep 3 the two representations agree to 1e-8 and
+  by sweep 4 both are at -8.682473226, the same converged energy every column reaches.
+  Stage C had already measured the head start spent by sweep 3 on this model, "because at
+  `chi=24` this model is not bond-limited and the plain sweep gets there on its own"; the
+  re-run says the same thing from the other side. So the weaker mixer costs a sweep of head
+  start and no accuracy here, and it is **not** a reason to keep a finite-range lattice
+  Hamiltonian symbolic. It stays a real reason for a **bond-limited** run, which is what
+  Stage C's N2 K=16 column measures and which lives in the lane that keeps its description
+  anyway — and that is the honest form of "keep the symbolic route reachable, rather than
+  default to it" the issue asked for.
+
+  **The quantum-chemistry lane is untouched.** `from_arrays`, `from_terms` and
+  `from_entries` all still return an operator carrying its description, so N2 at `K=16`
+  takes the prepared path exactly as before; `tests/network/test_materialize.py` asserts
+  that routing directly, by counting calls to the two module globals `Env.heff2` chooses
+  between, rather than inferring it from `h.edges`. `cutoff=None` behaviour is unchanged in
+  every respect: it selects which *operator* is built and is orthogonal to which
+  representation is handed to the engine.
+
+  **Public surface.** One addition, `MPO.materialize()`. No signature changed, no default
+  changed, no keyword added, no existing test edited. `benchmarks/bench_vs_yastn.py`'s
+  `tenet-sites` arm now spells `h.materialize()` where it spelled `MPO(h.sites)` — the same
+  object, in the name the milestone gives it, so the grid above measures the recommended
+  spelling and not a lookalike.
+
 
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic

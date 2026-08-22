@@ -41,10 +41,31 @@ h = MPO.from_arrays(
         ("S+ S-", bond, [0.5] * (n - 1)),
         ("S- S+", bond, [0.5] * (n - 1)),
     ],
-)
+).materialize()
 psi = MPS.product(site.phys, [U1Sector(1 if i % 2 else -1) for i in range(n)])
 out = dmrg_(psi, h, chi=64)
 ```
+
+## `.materialize()` — say it once, on every lattice model
+
+The `.materialize()` on the end is not decoration and it is the one line of this page to
+carry away. A builder hands back an operator that keeps its **symbolic** description — the
+finite-state machine the terms were assembled into — and
+[`Env.heff2`](../api/network.md) runs a symbolic operator on the prepared, block2-shaped
+engine: complementary operators assembled per bond, the sum dispatched term family by term
+family. That machinery is how an ab initio Hamiltonian with `O(K^4)` terms is made to fit
+at all. On a **finite-range lattice model**, whose MPO bond is five or eight wide, it is
+measured at **1.6–2.1× per sweep with nothing bought back**, while the plain site tensors
+run at 1.10–1.28× YASTN. `materialize()` returns the same operator holding those site
+tensors, and the sweep takes that path.
+
+So: a chain with nearest- or next-nearest-neighbour terms — every model on this page —
+ends its build with `.materialize()`. A Hamiltonian whose bond is in the hundreds or
+thousands, which in practice means quantum chemistry, leaves it off. Nothing is decided at
+run time and no threshold is probed anywhere: the representation the operator is in when
+you hand it to `dmrg_` *is* the choice, exactly as `cutoff=None` versus a float is already
+the choice of which operator gets built. The grid behind the numbers is `docs/design.md`
+"M64b" and "M67".
 
 A block's first entry is an *expression*: the operator names, whitespace-separated, one
 site index per name. That is why the names are the field's own symbols — `"Sz Sz"` is
@@ -82,7 +103,7 @@ for flavour in ("up", "dn"):
     expr = f"c+_{flavour} c_{flavour}"
     blocks += [(expr, fwd, [-1.0] * (n - 1)), (expr, bwd, [-1.0] * (n - 1))]
 blocks.append(("n_up n_dn", [(m, m) for m in range(n)], [u] * n))
-h = MPO.from_arrays(n, site.ops, blocks)
+h = MPO.from_arrays(n, site.ops, blocks).materialize()
 ```
 
 The last block is worth a look: `"n_up n_dn"` names two operators on two *coincident*
@@ -111,7 +132,8 @@ term:
 from tenet.network import MPO
 
 site = spin_half(SU2)
-h = MPO.from_terms(n, [(1.0, [(site.ops["S.S"], (i, i + 1))]) for i in range(n - 1)])
+terms = [(1.0, [(site.ops["S.S"], (i, i + 1))]) for i in range(n - 1)]
+h = MPO.from_terms(n, terms).materialize()
 ```
 
 `MPO.from_terms` splits it with an SVD and the graded MPO bond comes out of that SVD —
@@ -138,7 +160,7 @@ w = {                      # the Heisenberg W, exactly the eight non-zero channe
     (0, 3): sz,        (3, -1): sz,
     (-1, -1): None,        # I  -- the term is finished
 }
-h = MPO.from_entries([w] * 8)
+h = MPO.from_entries([w] * 8).materialize()
 ```
 
 `0` is the `IdL` channel of a bond and `-1` its `IdR` channel, at every bond, the way a
@@ -153,15 +175,17 @@ bond `0` keeps only `IdL` and the last bond only `IdR`: the same bulk mapping se
 first and last site too.
 
 What it produces is the *same* edge description a term list produces, so
-[`Env.heff2`](../api/network.md) cannot tell the two apart and both run on its one
-prepared engine path.
+[`Env.heff2`](../api/network.md) cannot tell the two apart and both route the same way —
+which is why this one gets the same `.materialize()` as the rest of the page.
 
 [`MPO.from_w`](../api/network.md) is the other hand-build entry and it is unchanged. Use
 it when the `W` arrives as a **dense array** — out of a paper, out of another library —
 because then the entries are numbers, no charge can be recovered from them, and you must
 supply the bond grading yourself. It is also what `examples/heisenberg_walkthrough.py`
 leads with, because writing the 5×5 out is what teaches what an MPO *is*. The price is
-that its result carries no symbols and takes `Env.heff2`'s compatibility entry instead.
+that its result carries no symbols. On a lattice model that is not a price at all —
+it is where `.materialize()` puts every other builder's output anyway — but it does mean
+there is no symbolic route left if you ever want one.
 
 | you have | use |
 |---|---|
@@ -169,6 +193,13 @@ that its result carries no symbols and takes `Env.heff2`'s compatibility entry i
 | many terms over a few patterns | `MPO.from_arrays` |
 | a `W` you are writing by hand | `MPO.from_entries` |
 | a `W` that is already a dense array | `MPO.from_w` |
+
+and then, orthogonally to that choice:
+
+| your Hamiltonian | what to hand `dmrg_` |
+|---|---|
+| a finite-range lattice model | `builder(...).materialize()` |
+| quantum chemistry, or any bond in the thousands | the builder's result as it comes |
 
 ## What is not here
 

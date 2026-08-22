@@ -661,39 +661,57 @@ class Env:
 
         Notes
         -----
-        **The engine is one path: the prepared, symbolic, term-family matvec.** Every MPO
-        that carries an edge description -- [from_terms][tenet.network.MPO.from_terms] and
-        [from_arrays][tenet.network.MPO.from_arrays], at *either* cutoff since #204 --
-        goes through it, and **later parallelism and accelerator work attaches here and
-        nowhere else**. This is block2's engine design in tenet's form: its
-        ``EffectiveHamiltonian`` never forms the effective Hamiltonian and instead
-        dispatches the symbolic operator sum term by term against the wavefunction
-        (``effective_hamiltonian.hpp``:230-243). There is no runtime dispatch here either
-        -- no bond-width threshold, no ``chi`` threshold, no ``path=`` keyword.
+        **Two paths, and the operator's representation is which one, decided at build
+        time.** An MPO that carries an edge description --
+        [from_terms][tenet.network.MPO.from_terms],
+        [from_arrays][tenet.network.MPO.from_arrays] and
+        [from_entries][tenet.network.MPO.from_entries], at *either* cutoff since #204 --
+        takes the prepared, symbolic, term-family matvec. An MPO that carries only site
+        tensors -- [from_w][tenet.network.MPO.from_w], an ``MPO`` built from bare tensors,
+        and whatever [MPO.materialize][tenet.network.MPO.materialize] hands back -- takes
+        the site-tensor contraction. **There is no runtime dispatch either way**: no
+        bond-width threshold, no ``chi`` threshold, no probe, no ``path=`` keyword. The
+        caller states the representation when the operator is built, exactly as
+        ``from_terms``' ``cutoff=None`` against a float already states which operator is
+        built.
 
-        **The site-tensor branch below is not a second engine; it is a compatibility entry.**
-        It exists for an MPO that carries no symbols at all --
-        [from_w][tenet.network.MPO.from_w] and an ``MPO`` built from bare site tensors --
-        and nothing else routes to it. Recovering symbols from a numeric ``W`` is not
-        possible in general: #141 measured that a compressed ``W`` retains no edge
-        structure to recover. So the entry cannot be closed without refusing
-        externally-built MPOs, which is a decision about the public surface and not one
-        this milestone makes. block2 has no equivalent because block2 is a
-        quantum-chemistry *program* and never receives an operator from outside; tenet is
-        a library, and essentially every MPO in the literature is written as a ``W``
-        matrix. Adopt block2's engine, not block2's role.
+        **The rule, in terms a caller reads off their own model** (#251, on the three-arm
+        grid in ``docs/design.md`` "M64b"):
 
-        **The knob that does exist is ``cutoff``, at build time.** ``cutoff=None`` keeps
-        the exact finite-state machine, whose bond is already minimal for a finite-range
-        lattice model and whose identity channels ride ``idmap``/``spec_op`` with no ``W``
-        contraction at all; a float ``cutoff`` compresses, which is what an ab initio
-        Hamiltonian needs and which -- because the rotation mixes the open states -- turns
-        every open state into an operator-carrying one. Both then run through this one
-        path. Measured at N=20 U(1) Heisenberg, ``chi=64``: 1.96 s at ``cutoff=None``
-        against 3.53 s at ``1e-13``. So a lattice model wants ``cutoff=None`` and quantum
-        chemistry wants the float, and the caller states which at build time rather than
-        the engine guessing at run time -- which is also how block2 takes its algorithm
-        choice. ``docs/design.md`` "Milestone 39" carries the ``chi`` scaling grid.
+        * a **finite-range lattice model** -- a narrow MPO bond, ``D_w`` of order ten --
+          wants the **site-tensor path**, spelled ``h.materialize()``. Its prepared
+          machinery costs 1.63-2.06x per steady sweep on U(1) Heisenberg and 1.85-2.07x
+          on the spinful Hubbard chain and buys nothing back at that width, while the
+          site-tensor path runs at 1.10-1.28x YASTN;
+        * **quantum chemistry** -- ``O(K^4)`` terms, a bond in the thousands -- wants the
+          **description kept**, which is every builder's default. There the prepared path
+          is 0.97x the site-tensor one at ``chi = 64`` and is the only route that fits
+          ``K = 26`` in memory at all ("Milestone 39").
+
+        **#218's single-path decision stands at its own scope, which is symbolic
+        operators.** It settled that a symbolic operator gets *one* engine -- the prepared
+        term-family matvec, at either cutoff, with **later parallelism and accelerator
+        work attaching there and nowhere else** -- and that is block2's engine design in
+        tenet's form: its ``EffectiveHamiltonian`` never forms the effective Hamiltonian
+        and instead dispatches the symbolic operator sum term by term against the
+        wavefunction (``effective_hamiltonian.hpp``:230-243). What #218 did not decide,
+        and #251 settles, is which representation a *lattice* Hamiltonian should be in
+        before it reaches an engine at all. So the site-tensor path is **the lattice
+        lane's engine**, not a compatibility entry -- it is also still what an
+        externally-built MPO gets, because symbols cannot be recovered from a numeric
+        ``W`` in general (#141 measured that a compressed ``W`` retains no edge structure),
+        and block2 has no equivalent because block2 is a quantum-chemistry *program* that
+        never receives an operator from outside. Adopt block2's engine, not block2's role.
+
+        **``cutoff`` is the other build-time knob, and it is orthogonal to this one.**
+        ``cutoff=None`` keeps the exact finite-state machine, whose bond is already minimal
+        for a finite-range lattice model and whose identity channels ride
+        ``idmap``/``spec_op`` with no ``W`` contraction at all; a float ``cutoff``
+        compresses, which is what an ab initio Hamiltonian needs and which -- because the
+        rotation mixes the open states -- turns every open state into an operator-carrying
+        one. Measured on the prepared path at N=20 U(1) Heisenberg, ``chi=64``: 1.96 s at
+        ``cutoff=None`` against 3.53 s at ``1e-13``. ``docs/design.md`` "Milestone 39"
+        carries the ``chi`` scaling grid.
 
         **The path in detail.** The two
         environments are folded into the site blocks **once per bond** (``_build2``,
@@ -706,21 +724,21 @@ class Env:
         [sweep_][tenet.network.sweep_] maintains at every bond -- as the standing
         precondition. It is the one thing this path asks of its caller, and it is not
         chosen at run time either: a caller whose environments come from a differently
-        gauged state has to hand over ``MPO(h.sites)``, which throws the description away
-        and takes the branch below. The apply itself is compiled through ``compile=``
+        gauged state hands over ``h.materialize()``, which drops the description and takes
+        the branch below. The apply itself is compiled through ``compile=``
         once per structure
         key -- the bond, and the tuple of ``aa``'s legs, which between them fix every leg
         the traced graph sees -- and the cache holds one entry per bond, its callable
         kept across a revisit and retraced only when the key moves.
 
-        **The compatibility entry**, for an MPO with no description at all
-        ([from_w][tenet.network.MPO.from_w] or bare site tensors), and no accelerator work
-        targets it: right environment, then
+        **The site-tensor path**, for an MPO with no description at all
+        ([from_w][tenet.network.MPO.from_w], bare site tensors, or
+        [MPO.materialize][tenet.network.MPO.materialize]): right environment, then
         ``W2``, then ``W1``, then the left environment -- YASTN's ``Env_mps_mpo_mps.Heff2`` order
         (``_env.py``:496-518) with ``precompute=False``, which ``_dmrg.py``:102-108
         documents as ``O(D^3 M d + D^2 M^2 d^2)``.
 
-        The engine and the compatibility entry agree as operators but sum their terms in
+        The two paths agree as operators but sum their terms in
         a different order, so they agree to solver precision, never bitwise. In and out
         on ``(left bond OUT, p
         OUT, q OUT, right bond IN)``: the *bra* legs of the two environments become the
@@ -797,10 +815,22 @@ class Env:
         perturbative noise uses. It is a **read**, not a second engine: the same
         ``_prepare2`` cache, the same contractions, only not added up.
 
-        The compatibility entry (an MPO with no edge description) has no families to
+        The site-tensor path (an MPO with no edge description, which since #251 is the
+        lattice lane's own spelling -- see
+        [MPO.materialize][tenet.network.MPO.materialize]) has no families to
         resolve, so it returns the single vector ``(heff2(n, aa),)`` -- the operator's own
         action on the state, unresolved. A one-vector mixer is weaker than a
         family-resolved one, and it is what an operator that carries no symbols can offer.
+        M67 re-measured M61 Stage C's lattice table on this path and states the cost
+        exactly: at N=20 U(1) Heisenberg from a Neel seed, ``chi=24``, the perturbative
+        columns lose their **first-sweep head start** -- 5.1e-2 below every other column
+        on the symbolic path, gone here -- and reach the **same converged energy**,
+        -8.682473226, by sweep 4, as every other column does. Stage C had already measured
+        that head start spent by sweep 3 because the model is not bond-limited at that
+        ``chi``. So on a finite-range lattice model the weaker mixer costs a sweep of head
+        start and no accuracy, which is not a reason to keep such a Hamiltonian symbolic;
+        an operator that is bond-limited is a different case and keeps its description.
+        ``docs/design.md`` "M67" carries both columns.
 
         Not compiled: ``compile=`` wraps the *summed* matvec, which is what a Krylov solve
         calls thousands of times; this is called once per bond visit.
