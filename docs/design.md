@@ -5900,8 +5900,8 @@ left that list with M61 Stage D above.
   | `from_matrices` (sector matrix → blocks) | 0.22 | 0.22 | 1.57 |
   | axis transposes (NumPy views, no copy) | 0.17 | 0.16 | 0.99 |
   | plan lookup + composability check | 0.11 | 0.10 | 0.08 |
-  | accounted | 10.85 (91 %) | 9.11 (89 %) | 4.03 (79 %) |
-  | residual (`einsum` parsing, object construction, the per-term loops) | 1.10 | 1.07 | 1.09 |
+  | accounted | 10.85 (91 %) | 9.14 (90 %) | 4.03 (79 %) |
+  | residual (`einsum` parsing, object construction, the per-term loops) | 1.10 | 1.04 | 1.09 |
 
   The coefficient row counts the accumulation loop that applies the coefficient, so the
   two control columns are not zero: they are that loop running with **no** coefficient
@@ -5916,7 +5916,7 @@ left that list with M61 Stage D above.
   | **coefficient pass** | **0.075** | **0.005** | **0.030** |
   | `from_matrices` | 0.07 | 0.08 | 0.54 |
   | axis transposes (views) | 0.05 | 0.05 | 0.31 |
-  | accounted | 1.06 (82 %) | 1.04 (80 %) | 1.52 (81 %) |
+  | accounted | 1.10 (85 %) | 1.04 (80 %) | 1.52 (81 %) |
 
   The same two calls on YASTN, wrapped the same way in a scratchpad harness (its
   `tensordot` at the default `fuse_contracted` policy is: build the merge meta, one
@@ -5960,8 +5960,8 @@ left that list with M61 Stage D above.
   *contracted* legs and lets the output axis order fall out of `tensordot`, so many of its
   merges are contiguous and it never unmerges at all. On the Hubbard geometry — two coupled
   sectors, sixteen blocks of ~98 k doubles — that is bandwidth, and it is 5.99 ms against
-  YASTN's 2.27 ms. On the Heisenberg geometry — 138 blocks of ~2.4 k doubles — the same
-  bytes are moved in forty times more pieces, both libraries are per-block-Python-bound
+  YASTN's 2.27 ms. On the Heisenberg geometry — 138 blocks of ~2.4 k doubles, forty times
+  smaller — both libraries are per-block-Python-bound instead
   (YASTN issues 457 `gemm` calls where tenet issues 35), and tenet comes out ahead. **The
   "fZ2 excess over U(1)" is therefore mostly a block-geometry effect measured on two models
   that differ in more than their grading**, not a fermionic one.
@@ -6021,7 +6021,9 @@ left that list with M61 Stage D above.
   `transpose`, `repartition`, `compose` and `to_matrices` with probe-carrying clones in a
   scratchpad harness; it is deliberately not committed, because an in-repo copy of four
   function bodies would rot at the first change to any of them, and the Z2 control run
-  reproduces the only claim that needs no probe at all.
+  reproduces the only claim that needs no probe at all. The tree measured is M67's, before
+  M65 landed; M65 touches how a structure records its pattern, not how many bytes a block
+  assembly moves, so the steady-state split above is not waiting on it.
 
 
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
