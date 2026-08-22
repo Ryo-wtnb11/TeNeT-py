@@ -5878,6 +5878,151 @@ left that list with M61 Stage D above.
   public surface moved, and #218's single-path engine is untouched — there is no dispatch
   on churn here, and there is none anywhere else either.
 
+- **M66** — **measured, not shipped**: the site-tensor path's per-sweep factor against
+  YASTN, attributed operation by operation inside one steady `_heff2_full` and one steady
+  `Env.update_`. No `src/` change. The headline is a correction to the question: **the fZ2
+  excess over U(1) is not the fermionic sign mechanism.** The braiding costs 1.17×; the
+  rest of it is a provider-independent cost in the shared contraction path that shows on
+  the Hubbard block geometry and hides on the Heisenberg one.
+
+  **The two fixtures**, `bench_vs_yastn.py`'s, on the site-tensor path (`h.materialize()`),
+  after two sweeps so the bond spaces are the ones `chi` names, mean of five calls, one
+  process, single-threaded BLAS. Every number below is one call, in milliseconds.
+
+  | | tenet fZ2 Hubbard N=16 | tenet Z2 control | tenet U(1) Heisenberg N=32 |
+  |---|---|---|---|
+  | `_heff2_full` wall | 11.95 | 10.18 | 5.12 |
+  | `to_matrices` (block → sector matrix) | 5.99 | 6.04 | 1.09 |
+  |  · of which strided reshape | 3.04 | 3.14 | 0.45 |
+  |  · of which `concatenate` | 2.80 | 2.66 | 0.30 |
+  | backend `matmul` | 2.75 | 2.61 | 0.20 |
+  | **coefficient pass** (R-coefficient / twist / Frobenius–Schur) | **1.62** | **0.02** | **0.09** |
+  | `from_matrices` (sector matrix → blocks) | 0.22 | 0.22 | 1.57 |
+  | axis transposes (NumPy views, no copy) | 0.17 | 0.16 | 0.99 |
+  | plan lookup + composability check | 0.11 | 0.10 | 0.08 |
+  | accounted | 10.85 (91 %) | 9.11 (89 %) | 4.03 (79 %) |
+  | residual (`einsum` parsing, object construction, the per-term loops) | 1.10 | 1.07 | 1.09 |
+
+  The coefficient row counts the accumulation loop that applies the coefficient, so the
+  two control columns are not zero: they are that loop running with **no** coefficient
+  term at all (0 of 316 on Z2, 0 of 2406 on U(1), against 60 of 316 on fZ2), which is
+  the loop's own Python and nothing else.
+
+  | | tenet fZ2 | tenet Z2 control | tenet U(1) |
+  |---|---|---|---|
+  | `Env.update_(to='last')` wall | 1.30 | 1.31 | 1.88 |
+  | `to_matrices` | 0.59 | 0.55 | 0.49 |
+  | backend `matmul` | 0.28 | 0.32 | 0.09 |
+  | **coefficient pass** | **0.075** | **0.005** | **0.030** |
+  | `from_matrices` | 0.07 | 0.08 | 0.54 |
+  | axis transposes (views) | 0.05 | 0.05 | 0.31 |
+  | accounted | 1.06 (82 %) | 1.04 (80 %) | 1.52 (81 %) |
+
+  The same two calls on YASTN, wrapped the same way in a scratchpad harness (its
+  `tensordot` at the default `fuse_contracted` policy is: build the merge meta, one
+  transpose-and-merge per operand into the flat data buffer, one `backend.dot` over the
+  meta list, and — because the outgoing legs are not merged — **no unmerge**):
+
+  | | YASTN fZ2 Hubbard N=16 | YASTN U(1) Heisenberg N=32 |
+  |---|---|---|
+  | `Heff2` wall | 5.04 | 5.34 |
+  | transpose-and-merge (8 merges) | 2.27 | 3.02 |
+  | `backend.dot` | 2.01 (56 gemms) | 1.97 (457 gemms) |
+  | merge/dot meta | 0.04 | 0.04 |
+  | accounted | 4.32 (86 %) | 5.03 (94 %) |
+  | | | |
+  | `update_env_(to='last')` wall | 1.04 | 2.24 |
+  | transpose-and-merge (6 merges) | 0.38 | 1.20 |
+  | `backend.dot` | 0.42 (20 gemms) | 0.79 (182 gemms) |
+  | accounted | 0.81 (78 %) | 2.02 (90 %) |
+
+  **The ratios, operation against operation.** `_heff2_full` / `Heff2` is **2.37× on fZ2**
+  and **0.96× on U(1)** — tenet is *faster* than YASTN on the U(1) fixture's matvec.
+  `update_` is 1.24× and 0.84×. Both calls over-predict M64b's 1.71× / 1.12× steady sweep,
+  as they must: a sweep also runs the SVD and the Lanczos recurrence, and on N=16 half the
+  bonds are far below `chi`.
+
+  **The Z2 control is what settles the attribution.** The middle column above is the same
+  Hubbard fixture graded by the *bosonic* `Z2` provider: identical block shapes, identical
+  block counts, identical contraction schedule, identical flop count — every coefficient 1.
+  It is not the Hubbard model any more, and it is not meant to be; it is the only way to
+  price the braiding without also changing the geometry. `_heff2_full` goes 11.95 → 10.18,
+  so **the whole fermionic surcharge is 1.77 ms, 1.17×**, and it matches the measured
+  coefficient pass (1.62 ms) within the run-to-run spread. On `Env.update_` the surcharge
+  is 1.30 → 1.31, i.e. **zero within noise**. Meanwhile the bosonic control is still 2.02×
+  YASTN. So of the "1.5× fZ2 excess over U(1)" this issue was rescoped onto, the fermionic
+  mechanism accounts for 1.17× and the remaining 2.0× is provider-independent.
+
+  **What the remaining 2.0× is, and why U(1) does not show it.** It is the block-assembly
+  round trip. tenet lowers every pairwise contraction to `to_matrices` → `matmul` →
+  `from_matrices`; the assembly reshapes each block out of a transposed NumPy *view* (a
+  strided copy) and then concatenates the pieces (a second copy). YASTN merges only the
+  *contracted* legs and lets the output axis order fall out of `tensordot`, so many of its
+  merges are contiguous and it never unmerges at all. On the Hubbard geometry — two coupled
+  sectors, sixteen blocks of ~98 k doubles — that is bandwidth, and it is 5.99 ms against
+  YASTN's 2.27 ms. On the Heisenberg geometry — 138 blocks of ~2.4 k doubles — the same
+  bytes are moved in forty times more pieces, both libraries are per-block-Python-bound
+  (YASTN issues 457 `gemm` calls where tenet issues 35), and tenet comes out ahead. **The
+  "fZ2 excess over U(1)" is therefore mostly a block-geometry effect measured on two models
+  that differ in more than their grading**, not a fermionic one.
+
+  The bandwidth claim is measured, not inferred: on one block of this fixture's size a
+  contiguous NumPy copy is 9.6 µs, a mild transposed copy 14–17 µs and a reversed one
+  85 µs, while an identity permutation costs nothing at all because no copy happens.
+
+  **The four candidates, each with its number.**
+
+  - *Contraction order and intermediate sizes* — **refuted**. The two chains are the same
+    four pairwise contractions with the same intermediates: `[128, 4, 4, 6, 128]` three
+    times then `[128, 4, 4, 128]`, at 16/16/16/8 blocks on fZ2, and
+    `[128, 2, 2, 5, 128]` three times then `[128, 2, 2, 128]` at 138/138/138/47 on U(1) —
+    identical on both sides, same flop count, no intermediate formed by one and not the
+    other. They differ only in the intermediates' *axis order*, which is free for YASTN
+    and is what makes its merges cheaper.
+  - *The coefficient pass* — **confirmed, and it is an extra pass over memory rather than
+    a per-block scalar multiply that rides along.** 1.62 ms of 11.95 (13.6 %) in
+    `_heff2_full`, 0.075 ms of 1.30 (5.8 %) in `update_`. Sixty of the call's 316
+    permutation and bend terms carry a coefficient, and each one materialises a fresh
+    array from a transposed view at ~26 µs per block against ~10 µs for a contiguous copy
+    of the same block. The Z2 control's 1.17× is the same number reached from the other
+    side.
+  - *`from_dense` / `to_dense` / `concatenate` on the hot path* — **`from_dense`/`to_dense`
+    refuted: no call site.** The only `from_dense` in `env.py` is `_drop`'s ones-cap and
+    it is reached from `_cores2` alone; neither `_heff2_full` nor `update_`'s site-tensor
+    branch, nor anything under `tensordot`, densifies at all. `concatenate` **confirmed**, at 2.80 ms of 11.95 (23 %), inside
+    `to_matrices`. A NumPy-only `zeros`-plus-slice-assignment variant of exactly the same
+    assembly measures 5.18 ms against the concatenating one's 5.99, so the
+    concatenate-shaped design costs **0.8 ms, 7 % of the call** — and the other 5.2 ms is
+    the strided copy itself, which is not avoidable by changing how the pieces are joined.
+    That 0.8 ms is the price of `map_view.py`'s stated rule (no zeros, no scatter, no
+    in-place writes, so the module stays JAX-traceable), and it is now priced rather than
+    assumed.
+  - *`_build2` / the refold* — **not applicable on this path**, as the rescope expected.
+    `Env.heff2` routes on `self.h.edges is not None` and `MPO.materialize()` drops the
+    description, so `_prepare2`, `_build2` and `_cores2` are never entered: zero calls
+    measured in either fixture.
+
+  **Why this stops here.** The issue's own rule was to fix only a single mechanism carrying
+  most of the excess and reachable locally in the shared contraction path. The fermionic
+  mechanism is neither: at 1.17× it is not most of anything, and it is spread over sixty
+  blocks in two operations (`transpose`'s permutation terms and `repartition`'s bend
+  terms), each paying a genuine per-block coefficient because that is what a categorical
+  engine is — YASTN pays no sign in `Heff2` at all, having folded the Jordan-Wigner string
+  into its MPO once at construction through `swap_gate`. **That difference is the design,
+  not a defect, and 1.17× per matvec is what it costs.** The larger, provider-independent
+  2.0× has a named mechanism and a measured size but is not this issue's target and is not
+  local — 5.2 of its 5.99 ms is the strided copy, which only a persisted matrix layout
+  between contractions would remove, and `ops/map.py` records that as already prototyped
+  and refused for a zero cache-hit rate in real `tensordot` chains.
+
+  **What is not measured.** Every number is NumPy on one machine at `chi=128`; the fZ2
+  point is N=16 and the U(1) point N=32, as the rescope fixed them, so nothing here speaks
+  to the χ- or N-scaling that M64 already established as flat. The instrumentation replaces
+  `transpose`, `repartition`, `compose` and `to_matrices` with probe-carrying clones in a
+  scratchpad harness; it is deliberately not committed, because an in-repo copy of four
+  function bodies would rot at the first change to any of them, and the Z2 control run
+  reproduces the only claim that needs no probe at all.
+
 
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
