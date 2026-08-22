@@ -52,10 +52,10 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
-from tenet.leg import IN, OUT
+from tenet.leg import IN, OUT, Leg, Side
 from tenet.ops.permutation import permutation_plan
 from tenet.space import GradedSpace
-from tenet.structure import TensorStructure
+from tenet.structure import TensorStructure, _pattern
 from tenet.symmetry.base import (
     BendingCoefficients,
     CapabilityError,
@@ -119,7 +119,33 @@ def bend_plan(structure: TensorStructure, axis: int) -> BendPlan:
     """Plan bending ``axis`` of ``structure``. Cached: repeat calls return one object.
 
     ``axis`` must be the last leg of its own side; [bend][tenet.bend] validates that.
+
+    The **body** is cached one level down, on ``_pattern(structure)``: block indices and
+    bending coefficients read no degeneracy, so structures that differ only in degeneracy
+    share one plan and this entry holds nothing but ``new_structure`` (#248).
     """
+    plan = _pattern_bend_plan(_pattern(structure), axis)
+    legs = _bent_legs(structure, axis)
+    if legs == plan.new_structure.legs:
+        return plan
+    return replace(plan, new_structure=TensorStructure(legs))
+
+
+def _on_side(leg: Leg, side: Side) -> Leg:
+    """``leg`` on ``side``: itself, or bent — ``side`` and ``dual`` both flipped."""
+    return leg if leg.side is side else replace(leg, side=side, dual=not leg.dual)
+
+
+def _bent_legs(structure: TensorStructure, axis: int) -> tuple[Leg, ...]:
+    """``structure``'s legs with ``axis`` flipped in ``side`` and ``dual``, moved last."""
+    leg = structure.legs[axis]
+    moved = _on_side(leg, IN if leg.side is OUT else OUT)
+    return (*(other for i, other in enumerate(structure.legs) if i != axis), moved)
+
+
+@cache
+def _pattern_bend_plan(structure: TensorStructure, axis: int) -> BendPlan:
+    """[bend_plan][tenet.bend_plan]'s body, on a degeneracy-free structure."""
     _refuse(structure, axis)
     provider = structure.provider
     leg = structure.legs[axis]
@@ -295,6 +321,28 @@ def repartition_plan(
     structure: TensorStructure, outputs: tuple[int, ...], inputs: tuple[int, ...]
 ) -> RepartitionPlan:
     """Plan the whole ``repartition``. Cached: repeat calls return one object.
+
+    The **body** is cached one level down, on ``_pattern(structure)`` (#248): the composed
+    permutation and the composed block map are functions of the legs' sectors, sides and
+    duals alone, and this entry holds only ``new_structure`` — ``structure``'s own legs in
+    the requested order, with ``side`` and ``dual`` flipped on each leg that crossed.
+    Without that split a growing U(1) bond rebuilds the whole transpose-bend-transpose
+    chain at every bond whose degeneracies moved, which is where M65 found the first
+    sweeps of an `N = 64` chain going.
+    """
+    plan = _pattern_repartition_plan(_pattern(structure), outputs, inputs)
+    want = {ax: OUT for ax in outputs} | {ax: IN for ax in inputs}
+    legs = tuple(_on_side(structure.legs[ax], want[ax]) for ax in (*outputs, *inputs))
+    if legs == plan.new_structure.legs:
+        return plan
+    return replace(plan, new_structure=TensorStructure(legs))
+
+
+@cache
+def _pattern_repartition_plan(
+    structure: TensorStructure, outputs: tuple[int, ...], inputs: tuple[int, ...]
+) -> RepartitionPlan:
+    """[repartition_plan][tenet.repartition_plan]'s body, on a degeneracy-free structure.
 
     Walks exactly the chain [repartition][tenet.SymmetricTensor.repartition] used to
     execute — transpose the

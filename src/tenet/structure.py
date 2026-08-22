@@ -26,11 +26,13 @@ genuinely frozen and the cache is shared between equal structures.
 """
 
 from dataclasses import dataclass
+from dataclasses import replace as _replace
 from functools import cache
 from itertools import product
 
 from tenet.fusion_tree import FusionTree, coupled_sectors, fusion_trees
 from tenet.leg import OUT, Leg
+from tenet.space import GradedSpace
 from tenet.symmetry.base import Sector, _DualFusionRules, _HashMemo
 
 __all__ = ["FusionBlockKey", "TensorStructure"]
@@ -309,6 +311,31 @@ class TensorStructure(_HashMemo):
 # --- derived values: module-level caches keyed on the (frozen, hashable) structure ---
 # Simplification: unbounded caches, deliberately — structures are small, few and long-lived,
 # and sharing across equal structures is the point. Swap for lru_cache if that changes.
+#
+# Which key each one takes is load-bearing (#248). A ``GradedSpace`` hashes its
+# degeneracies, so a structure whose bond degeneracies moved is a new key even though its
+# sector set did not — and a DMRG sweep moves them at every bond, every sweep, until the
+# state settles. Everything below that is a function of the *sectors* alone
+# (``_block_order`` and the two tables aligned with it) is therefore keyed on the
+# structure's ``_pattern``, the same legs with every degeneracy 1; only
+# ``_block_shape_table``, which reads the degeneracies, is keyed on the structure itself.
+
+
+@cache
+def _flat(space: GradedSpace) -> GradedSpace:
+    """``space`` with every degeneracy 1 — the part of it a *block set* depends on."""
+    return GradedSpace(space.provider, tuple((a, 1) for a, _ in space.sectors))
+
+
+@cache
+def _pattern(s: TensorStructure) -> TensorStructure:
+    """``s`` with every degeneracy 1, or ``s`` itself when it already is that.
+
+    Two structures share a pattern exactly when they have the same sectors, sides and
+    duals per leg — which is exactly when they have the same ``block_order``.
+    """
+    legs = tuple(_replace(leg, space=_flat(leg.space)) for leg in s.legs)
+    return s if legs == s.legs else TensorStructure(legs)
 
 
 @cache
@@ -327,6 +354,8 @@ def _block_order(s: TensorStructure) -> tuple[FusionBlockKey, ...]:
     rank-0 tree when ``c is p.unit`` and nothing otherwise, so a tensor with no
     IN legs keeps exactly the unit-coupled blocks.
     """
+    if (p := _pattern(s)) is not s:
+        return _block_order(p)
     provider, out_axes, in_axes = s.provider, s.out_axes, s.in_axes
     keys: set[FusionBlockKey] = set()
     for assignment in product(*(leg.sectors for leg in s.legs)):
@@ -344,6 +373,8 @@ def _block_order(s: TensorStructure) -> tuple[FusionBlockKey, ...]:
 
 @cache
 def _index_map(s: TensorStructure) -> dict[FusionBlockKey, int]:
+    if (p := _pattern(s)) is not s:
+        return _index_map(p)
     return {k: i for i, k in enumerate(_block_order(s))}
 
 
@@ -353,6 +384,8 @@ def _axis_sectors_table(s: TensorStructure) -> tuple[tuple[Sector, ...], ...]:
 
     The duality convention is inverted here and nowhere else (``Leg.space_sector``).
     """
+    if (p := _pattern(s)) is not s:
+        return _axis_sectors_table(p)
     out_axes, in_axes = _axes(s)
 
     def row(key: FusionBlockKey) -> tuple[Sector, ...]:
