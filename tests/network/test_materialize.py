@@ -13,10 +13,11 @@ the quantum-chemistry lane depends on. Which branch ran is *instrumented*, the w
 import numpy as np
 import pytest
 
+from tenet import GradedSpace
 from tenet.models import spin_half, spinful_fermion
 from tenet.network import MPO, MPS, Env, dmrg_
 from tenet.network import env as env_module
-from tenet.symmetry import FZ2Sector, U1Sector
+from tenet.symmetry import FZ2Sector, U1Sector, fZ2
 
 # --- the two models, built exactly as the guide builds them ---------------------------
 
@@ -49,7 +50,11 @@ def guide_hubbard(n=6, u=4.0):
         blocks += [(expr, fwd, [-1.0] * (n - 1)), (expr, bwd, [-1.0] * (n - 1))]
     blocks.append(("n_up n_dn", [(m, m) for m in range(n)], [u] * n))
     h = MPO.from_arrays(n, site.ops, blocks)
-    psi = MPS.product(site.phys, [FZ2Sector(i % 2) for i in range(n)])
+    # The d=4 site has degeneracy 2 per parity, so ``MPS.product`` -- which names a basis
+    # vector by sector alone -- cannot seed this one; a random state on a fixed bond does.
+    triv = GradedSpace.new(fZ2, {FZ2Sector(0): 1})
+    mid = GradedSpace.new(fZ2, {FZ2Sector(0): 8, FZ2Sector(1): 8})
+    psi = MPS.random(site.phys, [triv] + [mid] * (n - 1) + [triv], seed=0)
     return h, psi
 
 
@@ -90,7 +95,7 @@ def test_the_guide_lands_a_lattice_user_on_the_site_tensor_path(model, branches)
     thing the caller writes is the ``materialize()`` the guide teaches.
     """
     h, psi = MODELS[model]()
-    out = dmrg_(psi, h.materialize(), chi=16, sweeps=2)
+    out = dmrg_(psi, h.materialize(), chi=16, max_sweeps=2)
     assert branches["sites"] > 0
     assert branches["prepared"] == 0
     assert np.isfinite(out.energy)
@@ -105,7 +110,7 @@ def test_the_builder_without_materialize_still_takes_the_prepared_path(model, br
     network and live in ``benchmarks/``; the routing they depend on is asserted here.
     """
     h, psi = MODELS[model]()
-    dmrg_(psi, h, chi=16, sweeps=2)
+    dmrg_(psi, h, chi=16, max_sweeps=2)
     assert branches["prepared"] > 0
     assert branches["sites"] == 0
 
@@ -117,8 +122,9 @@ def test_materialize_changes_the_path_and_not_the_operator(model):
     sites = h.materialize()
     assert h.edges is not None and sites.edges is None
     assert np.allclose(h.to_dense(), sites.to_dense(), atol=1e-12)
-    a = dmrg_(psi, h, chi=16, sweeps=3)
-    b = dmrg_(psi, sites, chi=16, sweeps=3)
+    # ``dmrg_`` sweeps in place, so each arm gets its own copy of the same seed.
+    a = dmrg_(psi, h, chi=16, max_sweeps=8)
+    b = dmrg_(MODELS[model]()[1], sites, chi=16, max_sweeps=8)
     assert abs(a.energy - b.energy) < 1e-9
 
 

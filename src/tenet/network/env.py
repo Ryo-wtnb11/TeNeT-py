@@ -681,7 +681,7 @@ class Env:
         * a **finite-range lattice model** -- a narrow MPO bond, ``D_w`` of order ten --
           wants the **site-tensor path**, spelled ``h.materialize()``. Its prepared
           machinery costs 1.63-2.06x per steady sweep on U(1) Heisenberg and 1.85-2.07x
-          on the fZ2 Hubbard chain and buys nothing back at that width, while the
+          on the spinful Hubbard chain and buys nothing back at that width, while the
           site-tensor path runs at 1.10-1.28x YASTN;
         * **quantum chemistry** -- ``O(K^4)`` terms, a bond in the thousands -- wants the
           **description kept**, which is every builder's default. There the prepared path
@@ -821,10 +821,16 @@ class Env:
         resolve, so it returns the single vector ``(heff2(n, aa),)`` -- the operator's own
         action on the state, unresolved. A one-vector mixer is weaker than a
         family-resolved one, and it is what an operator that carries no symbols can offer.
-        On the lattice models M67 re-measured it costs nothing: at N=20 U(1) Heisenberg
-        from a Neel seed the perturbative and wavefunction columns reach the same energies
-        on both representations, so the mixer is not a reason to keep a lattice
-        Hamiltonian symbolic. ``docs/design.md`` "M67" carries the table.
+        M67 re-measured M61 Stage C's lattice table on this path and states the cost
+        exactly: at N=20 U(1) Heisenberg from a Neel seed, ``chi=24``, the perturbative
+        columns lose their **first-sweep head start** -- 5.1e-2 below every other column
+        on the symbolic path, gone here -- and reach the **same converged energy**,
+        -8.682473226, by sweep 4, as every other column does. Stage C had already measured
+        that head start spent by sweep 3 because the model is not bond-limited at that
+        ``chi``. So on a finite-range lattice model the weaker mixer costs a sweep of head
+        start and no accuracy, which is not a reason to keep such a Hamiltonian symbolic;
+        an operator that is bond-limited is a different case and keeps its description.
+        ``docs/design.md`` "M67" carries both columns.
 
         Not compiled: ``compile=`` wraps the *summed* matvec, which is what a Krylov solve
         calls thousands of times; this is called once per bond visit.
