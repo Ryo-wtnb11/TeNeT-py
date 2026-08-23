@@ -25,9 +25,11 @@ import sys
 import numpy as np
 import pytest
 
+sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples"))
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples" / "toy_codes"))
 
 import dmrg as example  # noqa: E402
+import heisenberg_walkthrough as walkthrough  # noqa: E402
 
 from tenet import GradedSpace  # noqa: E402
 from tenet.network import MPO, MPS, Sweep, dmrg_, local_op  # noqa: E402
@@ -90,7 +92,7 @@ def test_the_mpskit_hubbard_fixture_survives_the_mixer():
 
 def _su2_model():
     phys = GradedSpace.new(SU2, {SU2Sector(1): 1})
-    _, sz, sp, sm = example._spin_half()
+    _, sz, sp, sm = walkthrough._spin_half()
     ss = local_op(np.kron(sz, sz) + (np.kron(sp, sm) + np.kron(sm, sp)) / 2, phys=phys)
     tri = GradedSpace.new(SU2, {SU2Sector(0): 1})
     mid = GradedSpace.new(SU2, {SU2Sector(0): 2, SU2Sector(1): 2, SU2Sector(2): 1})
@@ -114,7 +116,7 @@ def _fermionic_model():
 
 def _mixed_model():
     op_sz, op_sp, op_sm = prepared._ops()
-    _, sz, _, _ = example._spin_half()
+    _, sz, _, _ = walkthrough._spin_half()
     terms = [
         (0.5, [(op_sp, 1), (op_sm, 4)]),
         (0.7, [(local_op(np.kron(sz, sz), phys=example.PHYS), (0, 3))]),
