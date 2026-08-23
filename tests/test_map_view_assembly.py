@@ -8,9 +8,11 @@ and that its copy really is one copy, i.e. that the destination reshape is a vie
 not a discarded temporary, which would make every write silently vanish.
 """
 
+import autoray as ar
 import numpy as np
 import pytest
 
+import tenet.map_view as map_view_module
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.map_view import _concatenated, _tables, from_matrices, map_layout, to_matrices
 from tenet.symmetry import SU2, U1, SU2Sector, Trivial, TrivialSector, U1Sector
@@ -93,3 +95,52 @@ def test_the_destination_reshape_is_a_view_not_a_temporary(legs):
 # holds a hygiene fence making itself the only test module allowed to import torch, and
 # it is an existing test. Its own suite runs every map-view operation on torch tensors,
 # so the path is covered there -- including under autograd.
+
+
+def _count_ar_do(monkeypatch, fn):
+    """Every ``ar.do`` name ``fn()`` reaches, counted. Sees the module's own calls."""
+    counts: dict[str, int] = {}
+    real = ar.do
+
+    def spy(name, *args, **kwargs):
+        counts[name] = counts.get(name, 0) + 1
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(map_view_module.ar, "do", spy)
+    fn()
+    return counts
+
+
+@pytest.mark.parametrize("legs", LEGS)
+def test_the_in_place_path_moves_each_block_exactly_once(monkeypatch, legs):
+    """One copy per block, and not one concatenate or materialising reshape anywhere.
+
+    The concatenating path's three passes are exactly ``reshape`` per block plus a
+    ``concatenate`` per band; if either name reappears here the extra pass is back.
+    """
+    t = SymmetricTensor.random(legs, seed=5)
+    counts = _count_ar_do(monkeypatch, lambda: to_matrices(t))
+    assert "concatenate" not in counts
+    assert "reshape" not in counts
+    # one preallocation per coupled sector, and nothing else that allocates
+    assert counts.get("empty", 0) == len(map_layout(t.structure).sectors)
+
+
+@pytest.mark.parametrize("legs", LEGS)
+def test_the_source_block_is_never_copied_before_the_write(legs):
+    """``to_matrices`` reads the caller's blocks through a view, never a materialisation."""
+    t = SymmetricTensor.random(legs, seed=6)
+    layout = map_layout(t.structure)
+    order = layout.axes_order
+    for i, block in enumerate(t.blocks):
+        view = block if order == tuple(range(t.ndim)) else np.transpose(block, order)
+        assert np.shares_memory(view, t.blocks[i])
+
+
+@pytest.mark.parametrize("legs", LEGS)
+def test_the_concatenating_path_still_only_concatenates(monkeypatch, legs):
+    """The immutable-backend path is unchanged: no ``empty``, nothing written in place."""
+    t = SymmetricTensor.random(legs, seed=7)
+    counts = _count_ar_do(monkeypatch, lambda: _reference(t))
+    assert "empty" not in counts
+    assert "zeros" not in counts
