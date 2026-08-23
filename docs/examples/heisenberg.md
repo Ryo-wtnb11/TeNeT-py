@@ -1,13 +1,12 @@
 # Heisenberg, U(1)
 
-`local_op` to `MPO.from_terms` to `MPS.product` to `dmrg_` to `expectation_2site`, on a
-core install. No `W` matrix is written anywhere: the MPO bond grading is derived from the
-operators' own charges.
+A 20-site spin-1/2 Heisenberg chain to its ground state: `tenet.models.spin_half`,
+`MPO.from_terms`, `MPS.product`, `dmrg_`, then bond energies with `expectation_2site`.
 
-What to look at: the sum of the 19 bond energies reproduces `out.energy` to twelve digits
-— `expectation_2site` and `dmrg_` weigh the same state on the same scale — and
-`max_n |<S^z_n>|` is float noise, because the `S^z_tot = 0` sector is fixed by the Neel
-seed's own charges. The [DMRG tutorial](../tutorials/dmrg.md) walks the file through.
+- The bond energies sum to `out.energy`.
+- `<S^z_n>` is zero on every site: the Néel seed fixes `S^z_tot = 0` and the sweep keeps it.
+
+Explained step by step in the [DMRG tutorial](../tutorials/dmrg.md).
 
 ## Source
 

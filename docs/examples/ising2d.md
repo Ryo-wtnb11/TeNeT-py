@@ -1,13 +1,12 @@
 # 2D Ising CTMRG
 
-The classical 2D Ising partition function through `ctmrg(*single_layer_ctm(bulk))`, on a
-core install.
+The classical 2D Ising partition function through `ctmrg(*single_layer_ctm(bulk))`.
 
-What to look at: the `rel` column — the free energy agrees with Onsager's closed form to
-float precision off criticality — and the last line, where the ordered-phase corner
-spectrum comes out **exactly** two-fold degenerate. The doublet spans the two Z2 parity
-sectors, so the grading makes it structural rather than approximate. The
-[CTMRG tutorial](../tutorials/ctmrg.md) walks the file through.
+- `rel` is the free energy against Onsager's exact result.
+- In the ordered phase the corner spectrum is exactly two-fold degenerate: the doublet
+  spans the two Z2 parity sectors.
+
+Explained in the [CTMRG tutorial](../tutorials/ctmrg.md).
 
 ## Source
 

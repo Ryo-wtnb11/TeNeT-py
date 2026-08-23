@@ -1,25 +1,13 @@
 # Heisenberg, U(1) — the walkthrough
 
-The same chain as [Heisenberg, U(1)](heisenberg.md), with the symmetry input spelled out:
-the hand-graded 5x5 `W`, the reachable-charge bond spaces, and three MPO routes
-cross-checked against each other.
+The same chain built three ways and cross-checked: `MPO.from_w` with a hand-written
+graded `W`, `MPO.from_entries` with the same `W` as eight sparse entries, and
+`MPO.from_terms` from the operators.
 
-What to look at: the three routes. `MPO.from_w` takes the hand-graded MPO bond the file
-writes out; `MPO.from_entries` names the same `W`'s eight non-zero entries and declares no
-grading; `MPO.from_terms` derives one from the operators' own charges. The two gradings
-printed below are the same grading, sector for sector, so all three runs land on the same
-twelve digits.
-
-The two lines after them say which route carries an **edge description** — the
-finite-state machine that decides whether `Env.heff2` takes the prepared, symbolic engine
-path or contracts the site tensors. At the builders' default none of them does, which is
-the lattice model's path; `symbolic=True` keeps it, and writing a `W` by hand does not
-cost you that option. See
-[Building a Hamiltonian](../guide/hamiltonians.md#symbolictrue).
-
-Below them, the seed's bond dimensions are the *reachable* U(1) charges at each cut
-(`1 2 3 4 …`, the whole `S^z_tot = 0` statement) and the final ones are what
-`svd_truncated` decided sweep by sweep.
+- All three give the same energy.
+- The two printed bond gradings are identical sector for sector.
+- The `edge description` lines show which operators keep the symbolic description
+  (`symbolic=True`); see [Building a Hamiltonian](../guide/hamiltonians.md#symbolictrue).
 
 ## Source
 

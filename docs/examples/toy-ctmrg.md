@@ -1,16 +1,16 @@
 # Toy CTMRG
 
-C4v CTMRG written out by hand on `tenet`'s tensor layer — corner, edge, the two absorbers,
-the projector and the sweep — then a U(1) and an SU(2) iPEPS gradient through it. Needs
-the `jax` extra.
+C4v CTMRG written naively with `tenet`'s basic tensor operations — corner, edge,
+absorption, projector, sweep — followed by an iPEPS gradient through it with `jax.grad`.
+Needs the `jax` extra.
 
-What to look at: `move`, the file's one CTMRG step, which builds the enlarged corner,
-takes a projector from it and absorbs one edge, with `svd_truncated` outside the trace
-deciding a bond and `svd(bond=)` inside it reusing one. Then the output: the `rel` column
-— the CTMRG free energy against Onsager's closed form — next to `d(beta f)/dbeta`, which
-is `jax.grad` taken through the unrolled sweeps and checked against the same oracle; then
-the two iPEPS traces, a U(1) and an SU(2) ansatz descending through the identical gradient
-path. The [CTMRG tutorial](../tutorials/ctmrg.md) walks the file through.
+- `move` is one CTMRG step: enlarge the corner, build the projector, absorb an edge.
+  `svd_truncated` chooses the bond outside the trace; `svd(bond=)` reuses it inside.
+- `rel` is the free energy against Onsager's exact result; `d(beta f)/dbeta` is the
+  gradient through the unrolled sweeps, checked against the same result.
+- The two iPEPS traces (U(1) and SU(2)) descend through the same code.
+
+The same algorithm through the library: [2D Ising CTMRG](ising2d.md).
 
 ## Source
 
