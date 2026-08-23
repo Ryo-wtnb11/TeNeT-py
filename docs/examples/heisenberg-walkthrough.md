@@ -4,9 +4,11 @@ What to look at: the three MPO routes. `MPO.from_w` takes the hand-graded MPO bo
 file writes out; `MPO.from_entries` names the same `W`'s eight non-zero entries and
 declares no grading at all; `MPO.from_terms` derives one from the operators' own charges —
 and the two gradings printed below are the same grading, sector for sector, so all three
-runs land on the same twelve digits. The last line says which of the three carries an
-**edge description**, which is what decides whether `Env.heff2` takes the prepared engine
-path or the compatibility entry: writing a `W` by hand no longer costs you the engine.
+runs land on the same twelve digits. The two lines after them say which of the three
+carries an **edge description** — the finite-state machine that decides whether
+`Env.heff2` takes the prepared, symbolic engine path or contracts the site tensors. At the
+builders' default none of them does, which is the lattice model's path; `symbolic=True`
+keeps it, and writing a `W` by hand does not cost you that option.
 Below them, the seed's bond dimensions are the *reachable* U(1) charges at each cut (`1 2 3 4 …`, the whole `S^z_tot = 0` statement) and the final ones
 are what `svd_truncated` decided sweep by sweep. `examples/heisenberg.py` is the same
 chain with none of this spelled out; `examples/toy_codes/dmrg.py` writes the algorithm
@@ -25,16 +27,17 @@ Produced by `heisenberg_walkthrough.main()` at its defaults — exactly
 
 ```text
 from_w      N=12 chi=64  E=-5.142090632841  exact=-5.142090632841
-  sweep  1  E=-5.074270839002  dE=inf  dS=inf  dw=4.441e-16
-  sweep  2  E=-5.142090098965  dE=6.782e-02  dS=4.787e-01  dw=6.883e-15
+  sweep  1  E=-5.074270839002  dE=inf  dS=inf  dw=2.220e-16
+  sweep  2  E=-5.142090098965  dE=6.782e-02  dS=4.787e-01  dw=7.105e-15
   sweep  3  E=-5.142090632840  dE=5.339e-07  dS=3.736e-03  dw=8.882e-15
-  sweep  4  E=-5.142090632841  dE=1.794e-13  dS=1.358e-06  dw=5.329e-15
-  sweep  5  E=-5.142090632841  dE=8.882e-16  dS=3.492e-10  dw=5.551e-15
+  sweep  4  E=-5.142090632841  dE=1.856e-13  dS=1.358e-06  dw=5.329e-15
+  sweep  5  E=-5.142090632841  dE=3.553e-15  dS=3.492e-10  dw=5.773e-15
 from_terms  N=12 chi=64  E=-5.142090632841
-  |E(from_w) - E(from_terms)| = 1.776e-15
+  |E(from_w) - E(from_terms)| = 8.882e-16
 from_entries N=12 chi=64  E=-5.142090632841
-  |E(from_w) - E(from_entries)| = 8.882e-16
-  carries an edge description: {'from_w': False, 'from_entries': True, 'from_terms': True}
+  |E(from_w) - E(from_entries)| = 5.329e-15
+  carries an edge description: {'from_w': False, 'from_entries': False, 'from_terms': False}
+  the same two under symbolic=True: {'from_entries': True, 'from_terms': True}
   MPO bond, hand-graded: -2:1 +0:3 +2:1
   MPO bond, derived:     -2:1 +0:3 +2:1
   seed bond dims:  [1, 2, 3, 4, 5, 6, 7, 6, 5, 4, 3, 2, 1]
