@@ -205,6 +205,45 @@ def test_a_toy_code_imports_nothing_from_the_network_layer(path):
     assert not offenders, f"{path.name} imports {offenders} from the algorithm layer"
 
 
+# The public way into a ``SymmetricTensor``'s numbers is ``tenet.to_matrices``. These are
+# the ways around it: ``t.blocks``, ``t.apply_blocks(...)``, and building the tensor from a
+# dense carrier-basis array with ``from_dense`` instead of naming its blocks.
+_BLOCK_BACKDOORS = ("blocks", "apply_blocks", "from_dense")
+
+
+@pytest.mark.parametrize(
+    "path", sorted((EXAMPLES / "toy_codes").glob("*.py")), ids=lambda p: p.name
+)
+def test_a_toy_code_reads_block_values_only_through_to_matrices(path):
+    """The teaching lane's second rule: a toy code stays on the *public* tensor layer.
+
+    A symmetric-tensor algorithm states its input in the symmetric form it is in --
+    ``SymmetricTensor.from_blocks`` with the block values written out, or ``zeros`` /
+    ``random`` -- and reads block values back through ``tenet.to_matrices``. Reaching for
+    ``.blocks``, ``apply_blocks`` or ``autoray`` reimplements the library in the file that
+    is supposed to be demonstrating it: ``tenet.inner`` and ``tenet.full_trace`` were both
+    hand-written over ``.items()`` here, one of them with the sign bug the library had
+    already fixed.
+
+    ``.items()`` is allowed on the ``tenet.to_matrices`` result and nowhere else, which is
+    what makes "block values are read through ``to_matrices``" mechanical rather than a
+    matter of reading the receiver's type.
+    """
+    offenders = []
+    for node in ast.walk(ast.parse(path.read_text())):
+        if not isinstance(node, ast.Attribute):
+            continue
+        if node.attr in _BLOCK_BACKDOORS:
+            offenders.append(f"line {node.lineno}: .{node.attr}")
+        elif node.attr == "items" and not ast.unparse(node.value).startswith("tenet.to_matrices("):
+            offenders.append(f"line {node.lineno}: .items() on {ast.unparse(node.value)}")
+    offenders += [f"imports {name}" for name in sorted(_imports(path)) if name == "autoray"]
+    assert not offenders, (
+        f"{path.name} goes around the public block API: {'; '.join(offenders)}. Build "
+        "inputs with SymmetricTensor.from_blocks and read values with tenet.to_matrices."
+    )
+
+
 def test_lane_basenames_are_disjoint():
     """Both lanes land on sys.path as top-level modules; a shared basename would shadow."""
     flat = {p.name for p in EXAMPLES.glob("*.py")}
