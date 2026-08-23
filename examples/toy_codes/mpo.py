@@ -1,7 +1,7 @@
 """The Heisenberg MPO, written out block by block on its named channels.
 
-The Hamiltonian half of ``examples/toy_codes/dmrg.py`` (#268 split it out). It takes the
-physical and boundary spaces from ``mps.py`` and is consumed by ``dmrg.py``.
+The Hamiltonian ``examples/toy_codes/dmrg.py`` minimizes against. The physical and
+boundary spaces come from ``mps.py``.
 
 **MPO leg convention**: site ``W_n`` is ``(wl IN, p OUT, p IN, wr OUT)``. Invariance reads
 ``q(p_out) + q(wr) = q(wl) + q(p_in)``, so an ``S^-`` emitted from the start channel sends

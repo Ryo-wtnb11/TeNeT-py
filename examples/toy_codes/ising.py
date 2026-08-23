@@ -1,8 +1,7 @@
 """The classical 2D Ising model: its partition-function bulk tensor and Onsager's free energy.
 
-The physics half of ``examples/toy_codes/ctmrg.py`` (#268 split it out): what the CTMRG in
-``ctmrg.py`` contracts, and the closed form it is judged against. ``ctmrg.py`` imports
-both names; nothing here imports ``ctmrg.py``.
+What the CTMRG in ``examples/toy_codes/ctmrg.py`` contracts, and the closed form it is
+judged against. ``ctmrg.py`` imports both names; nothing here imports ``ctmrg.py``.
 
 **The Ising half is Z2-graded**, for the reason YASTN's CTMRG Ising example passes
 ``sym='Z2'``: it stops a finite-chi environment from breaking the symmetry spuriously in

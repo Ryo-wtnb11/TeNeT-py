@@ -1,7 +1,7 @@
 """The MPS: the list of site tensors, its canonical form and a bond's Schmidt values.
 
-The container half of ``examples/toy_codes/dmrg.py`` (#268 split it out), imported by
-``mpo.py`` for the physical space and by ``dmrg.py`` for everything else.
+The state ``examples/toy_codes/dmrg.py`` sweeps. ``mpo.py`` imports the physical space
+from here and ``dmrg.py`` imports the rest.
 
 **MPS leg convention**, the part worth reading before the code: site ``A_n`` is
 ``(left bond OUT, physical OUT, right bond IN)``, the ``examples/toy_codes/vmc_mps.py``
