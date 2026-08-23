@@ -43,6 +43,7 @@ in CI**; every empty cell is a decision, not a constraint.
 | 3 | `repartition` / `bend` | all 8 | `tests/ops/test_repartition.py`; `tests/ops/test_repartition_plan.py:51` (`UF`); `tests/symmetry/test_z2.py:330-357`; `tests/symmetry/test_su3_multiplicity.py:174-207`; `tests/symmetry/test_sun.py:350-382` |
 | 4 | `fuse` / `unfuse` | `{su2, u1, trivial, fz2}` | `tests/ops/test_fusion.py:49` (`ALL_LEGS`; fZ2 joined in #146); dense oracles at `:245-262` |
 | 5 | `compose` / `tensordot` / `einsum` | `{trivial, u1, su2, fz2, product}`; `einsum_multi` drops product | `tests/ops/test_einsum.py:75`; `tests/ops/test_einsum_multi.py:82`; `tests/ops/test_contraction.py:61` |
+| 5b | `einsum_chain` (#260) | `{trivial, u1, z2, fz2, su2, su3}` on numpy; `{u1, su2}` on torch | `tests/ops/test_einsum_chain.py`; `tests/backends/test_torch.py::test_einsum_chain_fuses_on_torch` |
 | 6 | `full_trace` / `inner` | `{su2, u1}` (+ torch row below) | `tests/ops/test_full_trace.py:20-23` |
 | 7 | linalg (`svd`/`qr`/`lq`/`polar`/`eigh`/`eigh(bond=)`/`eig`/`expm`/`*_null`/`svd_truncated`/`select_bond`/`eigh_truncated`) | `{trivial, u1, su2, fz2}` | `tests/ops/test_linalg.py:52-62`; `tests/ops/test_svd_truncated.py:15-24`, `tests/ops/test_select_bond.py:18` and `tests/ops/test_eigh_truncated.py:19` import that same `PROVIDERS` — the reuse pattern the budget rule mandates |
 | 8 | `flip_dual` (#142) | capability on all 8; numerically `{u1, fz2, su2, su3}` (+ Z2/product spaces) | `tests/symmetry/test_flip_scalar.py:34`; `tests/ops/test_flip_dual.py` |

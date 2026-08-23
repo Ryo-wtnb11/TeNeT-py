@@ -441,6 +441,18 @@ def _real(coeff: complex) -> Any:
     return coeff.real if getattr(coeff, "imag", 0) == 0 else coeff
 
 
+def scaled(block: Any, coeff: Any) -> Any:
+    """``block * coeff`` as a temporary, in one named place.
+
+    The plan appliers reach this only for a term that both accumulates into an
+    already-written destination and carries a coefficient: ``out=`` scales or
+    accumulates, never both. Every other scaled term rides the ``out=`` of a write that
+    was happening anyway. Named rather than spelled inline so the extra pass is
+    countable -- the operator form is invisible to an ``autoray`` spy.
+    """
+    return block * coeff
+
+
 def lower_plan(
     t: "SymmetricTensor",
     structure: TensorStructure,
@@ -503,8 +515,8 @@ def lower_plan(
     """
     if not t.blocks or ar.infer_backend(t.blocks[0]) not in _MUTABLE:
         return None
-    scaled = tuple((src, dst, _real(coeff)) for src, dst, coeff in terms)
-    if any(isinstance(coeff, complex) for _, _, coeff in scaled):
+    normalized = tuple((src, dst, _real(coeff)) for src, dst, coeff in terms)
+    if any(isinstance(coeff, complex) for _, _, coeff in normalized):
         return None
 
     layout = map_layout(structure)
@@ -518,7 +530,7 @@ def lower_plan(
     mats = {c: ar.do("empty", layout.shape(c), dtype=dtype, like=ref) for c in layout.sectors}
 
     written: set[int] = set()
-    for src, dst, coeff in scaled:
+    for src, dst, coeff in normalized:
         block = t.blocks[src]
         if permuted:
             block = ar.do("transpose", block, order)
@@ -536,8 +548,11 @@ def lower_plan(
         else:
             # a second source summing into one destination *with* a coefficient is the
             # one term that still needs a temporary: ``out=`` scales or accumulates, not
-            # both. Only a multi-term (non-Abelian) expansion produces these.
-            ar.do("add", dest, block * coeff, out=dest)
+            # both. Only a multi-term (non-Abelian) expansion produces these, and that is
+            # also why ordering the group so a coefficient-carrying term writes first buys
+            # nothing: such a group's terms *all* carry coefficients, so the first write
+            # already scales through its ``out=`` and every later one still needs this.
+            ar.do("add", dest, scaled(block, coeff), out=dest)
 
     if len(written) != structure.num_blocks:
         raise ValueError(

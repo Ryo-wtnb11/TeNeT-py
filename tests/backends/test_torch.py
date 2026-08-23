@@ -399,6 +399,17 @@ def test_einsum_two_and_three_operands(name):
 
 
 @pytest.mark.parametrize("name", ["u1", "su2"])
+def test_einsum_chain_fuses_on_torch(name):
+    """The chain writes through ``out=``, which torch has and JAX does not."""
+    a, b, c = (tt(LEGS[name], seed=s) for s in (21, 22, 23))
+    ra, rb, rc = (x.to_backend("numpy") for x in (a, b, c))
+    eqs = ("abcd,defg->abcefg", "abcefg,ghij->abcefhij")
+    chained = tenet.einsum_chain([(eqs[0], a, b, ""), (eqs[1], None, c, "")])
+    assert is_torch(chained)
+    close(chained, tenet.einsum_chain([(eqs[0], ra, rb, ""), (eqs[1], None, rc, "")]))
+
+
+@pytest.mark.parametrize("name", ["u1", "su2"])
 @pytest.mark.parametrize("axes", [(1, 0), (0, 3)], ids=["same-side", "out-in"])
 def test_trace_stays_on_torch(name, axes):
     """Regression, bug 1 of #95: ``trace`` used to leave torch for NumPy.

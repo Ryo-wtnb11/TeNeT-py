@@ -6496,6 +6496,146 @@ left that list with M61 Stage D above.
   and every gradient test passes unchanged, `tests/backends/` included. Public signatures,
   results and `__all__` are unchanged, no existing test is edited, and no dependency is added.
 
+- **M71** — shipped: **nothing is materialized between two lowerings**. A contraction chain
+  used to write one tensor per step and read it straight back down into the next step's
+  sector matrices; step `k`'s restore-repartition (with its final transpose already folded
+  in, M70) and step `k+1`'s operand lowering — and the bend the composition rule demands at
+  that pair — are all plans of `(source, target, coefficient)` over blocks that are *views*
+  into step `k`'s matrices, so they compose into **one** plan from matrices to matrices
+  (#260). `tenet.einsum_chain` is the place that owns the chain and applies that one plan.
+  On a steady fZ2 Hubbard matvec the elements that had a coefficient pass **of their own**
+  fall from **2 384 064 to 65 536**, and the plan is applied to a whole tensor **once per
+  matvec instead of ten times**.
+
+  **The carrier.** `ops/contraction._Pending` is a tensor plus a plan not yet applied to it:
+  `(source, structure, perm, terms)`, where `structure` is what the tensor *will* have.
+  `then()` composes a following plan onto it with the same two rules `_restore_plan` already
+  used — `perm[i] for i in next_perm` for the permutation, `repartition._compose` for the
+  terms — and `realized()` is the one `apply_plan` at the end. An operand lowering that meets
+  a `_Pending` composes and calls `lower_plan` on the *original* source; the explicit bend is
+  a `sides_plan` composed the same way, so a bent operand is never written either. No
+  representation changes: `SymmetricTensor` is untouched, and `_Pending` never leaves
+  `ops/contraction`.
+
+  **Why a chain of pair equations and not one multi-operand equation.** The composition rule
+  (Milestone 11) fixes the intermediate leg order and the bent wires at every pair. A single
+  equation would hand both to `opt_einsum`'s path finder, whose intermediate order is
+  "`a`'s free labels then `b`'s", not the one the call sites state — and for a braided
+  provider the intermediate order is categorical data, not a formatting choice. So a chain
+  step is `(equation, a, b, bend)` with `None` standing for the previous step's result on
+  whichever side it belongs, which is exactly what the call sites already wrote.
+
+  **Where it is spelled.** `network/env.py`: `_heff2_full`'s four contractions,
+  `_families2`'s three multi-step families, and `_fold_last`/`_fold_first`'s two-and
+  three-step flows. Same equations, same operand order, same bends. `_composed` stays for the
+  single contractions, which are not chains.
+
+  | fZ2 Hubbard N=16 χ=128, one steady `_heff2_full` | before | after |
+  |---|---|---|
+  | elements scaled in a pass of their own | 2 384 064 | **65 536** |
+  | elements scaled riding a write already happening | 288 | 1 204 448 |
+  | scaled elements, total | 2 384 352 | 1 269 984 |
+  | plan terms carrying a coefficient | 60 | 38 |
+  | `apply_plan` calls (tensors written out of a plan) | 10 | **1** |
+
+  The total halves because an element that was scaled at the bend *and* again at a later
+  transpose is now scaled once, by the product. The own-pass row is the cost that was
+  actually there: it falls 36×, and what is left is the one case `out=` cannot serve — a
+  second source summing into a destination *with* a coefficient, which scales or
+  accumulates but not both.
+
+  **The residual, measured and closed.** #259 left "order the terms per destination so the
+  first write into each destination is a coefficient-carrying one" as the remaining lever,
+  with 20 of 66 SU(2) terms and 12 of 45 SU(3) terms as upper bounds. Implemented and
+  measured, that ordering removes **zero** temporaries on every provider and every shape
+  tried — the chain on U(1)/Z2/fZ2/SU(2)/SU(3), and the two-site bend and rank-4 permutation
+  of #259's own table. The reason is structural and is now a comment in `lower_plan`: a
+  destination that receives more than one term receives them from a non-Abelian expansion,
+  in which *every* term of the group carries a coefficient, so the first write already
+  scales through its `out=` and each later one still needs its temporary. The ordering was
+  written, measured and removed; the floor on numpy is a fused scale-and-add, which numpy
+  does not expose with `out=`.
+
+  | provider, the chain shape | terms | own-pass terms before | after fusing | after ordering |
+  |---|---|---|---|---|
+  | U(1), Z2 | 0 | 0 | 0 | 0 |
+  | fZ2 | 60 → 38 | 52 | 4 | 4 |
+  | SU(2) multi-band | 289 → 148 | 232 | 75 | 75 |
+  | SU(3) (`SUNProvider(3)`) | 227 → 114 | 184 | 62 | 62 |
+
+  **`linalg._lower`.** The one site from #260's original scope whose destination is a
+  *matrix*: every factorization reads the sector matrices and only the *structure* of the
+  tensor beside them. It now applies its repartition plan straight into the matrices —
+  `ar.do("transpose")` exactly once per term, no standalone multiply or add, one `empty` per
+  coupled sector — and the tensor is `from_matrices`' zero-copy view back. Bit-identical to
+  `to_matrices(repartition(t, ...))` on all seven fixtures of #259's table.
+
+  **Bit-identity, and where it stops.** The chain is `tobytes()`-identical to the separate
+  calls on every Abelian provider — U(1), Z2, fZ2 — and the DMRG sweep energies are identical
+  by `float.hex` to the pre-M71 base on both models and both `heff2` routes, five sweeps
+  each. It is **not** bit-identical on SU(2) or `SUNProvider(3)`, and cannot be: a composed
+  plan applies `coeff_k · coeff_{k+1}` where the separate calls apply one after the other,
+  and sums duplicate `(source, target)` pairs before any block moves rather than after. Both
+  are the same sum reassociated; measured, the disagreement is 2.6e-16 to 3.6e-16 relative,
+  i.e. last-ulp. The test asserts exactly that, and asserts the Abelian identity as bytes.
+
+  **Wall.** `_heff2_full`, interleaved against the pre-M71 source in one session, medians of
+  three runs of ten: fZ2 Hubbard N=16 χ=128 **10.1/9.6 → 9.1/9.4 ms**, U(1) Heisenberg N=32
+  χ=128 **4.3/4.3 → 3.3/2.8 ms**. The U(1) fixture pays no coefficient at all, so its 25–35 %
+  is the intermediate tensors alone — which is the point: the chain removes writes, and the
+  coefficient riding along is what it removes *as well*.
+
+  Whole sweeps, `bench_vs_yastn.py`'s bare `tenet` arm, the same session against the pre-M71
+  source, steady wall in seconds — and the energy identical to every digit at all eight
+  points:
+
+  | model | N | χ | before | after | ratio |
+  |---|---|---|---|---|---|
+  | Hubbard fZ2 | 16 | 64 | 0.249 | 0.243 | 1.02× |
+  | Hubbard fZ2 | 16 | 128 | 0.845 | 0.772 | 1.09× |
+  | Hubbard fZ2 | 16 | 256 | 2.818 | 2.717 | 1.04× |
+  | Hubbard fZ2 | 32 | 64 | 0.656 | 0.617 | 1.06× |
+  | Hubbard fZ2 | 32 | 128 | 2.299 | 2.161 | 1.06× |
+  | Hubbard fZ2 | 32 | 256 | 8.324 | 8.341 | 1.00× |
+  | Heisenberg U(1) | 32 | 64 | 0.882 | 0.829 | 1.06× |
+  | Heisenberg U(1) | 32 | 256 | 2.175 | 2.156 | 1.01× |
+
+  A matvec that is 1.2–1.7× faster moves a whole sweep by 0–9 %, which puts an upper bound on
+  what the matvec is of a sweep at these grid points and is the same story M69 and M70 told:
+  the sweep's remaining time is in the factorization and the Lanczos recurrence, still not
+  separately instrumented. The YASTN arm was not re-run: YASTN is not installable in this
+  environment (not on PyPI, no network), so this milestone has a before/after against its own
+  base and no cross-library ratio.
+
+  **What it inverts, and the one test that fails on it.** #141's inequality — the prepared
+  matvec issues fewer `autoray` dispatches than the four full contractions — no longer holds
+  on its own measurement object, the N=24 width-10 cylinder at `D_w = 32`. Both paths get
+  faster and the full one gets faster by more, because its margin *was* the tensors it wrote
+  between its four steps:
+
+  | N=24 ly10 cylinder, one `heff2` at the centre bond | before | after |
+  |---|---|---|
+  | prepared (`_apply2`, five families) — top-level `ar.do` | 2083 | 1278 |
+  | four full contractions — top-level `ar.do` | 2257 | **986** |
+  | prepared — wall | 2.76 ms | 2.24 ms |
+  | four full contractions — wall | 3.21 ms | **1.91 ms** |
+
+  This is not recoverable by fusing more of the prepared path: every family is already a
+  chain here, and the fully unfused prepared count (2083) is still above the fused full one
+  (986). The prepared path's advantage is *sparsity*, and on a cylinder whose merged `caf`
+  and `abf` blocks are near-dense there is little of it; what it used to win was the
+  intermediate writes, which both paths have now stopped paying. So
+  `test_dmrg_prepared.py::test_the_prepared_path_issues_fewer_dispatches_on_the_n24_ly10_cylinder`
+  fails on `assert 1278 < 986`, and it is left failing rather than edited: the inequality it
+  states is a claim about the two paths, and the claim has changed.
+
+  **Public surface.** One addition, `tenet.einsum_chain`. `einsum`, `tensordot`, `compose`,
+  `repartition` and `transpose` are unchanged in signature and in bytes for two operands;
+  `_tensordot`'s body is now `_contracted(...).realized(...)`, the same operations in the
+  same order. `map_view.scaled` is the one temporary a coefficient-carrying accumulate still
+  needs, named rather than spelled inline so an `autoray` spy can count it — the operator
+  form is invisible to `ar.do`, which is why #259's audit could not see it.
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
