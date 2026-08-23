@@ -1,10 +1,10 @@
 """The public tensor type: a [TensorStructure][tenet.TensorStructure] plus ordered reduced blocks.
 
 Fields are ``(structure, blocks)``, never ``(legs, blocks)``: the structure is the
-static, hashable half (a JAX treedef in Milestone 6) and ``blocks`` is the clean
-parameter tree of dynamic leaves, ordered by ``structure.block_order`` (invariant
-8). ``T.legs``, ``T.domain``, ``T.codomain``, ``T.block(key)`` and ``T.items()``
-are derived views; ``from_legs`` supplies the docs/design.md's ergonomics.
+static, hashable half -- the JAX treedef -- and ``blocks`` is the clean parameter
+tree of dynamic leaves, ordered by ``structure.block_order`` (invariant 8).
+``T.legs``, ``T.domain``, ``T.codomain``, ``T.block(key)`` and ``T.items()`` are
+derived views; ``from_legs`` builds one from public legs.
 
 [to_dense][tenet.SymmetricTensor.to_dense] and [from_dense][tenet.SymmetricTensor.from_dense]
 are the only way to cross into the dense basis — there is deliberately no ``__array__``
@@ -115,7 +115,7 @@ class SymmetricTensor:
 
     @classmethod
     def from_legs(cls, legs: Sequence[Leg], blocks: Sequence[Array]) -> "SymmetricTensor":
-        """Build from public legs, in ``block_order``. The docs/design.md's spelling.
+        """Build from public legs, in ``block_order``.
 
         Parameters
         ----------
@@ -298,12 +298,13 @@ class SymmetricTensor:
 
     @property
     def codomain(self) -> tuple[Leg, ...]:
-        """OUT legs in public axis order. A ``ProductSpace`` view arrives in M3.
+        """The OUT legs, in public axis order.
 
         Returns
         -------
         tuple of Leg
-            The OUT legs.
+            The OUT legs. [ProductSpace][tenet.ProductSpace] is the fused view of
+            the same legs, when one is wanted.
         """
         return tuple(leg for leg in self.legs if leg.side is OUT)
 
@@ -1043,7 +1044,7 @@ class SymmetricTensor:
         Notes
         -----
         Explicit by design (invariant 9). See
-        ``tenet.ops.dense.to_dense`` — traceable and differentiable as of #82.
+        ``tenet.ops.dense.to_dense`` — traceable and differentiable.
         """
         from tenet.ops.dense import to_dense
 

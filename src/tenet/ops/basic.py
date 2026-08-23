@@ -1,11 +1,11 @@
-"""Linear arithmetic, conjugation and the Frobenius norm — Milestone 2.
+"""Linear arithmetic, conjugation and the Frobenius norm.
 
 Everything here is linear in the blocks, so no categorical machinery is needed:
 blocks are combined index-aligned, because ``block_order`` is a pure function of
 the (frozen) structure and equal structures therefore give equal key tuples in
 equal order.
 
-Two rules the rest of Milestone 2 leans on:
+Two rules the rest of the package leans on:
 
 * mismatched structures fail loudly — addition never widens a graded space
   (invariant 11; a ``pad_to``/``union`` helper can arrive later as an explicit
@@ -16,8 +16,8 @@ Two rules the rest of Milestone 2 leans on:
 There is deliberately no NumPy call anywhere in this module: arithmetic must
 already work on JAX (or torch) blocks, so every array touch goes through
 ``autoray``. ``tests/backends/test_torch.py`` is what enforces the torch half of
-that (#95) — it runs every function here on torch blocks and compares against
-the NumPy result.
+that — it runs every function here on torch blocks and compares against the
+NumPy result.
 """
 
 import numbers
@@ -291,7 +291,7 @@ def conj(t: "SymmetricTensor") -> "SymmetricTensor":
     No ``dual`` flip, no side change: conjugation, duality and the categorical
     adjoint are three different things (invariant 2). In particular ``t.conj()``
     is **not** what you contract ``t`` against to obtain ``‖t‖²`` — that pairing
-    needs the adjoint (Milestone 3).
+    needs the adjoint, [tenet.adjoint][].
 
     Blockwise conjugation equals dense-basis conjugation exactly because every
     provider here has real Clebsch-Gordan coefficients (all-ones for Trivial and
@@ -349,7 +349,7 @@ def norm(t: "SymmetricTensor") -> Any:
     defined even for providers with no dense expansion at all.
 
     Returns the backend's own scalar, so the whole function is traceable and
-    differentiable (Milestone 6).
+    differentiable.
     """
     provider = t.provider
     requires(provider, QuantumDimensionData)

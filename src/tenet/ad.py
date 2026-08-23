@@ -28,8 +28,9 @@ Three things a caller must know:
   ``x = sigma_j - sigma_i`` -- so a default tuned for an ``O(1)``-normalized spectrum
   assumes a normalization our tensors do not guarantee. Hence the knob.
 
-Why broadening rather than a hard tolerance, and why ``qr``/``lq``/``polar`` need nothing
-of their own: ``docs/design.md`` "Automatic differentiation".
+Broadening rather than a hard tolerance, because a hard cut makes the gradient
+discontinuous in the spectrum. ``qr``, ``lq`` and ``polar`` need nothing of their own:
+their backend rules are already well defined where their inputs are full-rank.
 
 [tenet.enable_jax][]``(ad=True)`` is the one-call spelling of the three statements
 below, and is what the docs teach. It is the same explicit act this docstring demands --

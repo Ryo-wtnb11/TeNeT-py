@@ -272,7 +272,7 @@ class ProductSpace:
 
     Notes
     -----
-    A TensorMap-level value type (docs/design.md "``ProductSpace``"): nobody constructs one
+    A TensorMap-level value type: nobody constructs one
     to make an ordinary five-axis tensor, and ``SymmetricTensor.codomain`` keeps
     returning plain legs. It appears on [TensorMapView][tenet.TensorMapView].
 

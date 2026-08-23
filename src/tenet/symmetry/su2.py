@@ -15,13 +15,13 @@ F-, R- and B-symbols and Frobenius-Schur signs are available through the
 [AssociatorData][tenet.symmetry.AssociatorData] / [BraidingData][tenet.symmetry.BraidingData]
 / [DualityData][tenet.symmetry.DualityData] / [FSIndicatorData][tenet.symmetry.FSIndicatorData]
 capabilities. Every one of them comes from ``racah`` at Dynkin label ``(two_j,)``
-(#180): SU(2) is SU(N) at N = 2, and a second pure-Python implementation of the
-same coefficients would be a second gauge. The vendored TensorKitSectors fixtures
-are the cross-check rather than the specification now, agreeing to 4.95e-14 over
+-- SU(2) is SU(N) at N = 2, and a second pure-Python implementation of the same
+coefficients would be a second gauge. The vendored TensorKitSectors fixtures are
+the cross-check rather than the specification, agreeing to 4.95e-14 over
 all 109,900 rows. ``permute_tree`` is
 built on them, so ``transpose`` is total for SU(2), and ``bend_right`` /
 ``bend_left`` are built on the B-symbol and the Frobenius-Schur sign, so
-``repartition`` is total for SU(2) too (#38).
+``repartition`` is total for SU(2) too.
 """
 
 from dataclasses import dataclass
@@ -58,12 +58,10 @@ _SU2_GAUGE = f"su2=racah;{racah.sun_authority_fingerprint()}"
 Written into a saved file's header by [tenet.save][] and compared on
 [tenet.load][], which refuses a file recorded under a different convention.
 
-Since #180 this is racah's own fingerprint, exactly as ``_SUN_GAUGE`` is: the
-string records the coefficient *source*, and the source is now racah at
-``(two_j,)`` rather than the pure-Python closed forms deleted with it. The one
-string files were written under before that swap is accepted on load —
-``tenet.serialize._LEGACY_GAUGES`` — because the two coefficient sets were
-measured to agree to 4.95e-14 over the full fixture table, so those blocks are
+This is racah's own fingerprint, exactly as ``_SUN_GAUGE`` is: the string records
+the coefficient *source*, which is racah at ``(two_j,)``. One further string is
+accepted on load — ``tenet.serialize._LEGACY_GAUGES`` — because its coefficients
+agree with these to 4.95e-14 over the full fixture table, so those blocks are
 numerically comparable and refusing them would be a false alarm.
 
 The conventions themselves are unchanged: 3j and CG in Condon-Shortley phase with

@@ -26,7 +26,6 @@ Conventions:
 * The gauge freedom (per-singular-value phases; the sign of ``R``'s diagonal) is never
   fixed here.
 
-The lowering and its invariants: ``docs/design.md`` "Linear algebra" and invariant 10.
 ``svd``/``qr`` are absent from ``array/dispatch.py``, whose docstring owns that closed list.
 """
 
@@ -217,8 +216,8 @@ def svd(
     keyword here while truncation is a separate [svd_truncated][tenet.ops.linalg.svd_truncated]: a
     [GradedSpace][tenet.GradedSpace] is frozen, hashable, array-free metadata that
     the **caller** decided, so ``svd(t, bond=B)`` is exactly as shape-static, jittable
-    and differentiable as ``svd(t)``. What #64 refused to make a keyword is the
-    *decision*; what is a keyword here is the decision's *result*. The pairing::
+    and differentiable as ``svd(t)``. What is never a keyword is the *decision* to
+    truncate; what is a keyword here is the decision's *result*. The pairing::
 
         _, s, _ = tenet.linalg.svd_truncated(t0, axes, max_bond=D)   # outside jit/grad
         bond = s.structure.legs[0].space
@@ -236,11 +235,10 @@ def svd(
     [tenet.ad][]'s broadened ``F`` — rows ``i > k`` against columns ``j <= k``,
     weighted by ``1/(sigma_j - sigma_i)`` — is exactly the correction
     Francuz-Schuch-Vanhecke add in Eqs. (14)-(15) of Phys. Rev. Research 7, 013237
-    (2025). Measured against central differences it is flat at finite-difference
-    noise across ``sigma_perp/sigma_min`` from ``0.1`` to ``0.9``, while the
-    zeroth-order rule (the same VJP formed against the *kept* factors only, which is
-    what the CTMRG/iPEPS literature runs on) is off by 11% at a ratio of ``0.1``, i.e.
-    ``O(sigma_perp/sigma_min)``. Both numbers are pinned in
+    (2025). Against central differences it is flat at finite-difference noise across
+    ``sigma_perp/sigma_min`` from ``0.1`` to ``0.9``, while the zeroth-order rule (the
+    same VJP formed against the *kept* factors only, which is what the CTMRG/iPEPS
+    literature runs on) carries an ``O(sigma_perp/sigma_min)`` error. Both are pinned in
     ``tests/backends/test_ad.py``. Degeneracy is the one remaining caveat, and it is
     [tenet.ad][]'s: a multiplet *straddling* the cut makes the kept subspace
     gauge-dependent, so the gradient there is finite but meaningless.
@@ -438,9 +436,9 @@ def eigh(
     *signed*, so "the ``k`` largest" is an ``argsort`` over ``|w|`` and a gather, not a
     slice. A gather is a value-dependent *permutation*, never a value-dependent *shape*,
     so it traces: ``eigh(t, axes, bond=B)`` is as jittable and differentiable as
-    ``eigh(t, axes)``, and [svd][tenet.ops.linalg.svd]'s sentence applies unchanged — what
-    #64 refused to make a keyword is the *decision*; what is a keyword here is the
-    decision's *result*.
+    ``eigh(t, axes)``, and [svd][tenet.ops.linalg.svd]'s sentence applies unchanged — the
+    *decision* to truncate is never a keyword; what is a keyword here is the decision's
+    *result*.
 
     **The sign is kept.** Only the *ordering key* is ``|w|``; ``W``'s retained entries are
     the signed eigenvalues, so ``V @ W @ adjoint(V)`` reconstructs an indefinite operator
@@ -526,8 +524,8 @@ def polar(
     whose order depended on a keyword would be a footgun.
 
     No bond leg survives, so
-    ``polar`` is the one M7 decomposition insensitive to the ``min``-rank bond
-    convention — and the reason it is the gauge-fixing primitive for M8.
+    ``polar`` is the one decomposition here insensitive to the ``min``-rank bond
+    convention, which is what makes it the gauge-fixing primitive.
 
     ``W`` is only a *partial* isometry when some ``B_c`` is rank-deficient: then
     ``W†W`` is an orthogonal projector rather than the identity and ``P`` is
@@ -736,7 +734,7 @@ def left_null(t: "SymmetricTensor", axes: Axes = None) -> "SymmetricTensor":
     standing refusal ("min(rows_c, cols_c) is metadata, never the numerical rank")
     applied to the complement.
 
-    Complete QR, not a full SVD, and the reason is measured: JAX refuses to
+    Complete QR, not a full SVD, and the reason is differentiability: JAX refuses to
     differentiate a full SVD (``_svd_jvp_rule``'s "not implemented for full
     matrices") for exactly the non-square shapes that have a null space, while the
     complete QR differentiates since JAX 0.10 ("and when ``full_matrices`` is
@@ -1004,7 +1002,7 @@ def eig(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sy
     [eigvals][tenet.ops.linalg.eigvals] when the objective needs only the spectrum;
     it is differentiable.
 
-    Platform, as measured rather than as upstream's stale docstring has it: CPU
+    Platform: CPU
     **and** NVIDIA GPU (cuSolver by default since JAX 0.8.0); TPU has no lowering.
     """
     m, bond, mats = _lower(t, axes)
@@ -1243,18 +1241,16 @@ class BondSelection:
     the whole record into ``jit`` would make its Python floats leaves, which is the
     accident the surrounding split exists to prevent.
 
-    **``discarded`` is always retained, on the measured size.** One triple costs a
-    measured 116 bytes of Python object (the tuple, the float, the small-int index;
-    the sector is one shared reference), so a spectrum of ``N`` values costs
-    ``116 N`` bytes against the ``8 * Sum_c rows_c * cols_c`` bytes the blocks it
-    came from already occupy — a ratio of ``14.5 / max(rows_c, cols_c)``: 23% at a
-    64-dimensional coupled sector, 1.5% at a 1000-dimensional one. The K=26
-    quantum-chemistry cut the proposal worries about computes ~5e4 singular values,
-    i.e. ~6 MB against the 6 GiB that run is measured at in ``docs/design.md``'s M39
-    table — 0.1%. An opt-in flag would buy that back at the price of a keyword whose
-    only job is to make the object's contents conditional, and the discarded weight —
-    which every caller wants — has to walk the same list anyway. The regime where the
-    list dominates is the regime where the tensor is small enough not to care.
+    **``discarded`` is always retained, and there is no flag to drop it.** One triple
+    costs about 116 bytes of Python object (the tuple, the float, the small-int index;
+    the sector is one shared reference), so a spectrum of ``N`` values costs ``116 N``
+    bytes against the ``8 * Sum_c rows_c * cols_c`` bytes the blocks it came from
+    already occupy — a ratio of ``14.5 / max(rows_c, cols_c)``, negligible by the time
+    a coupled sector is a few hundred dimensions wide. An opt-in flag would buy that
+    back at the price of a keyword whose only job is to make the object's contents
+    conditional, and the discarded weight — which every caller wants — has to walk the
+    same list anyway. The regime where the list dominates is the regime where the
+    tensor is small enough not to care.
     """
 
     bond: GradedSpace
@@ -1550,11 +1546,11 @@ def svd_truncated(
     Same factor legs, same conventions and the same capability refusals as
     [svd][tenet.ops.linalg.svd]; the only difference is the bond [GradedSpace][tenet.GradedSpace],
     whose degeneracy at ``c`` is the number of kept singular values there and which
-    **omits ``c`` entirely** when that number is zero. That is docs/design.md Milestone 7's
-    "graded bond-space reconstruction", and it is why this is a sibling of
+    **omits ``c`` entirely** when that number is zero. Reconstructing the graded bond
+    space from the data is what makes this a sibling of
     [svd][tenet.ops.linalg.svd] rather than a keyword on it: a keyword would make one function
-    traceable or not depending on the value of an argument, which is exactly the
-    distinction docs/design.md says the library must never hide. Under ``jax.jit`` or
+    traceable or not depending on the value of an argument, and whether a call decides a
+    structure is a distinction the library never hides. Under ``jax.jit`` or
     ``jax.grad`` it raises
     [StructureChangingError][tenet.symmetry.StructureChangingError].
 
@@ -1582,9 +1578,9 @@ def svd_truncated(
     documented consequence is that ``max_bond`` may be undershot by up to
     ``max qdim(c) - 1``.
 
-    ``cutoff_mode`` (quimb's names and quimb's semantics; the integer codes 1-6 quimb
-    also accepts are listed only so an M8 shim is a lookup -- **only the strings are
-    accepted here**):
+    ``cutoff_mode`` takes quimb's names with quimb's semantics. **Only the strings are
+    accepted**; the ``code`` column is quimb's own integer for cross-reference and this
+    function refuses it.
 
     ==== ========= ===========================================================
     code mode      keeps

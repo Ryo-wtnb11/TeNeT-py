@@ -10,7 +10,8 @@ Conventions, stated once and enforced everywhere:
 * **Left-associated only.** ``e_0 = u_0``; ``e_{k+1} in fusion(e_k, u_{k+1})``;
   ``inner == (e_1, ..., e_{N-2})`` and ``coupled == e_{N-1}``. Vertex ``k``
   carries ``mu_k in range(n_symbol(e_k, u_{k+1}, e_{k+1}))``. Other tree shapes
-  are related by F-moves (Milestone 4); there is deliberately no shape field.
+  are related by F-moves, which are not implemented; there is deliberately no
+  shape field.
 * **No ``isdual``.** Duality is per-leg metadata (invariant 2/4), so
   ``uncoupled`` holds already dual-resolved labels and one tree is shareable
   between tensors with different duality patterns.

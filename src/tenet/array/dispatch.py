@@ -1,14 +1,13 @@
 """``autoray`` registration for :class:`~tenet.tensor.SymmetricTensor`.
 
 Registration only — no numerical logic lives here, ever. Every entry is an
-already-implemented Milestone 2 function; the list is **closed**, so
+already-implemented ``tenet`` function; the list is **closed**, so
 ``ar.do("exp", ...)``, ``ar.do("svd", ...)`` and friends raise rather than leak
 through to a backend (invariant 11). ``"reshape"`` is registered only to *refuse*
 in our own voice — a shape tuple has no categorical meaning here — so the
 defined-operation list is unchanged by its presence. Adding a
-name here is the deliberate act of declaring its categorical meaning defined —
-``"tensordot"`` and ``"trace"`` joined the list with #51 and ``"einsum"`` with
-#52. ``"einsum"`` needs no ``ar.register_dispatch``: autoray ships an
+name here is the deliberate act of declaring its categorical meaning defined.
+``"einsum"`` needs no ``ar.register_dispatch``: autoray ships an
 ``einsum_dispatcher`` that infers the backend from *all* arguments, and a
 ``str`` equation ranks below a ``SymmetricTensor``, so the string first argument
 resolves here on its own.
@@ -50,10 +49,10 @@ def _fuse(t: SymmetricTensor, *axes_groups: object) -> SymmetricTensor:
 
     Registering a name under autoray means agreeing to autoray's calling
     convention for it; ``tenet.fuse(t, axes)`` takes a single group, so callers
-    such as quimb's ``tensor_split`` — ``do("fuse", x, left, right)`` — used to
-    get a bare ``TypeError``. Adapt here, and refuse the multi-group form the
-    way every other undefined operation is refused. ``tenet.fuse``'s own
-    signature, the one the docs/design.md documents, is untouched.
+    such as quimb's ``tensor_split`` — ``do("fuse", x, left, right)`` — would
+    otherwise get a bare ``TypeError``. Adapt here, and refuse the multi-group form
+    the way every other undefined operation is refused. ``tenet.fuse``'s own
+    signature is untouched.
     """
     if len(axes_groups) != 1:
         raise ValueError(
@@ -68,17 +67,16 @@ def _fuse(t: SymmetricTensor, *axes_groups: object) -> SymmetricTensor:
 
 
 def _elementwise_refused(name: str) -> "Callable[..., SymmetricTensor]":
-    """Refuse a dense-elementwise name in our own voice (#93, #185).
+    """Refuse a dense-elementwise name in our own voice.
 
-    Since M31 the blockwise maps are spelled ``tenet.block_sqrt`` /
-    ``tenet.block_power``, so autoray's module lookup no longer finds anything
-    under ``"sqrt"`` or ``"power"`` and the *wrong* number can no longer leak.
-    These two registrations therefore stay by choice, not by necessity: they
-    are a better answer than autoray's ``ImportError`` for a name whose dense
-    meaning genuinely does not exist here. autoray's ``"sqrt"`` is the dense
-    elementwise one, and for a non-Abelian provider the two are different
-    operations — measured off by ``1.673`` on a dense scale of ``3.82`` for a
-    rank-3 SU(2) tensor. Same precedent as ``"reshape"``, applied the same way:
+    The blockwise maps are spelled ``tenet.block_sqrt`` / ``tenet.block_power``, so
+    autoray's module lookup finds nothing under ``"sqrt"`` or ``"power"`` and the
+    *wrong* number cannot leak. These two registrations are therefore a courtesy:
+    a better answer than autoray's ``ImportError`` for a name whose dense meaning
+    genuinely does not exist here. autoray's ``"sqrt"`` is the dense elementwise
+    one, and for a non-Abelian provider the two are different operations — off by
+    ``1.673`` on a dense scale of ``3.82`` for a rank-3 SU(2) tensor. Same
+    precedent as ``"reshape"``, applied the same way:
     the numpy name is refused and this package's own operation is spelled
     differently (``fuse``/``unfuse`` there, ``block_sqrt``/``block_power`` here)
     rather than rebound. A refusal about meaning, not about effort — and, like
@@ -89,7 +87,7 @@ def _elementwise_refused(name: str) -> "Callable[..., SymmetricTensor]":
         raise ValueError(
             f"{name} is not defined for a symmetric tensor: autoray's {name!r} is the dense "
             "elementwise operation, and no non-linear function commutes with "
-            "T = sum_tau A^(tau) (x) C^(tau) (measured 1.673 off on a dense scale of 3.82 "
+            "T = sum_tau A^(tau) (x) C^(tau) (1.673 off on a dense scale of 3.82 "
             f"for SU(2)). The blockwise map on the coefficients is tenet.block_{name}(t) / "
             "tenet.apply_blocks(t, fn); for dense semantics, densify explicitly."
         )
@@ -102,20 +100,20 @@ def _reshape(t: SymmetricTensor, *args: object, **kwargs: object) -> SymmetricTe
     raise ValueError(
         "reshape by shape is not defined for a symmetric tensor; a tuple of physical "
         "dimensions does not say how graded spaces are to be fused or split. The "
-        "categorical operation is fuse/unfuse over named axes (docs/design.md 'reshape and "
-        "fusion'): tenet.fuse(t, (0, 1)), tenet.unfuse(t, 0)."
+        "categorical operation is fuse/unfuse over named axes: "
+        "tenet.fuse(t, (0, 1)), tenet.unfuse(t, 0)."
     )
 
 
 def _flip(t: SymmetricTensor, *args: object, **kwargs: object) -> SymmetricTensor:
-    """Refuse ``flip`` in our own voice — the hole #185 found still open.
+    """Refuse ``flip`` in our own voice.
 
-    ``numpy.flip`` reverses element order along an axis and takes the same
-    ``(t, axes)`` arguments this package's duality toggle used to take under the
-    same name, so before M31 ``ar.do("flip", t, 0)`` silently returned a tensor
-    with a toggled ``dual`` flag: a wrong answer, no error. The rename to
-    ``tenet.flip_dual`` closes the lookup; this registration replaces autoray's
-    ``ImportError`` with the sentence that says which operation was meant.
+    ``numpy.flip`` reverses element order along an axis and takes ``(t, axes)``,
+    which is also the shape of a duality toggle -- so a bare ``flip`` under
+    autoray's module lookup would be a wrong answer with no error. The duality
+    toggle is named ``tenet.flip_dual``, which closes that lookup; this
+    registration replaces autoray's ``ImportError`` with the sentence that says
+    which operation was meant.
     """
     raise ValueError(
         "flip is not defined for a symmetric tensor: autoray's 'flip' reverses element "

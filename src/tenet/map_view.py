@@ -1,13 +1,11 @@
 """The coupled-sector matrix lowering ``T ≃ ⊕_c B_c ⊗ id_c`` and its inverse.
 
-This is the "temporary map lowering" arrow of docs/design.md "Reduced blocks follow
-public ndarray axes": public-axis-ordered reduced blocks in, one dense matrix
+A temporary lowering: public-axis-ordered reduced blocks in, one dense matrix
 per coupled sector out, exactly invertible. Nothing about the public axis order
 changes and nothing is cached in storage — [to_matrices][tenet.to_matrices] allocates
 temporaries and hands them back.
 
-Conventions fixed here once, because Milestone 7's truncation code has to invert
-them:
+Conventions fixed here once, because the truncation code has to invert them:
 
 * **Rows are OUT, columns are IN.** The row index of ``B_c`` is
   ``(output tree, degeneracy multi-index over the OUT axes in public order)``,
@@ -22,7 +20,7 @@ them:
   two distinct row bands.
 * **Band order is ``block_order`` restricted**, never a fresh enumeration, so two
   tensors whose OUT (resp. IN) legs agree as ordered legs get *identical* row
-  (resp. column) orderings. Composition in #30 is then a plain matmul.
+  (resp. column) orderings. Composition is then a plain matmul.
 * **No ``sqrt(qdim)`` is folded into ``B_c``.** The norm identity is
   ``‖T‖² = Σ_c qdim(c)·‖B_c‖²_F`` — i.e. [tenet.norm][] regrouped — and
   folding the weight in would silently change the convention ``norm`` and
@@ -43,8 +41,7 @@ blocks' **backend**, never on their shapes:
   axes only subdivides strides, so it is always a view, and the assignment is one
   strided copy per block. The concatenating path costs three passes (materialise
   the transposed view, join the row band, join the sector), and on a
-  bandwidth-bound block geometry that is most of what a contraction costs
-  (docs/design.md "M69").
+  bandwidth-bound block geometry that is most of what a contraction costs.
 
 The two produce bit-identical matrices -- the mutable path writes exactly the
 cells the concatenating path would place, in the same layout -- and the tests run
@@ -286,13 +283,12 @@ def _tables(
     -----
     Both are pure functions of ``structure``, so they are cached beside
     [map_layout][tenet.map_layout] rather than rebuilt inside the assembly loops.
-    They used to be: the band tuples once per coupled sector per call (each an
-    ``O(bands)`` filter of ``rows``/``cols``, so ``O(bands²)`` for the call), and
-    the shapes once per block per call (a ``FusionBlockKey`` hash and a dict lookup
-    through ``block_shape``). On a many-small-blocks structure that re-derivation is
-    most of what an assembly costs, and it is what makes ``from_matrices`` — which
-    moves no bytes, every piece being a view — the more expensive of the two
-    directions there (docs/design.md "M69").
+    Rebuilding them inside the loops would cost the band tuples once per coupled
+    sector per call (each an ``O(bands)`` filter of ``rows``/``cols``, so
+    ``O(bands²)`` for the call) and the shapes once per block per call (a
+    ``FusionBlockKey`` hash and a dict lookup through ``block_shape``). On a
+    many-small-blocks structure that re-derivation is most of what an assembly
+    costs.
     """
     layout = map_layout(structure)
     order = layout.axes_order
@@ -481,7 +477,7 @@ def lower_plan(
 
     Notes
     -----
-    The fusion of "apply the plan" and "lower the result" (docs/design.md "M70").
+    The fusion of "apply the plan" and "lower the result".
     Applying a plan writes one array per term -- a transposed view, materialised by the
     scalar multiply when the coefficient is not 1 -- and lowering then copies every one
     of them into its sector matrix, so a coefficient-carrying block crosses memory twice
@@ -642,8 +638,8 @@ class TensorMapView:
     Notes
     -----
     ``as_map`` allocates nothing: the view holds the tensor and every property is
-    derived from the ``side`` metadata the legs already carry (docs/design.md "TensorMap
-    views"). Materializing an ``(out..., in...)`` reordering here would violate
+    derived from the ``side`` metadata the legs already carry. Materializing an
+    ``(out..., in...)`` reordering here would violate
     invariant 3 and fork ``T.as_map().svd()`` from ``svd(T, axes=...)``.
     """
 
@@ -915,8 +911,8 @@ def check_square(m: "SymmetricTensor", caller: str) -> None:
     Five square-map operations share this paragraph (``eigh``, ``expm``, ``eig``,
     ``eigvals``, ``full_trace``); a copy per caller is a paragraph that would need
     editing five times. It lives here, next to [as_map][tenet.as_map], because
-    the predicate is pure map-view metadata — ``ops`` used to hold it privately
-    and its fifth caller is in another ``ops`` module (#126).
+    the predicate is pure map-view metadata and its callers span more than one
+    ``ops`` module.
     """
     codomain, domain = as_map(m).codomain, as_map(m).domain
     i = codomain.matches(domain)

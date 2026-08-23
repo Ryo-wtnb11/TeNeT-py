@@ -1,4 +1,4 @@
-"""The dense boundary — ``to_dense`` and ``from_dense`` (issue #82).
+"""The dense boundary — ``to_dense`` and ``from_dense``.
 
 ``T = Σ_τ A^(τ) ⊗ C^(τ)``, in both directions, with the categorical half
 precomputed once per :class:`~tenet.structure.TensorStructure` and the numerical
@@ -6,7 +6,7 @@ half done entirely through ``ar.do`` — so a JAX-backed tensor densifies *insid
 ``jit`` and differentiates like any other composition of ``einsum``, ``reshape``
 and ``concatenate``.
 
-Layout contract, unchanged from #9 and depended on by twenty test modules: axis
+Layout contract, depended on by twenty test modules: axis
 ``i`` has length ``legs[i].space.dim``; sectors occupy contiguous slabs in the
 space's canonical order; within sector ``a``'s slab the index is ``alpha * d_a + m``.
 
@@ -121,8 +121,8 @@ class DensePlan:
 
     NOT a field of :class:`~tenet.structure.TensorStructure` — invariant 8 keeps
     arrays out of structural metadata. It lives in the module-level
-    :func:`dense_plan` cache, exactly as ``permutation_plan`` (#21),
-    ``map_layout`` (#29) and ``fusion_plan`` (#22) do.
+    :func:`dense_plan` cache, exactly as ``permutation_plan``, ``map_layout``
+    and ``fusion_plan`` do.
     """
 
     structure: TensorStructure
@@ -174,7 +174,7 @@ def _tree_cgt(provider: _DenseCapable, tree: FusionTree, duals: tuple[bool, ...]
     Where it is, the tree's label is ``dual(a)`` but the dense axis must run over
     ``V_a``, so the provider's ``Z_a: V_a -> V_a^*`` is contracted onto that axis.
 
-    The ``d_a > 1`` path is covered as of #37: SU(2)'s ``Z`` is the antidiagonal
+    The ``d_a > 1`` path is covered: SU(2)'s ``Z`` is the antidiagonal
     ``(-1)**i``, so a dual leg's dense slab is the direct one with the magnetic
     index reversed and alternately signed, and the placement (together with the
     ``.conj()`` the caller applies to the input tree) is pinned by the cup/cap
@@ -212,7 +212,7 @@ def dense_plan(structure: TensorStructure) -> DensePlan:
     """The dense grid of ``structure``: cells, offsets and NumPy CG tensors.
 
     Cached on the structure alone. No ``provider_key`` component is needed and
-    one would be dead weight (#53): the structure holds ``Leg``s holding
+    one would be dead weight: the structure holds ``Leg``s holding
     ``GradedSpace``s holding the frozen provider *value*, so provider identity —
     and with it the gauge — is already in the key.
 
@@ -290,8 +290,8 @@ def to_dense(t: "SymmetricTensor") -> Array:
     ``V_a -> V_a^*`` isomorphism in the dense basis.
 
     The dtype is whatever the backend's own promotion makes of ``block × CG``:
-    on NumPy that is ``result_type(block.dtype, float64)``, the pre-#82 rule
-    exactly; on JAX without ``jax_enable_x64`` the CG array arrives as
+    on NumPy that is ``result_type(block.dtype, float64)``; on JAX without
+    ``jax_enable_x64`` the CG array arrives as
     ``float32``, the same stance ``to_backend`` documents.
     """
     plan = dense_plan(t.structure)

@@ -1,4 +1,4 @@
-"""Coherence validators and derived categorical properties (M24a, #158).
+"""Coherence validators and derived categorical properties.
 
 Properties and coherence conditions — pentagon, hexagon, snake, sphericality,
 unitarity, non-degeneracy of the braiding — are **validators, not protocols**:
@@ -13,7 +13,7 @@ sphericality check), both cached.
 
 Tolerances follow the arithmetic: exact identities (quantum dimensions,
 ``R**2`` for a symmetric provider) are compared exactly; float-folded ones
-(pentagon, unitarity) use the same ``atol`` the pre-M24 test assertions used.
+(pentagon, unitarity) compare within an ``atol`` the caller may override.
 
 Multiplicity-bearing providers (SU(N)) validate their coherence racah-side —
 the scalar validators here raise on an ``n_symbol > 1`` vertex by construction
@@ -306,7 +306,7 @@ def validate_unitary(provider: FusionRules, sectors: Sectors, *, atol: float = 1
     sectors : tuple of Sector
         The budget ``a, b, c, d`` are drawn from.
     atol : float, optional
-        Absolute tolerance, matching the pre-M24 test assertion.
+        Absolute tolerance. Default ``1e-13``.
 
     Returns
     -------

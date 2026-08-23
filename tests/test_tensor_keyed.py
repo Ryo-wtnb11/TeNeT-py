@@ -35,9 +35,7 @@ FROM_LEGS_SIGNATURE = (
     "(legs: collections.abc.Sequence[tenet.leg.Leg], "
     "blocks: collections.abc.Sequence[typing.Any]) -> 'SymmetricTensor'"
 )
-FROM_LEGS_DOC_FIRST_LINE = (
-    "Build from public legs, in ``block_order``. The docs/design.md's spelling."
-)
+FROM_LEGS_DOC_FIRST_LINE = "Build from public legs, in ``block_order``."
 
 
 def ones_for(structure, key):

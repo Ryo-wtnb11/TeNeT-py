@@ -6,7 +6,8 @@ Two families, independent of each other:
   containers, [MPO.from_terms][tenet.network.MPO.from_terms] builds a Hamiltonian from a
   term list, [Env][tenet.network.Env] caches the ``<psi|H|psi>`` partial contractions, and
   [dmrg_][tenet.network.dmrg_] / [sweep_][tenet.network.sweep_] /
-  [lanczos][tenet.network.lanczos] run the ground-state search.
+  [lanczos][tenet.network.lanczos] run the variational search -- the ground state, and
+  excited states through ``dmrg_``'s ``orthogonal_to=``.
   [MPS.product][tenet.network.MPS.product], [MPS.compress_][tenet.network.MPS.compress_],
   [MPS.save][tenet.network.MPS.save] / [MPS.load][tenet.network.MPS.load] and the two
   [expectation][tenet.network.expectation_1site] values surround it.
@@ -31,9 +32,12 @@ is fixed-structure and traceable through an injected ``compile=``, and in ``ctmr
 [ctmrg_unrolled][tenet.network.ctmrg_unrolled] and ``move(bond=B)`` are shape-static and
 differentiable while ``ctmrg`` is not.
 
-Design reasoning, the composition rule every ``einsum`` here obeys, and the
-public-``tenet``-API-only hygiene rules: ``docs/design.md`` "Milestone 11", enforced by
-``tests/network/test_hygiene.py``.
+**The composition rule** every two-operand ``tenet.einsum`` here obeys: operand 1
+supplies the ``IN`` end of every shared wire. Meeting ``IN`` against ``OUT`` is not
+enough, because that condition is symmetric and fixes contractibility only, while the
+sign a cap pays depends on which operand supplies which end. A wire that genuinely turns
+around is bent explicitly with [tenet.repartition][] before the contraction. This module
+uses the public ``tenet`` API only, enforced by ``tests/network/test_hygiene.py``.
 """
 
 from tenet.network.common import entropy, ones, spectrum, spectrum_sectors

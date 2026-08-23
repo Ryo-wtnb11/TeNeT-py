@@ -159,7 +159,7 @@ def spin_half(symmetry: _DualFusionRules = U1) -> Site:  # ty: ignore[invalid-pa
     emit onto is the ``j=1`` multiplet, whose *dense* dimension is 3 -- so
     ``local_op(sz, phys=phys, charge=SU2Sector(2))`` raises on the shape, and no
     irreducible tensor operator of nonzero rank exists in this API to hand back. What
-    exists is M13b's invariant *k*-site form, and ``S.S`` is it: one whole Heisenberg
+    exists is the invariant *k*-site form, and ``S.S`` is it: one whole Heisenberg
     bond term, whose coupling lives inside its own blocks, which
     [MPO.from_terms][tenet.network.MPO.from_terms] splits with an SVD. The same object
     is invariant under ``U1`` too, where ``S.S`` is what
@@ -214,9 +214,8 @@ def spinless_fermion() -> Site:
     Notes
     -----
     There is no ``JW`` operator to ship and no place to put one: the Jordan-Wigner
-    string is the ``fZ2`` braiding an odd MPO bond pays when it crosses a physical line
-    (M21/#147), so a term list over these operators is already the fermionic
-    Hamiltonian.
+    string is the ``fZ2`` braiding an odd MPO bond pays when it crosses a physical
+    line, so a term list over these operators is already the fermionic Hamiltonian.
     """
     return _build(
         GradedSpace.new(
@@ -260,7 +259,7 @@ def spinful_fermion() -> Site:
     sector in canonical order. Modes run up before down, ``|ud> = c+_up c+_dn |0>``, so
     ``c_up`` carries no intra-site sign and ``c_dn`` pays the Jordan-Wigner ``Z`` on the
     up mode (``c_dn |ud> = -|u>``). Inter-site strings are the braiding's business, not
-    a matrix's; this is the convention M21/#147 pinned against a dense oracle.
+    a matrix's, and this convention is pinned against a dense oracle.
     """
     n_up, n_dn = _C_UP.T @ _C_UP, _C_DN.T @ _C_DN
     return _build(

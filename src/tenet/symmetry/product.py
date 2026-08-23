@@ -33,7 +33,7 @@ Two known gaps, deliberate:
 * **No ``BendingCoefficients`` / ``DualBasis`` forwarding.** The pattern is the
   same (the duality matrix becomes a Kronecker product with this same flattening)
   but it has its own dense-oracle criteria; a product has no bending capability
-  today and fails loudly. Follow-up to #40.
+  and fails loudly.
 
 **Nested products are not flattened.** ``ProductProvider((ProductProvider((A, B)),
 C))`` is a legal provider whose sectors are nested ``ProductSector``s, and it is
@@ -75,7 +75,7 @@ __all__ = [
 
 _PERM_HINT = (
     "Within-side reordering is a braid and needs that factor's own F- and R-moves "
-    "(Milestone 4 for SU(2)); it will not be faked by permuting block axes."
+    "(not implemented for SU(2)); it will not be faked by permuting block axes."
 )
 _CGC_HINT = "A product's Clebsch-Gordan tensor is the outer product of the factors'."
 
@@ -270,8 +270,8 @@ class ProductProvider:
         The braiding of a Deligne product is the tensor product of the factors'
         braidings and the associator factorizes, so the permuted product tree is
         literally ``⊗_i (Σ_α c_α^(i) t_α^(i))``, which multiplies out to this.
-        Written for many terms per factor, which SU(2)'s braid expansion (#36)
-        actually reaches — a single-term special case would be a correctness trap.
+        Written for many terms per factor, which SU(2)'s braid expansion actually
+        reaches — a single-term special case would be a correctness trap.
         """
         self._require_all(PermutationCoefficients, _PERM_HINT)
         per_factor = [

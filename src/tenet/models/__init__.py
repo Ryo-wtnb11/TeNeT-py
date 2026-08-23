@@ -2,8 +2,8 @@
 
 An optional layer above the core, imported explicitly (``from tenet.models import
 spin_half``) and re-exported nowhere: **``tenet.network`` never imports it**, which is
-what keeps #112/#133's operator-zoo rule true verbatim -- the driver layer still decides
-nothing about what a caller's operators mean. ``tests/network/test_hygiene.py`` enforces
+what keeps the driver layer from deciding anything about what a caller's operators
+mean. ``tests/network/test_hygiene.py`` enforces
 that edge.
 
 What ships is *sites*, not models: [spin_half][tenet.models.spin_half],
@@ -31,12 +31,11 @@ Examples
 >>> h.to_dense().shape
 (16, 16)
 
-The build carries no keyword, which is what ``docs/guide/models-and-sites.md`` teaches: a
-builder hands back the **site tensors**, and a finite-range model's MPO bond is narrow
-enough that [Env.heff2][tenet.network.Env.heff2]'s prepared, symbolic path costs 1.6-2.1x
-per sweep and returns nothing, so the sites are what the sweep should run on (#255,
-measured in ``docs/design.md`` "M64b"). An ab initio Hamiltonian writes ``symbolic=True``
-and keeps the description.
+The build carries no keyword: a builder hands back the **site tensors**, and a
+finite-range model's MPO bond is narrow enough that
+[Env.heff2][tenet.network.Env.heff2]'s prepared, symbolic path costs more per sweep than
+it returns, so the sites are what the sweep should run on. An ab initio Hamiltonian
+writes ``symbolic=True`` and keeps the description.
 """
 
 from tenet.models.sites import (

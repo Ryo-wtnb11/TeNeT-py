@@ -186,7 +186,7 @@ def test_product_refuses_a_sector_absent_from_phys():
 def test_product_refuses_a_degenerate_sector():
     """A product state names a *basis vector*; this constructor has no degeneracy slot."""
     wide = GradedSpace.new(U1, {U1Sector(0): 2})
-    with pytest.raises(ValueError, match=r"degeneracy 2.*Sequence\[tuple\[Sector, int\]\]"):
+    with pytest.raises(ValueError, match=r"degeneracy 2.*no slot for the degeneracy index"):
         MPS.product(wide, [U1Sector(0), U1Sector(0)])
 
 

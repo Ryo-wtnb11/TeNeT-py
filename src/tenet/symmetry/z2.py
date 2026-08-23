@@ -10,7 +10,7 @@ that differs is the braiding, and therefore the only method body that differs is
 here.** Its docstring carries a
 standing warning: a provider must opt in by defining ``permute_tree``, because
 fermion parity has the identical unique multiplicity-free fusion rule and still
-carries a Koszul sign — *uniqueness of fusion is never permission* (#21). This
+carries a Koszul sign — *uniqueness of fusion is never permission*. This
 provider trips that warning head-on and answers it from somewhere else entirely:
 ``Z2Provider`` is **defined** to be ``Vect_Z2`` with symmetric bosonic braiding,
 ``R^{ab}_c ≡ +1`` for every triple, so the permutation coefficient is 1 *by the

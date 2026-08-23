@@ -1,18 +1,7 @@
 """The containers: [MPS][tenet.network.MPS] and [MPO][tenet.network.MPO].
 
-Promoted from ``examples/toy_codes/dmrg.py`` (#110) with no arithmetic change: ``random_mps``
-:266-274, ``_as_site`` :277-286 (now the ``MPS.__setitem__`` write barrier),
-``canonicalize`` :289-306 (now [MPS.canonize_][tenet.network.MPS.canonize_]) and ``mpo`` :220-240
-(now
-[MPO.from_w][tenet.network.MPO.from_w]). ``scalar``, ``inner`` and ``spectrum`` lived here until
-#114 moved
-them to ``tenet.network.common``, where ``network/ctmrg.py`` can reach them without
-importing a driver it shares no concept with; #126 then promoted the first two out of the
-driver layer entirely, as [tenet.full_trace][] and [tenet.inner][].
-
-Every two-operand ``tenet.einsum`` in this module follows the package's composition rule
--- operand 1 supplies ``IN`` on every shared wire; stated in ``docs/design.md``
-"Milestone 11", pinned by ``tests/network/test_hygiene.py`` (#160).
+Every two-operand ``tenet.einsum`` in this module follows the package's composition
+rule: operand 1 supplies ``IN`` on every shared wire.
 """
 
 import json
@@ -83,27 +72,17 @@ class MPS:
         A_n : (left bond OUT, physical OUT, right bond IN)
 
     Charge flows left to right, ``bond_n (x) phys_n -> bond_{n+1}``, and both end bonds
-    have ``D=1``; a non-unit sector on bond 0 targets that total charge (YASTN's
-    charged-first-virtual-leg recipe, ``_initialize.py``:194). The convention is not
-    invented here -- ``examples/toy_codes/dmrg.py``:57-59 and
-    ``examples/toy_codes/vmc_mps.py``:69-74 both chose it independently and
-    ``tests/integration/test_dmrg.py`` already pins it.
+    have ``D=1``; a non-unit sector on bond 0 targets that total charge.
 
-    **Why a mutable container does not violate REPOSITORY_RULES:30.** That rule protects
-    *categorical* objects -- ``Leg``, ``GradedSpace``, ``TensorStructure``,
-    ``SymmetricTensor`` -- whose identity is their metadata, and every tensor this class
-    holds is still frozen. An MPS is a container of those plus an orthogonality centre
-    that *moves*: a state machine, not a category. In-place methods therefore carry
-    YASTN's trailing underscore (``canonize_``), because the invalidation discipline is
-    the entire correctness content of a sweep and ``env.clear_(n, n + 1)`` reading as a
-    mutation at the call site is worth the character it costs.
+    **A mutable container.** The immutability rule protects *categorical* objects --
+    ``Leg``, ``GradedSpace``, ``TensorStructure``, ``SymmetricTensor`` -- whose identity
+    is their metadata, and every tensor this class holds is still frozen. An MPS is a
+    container of those plus an orthogonality centre that *moves*. In-place methods
+    therefore carry a trailing underscore (``canonize_``), so that a mutation such as
+    ``env.clear_(n, n + 1)`` reads as one at the call site.
 
-    ``center`` is one ``int | None``, ``None`` meaning "no claim made". Deliberately
-    *not* TenPy's per-site ``form`` table plus singular values on ``L + 1`` bonds
-    (``tenpy/networks/mps.py``:64-79, :2882-2933) and not YASTN's central block ``pC``
-    (``_mps_parent.py``:39-40): those exist to serve ``get_B(form=)``, mixers and 1-site
-    DMRG, none of which M11a ships. Both are the named upgrade paths, with their specs at
-    those line numbers, if TDVP or 1-site DMRG ever lands.
+    ``center`` is one ``int | None``, ``None`` meaning "no claim made": a single
+    orthogonality centre rather than a per-site form table or a separate central block.
     """
 
     sites: list[SymmetricTensor]
@@ -210,8 +189,10 @@ class MPS:
         ------
         ValueError
             If a sector is not in ``phys``; if a sector has degeneracy > 1 in
-            ``phys`` (this constructor has no slot for the degeneracy index);
-            or if a fusion along the backwards bond derivation has more than
+            ``phys`` -- this constructor has no slot for the degeneracy index,
+            so seed with [MPS.random][tenet.network.MPS.random] and a bond
+            profile whose boundary leg carries the target charge; or if a
+            fusion along the backwards bond derivation has more than
             one channel -- the constructor is Abelian-only and refuses rather
             than picking a channel.
 
@@ -259,8 +240,7 @@ class MPS:
                 raise ValueError(
                     f"sector {a!r} has degeneracy {phys.degeneracy(a)} in the physical "
                     "space, and a product state names a basis vector: this constructor "
-                    "has no slot for the degeneracy index (a states: "
-                    "Sequence[tuple[Sector, int]] spelling would be the upgrade)"
+                    "has no slot for the degeneracy index"
                 )
         bonds = [GradedSpace.new(sym, {sym.unit: 1})]  # bond len(states), built backwards
         for n in range(len(states) - 1, -1, -1):
@@ -363,9 +343,8 @@ class MPS:
         -----
         No dense expansion and no environment object: two ``tenet.einsum`` calls per site,
         the same pairwise shape [Env.update_][tenet.network.Env.update_] uses with the MPO row
-        removed. Written *through* [overlap][tenet.network.overlap] rather than beside it
-        (#213), so the one-state and two-state readings of the same transfer pass cannot
-        drift.
+        removed. Written *through* [overlap][tenet.network.overlap], so the one-state and
+        two-state readings of the same transfer pass cannot drift.
         """
         return overlap(self, self) ** 0.5
 
@@ -482,11 +461,9 @@ class MPS:
 
         Notes
         -----
-        YASTN's ``get_Schmidt_values`` and TenPy's ``entanglement_spectrum(by_charge=False)``.
-        Both are methods on the state rather than outputs of an algorithm, and so is this:
-        the sweep computes the same numbers at every bond of every sweep and reports only
-        how much they *moved*, which is a convergence diagnostic and not an answer about the
-        converged state (#215).
+        A method on the state rather than an output of an algorithm: the sweep reports only
+        how much these numbers *moved*, which is a convergence diagnostic and not an answer
+        about the converged state.
 
         A canonical **copy** is taken first, so this never re-gauges the state it reads and
         never reports the values of a non-canonical gauge. Each of the three readers here
@@ -1194,8 +1171,8 @@ def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
     an MPO bond carries one ``dual`` convention — ``V (+) V*`` is not a graded space; on
     the unit sector the flag is free. **Except on a sign-braiding grading**: for a bond
     sector with a ``-1`` self-braiding the two caps differ by exactly that twist, so a
-    dual odd bond contracted in #160's composition order pays one Koszul sign per cut —
-    measured as ``(-1)^(number of odd internal bonds)`` on the chain (#147 gate 2). The
+    dual odd bond contracted in the package's composition order pays one Koszul sign per
+    cut — ``(-1)^(number of odd internal bonds)`` on the chain. The
     factors are therefore flipped to the non-dual convention the rank-3 route already
     uses, with the twist paid once per bond (``inv`` on exactly one end -- ``flip_dual`` twice
     is ``chi_a * theta_a``, ``-1`` on an odd line); bosonic splits are byte-identical.
@@ -1265,7 +1242,7 @@ def _place(items, space_l, space_r, phys, dual_l, dual_r, carry=None):
     the write is disjoint **on the left index**: no two edges share a row slab. ``items``
     yields ``(dense block, left state space, its slots, right state space, its slots)``
     per live edge; the block is the edge's **full** rank-4 dense array, never capped or
-    sliced on the way in (#147 gate 4), so the round trip is exact by
+    sliced on the way in, so the round trip is exact by
     [from_dense][tenet.SymmetricTensor.from_dense]'s own contract.
 
     With ``carry`` — the compressing sweep's already-truncated right leg as a dense
@@ -1277,18 +1254,13 @@ def _place(items, space_l, space_r, phys, dual_l, dual_r, carry=None):
     instead of assigning. Only the left slab assignment keeps the isometry argument; the
     accumulation's oracle is the round trip itself.
 
-    Built at ``from_dense``'s **default** relative ``atol``, which keeps the refusal the
-    per-state isometries used to carry, carry folded or not: a slot map that disagrees
-    with its state puts mass in a symmetry-forbidden cell of the assembled site and
-    construction *raises* rather than projecting. ``None`` when no edge survives the cut.
+    Built at ``from_dense``'s **default** relative ``atol``, carry folded or not: a slot
+    map that disagrees with its state puts mass in a symmetry-forbidden cell of the
+    assembled site and construction *raises* rather than projecting. ``None`` when no edge
+    survives the cut.
 
     Simplification: the buffer is dense across sectors where the tensor stores only the
-    allowed blocks. #191 recorded per-coupled-sector assembly through ``to_matrices`` /
-    ``from_matrices`` (``map_view.py``:238, :282) as the upgrade path if that ever stopped
-    fitting. #193 took the measurement instead of assuming it: with the carry folded,
-    ``from_dense`` is 9% of a K=26 ab initio build and on a two-sector fermionic grading
-    the dense buffer is exactly 2x the stored blocks, so the ceiling on that route is
-    **~4.5%**. It is not the upgrade path it was recorded as; folding the carry was.
+    allowed blocks; folding the carry is what keeps that affordable.
     """
     d = phys.dim
     buf = None
@@ -1378,17 +1350,15 @@ class EdgeBlocks(NamedTuple):
     spectators -- between the full left and right bonds, so all "identity through this
     site" paths ride one tensor; ``spec_op`` is the same spectator map restricted to the
     open subspaces; and ``a_real_op`` is ``a_op`` minus those spectators. **A spectator
-    rides the rank-2 maps only if its state's space braids with no sign** (#160): the
+    rides the rank-2 maps only if its state's space braids with no sign**: the
     identity tensor interleaves the bond line with the two physical lines, and for a
     state that braids with signs that crossing is the Jordan-Wigner string -- it lives
     in the rank-4 tensor and in nothing cheaper, so such a state is classified into
     ``a_real_op`` instead, where [Env.heff2][tenet.network.Env.heff2]'s open-to-open chain contracts
     the
-    full tensor. For every sign-free provider the classification is what it always was,
-    at the cost it always had.
+    full tensor.
 
-    MPSKit calls this partition the MPO's *Jordan form*; why this type is not spelled
-    that way is in ``docs/design.md`` "Milestone 16".
+    MPSKit calls this partition the MPO's *Jordan form*.
     """
 
     a: dict
@@ -1431,8 +1401,7 @@ class _Walk:
     edge tensor, the charge after it and the state's space. That is what takes the
     per-operator cost in ``_term_edges`` down to two dict lookups, with the fusion, the
     ``GradedSpace``, the braiding probe and the dense round trip paid once per pattern
-    instead of once per term (#197: at ab initio scale they measured 3.7
-    ``_braids_with_signs`` and 4.7 ``GradedSpace.new`` calls *per term*).
+    instead of once per term.
 
     The five structures ``_edge_table`` consumes -- ``states``, ``order``, ``moves``,
     ``stops``, ``spectators`` -- are attributes, filled in place. Closing edges accumulate
@@ -1838,8 +1807,8 @@ class EdgeTable:
 
     Notes
     -----
-    **This is the MPO's symbolic representation, and it is the instantiation boundary**
-    (#200, staging #184 Part 2 (a)). Nothing above it is numeric: ``_edge_table`` builds
+    **This is the MPO's symbolic representation, and it is the instantiation boundary.**
+    Nothing above it is numeric: ``_edge_table`` builds
     the whole thing without a tensor. Everything below it is, and there are exactly two
     ways down — [site][tenet.network.EdgeTable.site], which materialises one
     dense-blocked rank-4 ``W`` on the full bond, and
@@ -1849,23 +1818,22 @@ class EdgeTable:
     ``env._cores2`` the second's, and neither is built out of the other.
 
     The group *embedding* — the 0/1 isometry between a group of states and its slots of
-    the full bond — belongs to the second way down and is built there, which is the
-    restructuring #184 named as the real cost of deferred instantiation: ``Env``'s cores
-    used to be assembled from tensors ``_instantiate`` had already embedded.
+    the full bond — belongs to the second way down and is built there, so that ``Env``'s
+    cores never route through a full-width site tensor.
 
     Both ways down are cached per site and neither runs at construction, so an MPO that
     only ever reaches the matvec never allocates a full-width site tensor. That is the
     memory claim, and ``tests/network/test_deferred.py`` is what fails if it stops
     holding.
 
-    The per-site cache is **bounded by bytes** (M38, #202): it keeps its most recently
+    The per-site cache is **bounded by bytes**: it keeps its most recently
     used sites up to ``common.CACHE_BUDGET`` and evicts past it, because a sweep visits
     every site and a cache holding all of them is the whole operator again -- the object
     this boundary exists not to build. An operator small enough to sit under the budget
     keeps every site and never evicts. A rebuilt block table is bit-identical to the
     evicted one; ``edge_blocks`` is a pure function of the description.
 
-    **Two producers, one interface** (#204). ``_edge_table`` builds the finite-state
+    **Two producers, one interface.** ``_edge_table`` builds the finite-state
     machine; ``_compressed_table`` builds the *compressed* description a float-``cutoff``
     builder returns -- the compressed sites plus, per cut, the three group slabs the
     pinned sweeps preserved, with one open state per cut where the FSM has one per open
@@ -1875,11 +1843,6 @@ class EdgeTable:
     [EdgeBlocks][tenet.network.EdgeBlocks] reads ``a``/``b``/``c``/``d``. The one
     difference is inside [edge_blocks][tenet.network.EdgeTable.edge_blocks], which slices
     the compressed ``W'`` where it scatters the FSM's edges.
-
-    The next stage (#184 candidate (d)) plugs in *here*: a per-cut assembler with an
-    expression algebra replaces ``_edge_table`` as the producer and
-    [edge_blocks][tenet.network.EdgeTable.edge_blocks] as the per-site core builder, with the
-    a/b/c/d partition as the interface it has to keep hitting.
     """
 
     edges: list[dict]
@@ -1966,11 +1929,10 @@ class EdgeTable:
         the moment it is placed, which is what lets the compressing sweep consume them one
         at a time. ``_place`` folds ``carry`` into the scatter, so the site is born
         contracted with it and the buffer never widens past ``chi``. The site's right leg
-        is the carry's second leg moved to the codomain, which is the same relabelling
-        ``einsum("xy,apqx->apqy", carry, w)`` used to make: same space, ``OUT``, ``dual``
+        is the carry's second leg moved to the codomain: same space, ``OUT``, ``dual``
         flipped.
 
-        A **compressed** description (#204) is already numeric: its site is handed back
+        A **compressed** description is already numeric: its site is handed back
         as it is and ``carry`` has nowhere to go, because the two sweeps that would fold
         one are what produced the description in the first place.
 
@@ -2032,15 +1994,14 @@ class EdgeTable:
         matching ``site``'s caps and ``Env``'s boundary legs.
 
         The six group embeddings are built here, per cut and shared between the two sites
-        that meet at it. Until #200 they were built by ``_instantiate`` for the whole MPO
-        at once, which is what tied ``Env``'s cores to a materialised operator.
+        that meet at it, so that ``Env``'s cores never depend on a materialised operator.
 
-        For a **compressed** description (#204) there is nothing to scatter: the four
+        For a **compressed** description there is nothing to scatter: the four
         blocks are the four sub-slabs of the compressed ``W'``, cut out by the same group
         embeddings, and ``spec_op``/``a_real_op`` say that in a rotated open basis a
         spectator's identity ride no longer separates -- everything open is
         operator-carrying. A spin chain that wants the spectator shortcut keeps
-        ``cutoff=None``, where nothing changed.
+        ``cutoff=None``, where the FSM states stay separate.
         """
         got = self._table.get(n)
         if got is None:
@@ -2265,8 +2226,8 @@ def _edge_table(n_sites, phys, dual, states, order, moves, stops, spectators) ->
     a cut is then the direct sum of the surviving states' spaces, in allocation order with
     the identities at the two ends.
 
-    Symbolic throughout: not one tensor is built here, and since #200 not one is built
-    afterwards either unless a consumer asks for it. This is the producer of the
+    Symbolic throughout: not one tensor is built here, and none afterwards either unless
+    a consumer asks for it. This is the producer of the
     description; [EdgeTable][tenet.network.EdgeTable] names its two consumers.
     """
     sym = phys.provider
@@ -2371,12 +2332,11 @@ def _joined(parts: list[SymmetricTensor], axes: Any) -> SymmetricTensor:
 def _instantiate(tab: EdgeTable, cutoff: float) -> tuple[list[SymmetricTensor], list]:
     """Place every site numerically, truncating as it goes — one consumer of the table.
 
-    The streaming materialiser, and since #200 the *only* thing ``_instantiate`` is: the
-    pruning and the bond spaces are ``_edge_table``'s, the per-site block table is
+    The streaming materialiser, and nothing else: the pruning and the bond spaces are
+    ``_edge_table``'s, the per-site block table is
     [EdgeTable.edge_blocks][tenet.network.EdgeTable.edge_blocks]'s, and this function asks
-    ``EdgeTable.site`` for one site at a time. The ``cutoff=None`` branch that used to
-    live here is gone, because an MPO that keeps its finite-state machine now keeps the
-    description rather than a materialised copy of it.
+    ``EdgeTable.site`` for one site at a time. It runs only for a float ``cutoff``; an
+    MPO that keeps its finite-state machine keeps the description instead.
 
     Materialisation runs **inside** the backward compressing sweep, which is the only
     consumer of a site here. Site ``N-1`` is placed and its left bond truncated; site
@@ -2389,13 +2349,13 @@ def _instantiate(tab: EdgeTable, cutoff: float) -> tuple[list[SymmetricTensor], 
     widest object that ever exists is ``D_FSM x d**2 x chi_Schmidt``, so the full-width
     MPO never exists as a whole.
 
-    **The SVD acts on the open row slab only** (#204): the two corner channels are taken
+    **The SVD acts on the open row slab only**: the two corner channels are taken
     out first, the rest is rotated and truncated, and the carry handed to site ``n-1`` is
     the block-diagonal ``1_IdL (+) (u.s) (+) 1_IdR`` -- which ``_place`` folds exactly as
     it folds the free carry, its right end being one rank-2 map either way. The corner
     rows are removed by subtracting their own one-row slabs rather than by restricting to
     the open group, because a whole-group embedding of the *uncompressed* bond is a
-    ``D_FSM x D_FSM`` object (7.9 GiB at K=26, #202) and a one-row selector is not.
+    ``D_FSM x D_FSM`` object and a one-row selector is not.
 
     Returns the sites and, per cut, ``(IdL live, the open block's space or None, IdR
     live)`` -- the description of the partition the sweep just preserved, which
@@ -2508,8 +2468,8 @@ def _compress_forward(
 def _compressed_table(sites: list[SymmetricTensor], cuts: list, phys: GradedSpace) -> EdgeTable:
     """The compressed operator as a description: the sites plus each cut's three slabs.
 
-    The carrier #204 asks for. A float-``cutoff`` builder no longer hands ``MPO`` bare
-    site tensors; it hands this, so ``MPO.edges`` stays the one dispatch source for
+    A float-``cutoff`` builder hands ``MPO`` this rather than bare site tensors, so that
+    ``MPO.edges`` is the one dispatch source for
     [Env.heff2][tenet.network.Env.heff2] whether the MPO was compressed or not. What the
     prepared machinery consumes of a bond is the direct-sum decomposition ``IdL (+) open
     (+) IdR`` and the four blocks placed against it -- not the FSM's edges, which no
@@ -2560,8 +2520,8 @@ class MPO:
         The edge description the builders keep under ``symbolic=True`` -- the
         finite-state machine at ``cutoff=None``, the compressed sites and their
         per-cut slabs at a float cutoff -- from which sites and block tables
-        come on request; ``None`` for every other MPO, which since #255
-        includes every builder's default. Keyword-only.
+        come on request; ``None`` for every other MPO, including every builder's
+        default. Keyword-only.
 
     Raises
     ------
@@ -2574,28 +2534,23 @@ class MPO:
     carry a ``D=1`` boundary MPO bond, which is what makes *every* ``W_n`` rank 4 and
     removes the boundary-vector special case.
 
-    **A separate class from [MPS][tenet.network.MPS], with no shape flag** -- the comparison
-    with YASTN's and TenPy's choices is in ``docs/design.md`` "Milestone 11".
+    **A separate class from [MPS][tenet.network.MPS], with no shape flag.**
 
-    **Two internal representations, and ``edges`` is the description** (#200). Given an
+    **Two internal representations, and ``edges`` is the description.** Given an
     ``EdgeTable`` the container may hold no tensor at all: ``self[n]``
     materialises site ``n`` on request and caches it, and
     [edge_blocks][tenet.network.MPO.edge_blocks] does the same for the site's block table,
     so an MPO whose only consumer is the prepared two-site matvec never allocates a
-    full-width rank-4 ``W``. A *compressed* description (#204) already holds its sites --
-    the two truncating sweeps built them -- and answers both accessors off those. Given
-    site tensors and no description the container holds exactly those and
-    ``edge_blocks`` is ``None`` throughout. #141's standing trade -- two representations
-    in one class, because ``from_w``'s numeric path and ``to_dense`` still need the sites
-    -- is accepted here one level deeper, with its deletion condition unchanged.
+    full-width rank-4 ``W``. A *compressed* description already holds its sites -- the two
+    truncating sweeps built them -- and answers both accessors off those. Given site
+    tensors and no description the container holds exactly those and ``edge_blocks`` is
+    ``None`` throughout: ``from_w``'s numeric path and ``to_dense`` need the sites, so both
+    representations live in one class.
 
-    ``edges`` and
-    [edge_blocks][tenet.network.MPO.edge_blocks] are the two read-only accessors beyond
-    the container protocol, and they exist so that [Env][tenet.network.Env] can reach the
-    symbolic structure without touching a private name -- #138 refused public exposure of
-    the symbolic layer "if a caller ever needs to inspect it, that is a separate issue
-    with an argument attached", and the prepared two-site matvec is that caller and that
-    argument (#141).
+    ``edges`` and [edge_blocks][tenet.network.MPO.edge_blocks] are the two read-only
+    accessors beyond the container protocol, and they exist so that
+    [Env][tenet.network.Env] can reach the symbolic structure without touching a private
+    name.
     """
 
     edges: EdgeTable | None
@@ -2648,22 +2603,18 @@ class MPO:
 
         Notes
         -----
-        Every operator built ``symbolic=True`` carries a table, at either
-        cutoff. The float cutoff used to give one up, because the compressing sweep's SVD
-        gauge mixed the FSM states and left zero identity edges on every model (#141);
-        since #204 both sweeps pin the two corner channels, so a compressed bond still
-        decomposes as ``IdL (+) open (+) IdR`` and still has a table -- one open state per
-        cut rather than one per open string. [from_w][tenet.network.MPO.from_w] never had
-        a description and returns ``None``, which routes
-        [Env.heff2][tenet.network.Env.heff2] onto its site-tensor path -- as do the three
-        builders at their default and
-        [materialize][tenet.network.MPO.materialize] (#255).
+        Every operator built ``symbolic=True`` carries a table, at either cutoff: both
+        compressing sweeps pin the two corner channels, so a compressed bond still
+        decomposes as ``IdL (+) open (+) IdR`` -- one open state per cut rather than one
+        per open string. [from_w][tenet.network.MPO.from_w] carries no description and
+        returns ``None``, which routes [Env.heff2][tenet.network.Env.heff2] onto its
+        site-tensor path, as do the three builders at their default and
+        [materialize][tenet.network.MPO.materialize].
 
-        Since #200 the table is *built* here rather than stored here: the call goes
-        through to ``EdgeTable.edge_blocks``, which places one
-        site's blocks against the group slot maps and caches them. No full-width site
-        tensor is involved, which is what lets a Hamiltonian be assembled and swept
-        without one ever existing.
+        The table is *built* here rather than stored here: the call goes through to
+        ``EdgeTable.edge_blocks``, which places one site's blocks against the group slot
+        maps and caches them. No full-width site tensor is involved, which is what lets a
+        Hamiltonian be assembled and swept without one ever existing.
         """
         return None if self.edges is None else self.edges.edge_blocks(n)
 
@@ -2692,34 +2643,17 @@ class MPO:
 
         Notes
         -----
-        **Going the other way** (#255). Since M68 the three builders return site tensors
-        by *default*, so a lattice model needs nothing here: this is the route back for an
-        operator built ``symbolic=True`` that a caller later wants on the site-tensor
-        path -- a wide-bond operator handed to a differently gauged environment, say, or a
-        second run priced on the other path. It is also what
-        [from_terms][tenet.network.MPO.from_terms]'s own default now applies internally.
-
-        The two engine paths are priced against each other in ``docs/design.md`` "M64b":
-        on U(1) Heisenberg the site-tensor path runs at 1.10-1.28x YASTN per steady sweep
-        and the prepared, symbolic path adds 1.63-2.06x on top of that, because a
-        ``D_w = 5`` bond does not repay block2's per-bond cores, prepared operator and
-        structure-keyed cache. A **quantum-chemistry** operator, whose bond is wide and
-        whose terms are ``O(K^4)``, is the case that keeps the description: there the
-        prepared path is 0.97x the site-tensor one at ``chi = 64`` and the only route that
-        fits ``K = 26`` in memory at all (M39).
-
-        The choice is the caller's and it is made **at build time, in the open**, exactly
-        as [from_terms][tenet.network.MPO.from_terms]'s ``cutoff=None`` against a float
-        already chooses the exact finite-state machine against the compressed operator.
-        Nothing dispatches on bond width, on ``chi`` or on how the bond structure churns.
+        The route from the symbolic representation to the numeric one. The three builders
+        return site tensors by default, so a lattice model needs nothing here; this is for
+        an operator built ``symbolic=True`` that a caller later wants on the site-tensor
+        path. [from_terms][tenet.network.MPO.from_terms] applies it internally at its own
+        default.
 
         What is given up is stated in
         [heff2_families][tenet.network.Env.heff2_families]: a materialized operator has no
         term families, so [sweep_][tenet.network.sweep_]'s ``noise_type="perturbative"``
-        falls back to the single-vector mixer. On the lattice models measured in M67 that
-        costs nothing -- the perturbative and wavefunction columns land on the same
-        energies to 1e-9 there -- and an operator that wants the family-resolved mixer
-        simply does not call this.
+        falls back to the single-vector mixer. An operator that wants the family-resolved
+        mixer does not call this.
 
         Nothing is recomputed that a consumer would not have asked for anyway: ``sites``
         materialises each site once through the description's own door and the new
@@ -2829,9 +2763,7 @@ class MPO:
         passing ``allclose`` is not.
 
         The builder that shows what an MPO *is*, and the one a reader needs before they
-        can debug one. [from_terms][tenet.network.MPO.from_terms] is the other route (#133 reversed
-        this
-        docstring's refusal of it, on a direct request rather than on new evidence); it is
+        can debug one. [from_terms][tenet.network.MPO.from_terms] is the other route; it is
         not a replacement, and neither is deprecated or aliased to the other.
         """
 
@@ -2936,7 +2868,7 @@ class MPO:
         cut is the direct sum over its states -- so there is no grading argument and no
         ``dual`` convention to state. ``from_w`` is unchanged and is not deprecated: it is
         the entry for a ``W`` that arrives as a *dense array* (a paper, another library),
-        where the entries are numbers and no charge can be recovered from them (#141).
+        where the entries are numbers and no charge can be recovered from them.
 
         **``IdL`` is index ``0`` and ``IdR`` is index ``-1``, by convention, at every
         bond.** MPSKit fixes the same two by position -- ``V[1] = V[end] = _rightunit``
@@ -2975,17 +2907,16 @@ class MPO:
         ``jit``/``grad`` like the rest of this
         module, because the assembly decides [GradedSpace][tenet.GradedSpace]\\ s.
 
-        **Which engine path this operator takes, and how a caller chooses** (#255). By
+        **Which engine path this operator takes, and how a caller chooses.** By
         default this builder hands back the **site tensors**: the description is what
         produces them and is then dropped, so [Env.heff2][tenet.network.Env.heff2] takes
         its site-tensor contraction. That is the path a **finite-range lattice model**
-        wants -- at ``D_w`` of order ten the prepared machinery costs 1.6-2.1x per steady
-        sweep and buys nothing back, while the site-tensor path runs at 1.10-1.28x YASTN
-        on U(1) (``docs/design.md`` "M64b", "M67", "M68"). ``symbolic=True`` keeps the
-        description and routes ``heff2`` onto the prepared, symbolic term-family matvec,
-        which is what **quantum chemistry** wants: ``O(K^4)`` terms over a bond in the
-        thousands, where the prepared path is 0.97x the site-tensor one at ``chi = 64``
-        and the only route that fits ``K = 26`` in memory at all ("Milestone 39").
+        wants -- at ``D_w`` of order ten the prepared machinery's per-bond cores and
+        structure-keyed cache cost more per sweep than they buy back. ``symbolic=True``
+        keeps the description and routes ``heff2`` onto the prepared, symbolic
+        term-family matvec, which is what **quantum chemistry** wants: ``O(K^4)`` terms
+        over a bond in the thousands, where the prepared path is the faster of the two
+        and the only one that fits a large orbital count in memory at all.
         Nothing dispatches at run time; the caller states it here, at build time. An
         operator built ``symbolic=True`` moves to the site-tensor path afterwards with
         [materialize][tenet.network.MPO.materialize].
@@ -3263,36 +3194,33 @@ class MPO:
         ``symbolic=True`` both settings keep the block table
         [edge_blocks][tenet.network.MPO.edge_blocks] exposes, so both reach
         [Env.heff2][tenet.network.Env.heff2]'s prepared path, because the sweeps pin
-        the ``IdL``/``IdR`` channels through their SVDs (#204) instead of rotating them
-        away (#141). What ``cutoff`` decides either way is the operator the engine runs
+        the ``IdL``/``IdR`` channels through their SVDs instead of rotating them
+        away. What ``cutoff`` decides either way is the operator the engine runs
         on:
 
         * ``cutoff=None`` for a **finite-range lattice model**. The compressing sweeps
           reduce its bond by exactly nothing, and the finite-state machine keeps its
           identity channels separable, so every spectator site rides a rank-2 map with no
-          ``W`` contraction. Measured on N=20 U(1) Heisenberg at ``chi=64``: **1.96 s**
-          against **3.53 s** at ``1e-13``.
+          ``W`` contraction, which is the cheaper sweep.
         * a float ``cutoff`` for **power-law couplings and ab initio integrals**, where
-          the sweep is the difference between a bond of 31,441 and one of 736 and the
-          operator does not fit otherwise. The rotation mixes the open states, so no
+          the sweep takes the bond down by orders of magnitude and the operator does not
+          fit otherwise. The rotation mixes the open states, so no
           spectator separates any more and every open state is operator-carrying; that
           is a real constant factor and it is the same uniform mechanism block2 uses,
           which carries its identity as an ordinary entry in its operator map.
 
-        The default stays ``1e-13``. The measurements are in ``docs/design.md``
-        "Milestone 16" and "Milestone 39".
+        The default is ``1e-13``.
 
-        **Which engine path this operator takes, and how a caller chooses** (#255). By
+        **Which engine path this operator takes, and how a caller chooses.** By
         default this builder hands back the **site tensors**: the description is what
         produces them and is then dropped, so [Env.heff2][tenet.network.Env.heff2] takes
         its site-tensor contraction. That is the path a **finite-range lattice model**
-        wants -- at ``D_w`` of order ten the prepared machinery costs 1.6-2.1x per steady
-        sweep and buys nothing back, while the site-tensor path runs at 1.10-1.28x YASTN
-        on U(1) (``docs/design.md`` "M64b", "M67", "M68"). ``symbolic=True`` keeps the
-        description and routes ``heff2`` onto the prepared, symbolic term-family matvec,
-        which is what **quantum chemistry** wants: ``O(K^4)`` terms over a bond in the
-        thousands, where the prepared path is 0.97x the site-tensor one at ``chi = 64``
-        and the only route that fits ``K = 26`` in memory at all ("Milestone 39").
+        wants -- at ``D_w`` of order ten the prepared machinery's per-bond cores and
+        structure-keyed cache cost more per sweep than they buy back. ``symbolic=True``
+        keeps the description and routes ``heff2`` onto the prepared, symbolic
+        term-family matvec, which is what **quantum chemistry** wants: ``O(K^4)`` terms
+        over a bond in the thousands, where the prepared path is the faster of the two
+        and the only one that fits a large orbital count in memory at all.
         Nothing dispatches at run time; the caller states it here, at build time, exactly
         as ``cutoff`` does. An operator built ``symbolic=True`` moves to the site-tensor
         path afterwards with [materialize][tenet.network.MPO.materialize].
@@ -3300,8 +3228,7 @@ class MPO:
         **``symbolic`` and ``cutoff`` are independent.** ``cutoff`` decides whether the
         operator is *compressed*; ``symbolic`` decides whether the description is *kept*.
         ``cutoff=None`` with the default therefore yields exact, uncompressed site
-        tensors -- on a finite-range lattice model the minimal bond anyway, and the
-        plain-NumPy path "Milestone 16" first measured.
+        tensors -- on a finite-range lattice model the minimal bond anyway.
 
         **There is no** ``phys=`` **argument**: the operators carry the physical space and
         a second source of truth could disagree with them, which would surface as a
@@ -3310,8 +3237,8 @@ class MPO:
 
         Fermionic terms build like any other graded terms, and the braided route needs
         no Jordan-Wigner operator in the API: an odd FSM bond crossing a physical line
-        *is* the string, paid by the Koszul braiding under #160's composition rule
-        (#147). Two conventions follow from that and are pinned by the gate-4 oracle.
+        *is* the string, paid by the Koszul braiding under the package's composition
+        rule. Two conventions follow from that.
         A term's operator list is the **ordered product** of its operators --
         ``[(c, i), (c+, j)]`` is ``c_i c+_j``, which for ``i != j`` is ``-c+_j c_i`` --
         with the reordering-to-site-order sign paid on the coefficient. And intra-site
@@ -3495,17 +3422,16 @@ class MPO:
         nothing else; it is an accuracy/size trade the caller can take deliberately at
         ``1e-4`` and above, not a performance lever.
 
-        **Which engine path this operator takes, and how a caller chooses** (#255). By
+        **Which engine path this operator takes, and how a caller chooses.** By
         default this builder hands back the **site tensors**: the description is what
         produces them and is then dropped, so [Env.heff2][tenet.network.Env.heff2] takes
         its site-tensor contraction. That is the path a **finite-range lattice model**
-        wants -- at ``D_w`` of order ten the prepared machinery costs 1.6-2.1x per steady
-        sweep and buys nothing back, while the site-tensor path runs at 1.10-1.28x YASTN
-        on U(1) (``docs/design.md`` "M64b", "M67", "M68"). ``symbolic=True`` keeps the
-        description and routes ``heff2`` onto the prepared, symbolic term-family matvec,
-        which is what **quantum chemistry** wants: ``O(K^4)`` terms over a bond in the
-        thousands, where the prepared path is 0.97x the site-tensor one at ``chi = 64``
-        and the only route that fits ``K = 26`` in memory at all ("Milestone 39").
+        wants -- at ``D_w`` of order ten the prepared machinery's per-bond cores and
+        structure-keyed cache cost more per sweep than they buy back. ``symbolic=True``
+        keeps the description and routes ``heff2`` onto the prepared, symbolic
+        term-family matvec, which is what **quantum chemistry** wants: ``O(K^4)`` terms
+        over a bond in the thousands, where the prepared path is the faster of the two
+        and the only one that fits a large orbital count in memory at all.
         Nothing dispatches at run time; the caller states it here, at build time, exactly
         as ``cutoff`` does. An operator built ``symbolic=True`` moves to the site-tensor
         path afterwards with [materialize][tenet.network.MPO.materialize].
@@ -3513,14 +3439,13 @@ class MPO:
         **``symbolic`` and ``cutoff`` are independent.** ``cutoff`` decides whether the
         operator is *compressed*; ``symbolic`` decides whether the description is *kept*.
         ``cutoff=None`` with the default therefore yields exact, uncompressed site
-        tensors -- on a finite-range lattice model the minimal bond anyway, and the
-        plain-NumPy path "Milestone 16" first measured.
+        tensors -- on a finite-range lattice model the minimal bond anyway.
 
         This builder's shape is the ab initio one, but it is **not** an ab initio front
         end only: ``docs/guide/models-and-sites.md`` teaches it for lattice models too,
         because a [Site][tenet.models.Site]'s ``ops`` is exactly the table it takes. That
         is why the default here is the lattice one, the same as the other two builders' --
-        the representation follows the *model*, not the builder that was called (#255).
+        the representation follows the *model*, not the builder that was called.
         """
         phys, table, merged = _canonical_blocks(n_sites, ops, blocks, screen)
         # No k-site split runs here, so the MPO stays on the non-dual convention.
@@ -3632,13 +3557,13 @@ class MPO:
         ``cutoff=None``, which carries an edge description and no tensors, pays one full
         ``W`` per site here. That is stated rather than avoided: this is a whole-state
         product, not a sweep step, and there is no bond at which a symbolic operator could
-        be kept symbolic. The sweep's own path (#200, #204) is untouched.
+        be kept symbolic. The sweep's own path is untouched.
 
         **The virtual leg is turned around once, and that is the whole graded content.**
         The operator's bond and the state's bond cross a site in *opposite* directions --
-        the fact ``docs/design.md`` "Milestone 11" spends a section on -- so they cannot be
-        fused until one of them is turned. Turning the operator's left virtual leg is a
-        duality relabel, [tenet.flip_dual][], which charges ``chi * theta`` per fusion tree:
+        so they cannot be fused until one of them is turned. Turning the operator's left
+        virtual leg is a duality relabel, [tenet.flip_dual][], which charges
+        ``chi * theta`` per fusion tree:
         ``+1`` on every bosonic sector and ``-1`` on an odd fermionic one, which is exactly
         the sign that is missing if the fusion is written without it. The direction is fixed
         by the leg rather than by the flag: ``inv=not dual`` charges the same categorical
@@ -3712,8 +3637,7 @@ class MPO:
         exact, ``<psi|H^2|psi>`` is ``<Hpsi|Hpsi>`` and ``<psi|H|psi>`` is
         ``<psi|Hpsi>`` -- three overlaps and one product. Expanding ``H**2`` as a term list
         would be quadratic in the term count and would ask the caller to multiply every
-        operator pair by hand, which is why #214 is about the apply and not about an
-        operator algebra.
+        operator pair by hand; there is no operator algebra here.
 
         The product is **untruncated**, so this is the variance of ``psi`` under the exact
         ``H`` and not of a compressed approximation to it; the cost is one state of bond

@@ -1,4 +1,4 @@
-"""Axis permutation — ``T.transpose(*axes)`` / [tenet.transpose][] — Milestone 2.
+"""Axis permutation — ``T.transpose(*axes)`` / [tenet.transpose][].
 
 Public axis order enters the categorical data through exactly two channels: which
 leg is which, and the *relative order within each side* (a ``FusionBlockKey``'s
@@ -26,7 +26,7 @@ while the provider's gauge is real (SU(2)'s is); a complex-gauge provider must
 conjugate on the domain (input-tree) side.
 
 ``transpose`` never changes a leg's ``side``: moving a leg between domain and
-codomain is a bend (``repartition``, Milestone 3). What it does change is
+codomain is a bend ([tenet.repartition][]). What it does change is
 ``out_axes``/``in_axes``, which are *positions*.
 
 No NumPy and no ``to_dense`` here (invariants 8/9): the plan is array-free
@@ -143,7 +143,7 @@ def permutation_plan(structure: TensorStructure, axes: tuple[int, ...]) -> Permu
     the cache is keyed on the frozen structure and the tuple, nothing else.
 
     The **body** is cached one level down, on ``_pattern(structure)`` — the same legs with
-    every degeneracy 1 (#248). ``terms`` is block indices and coefficients, which depend on
+    every degeneracy 1. ``terms`` is block indices and coefficients, which depend on
     the legs' sectors, sides and duals and never on their degeneracies, so two structures
     that differ only in degeneracy share one enumeration and this entry holds nothing but
     ``new_structure``. A DMRG sweep moves a bond's degeneracies at every bond of every

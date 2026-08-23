@@ -1,7 +1,7 @@
-"""Pairwise contraction — ``tenet.tensordot``, ``tenet.trace``, ``tenet.einsum`` — M5.
+"""Pairwise contraction — ``tenet.tensordot``, ``tenet.trace``, ``tenet.einsum``.
 
-There is no new mathematics here, and that is the point (docs/design.md "Composition
-remains first-class", "Bending and contraction"). A contraction is lowered to
+There is no new mathematics here, and that is the point: composition stays
+first-class and a contraction is lowered to
 operations that already exist and are already dense-oracle tested::
 
     a ──repartition(outputs=free, inputs=contracted)──▶  a' : Hom(K, F_a)
@@ -12,7 +12,7 @@ operations that already exist and are already dense-oracle tested::
       ──repartition(each free leg back to its original side)──▶
       ──transpose──▶ (a free..., b free...)
 
-``repartition`` is itself the transpose/bend/transpose sandwich (#32), so the
+``repartition`` is itself the transpose/bend/transpose sandwich, so the
 whole module is axis bookkeeping over frozen metadata plus four already-cached
 plans. TensorKit's ``tensorcontract!`` ends in ``permute(compose(sA, sB), pAB)``
 for the same reason.
@@ -29,8 +29,8 @@ Two design decisions carry the module:
   ``dual`` and ``name`` — at the cost of a second repartition. Letting a free IN
   leg return as an OUT leg because that is where the composition left it would
   make the output legs depend on the lowering. The round trip is *exact*, not
-  approximately so, because ``bend_left`` is the conjugate of ``bend_right``
-  (#38), i.e. its genuine inverse.
+  approximately so, because ``bend_left`` is the conjugate of ``bend_right``,
+  i.e. its genuine inverse.
 
 Everything is refused before any block moves: axis validation, contractibility
 and the ``BendingCoefficients`` requirement of every leg that will cross — on
@@ -43,7 +43,7 @@ into label→axis maps, hands the shared labels to [tensordot][tenet.tensordot] 
 pair, and hands the requested output order to [transpose][tenet.transpose]. The
 parser is hand-rolled — ``opt_einsum`` parses ellipsis, unicode labels, the
 interleaved format and shape-driven broadcasting, none of which is meaningful
-for symmetric tensors. ``opt_einsum`` enters one level up instead (M8, #67), at
+for symmetric tensors. ``opt_einsum`` enters one level up instead, at
 the *path* level: with three or more operands ``contract_path`` orders the
 pairwise contractions and each step is the two-operand call above, so the
 scheduler adds a loop and no mathematics. It is imported lazily, inside that
@@ -405,9 +405,9 @@ def _tensordot(
     Notes
     -----
     ``after`` exists so that the restore-repartition and every transpose that follows it
-    are **one** plan: each of them re-applies its own coefficients, and a block that
-    carries one at two steps used to be materialised twice for a movement that is one
-    pass' worth (docs/design.md "M70"). Composing plans is ``repartition_plan``'s own
+    are **one** plan: each of them re-applies its own coefficients, and materialising a
+    block twice for a movement worth one pass is what composing them avoids.
+    Composing plans is ``repartition_plan``'s own
     idiom — the transpose/bend/transpose sandwich is composed exactly this way — so this
     is the same rewriting one level up, not a new rule. The terms and their coefficients
     are unchanged; only the number of passes over them is.
@@ -525,8 +525,8 @@ def _contracted(
 def _bent(x: Operand, term: str, bend: str) -> tuple[Operand, str]:
     """``x`` with every wire named in ``bend`` moved to the other side, plan deferred.
 
-    The bend the composition rule demands (``docs/design.md`` "Milestone 11"): both ends
-    of a wire that turns around in the intended planar diagram are repartitioned before
+    The bend the composition rule demands: both ends of a wire that turns around in the
+    intended planar diagram are repartitioned before
     the composition, which pays the categorical bending coefficient by construction. In
     a chain the repartition is a *plan*, composed onto whatever the operand is already
     carrying, so the bent tensor is never written.
@@ -712,7 +712,7 @@ def _lowered(
     between the two is a temporary that exists to be copied: applying the plan writes
     every term once and lowering copies every block again. ``lower_plan`` composes the
     two and writes each term straight into its slot, one pass whether or not the term
-    carries a coefficient (docs/design.md "M70"). Which terms are applied, and with
+    carries a coefficient. Which terms are applied, and with
     which coefficients, is untouched -- only when the writes happen. The ordinary route
     remains the fallback wherever ``lower_plan`` declines (an immutable backend, so JAX
     is unaffected).
@@ -770,7 +770,7 @@ def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
 
     The identity is built on ``t``'s own backend and dtype — the
     ``dtype=ar.get_dtype_name(ref), like=ref`` spelling ``ops/map.py::compose``
-    already uses for its zero-filled sectors (#95). Without it a torch-backed
+    already uses for its zero-filled sectors. Without it a torch-backed
     ``t`` would meet NumPy blocks in ``matmul``.
     """
     i, j = axes
@@ -908,15 +908,13 @@ def inner(a: "SymmetricTensor", b: "SymmetricTensor") -> Any:
     (``src/tensors/vectorinterface.jl``: ``Σ_c dim(c) · inner(block(t1, c), block(t2, c))``
     in both fusion-style branches), i.e. the pairing MPSKit's Krylov machinery runs on.
 
-    Drawing the pairing instead is what M62 removed. The old body was
-    ``full_trace(einsum("L{rest},l{rest}->lL", adjoint(a), b))``: contracting every
-    axis but the first makes the still-open axis-0 lines *cross* the contracted ones,
-    and on a graded provider each crossing of two odd lines pays ``-1``. An invariant
-    scalar has (axis-0 sector) = (sector of the rest), so exactly the odd-sector blocks
-    entered the sum with the wrong sign and ``inner(t, t) != norm(t) ** 2`` whenever
-    axis 0 carried an odd sector (#236). No diagram, no crossing, no twist — and no
-    rank cap either: the old ``string.ascii_lowercase`` labelling stopped at rank 26,
-    this works at any rank.
+    **Drawing the pairing as a diagram would be wrong here.** Contracting every axis but
+    the first, then closing, makes the still-open axis-0 lines *cross* the contracted
+    ones, and on a graded provider each crossing of two odd lines pays ``-1``: an
+    invariant scalar has (axis-0 sector) = (sector of the rest), so exactly the
+    odd-sector blocks would enter the sum with the wrong sign and ``inner(t, t)`` would
+    differ from ``norm(t) ** 2``. No diagram, no crossing, no twist — and no rank cap
+    either: this works at any rank.
 
     Returns the backend's own scalar, so the whole function stays traceable and
     differentiable, as [norm][tenet.norm] is.
@@ -1026,8 +1024,8 @@ def _parse(equation: str, operands: tuple["SymmetricTensor", ...]) -> tuple[list
 def _plan_shape(t: "SymmetricTensor") -> tuple[int, ...]:
     """What the path finder is allowed to see: physical dimensions, ``Σ_a m_a d_a``.
 
-    A planner asked to minimize FLOPs must see the physical extent of an axis
-    (#19), not its degeneracy count. A provider without ``ClebschGordanData`` has no
+    A planner asked to minimize FLOPs must see the physical extent of an axis, not its
+    degeneracy count. A provider without ``ClebschGordanData`` has no
     physical shape at all, and there ``reduced_shape`` is the only thing on
     offer; it can degrade *path quality*, never correctness, since the path only
     ever decides the order of contractions that are each individually checked.
