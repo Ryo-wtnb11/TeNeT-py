@@ -1,29 +1,19 @@
-"""C4v CTMRG written out by hand: classical Ising against Onsager, then an iPEPS gradient.
+"""C4v CTMRG, written out: the classical Ising model against Onsager, then an iPEPS gradient.
 
 Run it standalone::
 
     uv run --extra jax python examples/toy_codes/ctmrg.py
 
-**The lane rule, and what this file is.** ``examples/toy_codes/`` teaches what the library
-does not own: the algorithm is written here, on ``tenet``'s *tensor* layer --
-``SymmetricTensor``, ``tenet.einsum``, ``tenet.linalg`` -- and **nothing is imported from
-``tenet.network``**, which ``tests/test_examples.py`` asserts for every file in this
-directory. The corner and edge tensors, the two absorbers, the projector, the move and the
-sweep are what the reader is here to see. The library ships all of them
-(``tenet.network.ctmrg``); this is the same code before it was promoted (#114) and
-restored (#187), and the split is tenpy's -- ``tenpy_toycodes`` writes the algorithms out,
-tenpy's own ``examples/`` calls the library. ``examples/ising2d.py`` is the Ising half
-through ``tenet.network``, and is where a reader who wants the library's version should go.
+The algorithm is the file: the corner and edge tensors, the two absorbers, the projector,
+the move and the sweep. Nothing is imported from ``tenet.network``, which ships all of
+it; ``examples/ising2d.py`` is the Ising half through the library.
 
-**The per-helper rule, stated once and applied throughout.** Some of what follows exists in
-``tenet.network`` already. A helper stays local when writing it out is the lesson, and is
-called from ``tenet`` when it is the tensor layer this file is built on. So
-:func:`spectrum`, :func:`ones`, :func:`normalized` and :func:`ring` are written here even
-though ``tenet.network`` exports all four -- *how an environment is seeded, normalized and
-closed into a ring* is exactly what a first reader is missing, and each is a few lines.
-Everything below the tensor layer -- ``einsum``, ``svd_truncated``, ``svd(bond=)``,
-``adjoint``, ``repartition``, ``norm``, ``identity`` -- is called, never reimplemented:
-rewriting a graded SVD would teach nothing about CTMRG.
+The tensor operations it is built on: ``SymmetricTensor.from_blocks`` and
+``SymmetricTensor.random`` for the inputs, ``tenet.einsum`` for every contraction,
+``tenet.adjoint``, ``tenet.transpose`` and ``tenet.repartition`` for the leg moves,
+``tenet.linalg.svd_truncated`` and ``tenet.linalg.svd(bond=)`` for the projector,
+``tenet.identity`` for the corner seed, ``tenet.norm``, ``tenet.full_trace`` for the
+closed networks, and ``tenet.to_matrices`` to read a corner spectrum.
 
 Two physical problems, **one** CTMRG core:
 
@@ -34,14 +24,13 @@ Two physical problems, **one** CTMRG core:
   exercises graded truncation, ``svd(bond=)`` across sectors and multiplet degeneracies.
 
 **This file lives on both sides of a trace**, so every function below opens by saying
-which. The pairing is #77's: :func:`converge` runs ``tenet.linalg.svd_truncated``
-**outside** ``jax.grad`` -- it decides a bond :class:`~tenet.GradedSpace` from singular
-*values*, so it raises ``tenet.StructureChangingError`` under any trace -- and
-:func:`unrolled` runs ``tenet.linalg.svd(bond=)`` **inside** it at exactly that frozen
-bond: shape-static, one trace, differentiable. The ``GradedSpace`` is the only thing that
-crosses the boundary, and it is metadata -- frozen, hashable, array-free, a legitimate jit
-*cache key* and never a jit *argument*. That is the mirror image of ``dmrg.py``, which
-needs only the outside half because it never differentiates.
+which. :func:`converge` runs ``tenet.linalg.svd_truncated`` **outside** ``jax.grad`` -- it
+decides a bond :class:`~tenet.GradedSpace` from singular *values*, so it raises
+``tenet.StructureChangingError`` under any trace -- and :func:`unrolled` runs
+``tenet.linalg.svd(bond=)`` **inside** it at exactly that frozen bond: shape-static, one
+trace, differentiable. The ``GradedSpace`` is the only thing that crosses the boundary,
+and it is metadata -- frozen, hashable, array-free, a legitimate jit *cache key* and never
+a jit *argument*.
 
 **Leg conventions**, the part worth reading before the code:
 
@@ -66,32 +55,27 @@ needs only the outside half because it never differentiates.
 
 **The Ising half is Z2-graded**, for the reason YASTN's CTMRG Ising example passes
 ``sym='Z2'``: it stops a finite-chi environment from breaking the symmetry spuriously in
-the ordered phase, which is what lets this file run at ``beta > beta_c`` against Onsager at
-all. Two further things the grading buys, both asserted in
-``tests/integration/test_ctmrg.py``: zero magnetization becomes *structural* -- a spin
-insertion is a Z2-odd tensor, which no invariant ``SymmetricTensor`` can hold, so
-``from_dense`` refuses it and the refusal is the statement -- and the ordered-phase corner
-spectrum acquires **exact** two-fold degeneracy across the parity sectors. Because that
-doubling is *cross*-sector and ``tenet.ad`` broadens *per coupled sector*, the graded run
-never hands one SVD a degenerate pair: grading removes the ``NaN``, it does not create it.
-It changed no arithmetic either -- see :func:`ising_bulk`.
+the ordered phase, which is what lets this file run at ``beta > beta_c`` against Onsager
+at all. Two further things the grading buys: zero magnetization is *structural* -- a spin
+insertion is a Z2-odd tensor, which no invariant ``SymmetricTensor`` can hold -- and the
+ordered-phase corner spectrum acquires **exact** two-fold degeneracy across the parity
+sectors. Because that doubling is *cross*-sector and ``tenet.ad`` broadens *per coupled
+sector*, the graded run never hands one SVD a degenerate pair.
 
-**The iPEPS half is a plumbing result, not a physics result, and cannot be otherwise with a
-one-site unit cell**, so it makes **no benchmark-energy claim**. Liao et al. get a
+**The iPEPS half is a plumbing result, not a physics result, and cannot be otherwise with
+a one-site unit cell**, so it makes **no benchmark-energy claim**. Liao et al. get a
 single-site AFM Heisenberg cell by rotating one sublattice by pi about y, which turns
-``S^x S^x - S^y S^y`` into ``(S^+S^+ + S^-S^-)/2`` -- an operator that changes ``S^z_tot``
-by +-2 and so *destroys the U(1) the ansatz is graded by*. The alternatives are a two-site
-unit cell (out of scope) or dropping the symmetry (which deletes the reason this half
-exists). So it follows ``examples/toy_codes/vmc_mps.py``: random symmetric ``h``, no
-comparison against ``-0.669437(5)``, said out loud right here.
-
-Deliberate simplifications, each with its ceiling:
+``S^x S^x - S^y S^y`` into ``(S^+S^+ + S^-S^-)/2`` -- an operator that changes
+``S^z_tot`` by +-2 and so *destroys the U(1) the ansatz is graded by*. The alternatives
+are a two-site unit cell (out of scope) or dropping the symmetry (which deletes the
+reason this half exists). So it follows ``examples/toy_codes/vmc_mps.py``: random
+symmetric ``h``, no comparison against ``-0.669437(5)``, said out loud right here.
 
 Simplification: **one C4v move, not four directional ones**, and no multi-site unit cell.
-One corner and one edge describe the whole environment only for a mirror-symmetric bulk on
-a 1x1 cell, which is why :func:`c4v` symmetrizes the *ansatz*. The upgrade path is named
-and not started: YASTN's ``EnvCTM`` (eight tensors per site and four ``update_`` moves),
-froSTspin's four ``contract_*`` wrappers over one ``contract_enlarged_corner``.
+One corner and one edge describe the whole environment only for a mirror-symmetric bulk
+on a 1x1 cell, which is why :func:`c4v` symmetrizes the *ansatz*. The upgrade path is
+named and not started: YASTN's ``EnvCTM`` (eight tensors per site and four ``update_``
+moves), froSTspin's four ``contract_*`` wrappers over one ``contract_enlarged_corner``.
 
 Simplification: **truncated backprop through K unrolled moves, never the implicit fixed
 point** (PRX 9, 031041 Sec. III C) -- the implicit route is a second numerical framework
@@ -106,13 +90,8 @@ Simplification: **no pre-QR before the projector SVD** -- YASTN takes an interme
 lines, and at ``chi <= 16`` in float64 nothing has lost digits yet.
 
 Simplification: **``svd``, not ``eigh``, for the projector**, even though C4v CTMRG
-classically diagonalizes a Hermitian corner: #77 left ``eigh(t, bond=)`` out of scope, so
-the fixed-bond differentiable route exists only for ``svd``. tensorgrad does the same.
-
-Simplification: **``tenet.to_symmetry`` (#92) is mentioned and not used.** Building an
-SU(2) ansatz and casting it to U(1) is a third concept in a file that already has two
-models; the SU(2) provider is instead run through the *same* iPEPS path via a ``provider``
-parameter.
+classically diagonalizes a Hermitian corner: the fixed-bond differentiable route exists
+only for ``svd``. tensorgrad does the same.
 
 **There is an XLA compile floor here**, unlike in ``dmrg.py``: the unrolled sweeps are one
 traced region, and tracing plus compiling them dominates a short run.
@@ -121,10 +100,10 @@ traced region, and tracing plus compiling them dominates a short run.
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
-import autoray as ar
+import numpy as np
 
 import tenet
-from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
 from tenet.symmetry import SU2, U1, Z2, SU2Sector, U1Sector, Z2Sector
 
 BETA_C = 0.4406867935097714  # ln(1 + sqrt(2)) / 2
@@ -159,32 +138,44 @@ SPACES = {
 # --- the two bulk tensors ----------------------------------------------------------
 
 
+def _namespace(x):
+    """``x``'s own array namespace, or ``numpy`` for a plain Python float.
+
+    ``beta`` and the closed networks below may be *traced* scalars -- ``jax.grad``
+    differentiates the Boltzmann weight and the free energy -- and a tracer's namespace is
+    ``jax.numpy``. A Python float has none to ask, so numpy is the fallback.
+    """
+    return getattr(x, "__array_namespace__", lambda: np)()
+
+
 def ising_bulk(beta):
     """Classical 2D Ising partition-function tensor, legs ``(l OUT, u OUT, r IN, d IN)``.
 
     ``a[l,u,r,d] = sum_s W[s,l] W[s,u] W[s,r] W[s,d]`` with ``W W^T`` the bond Boltzmann
     matrix ``[[e^b, e^-b], [e^-b, e^b]]``, i.e. the symmetric splitting
-    ``W = [[sqrt cosh b, sqrt sinh b], [sqrt cosh b, -sqrt sinh b]]``. That ``W`` is
-    *already the parity basis* -- ``W[s, 0]`` does not depend on ``s`` and ``W[s, 1]`` is
-    odd under ``s -> -s`` -- so eight of the sixteen entries are *structurally* zero, the
-    ``Z2`` legs are what stops us storing them, and the grading declared a symmetry the
-    example always had rather than changing any arithmetic.
+    ``W = [[sqrt cosh b, sqrt sinh b], [sqrt cosh b, -sqrt sinh b]]``. That ``W`` *is
+    already the parity basis*: ``W[s, 0]`` does not depend on ``s`` and ``W[s, 1]`` is odd
+    under ``s -> -s``, so summing over ``s`` doubles every term with an even number of odd
+    legs and annihilates the rest.
 
-    ``beta`` may be a *traced scalar*: the block is built through ``autoray``, so
-    ``jax.grad`` has something to differentiate. Hence ``atol=tenet.PROJECT`` -- #82's
-    "project, don't check" spelling (exactly ``math.inf``), because a symmetry check is a
-    concrete-value question and would raise under a trace. The check is *moved*, not lost:
-    an untraced test runs the same array through ``from_dense`` at the **default**
-    relative ``atol``.
+    The ``Z2`` legs are therefore not a claim checked afterwards, they are the statement:
+    the blocks the grading allows are exactly the surviving entries, and each one is
+    ``2 W[0,l] W[0,u] W[0,r] W[0,d]``. The eight structurally zero entries have no block to
+    live in and are never built.
 
-    Simplification: dense-then-gather at setup on a 16-element array, ceiling ``prod dim_i``.
+    ``beta`` may be a *traced scalar*, so the block values are built in :func:`_namespace`.
     """
-    c, s = ar.do("sqrt", ar.do("cosh", beta)), ar.do("sqrt", ar.do("sinh", beta))
-    w = ar.do("stack", (ar.do("stack", (c, s)), ar.do("stack", (c, -s))))
-    block = ar.do("einsum", "sl,su,sr,sd->lurd", w, w, w, w)
+    xp = _namespace(beta)
+    c, s = xp.sqrt(xp.cosh(beta)), xp.sqrt(xp.sinh(beta))
     space = GradedSpace.new(Z2, {Z2Sector(0): 1, Z2Sector(1): 1})
     legs = (Leg(space, OUT), Leg(space, OUT), Leg(space, IN), Leg(space, IN))
-    return SymmetricTensor.from_dense(block, legs, atol=tenet.PROJECT)
+    structure = TensorStructure(legs)
+    blocks = {}
+    for key in structure.block_order:  # the key names (l, u) and (r, d)
+        w = [c if sector.parity == 0 else s for sector in key.output_tree.uncoupled]
+        w += [c if sector.parity == 0 else s for sector in key.input_tree.uncoupled]
+        blocks[key] = xp.full((1, 1, 1, 1), 2.0 * (w[0] * w[1] * w[2] * w[3]))
+    return SymmetricTensor.from_blocks(legs, blocks)
 
 
 def c4v(a: SymmetricTensor) -> SymmetricTensor:
@@ -244,10 +235,13 @@ class Absorb(NamedTuple):
 def ones(legs: Sequence[Leg]) -> SymmetricTensor:
     """A tensor with every structurally allowed entry equal to 1.
 
-    ``SymmetricTensor.zeros`` already knows which blocks the grading allows, so the seed is
-    "fill the blocks that exist"; there is no dense array here to build and project.
+    ``TensorStructure`` already knows which blocks the grading allows and how big each one
+    is, so the seed is "fill the blocks that exist"; there is no dense array here to build
+    and project.
     """
-    return SymmetricTensor.zeros(legs).apply_blocks(lambda b: ar.do("ones_like", b))
+    structure = TensorStructure(tuple(legs))
+    blocks = {key: np.ones(structure.block_shape(key)) for key in structure.block_order}
+    return SymmetricTensor.from_blocks(legs, blocks)
 
 
 def spectrum(s: SymmetricTensor) -> list[float]:
@@ -261,9 +255,9 @@ def spectrum(s: SymmetricTensor) -> list[float]:
     """
     qdim = s.provider.qdim
     out = [
-        float(v)
+        float(m[i, i]) * qdim(sector) ** 0.5
         for sector, m in tenet.to_matrices(s).items()
-        for v in ar.do("diag", m) * qdim(sector) ** 0.5
+        for i in range(m.shape[0])
     ]
     return sorted(out, reverse=True)
 
@@ -578,7 +572,7 @@ def log_kappa(beta, env, k: int = 4):
             optimize=PATH,
         )
     )
-    return ar.do("log", z_a * z_c / z_h**2)
+    return _namespace(z_a).log(z_a * z_c / z_h**2)
 
 
 def free_energy(beta, env, k: int = 4):
@@ -599,8 +593,6 @@ def onsager(beta: float, points: int = 200_001) -> float:
     2theta)]``, ``k = 1/sinh^2(2b)``. The equivalent elliptic form is cross-checked in
     ``tests/integration/test_ctmrg.py`` before this is used to judge anything.
     """
-    import numpy as np
-
     kk = 1.0 / np.sinh(2.0 * beta) ** 2
     theta = np.linspace(0.0, np.pi, points)
     integrand = np.log(
