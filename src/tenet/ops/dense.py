@@ -335,7 +335,7 @@ def from_dense(
 
     ``legs`` cannot be inferred — a dense array carries no categorical
     information at all (which sector an index belongs to, which axes are
-    ``dual``, which are IN) — so it is given, as ``from_legs`` spells it.
+    ``dual``, which are IN) — so it is given.
 
     Input that is not symmetric to ``atol`` is **refused**, never silently
     projected: the residual is ``sqrt(‖dense‖² − ‖reproduced‖²)`` accumulated

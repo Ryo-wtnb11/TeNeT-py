@@ -19,6 +19,11 @@ TRIV = GradedSpace.new(Trivial, {TrivialSector(): 3})
 Q = GradedSpace.new(U1, {U1Sector(-1): 2, U1Sector(0): 3, U1Sector(1): 1})
 
 
+def keyed(legs, blocks):
+    """Every block, keyed in ``block_order``."""
+    return dict(zip(TensorStructure(tuple(legs)).block_order, blocks, strict=True))
+
+
 def spin_matrices(two_j: int) -> tuple[np.ndarray, np.ndarray]:
     """``(Jz, J+)`` in the descending-m basis used by ``cg_tensor``: index i has m = j - i."""
     d = two_j + 1
@@ -65,9 +70,10 @@ def test_frozen_hashable_structure_tuple_blocks():
 
 def test_wrong_block_count_raises():
     legs = (Leg(V, OUT), Leg(W, IN), Leg(V, OUT))
-    assert len(SymmetricTensor.zeros(legs).blocks) > 1
-    with pytest.raises(ValueError, match="expected .* blocks, got 1"):
-        SymmetricTensor.from_legs(legs, (np.zeros((4, 2, 4)),))
+    structure = TensorStructure(tuple(legs))
+    assert len(structure.block_order) > 1
+    with pytest.raises(ValueError):
+        SymmetricTensor(structure, (np.zeros((4, 2, 4)),))
 
 
 def test_wrong_block_shape_names_index_and_expected_shape():
@@ -75,7 +81,7 @@ def test_wrong_block_shape_names_index_and_expected_shape():
     blocks = list(SymmetricTensor.zeros(legs).blocks)
     blocks[0] = np.zeros((1, 1))
     with pytest.raises(ValueError, match=r"block 0 has shape \(1, 1\), expected"):
-        SymmetricTensor.from_legs(legs, blocks)
+        SymmetricTensor.from_blocks(legs, keyed(legs, blocks))
 
 
 def test_mixed_dtypes_raise():
@@ -83,7 +89,7 @@ def test_mixed_dtypes_raise():
     blocks = [b.astype(np.float32) for b in SymmetricTensor.zeros(legs).blocks]
     blocks[0] = blocks[0].astype(np.float64)
     with pytest.raises(ValueError, match="share one dtype"):
-        SymmetricTensor.from_legs(legs, blocks)
+        SymmetricTensor.from_blocks(legs, keyed(legs, blocks))
 
 
 def test_block_view_is_identity_and_items_round_trip():
@@ -91,7 +97,7 @@ def test_block_view_is_identity_and_items_round_trip():
     t = SymmetricTensor.random(legs, seed=0)
     for key in t.structure.block_order:
         assert t.blocks[t.structure.index_of(key)] is t.block(key)
-    again = SymmetricTensor.from_legs(legs, [b for _, b in t.items()])
+    again = SymmetricTensor.from_blocks(legs, keyed(legs, [b for _, b in t.items()]))
     assert again.structure == t.structure
     assert all(np.array_equal(x, y) for x, y in zip(again.blocks, t.blocks, strict=True))
 
@@ -244,7 +250,6 @@ def test_to_dense_is_linear_in_the_blocks():
     t1 = SymmetricTensor.random(legs, seed=10)
     t2 = SymmetricTensor.random(legs, seed=11)
     a, b = 2.5, -0.75
-    mixed = SymmetricTensor.from_legs(
-        legs, [a * x + b * y for x, y in zip(t1.blocks, t2.blocks, strict=True)]
-    )
+    combos = [a * x + b * y for x, y in zip(t1.blocks, t2.blocks, strict=True)]
+    mixed = SymmetricTensor.from_blocks(legs, keyed(legs, combos))
     np.testing.assert_allclose(mixed.to_dense(), a * t1.to_dense() + b * t2.to_dense(), atol=1e-12)

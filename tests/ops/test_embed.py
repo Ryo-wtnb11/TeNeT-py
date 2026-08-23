@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 import tenet
-from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
 from tenet.symmetry import (
     SU2,
     U1,
@@ -1150,8 +1150,9 @@ def test_dtype_promotion_reaches_every_block_including_the_untouched_ones():
 def test_differing_names_are_accepted_and_t_wins():
     """``name`` is user bookkeeping, exactly the stance ``ProductSpace.matches`` takes."""
     t, u = sum_fixture("su2")
-    renamed = SymmetricTensor.from_legs(
-        tuple(leg.renamed(f"other-{i}") for i, leg in enumerate(u.legs)), u.blocks
+    other = tuple(leg.renamed(f"other-{i}") for i, leg in enumerate(u.legs))
+    renamed = SymmetricTensor.from_blocks(
+        other, dict(zip(TensorStructure(other).block_order, u.blocks, strict=True))
     )
     d = tenet.direct_sum(t, renamed, 0)
     assert tuple(leg.name for leg in d.legs) == ("a", "b", "c")

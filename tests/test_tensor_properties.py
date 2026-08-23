@@ -8,7 +8,7 @@ import sys
 import numpy as np
 import pytest
 
-from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
 from tenet.symmetry import SU2, U1, CapabilityError, SU2Sector, Trivial, TrivialSector, U1Sector
 
 HALF, ONE = SU2Sector(1), SU2Sector(2)
@@ -27,6 +27,11 @@ BLOCK_FREE_LEGS = (
     Leg(GradedSpace.new(SU2, {HALF: 2}), OUT),
     Leg(GradedSpace.new(SU2, {ONE: 2}), IN),
 )
+
+
+def keyed(legs, blocks):
+    """Every block, keyed in ``block_order``."""
+    return dict(zip(TensorStructure(tuple(legs)).block_order, blocks, strict=True))
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -156,12 +161,12 @@ def test_block_free_tensor_has_structure_but_no_array_properties():
 
 def test_equality_is_exact_and_total():
     a = SymmetricTensor.random(SU2_LEGS, seed=5)
-    b = SymmetricTensor.from_legs(SU2_LEGS, [x.copy() for x in a.blocks])
+    b = SymmetricTensor.from_blocks(SU2_LEGS, keyed(SU2_LEGS, [x.copy() for x in a.blocks]))
     assert a == b
 
     blocks = [x.copy() for x in a.blocks]
     blocks[0] = blocks[0] + 1e-15
-    assert a != SymmetricTensor.from_legs(SU2_LEGS, blocks)
+    assert a != SymmetricTensor.from_blocks(SU2_LEGS, keyed(SU2_LEGS, blocks))
 
     assert (a == SymmetricTensor.zeros(U1_LEGS)) is False
     assert (a == "not a tensor") is False
