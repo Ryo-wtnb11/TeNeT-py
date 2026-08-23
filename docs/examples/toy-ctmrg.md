@@ -1,6 +1,6 @@
 # Toy CTMRG
 
-C4v CTMRG written naively with `tenet`'s basic tensor operations — corner, edge,
+C4v CTMRG written on the tensor layer — corner, edge,
 absorption, projector, sweep — followed by an iPEPS gradient through it with `jax.grad`.
 Needs the `jax` extra.
 

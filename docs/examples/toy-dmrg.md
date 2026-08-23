@@ -1,6 +1,6 @@
 # Toy DMRG
 
-Two-site DMRG written naively with `tenet`'s basic tensor operations: the MPS as a list of
+Two-site DMRG written on the tensor layer: the MPS as a list of
 `SymmetricTensor`s, canonical form, environments, a Lanczos step and the sweep, using
 `tenet.einsum` and `tenet.linalg` only. Nothing from `tenet.network` is imported.
 

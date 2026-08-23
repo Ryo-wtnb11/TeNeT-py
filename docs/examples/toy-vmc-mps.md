@@ -1,6 +1,6 @@
 # Toy VMC on an MPS
 
-Variational Monte Carlo written naively on a symmetric MPS: the MPS as a JAX pytree, the
+Variational Monte Carlo written on the tensor layer, on a symmetric MPS: the MPS as a JAX pytree, the
 Rayleigh quotient, `jax.grad`, and an SGD step with `jax.tree.map`. Needs the `jax` extra.
 
 - Both traces (U(1) and SU(2)) decrease on every one of the 20 steps.
