@@ -92,19 +92,21 @@ def _sweep_worst(n, h, phys, bonds, seed=5):
 
 
 def test_prepared_agrees_with_dense_on_the_nn_heisenberg_chain():
-    h = MPO.from_terms(8, _pair_terms([(i, i + 1) for i in range(7)]), cutoff=None)
+    h = MPO.from_terms(8, _pair_terms([(i, i + 1) for i in range(7)]), cutoff=None, symbolic=True)
     assert _sweep_worst(8, h, example.PHYS, example.bond_spaces(8)) < 1e-12
 
 
 def test_prepared_agrees_with_dense_on_the_r4_power_law_chain():
     pairs = [(i, j) for i in range(12) for j in range(i + 1, min(i + 5, 12))]
-    h = MPO.from_terms(12, _pair_terms(pairs, coeff=lambda i, j: (j - i) ** -2.0), cutoff=None)
+    h = MPO.from_terms(
+        12, _pair_terms(pairs, coeff=lambda i, j: (j - i) ** -2.0), cutoff=None, symbolic=True
+    )
     assert h[6].legs[0].space.dim == 14  # measurement 2's R=4 row: D_w = 14 uncompressed
     assert _sweep_worst(12, h, example.PHYS, example.bond_spaces(12)) < 1e-12
 
 
 def test_prepared_agrees_with_dense_on_the_ly6_cylinder():
-    h = MPO.from_terms(12, _pair_terms(_cylinder_pairs(12, 6)), cutoff=None)
+    h = MPO.from_terms(12, _pair_terms(_cylinder_pairs(12, 6)), cutoff=None, symbolic=True)
     assert _sweep_worst(12, h, example.PHYS, example.bond_spaces(12)) < 1e-12
 
 
@@ -118,7 +120,7 @@ def test_prepared_agrees_with_dense_on_a_mixed_rank3_and_rank2k_term_set():
         (2.5, [(op_sz, 0), (op_sz, 2), (op_sz, 5)]),  # a genuine continuing (A) edge
         (-1.3, [(op_sz, 3)]),  # an onsite (D) edge, so ID and DE are exercised
     ]
-    h = MPO.from_terms(6, terms, cutoff=None)
+    h = MPO.from_terms(6, terms, cutoff=None, symbolic=True)
     assert _sweep_worst(6, h, example.PHYS, example.bond_spaces(6)) < 1e-12
 
 
@@ -127,7 +129,7 @@ def test_prepared_agrees_with_dense_on_the_su2_heisenberg_chain():
     su2_phys = GradedSpace.new(SU2, {SU2Sector(1): 1})
     _, sz, sp, sm = example._spin_half()
     ss = local_op(np.kron(sz, sz) + (np.kron(sp, sm) + np.kron(sm, sp)) / 2, phys=su2_phys)
-    h = MPO.from_terms(8, [(1.0, [(ss, (i, i + 1))]) for i in range(7)], cutoff=None)
+    h = MPO.from_terms(8, [(1.0, [(ss, (i, i + 1))]) for i in range(7)], cutoff=None, symbolic=True)
     tri = GradedSpace.new(SU2, {SU2Sector(0): 1})
     mid = GradedSpace.new(SU2, {SU2Sector(0): 2, SU2Sector(1): 2, SU2Sector(2): 1})
     assert _sweep_worst(8, h, su2_phys, [tri] + [mid] * 7 + [tri]) < 1e-12
@@ -150,7 +152,7 @@ def test_prepared_agrees_with_dense_on_a_fermionic_chain():
     terms = [(0.8, [(op_n, 2)])]
     for i, j in [(m, m + 1) for m in range(4)] + [(1, 3)]:
         terms += [(1.0, [(op_cd, i), (op_c, j)]), (1.0, [(op_cd, j), (op_c, i)])]
-    h = MPO.from_terms(5, terms, cutoff=None)
+    h = MPO.from_terms(5, terms, cutoff=None, symbolic=True)
     unit = GradedSpace.new(fZ2, {FZ2Sector(0): 1})
     both = GradedSpace.new(fZ2, {FZ2Sector(0): 2, FZ2Sector(1): 2})
     assert _sweep_worst(5, h, phys, [unit] + [both] * 4 + [unit]) < 1e-12
@@ -204,8 +206,8 @@ def test_the_compressed_prepared_path_agrees_with_dense_and_with_cutoff_none(chi
     n = 8
     pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
     terms = _pair_terms(pairs, coeff=lambda i, j: (j - i) ** -3.0)
-    exact = MPO.from_terms(n, terms, cutoff=None)
-    comp = MPO.from_terms(n, terms, cutoff=1e-13)
+    exact = MPO.from_terms(n, terms, cutoff=None, symbolic=True)
+    comp = MPO.from_terms(n, terms, cutoff=1e-13, symbolic=True)
     assert comp.edges is not None and comp.edge_blocks(0) is not None
     bonds = [
         GradedSpace.new(U1, {a: m for a, _ in space.sectors})
@@ -217,7 +219,7 @@ def test_the_compressed_prepared_path_agrees_with_dense_and_with_cutoff_none(chi
 
 def test_dmrg_reaches_the_n12_reference_on_both_paths():
     """The whole pipeline, both routes, to the tolerance ``test_dmrg.py`` already uses."""
-    h = MPO.from_terms(12, _pair_terms([(i, i + 1) for i in range(11)]), cutoff=None)
+    h = MPO.from_terms(12, _pair_terms([(i, i + 1) for i in range(11)]), cutoff=None, symbolic=True)
     for ham in (h, MPO(h.sites)):
         psi = MPS.random(example.PHYS, example.bond_spaces(12), seed=0)
         out = dmrg_(psi, ham, chi=64)
@@ -228,7 +230,7 @@ def test_the_prepared_path_issues_fewer_dispatches_on_the_n24_ly10_cylinder():
     """#141's inequality on the measurement-2 object itself: N=24, width 10, D_w=32."""
     import autoray  # noqa: PLC0415
 
-    h = MPO.from_terms(24, _pair_terms(_cylinder_pairs(24, 10)), cutoff=None)
+    h = MPO.from_terms(24, _pair_terms(_cylinder_pairs(24, 10)), cutoff=None, symbolic=True)
     psi = MPS.random(example.PHYS, example.bond_spaces(24), seed=1).canonize_()
     envs = [Env(psi, h).setup_(), Env(psi, MPO(h.sites)).setup_()]
     for env in envs:

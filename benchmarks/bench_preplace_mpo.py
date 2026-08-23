@@ -578,7 +578,9 @@ def measure(name, n_sites, terms, cutoff=1e-13, rank=1e-14, dense_check=False):
     post = MPO.from_terms(n_sites, terms, cutoff=cutoff)
     row["wall_post"] = round(time.perf_counter() - t0, 2)
     row["post"] = pin.widths(post.sites)
-    row["fsm"] = [b.dim for b in MPO.from_terms(n_sites, terms, cutoff=None).edges.bonds]
+    row["fsm"] = [
+        b.dim for b in MPO.from_terms(n_sites, terms, cutoff=None, symbolic=True).edges.bonds
+    ]
     row["rss_post_peak"] = round(rss_gib(), 3)
     row["place_fsm"] = round(_buffer(row["fsm"], row["post"], walk.phys.dim), 4)
     row["place_pre"] = round(_buffer(row["exact"], row["exact"], walk.phys.dim), 4)

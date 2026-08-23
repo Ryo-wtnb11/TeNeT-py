@@ -662,30 +662,31 @@ class Env:
         Notes
         -----
         **Two paths, and the operator's representation is which one, decided at build
-        time.** An MPO that carries an edge description --
+        time.** An MPO that carries only site tensors takes the site-tensor contraction:
+        [from_w][tenet.network.MPO.from_w], an ``MPO`` built from bare tensors, whatever
+        [MPO.materialize][tenet.network.MPO.materialize] hands back, and -- since #255 --
         [from_terms][tenet.network.MPO.from_terms],
         [from_arrays][tenet.network.MPO.from_arrays] and
-        [from_entries][tenet.network.MPO.from_entries], at *either* cutoff since #204 --
-        takes the prepared, symbolic, term-family matvec. An MPO that carries only site
-        tensors -- [from_w][tenet.network.MPO.from_w], an ``MPO`` built from bare tensors,
-        and whatever [MPO.materialize][tenet.network.MPO.materialize] hands back -- takes
-        the site-tensor contraction. **There is no runtime dispatch either way**: no
-        bond-width threshold, no ``chi`` threshold, no probe, no ``path=`` keyword. The
-        caller states the representation when the operator is built, exactly as
-        ``from_terms``' ``cutoff=None`` against a float already states which operator is
-        built.
+        [from_entries][tenet.network.MPO.from_entries] at their default. **This default
+        path is the lattice lane's engine**, not a compatibility entry. An MPO built
+        ``symbolic=True`` carries an edge description, at *either* cutoff since #204, and
+        that is what the keyword buys: the prepared, symbolic, term-family matvec.
+        **There is no runtime dispatch either way**: no bond-width threshold, no ``chi``
+        threshold, no probe, no ``path=`` keyword. The caller states the representation
+        when the operator is built, exactly as ``from_terms``' ``cutoff=None`` against a
+        float already states which operator is built.
 
-        **The rule, in terms a caller reads off their own model** (#251, on the three-arm
+        **The rule, in terms a caller reads off their own model** (#255, on the three-arm
         grid in ``docs/design.md`` "M64b"):
 
         * a **finite-range lattice model** -- a narrow MPO bond, ``D_w`` of order ten --
-          wants the **site-tensor path**, spelled ``h.materialize()``. Its prepared
-          machinery costs 1.63-2.06x per steady sweep on U(1) Heisenberg and 1.85-2.07x
-          on the spinful Hubbard chain and buys nothing back at that width, while the
-          site-tensor path runs at 1.10-1.28x YASTN;
+          wants the **site-tensor path**, which is the bare builder, no keyword. The
+          prepared machinery costs 1.63-2.06x per steady sweep on U(1) Heisenberg and
+          1.85-2.07x on the spinful Hubbard chain and buys nothing back at that width,
+          while the site-tensor path runs at 1.10-1.28x YASTN;
         * **quantum chemistry** -- ``O(K^4)`` terms, a bond in the thousands -- wants the
-          **description kept**, which is every builder's default. There the prepared path
-          is 0.97x the site-tensor one at ``chi = 64`` and is the only route that fits
+          **description kept**, which is ``symbolic=True``. There the prepared path is
+          0.97x the site-tensor one at ``chi = 64`` and is the only route that fits
           ``K = 26`` in memory at all ("Milestone 39").
 
         **#218's single-path decision stands at its own scope, which is symbolic
@@ -694,10 +695,11 @@ class Env:
         work attaching there and nowhere else** -- and that is block2's engine design in
         tenet's form: its ``EffectiveHamiltonian`` never forms the effective Hamiltonian
         and instead dispatches the symbolic operator sum term by term against the
-        wavefunction (``effective_hamiltonian.hpp``:230-243). What #218 did not decide,
-        and #251 settles, is which representation a *lattice* Hamiltonian should be in
-        before it reaches an engine at all. So the site-tensor path is **the lattice
-        lane's engine**, not a compatibility entry -- it is also still what an
+        wavefunction (``effective_hamiltonian.hpp``:230-243). Its scope is therefore
+        symbolic operators, *which a caller asks for*: what #218 did not decide, and
+        #251/#255 settle, is which representation a *lattice* Hamiltonian should be in
+        before it reaches an engine at all -- site tensors, by default. The site-tensor
+        path is also still what an
         externally-built MPO gets, because symbols cannot be recovered from a numeric
         ``W`` in general (#141 measured that a compressed ``W`` retains no edge structure),
         and block2 has no equivalent because block2 is a quantum-chemistry *program* that
@@ -794,7 +796,8 @@ class Env:
         >>> import numpy as np
         >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
         >>> sz = local_op(np.diag([-0.5, 0.5]), phys=phys, charge=U1Sector(0))
-        >>> h = MPO.from_terms(3, [(1.0, [(sz, i), (sz, i + 1)]) for i in range(2)])
+        >>> terms = [(1.0, [(sz, i), (sz, i + 1)]) for i in range(2)]
+        >>> h = MPO.from_terms(3, terms, symbolic=True)  # families need the description
         >>> psi = MPS.product(phys, [U1Sector(1), U1Sector(-1), U1Sector(1)]).canonize_()
         >>> env = Env(psi, h).setup_()
         >>> aa = tenet.einsum("apx,xqr->apqr", psi[0], psi[1])
@@ -815,10 +818,10 @@ class Env:
         perturbative noise uses. It is a **read**, not a second engine: the same
         ``_prepare2`` cache, the same contractions, only not added up.
 
-        The site-tensor path (an MPO with no edge description, which since #251 is the
-        lattice lane's own spelling -- see
-        [MPO.materialize][tenet.network.MPO.materialize]) has no families to
-        resolve, so it returns the single vector ``(heff2(n, aa),)`` -- the operator's own
+        The site-tensor path -- an MPO with no edge description, which since #255 is what
+        every builder returns unless the caller writes ``symbolic=True`` -- has no
+        families to resolve, so **the default is the single vector**
+        ``(heff2(n, aa),)`` -- the operator's own
         action on the state, unresolved. A one-vector mixer is weaker than a
         family-resolved one, and it is what an operator that carries no symbols can offer.
         M67 re-measured M61 Stage C's lattice table on this path and states the cost

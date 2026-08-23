@@ -58,7 +58,7 @@ def _heis(n):
 @pytest.fixture(scope="module")
 def ly10():
     """The width-10 cylinder at N=24, ``cutoff=None`` -- #141's measurement-2 subject."""
-    return MPO.from_terms(24, _pair_terms(_cylinder_pairs(24, 10)), cutoff=None)
+    return MPO.from_terms(24, _pair_terms(_cylinder_pairs(24, 10)), cutoff=None, symbolic=True)
 
 
 def _mid_env(h, seed=1):
@@ -85,9 +85,11 @@ def test_only_a_from_terms_mpo_carries_a_table():
     never had a description, still hands out ``None`` and still routes ``heff2`` onto the
     site-tensor path.
     """
-    kept = MPO.from_terms(6, _heis(6), cutoff=None)
+    kept = MPO.from_terms(6, _heis(6), cutoff=None, symbolic=True)
     assert all(kept.edge_blocks(n) is not None for n in range(6))
-    assert all(MPO.from_terms(6, _heis(6)).edge_blocks(n) is not None for n in range(6))
+    assert all(
+        MPO.from_terms(6, _heis(6), symbolic=True).edge_blocks(n) is not None for n in range(6)
+    )
     from_w = example.mpo(6)
     assert all(from_w.edge_blocks(n) is None for n in range(6))
     assert MPO(kept.sites).edge_blocks(0) is None  # rebuilding the container drops the table
@@ -126,7 +128,7 @@ def test_the_su3_state_space_survives_in_the_table_with_its_multiplicity():
     d = SU3.irrep_dim(EIGHT)
     swap = np.einsum("ad,bc->abcd", np.eye(d), np.eye(d))
     op = local_op(swap, phys=GradedSpace.new(SU3, {EIGHT: 1}))
-    h = MPO.from_terms(2, [(1.0, [(op, (0, 1))])], cutoff=None)
+    h = MPO.from_terms(2, [(1.0, [(op, (0, 1))])], cutoff=None, symbolic=True)
     assert h[0].legs[3].space.degeneracy(EIGHT) == 2
     ((_, edge),) = h.edge_blocks(1).b.items()
     assert edge.legs[0].space.degeneracy(EIGHT) == 2
@@ -139,7 +141,7 @@ def test_the_prepared_operator_populates_at_most_six_fields_for_nn_heisenberg():
     """The empty fields are the structural zeros, counted after preparation: nearest
     neighbour has no onsite and no continuing block, so ``ID``, ``DE``, ``CA``, ``AB``
     and ``AA`` are all absent at the middle bond."""
-    h = MPO.from_terms(8, _heis(8), cutoff=None)
+    h = MPO.from_terms(8, _heis(8), cutoff=None, symbolic=True)
     env, _ = _mid_env(h)
     env._prepare2(4)
     fields = env._prepared[4][3]
@@ -153,7 +155,7 @@ def test_the_prepared_operator_populates_at_most_nine_fields_on_the_ly10_cylinde
     width-10 cylinder are enough: the middle bond already carries every field pattern
     the N=24 table does, and the dispatch inequality on the full N=24 object lives in
     ``tests/integration/test_dmrg_prepared.py`` with the budget it needs."""
-    h = MPO.from_terms(12, _pair_terms(_cylinder_pairs(12, 10)), cutoff=None)
+    h = MPO.from_terms(12, _pair_terms(_cylinder_pairs(12, 10)), cutoff=None, symbolic=True)
     psi = MPS.random(example.PHYS, example.bond_spaces(12), seed=1).canonize_()
     env = Env(psi, h).setup_()
     for m in range(2):
@@ -170,7 +172,7 @@ def test_the_prepared_operator_populates_at_most_nine_fields_on_the_ly10_cylinde
 def test_one_lanczos_solve_builds_the_prepared_operator_exactly_once(monkeypatch):
     """``ncv=3`` means three matvecs per bond; the fold over the environments must be
     paid once, which is the entire amortisation argument of #141 decision 2."""
-    h = MPO.from_terms(6, _heis(6), cutoff=None)
+    h = MPO.from_terms(6, _heis(6), cutoff=None, symbolic=True)
     env, psi = _mid_env(h)
     builds = []
     original = env_module._build2
@@ -183,7 +185,7 @@ def test_one_lanczos_solve_builds_the_prepared_operator_exactly_once(monkeypatch
 def test_the_compiled_cache_keeps_one_entry_per_bond_across_two_chis():
     """Two sweeps at different ``chi``: the bond spaces move, the structure keys change,
     and every changed key *replaces* its entry -- the cache never accumulates."""
-    h = MPO.from_terms(6, _heis(6), cutoff=None)
+    h = MPO.from_terms(6, _heis(6), cutoff=None, symbolic=True)
     psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=2).canonize_()
     env = Env(psi, h).setup_()
     sweep_(psi, h, env, {}, chi=4, cutoff=1e-14)
@@ -199,7 +201,7 @@ def test_compile_is_called_once_per_structure_key_and_its_result_is_used():
     """The identity-recording stub: no accelerator needed. One ``lanczos`` solve compiles
     once and runs the compiled callable for all three matvecs; re-solving at the same
     bond with unchanged environments recompiles nothing."""
-    h = MPO.from_terms(6, _heis(6), cutoff=None)
+    h = MPO.from_terms(6, _heis(6), cutoff=None, symbolic=True)
     compiled, runs = [], []
 
     def stub(fn):
@@ -230,7 +232,7 @@ def test_a_sweep_compiles_once_per_distinct_structure_key(monkeypatch):
     entry was rebuilt whenever the stored ``_Prepared`` was not the object ``_prepare2``
     had just returned -- and it returns a fresh one every visit -- so ``compile`` ran
     about ``2 x sweeps x bonds`` times for a handful of distinct graphs."""
-    h = MPO.from_terms(6, _heis(6), cutoff=None)
+    h = MPO.from_terms(6, _heis(6), cutoff=None, symbolic=True)
     psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=2).canonize_()
     compiled, keys = [], set()
     original = Env.heff2
@@ -261,7 +263,7 @@ def test_a_squeezed_budget_no_longer_recompiles_a_bond_it_evicted(monkeypatch, b
     the number of distinct keys.
     """
     monkeypatch.setattr(common, "CACHE_BUDGET", budget)
-    h = MPO.from_terms(6, _heis(6), cutoff=None)
+    h = MPO.from_terms(6, _heis(6), cutoff=None, symbolic=True)
     psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=2).canonize_()
     compiled, keys = [], set()
     original = Env.heff2
@@ -283,7 +285,7 @@ def test_a_moved_environment_still_rebuilds_the_prepared_operator():
     """The other half of #225, and the half that must not move: the *operator* is cached
     on the two environments' identity, so a rebuilt environment produces a rebuilt
     operator. A stale one would give an energy that is plausible and wrong."""
-    h = MPO.from_terms(6, _heis(6), cutoff=None)
+    h = MPO.from_terms(6, _heis(6), cutoff=None, symbolic=True)
     env, psi = _mid_env(h)
     before = env._prepare2(3)
     assert env._prepare2(3) is before  # nothing moved: the cached operator is served

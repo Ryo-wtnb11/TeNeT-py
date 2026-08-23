@@ -459,7 +459,12 @@ def sweep_(
     dimensionless in the same 1e-4..1e-5 range. This reaches the sectors *the Hamiltonian
     couples to*, which is the difference from the random draw: it cannot waste the
     perturbation on a direction the operator never visits, and on a sector-poor bond it
-    fills what ``H`` can actually populate.
+    fills what ``H`` can actually populate. The resolution needs the operator's
+    description, so it is an operator built ``symbolic=True`` that gets the
+    family-resolved mixer; every other MPO -- the builders' default among them since
+    #255 -- gets ``heff2_families``' single-vector fallback, which on a finite-range
+    lattice model costs one sweep of head start and no accuracy (``docs/design.md``
+    "M67").
 
     Neither noise is variational: a noisy sweep's energy may sit above the same sweep at
     ``noise=0.0``.

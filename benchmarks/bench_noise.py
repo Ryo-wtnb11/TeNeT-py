@@ -53,7 +53,7 @@ def n2_model(chi):
     norb, _, recs = qc.fetch("N2.CAS.6-31G")
     terms = qc.to_tenet_terms(qc.fold_terms(qc.spin_orbital_terms(recs, screen=qc.SCREEN))[0])
     n_sites = 2 * norb
-    h = MPO.from_terms(n_sites, terms, cutoff=None)
+    h = MPO.from_terms(n_sites, terms, cutoff=None, symbolic=True)
     phys = GradedSpace.new(fZ2, {FZ2Sector(0): 1, FZ2Sector(1): 1})
     triv = GradedSpace.new(fZ2, {FZ2Sector(0): 1})
     mid = GradedSpace.new(fZ2, {FZ2Sector(0): chi - chi // 2, FZ2Sector(1): chi // 2})
