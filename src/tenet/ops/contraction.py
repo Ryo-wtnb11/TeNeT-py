@@ -525,8 +525,8 @@ def _contracted(
 def _bent(x: Operand, term: str, bend: str) -> tuple[Operand, str]:
     """``x`` with every wire named in ``bend`` moved to the other side, plan deferred.
 
-    The bend the composition rule demands (``docs/design.md`` "Milestone 11"): both ends
-    of a wire that turns around in the intended planar diagram are repartitioned before
+    The bend the composition rule demands: both ends of a wire that turns around in the
+    intended planar diagram are repartitioned before
     the composition, which pays the categorical bending coefficient by construction. In
     a chain the repartition is a *plan*, composed onto whatever the operand is already
     carrying, so the bent tensor is never written.

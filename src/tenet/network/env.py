@@ -447,9 +447,8 @@ def _heff2_full(h: MPO, fl: SymmetricTensor, fr: SymmetricTensor, n: int, aa: Sy
     ``aa`` lives on the *ket* bonds and the result on the *bra* bonds; the two coincide
     for a one-state [Env][tenet.network.Env] and that is why ``heff2`` can iterate on it.
 
-    Spelled as one [einsum_chain][tenet.einsum_chain]: the four contractions, their operand
-    order and the wires each of them bends are unchanged, and the three tensors that used to
-    stand between them are never written.
+    Spelled as one [einsum_chain][tenet.einsum_chain], so the three intermediate tensors
+    between the four contractions are never written.
     """
     return tenet.einsum_chain(
         [
