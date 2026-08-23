@@ -67,7 +67,8 @@ from tenet.map_view import check_square, lower_plan, to_matrices
 from tenet.ops.basic import _check_same_structure
 from tenet.ops.map import compose_lowered, identity
 from tenet.ops.permutation import permutation_plan, transpose
-from tenet.ops.repartition import repartition, repartition_plan
+from tenet.ops.repartition import _compose as compose_terms
+from tenet.ops.repartition import apply_plan, repartition, repartition_plan
 from tenet.structure import TensorStructure
 from tenet.symmetry.base import (
     BendingCoefficients,
@@ -366,16 +367,97 @@ def tensordot(a: "SymmetricTensor", b: "SymmetricTensor", axes: Axes) -> "Symmet
     what is left here is the execution of four already-tested operations.
     """
     # normalize first so the integer form and NumPy integer scalars share one entry
-    plan = contraction_plan(a.structure, b.structure, _validated(a.structure, b.structure, axes))
+    return _tensordot(a, b, _validated(a.structure, b.structure, axes), ())
+
+
+def _tensordot(
+    a: "SymmetricTensor",
+    b: "SymmetricTensor",
+    axes: tuple[tuple[int, ...], ...],
+    after: tuple[tuple[int, ...], ...],
+) -> "SymmetricTensor":
+    """[tensordot][tenet.tensordot] on validated axes, with ``after`` folded into the restore.
+
+    Parameters
+    ----------
+    a, b : SymmetricTensor
+        The operands.
+    axes : tuple of tuple of int
+        The contracted axes, already through ``_validated``.
+    after : tuple of tuple of int
+        Further transposes the caller would apply to the result, outermost last.
+        [einsum][tenet.einsum] passes its output reordering here.
+
+    Returns
+    -------
+    SymmetricTensor
+        The contraction, transposed by ``after``.
+
+    Notes
+    -----
+    ``after`` exists so that the restore-repartition and every transpose that follows it
+    are **one** plan: each of them re-applies its own coefficients, and a block that
+    carries one at two steps used to be materialised twice for a movement that is one
+    pass' worth (docs/design.md "M70"). Composing plans is ``repartition_plan``'s own
+    idiom — the transpose/bend/transpose sandwich is composed exactly this way — so this
+    is the same rewriting one level up, not a new rule. The terms and their coefficients
+    are unchanged; only the number of passes over them is.
+    """
+    plan = contraction_plan(a.structure, b.structure, axes)
     sa, ma = _lowered(a, plan.a_outputs, plan.a_inputs)
     sb, mb = _lowered(b, plan.b_outputs, plan.b_inputs)
     joined = TensorStructure(
         (*(sa.legs[i] for i in sa.out_axes), *(sb.legs[i] for i in sb.in_axes))
     )
     c = compose_lowered(joined, ma, mb, a.blocks[0])
-    return transpose(
-        repartition(c, plan.restore_outputs, plan.restore_inputs), plan.final_transpose
+    structure, perm, terms = _restore_plan(
+        c.structure, plan.restore_outputs, plan.restore_inputs, (plan.final_transpose, *after)
     )
+    return apply_plan(c, structure, perm, terms, "tensordot")
+
+
+@cache
+def _restore_plan(
+    structure: TensorStructure,
+    outputs: tuple[int, ...],
+    inputs: tuple[int, ...],
+    transposes: tuple[tuple[int, ...], ...],
+) -> tuple[TensorStructure, tuple[int, ...], tuple[tuple[int, int, complex], ...]]:
+    """The restore-repartition followed by ``transposes``, composed into one plan.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The composition's structure, before the free legs are put back.
+    outputs, inputs : tuple of int
+        The restore-repartition's axes.
+    transposes : tuple of tuple of int
+        Applied in order after it; each a permutation of ``range(ndim)``.
+
+    Returns
+    -------
+    new_structure : TensorStructure
+        The result's structure.
+    perm : tuple of int
+        The one per-block axis permutation of the whole chain.
+    terms : tuple of (int, int, complex)
+        ``(source block, target block, coefficient)``, the coefficients multiplied
+        through and duplicate ``(source, target)`` pairs summed.
+
+    Notes
+    -----
+    Cached like every other plan, and on the same key shape. ``repartition_plan`` is
+    asked for the restore even when nothing crosses — with an empty crossing list its
+    body is a single ``permutation_plan``, which is what the chain needs anyway.
+    """
+    plan = repartition_plan(structure, outputs, inputs)
+    new_structure, perm, terms = plan.new_structure, plan.perm, plan.terms
+    for axes in transposes:
+        step = permutation_plan(new_structure, axes)
+        perm = tuple(perm[i] for i in step.axes)
+        terms = compose_terms(terms, step.terms)
+        new_structure = step.new_structure
+    return new_structure, perm, terms
 
 
 def _lowered(
@@ -834,6 +916,11 @@ def einsum(
     free += [label for label in terms[1] if label not in shared]
     # exactly two operands on this path (the len() checks above); a tuple
     # unpack of statically unknown length is what the checker refuses
+    # The output reordering stays a separate ``transpose`` and is *not* folded into the
+    # contraction's restore plan, though ``_tensordot`` would take it: the reordering is
+    # applied to a value ``tensordot`` has already returned, and folding it would mean
+    # ``einsum`` no longer calling ``tensordot``. docs/design.md "M70" measures what that
+    # costs and where the coefficient passes that are left actually sit.
     return transpose(
         tensordot(*operands, axes),  # ty: ignore[too-many-positional-arguments]
         tuple(free.index(label) for label in out),

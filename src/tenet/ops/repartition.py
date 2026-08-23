@@ -437,7 +437,6 @@ def repartition(
     composed once by ``repartition_plan`` and executed in a single pass, so
     every block is copied once instead of once per step.
     """
-    from tenet.tensor import SymmetricTensor
 
     outputs, inputs = _validated(t.ndim, outputs, inputs)
 
@@ -447,33 +446,75 @@ def repartition(
         return t.transpose((*outputs, *inputs))
 
     plan = repartition_plan(t.structure, outputs, inputs)
+    return apply_plan(t, plan.new_structure, plan.perm, plan.terms, "repartition")
 
-    # one transpose per *distinct source*, not per term (#123): ``plan.perm`` is per-plan
-    # and only the coefficient is per-term, so every term sharing a source used to
-    # recompute a byte-identical array -- 2.87 terms per source at SU(2) chi=6 against
-    # exactly 1.00 at U(1), the multi-term expansion being what a non-Abelian provider's
-    # coefficients produce and an Abelian one never does. #74's batched alternative
-    # (stack a shape bucket, transpose once, slice back out) was prototyped and measured
-    # slower on every axis -- see #123 for the table and the refusal.
-    moved = {
-        src: ar.do("transpose", t.blocks[src], plan.perm) for src in {s for s, _, _ in plan.terms}
-    }
+
+def apply_plan(
+    t: "SymmetricTensor",
+    structure: TensorStructure,
+    perm: tuple[int, ...],
+    terms: tuple[tuple[int, int, complex], ...],
+    caller: str,
+) -> "SymmetricTensor":
+    """Move ``t``'s blocks by ``(perm, terms)`` and build the tensor they fill.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor the plan reads.
+    structure : TensorStructure
+        The plan's ``new_structure``.
+    perm : tuple of int
+        The plan's single per-block axis permutation.
+    terms : tuple of (int, int, complex)
+        ``(source block, target block, coefficient)``.
+    caller : str
+        The name the fill-check message opens with.
+
+    Returns
+    -------
+    SymmetricTensor
+        The tensor the plan builds.
+
+    Raises
+    ------
+    ValueError
+        If the plan does not fill every target block — the provider's coefficients
+        dropped terms.
+
+    Notes
+    -----
+    One transpose per *distinct source*, not per term (#123): ``perm`` is per-plan and
+    only the coefficient is per-term, so every term sharing a source used to recompute
+    a byte-identical array — 2.87 terms per source at SU(2) ``chi=6`` against exactly
+    1.00 at U(1), the multi-term expansion being what a non-Abelian provider's
+    coefficients produce and an Abelian one never does. #74's batched alternative
+    (stack a shape bucket, transpose once, slice back out) was prototyped and measured
+    slower on every axis — see #123 for the table and the refusal.
+
+    A term with coefficient 1 leaves its transposed **view** in place and moves no
+    element at all; the first consumer that needs contiguity pays for it, which on the
+    contraction path is the sector-matrix assembly (docs/design.md "M69", "M70").
+    """
+    from tenet.tensor import SymmetricTensor
+
+    moved = {src: ar.do("transpose", t.blocks[src], perm) for src in {s for s, _, _ in terms}}
 
     blocks: dict[int, Any] = {}
-    for src, dst, coeff in plan.terms:
+    for src, dst, coeff in terms:
         contrib = moved[src]
         if coeff != 1:
             # keep a real coefficient real, so a real tensor stays real
             contrib = contrib * (coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)
         blocks[dst] = contrib if dst not in blocks else blocks[dst] + contrib
 
-    n = plan.new_structure.num_blocks
+    n = structure.num_blocks
     if len(blocks) != n:
         raise ValueError(
-            f"repartition: the plan fills {len(blocks)} of {n} target blocks — "
+            f"{caller}: the plan fills {len(blocks)} of {n} target blocks — "
             f"{t.provider.name}'s coefficients dropped terms"
         )
-    return SymmetricTensor(plan.new_structure, tuple(blocks[i] for i in range(n)))
+    return SymmetricTensor(structure, tuple(blocks[i] for i in range(n)))
 
 
 def _flip_refuse(structure: TensorStructure) -> None:
