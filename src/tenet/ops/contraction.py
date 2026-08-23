@@ -50,6 +50,14 @@ scheduler adds a loop and no mathematics. It is imported lazily, inside that
 branch only; ``cotengra``'s optimizers arrive through ``optimize=`` as ordinary
 ``PathOptimizer`` objects and ``cotengra`` is imported nowhere in ``tenet``.
 
+``einsum_chain`` sits beside ``einsum`` and owns a *run* of pair-contractions. Between two
+steps there is nothing to materialize: step k's restore-repartition and step k+1's operand
+lowering are both plans of ``(source, target, coefficient)`` over blocks that are views into
+step k's sector matrices, so composing them gives one plan from matrices to matrices. The
+steps are the caller's rather than a path finder's, because the composition rule fixes the
+intermediate leg order and the bent wires at every pair and a single multi-operand equation
+would leave both to ``opt_einsum``.
+
 No ``to_dense``, no NumPy and no provider branching here (invariants 8/9).
 """
 

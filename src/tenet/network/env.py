@@ -400,9 +400,10 @@ def _fold_first(
     diagram every bond rail -- the ket bond ``r``, the MPO bond ``y``/``w``/``v``, the
     bra bond ``s`` -- runs through the right cap and turns around, while the physical
     wires compose straight. Each contraction therefore bends its bond-rail wire
-    explicitly (``_composed``) and composes the rest; the dense Jordan-Wigner
-    oracle fixes every one of these choices (#160), and ``_fold_last``, whose
-    rails run *out* of the left cap, needs no bend at all.
+    explicitly -- ``_composed`` for a single one, the chain's ``bend`` field for a step of
+    one -- and composes the rest; the dense Jordan-Wigner oracle fixes every one of these
+    choices (#160), and ``_fold_last``, whose rails run *out* of the left cap, needs no
+    bend at all.
     """
     t1 = _composed("rys,apr->apys", f, a, bend="r")
     out = None
@@ -453,6 +454,10 @@ def _heff2_full(h: MPO, fl: SymmetricTensor, fr: SymmetricTensor, n: int, aa: Sy
 
     ``aa`` lives on the *ket* bonds and the result on the *bra* bonds; the two coincide
     for a one-state [Env][tenet.network.Env] and that is why ``heff2`` can iterate on it.
+
+    Spelled as one [einsum_chain][tenet.einsum_chain]: the four contractions, their operand
+    order and the wires each of them bends are unchanged, and the three tensors that used to
+    stand between them are never written.
     """
     return tenet.einsum_chain(
         [
