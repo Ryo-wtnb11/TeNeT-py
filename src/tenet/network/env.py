@@ -279,21 +279,39 @@ def _families2(p: _Prepared, aa: SymmetricTensor) -> list[SymmetricTensor]:
     # ``ra1`` — so inside each branch the sibling field is non-None; a cross-field
     # invariant no checker narrows.
     if p.grt is not None:  # II + EE + sign-free spectator AA: identity through both sites
-        t = _composed("rxs,apqr->apqxs", p.grt, aa, bend="r")
-        parts.append(_composed("axB,apqxs->Bpqs", p.gl, t, bend="x"))  # ty: ignore[invalid-argument-type]
+        parts.append(
+            tenet.einsum_chain(
+                [
+                    ("rxs,apqr->apqxs", p.grt, aa, "r"),
+                    ("axB,apqxs->Bpqs", p.gl, None, "x"),
+                ]
+            )
+        )
     if p.caf is not None:  # IC + ID + CB + CA: the IdL channel left of the bond is gauge-1
         parts.append(_composed("PpQqrs,apqr->aPQs", p.caf, aa, bend="r"))
     if p.abf is not None:  # AB + BE + DE: the IdR channel right of the bond is gauge-1
         parts.append(tenet.einsum("aPpQqB,apqr->BPQr", p.abf, aa))
     if p.ra1 is not None:  # AA remainder, left factor operator-carrying
-        t = tenet.einsum("apqr,rws->apqws", aa, p.gr2)  # ty: ignore[invalid-argument-type]
-        t = _composed("apqws,mQqw->apQms", t, p.ra2, bend="q")  # ty: ignore[invalid-argument-type]
-        t = _composed("apQms,wPpm->aPQws", t, p.ra1, bend="p")
-        parts.append(_composed("aPQws,awB->BPQs", t, p.gl2, bend="a"))  # ty: ignore[invalid-argument-type]
+        parts.append(
+            tenet.einsum_chain(
+                [
+                    ("apqr,rws->apqws", aa, p.gr2, ""),
+                    ("apqws,mQqw->apQms", None, p.ra2, "q"),
+                    ("apQms,wPpm->aPQws", None, p.ra1, "p"),
+                    ("aPQws,awB->BPQs", None, p.gl2, "a"),
+                ]
+            )
+        )
     if p.sr2 is not None:  # AA remainder, free spectator left then operator right
-        t = tenet.einsum("apqr,rws->apqws", aa, p.gr2)  # ty: ignore[invalid-argument-type]
-        t = _composed("apqws,mQqw->apQms", t, p.sr2, bend="q")
-        parts.append(_composed("apQms,amB->BpQs", t, p.gl2, bend="a"))  # ty: ignore[invalid-argument-type]
+        parts.append(
+            tenet.einsum_chain(
+                [
+                    ("apqr,rws->apqws", aa, p.gr2, ""),
+                    ("apqws,mQqw->apQms", None, p.sr2, "q"),
+                    ("apQms,amB->BpQs", None, p.gl2, "a"),
+                ]
+            )
+        )
     return parts
 
 
@@ -338,13 +356,18 @@ def _fold_last(
     t1 = tenet.einsum("axB,apr->xBpr", f, a)
     out = None
     if t.idmap is not None:
-        comp = tenet.einsum("Bps,xBpr->rxs", bra, t1)
-        out = tenet.einsum("xm,rxs->rms", t.idmap, comp)
+        out = tenet.einsum_chain(
+            [("Bps,xBpr->rxs", bra, t1, ""), ("xm,rxs->rms", t.idmap, None, "")]
+        )
 
     def flow(src, w, emb) -> SymmetricTensor:
-        s = tenet.einsum("vPpw,vBpr->BrPw", w, src)
-        s = tenet.einsum("BPs,BrPw->rws", bra, s)
-        return tenet.einsum("wm,rws->rms", emb, s)
+        return tenet.einsum_chain(
+            [
+                ("vPpw,vBpr->BrPw", w, src, ""),
+                ("BPs,BrPw->rws", bra, None, ""),
+                ("wm,rws->rms", emb, None, ""),
+            ]
+        )
 
     if t.idl_l is not None and (t.c_op is not None or t.d_op is not None):
         ti = tenet.einsum("xv,xBpr->vBpr", t.idl_l, t1)
@@ -384,13 +407,18 @@ def _fold_first(
     t1 = _composed("rys,apr->apys", f, a, bend="r")
     out = None
     if t.idmap is not None:
-        comp = _composed("Bps,apys->ayB", bra, t1, bend="s")
-        out = _composed("xy,ayB->axB", t.idmap, comp, bend="y")
+        out = tenet.einsum_chain(
+            [("Bps,apys->ayB", bra, t1, "s"), ("xy,ayB->axB", t.idmap, None, "y")]
+        )
 
     def flow(src, w, emb) -> SymmetricTensor:
-        s = _composed("vPpw,apws->avPs", w, src, bend="w")
-        s = _composed("BPs,avPs->avB", bra, s, bend="s")
-        return _composed("xv,avB->axB", emb, s, bend="v")
+        return tenet.einsum_chain(
+            [
+                ("vPpw,apws->avPs", w, src, "w"),
+                ("BPs,avPs->avB", bra, None, "s"),
+                ("xv,avB->axB", emb, None, "v"),
+            ]
+        )
 
     if t.idr_r is not None and (t.b_op is not None or t.d_op is not None):
         te = _composed("wy,apys->apws", t.idr_r, t1, bend="y")
