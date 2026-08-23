@@ -1,10 +1,12 @@
 # Heisenberg, U(1)
 
-What to look at: the sum of the 19 bond energies reproduces `out.energy` to twelve
-digits — `expectation_2site` and `dmrg_` weigh the same state on the same scale — and
-`max_n |<S^z_n>|` is float noise, because the `S^z_tot = 0` sector is enforced by the
-Néel seed's own charges, not by a projector. See the [DMRG tutorial](../tutorials/dmrg.md)
-for the physics.
+A 20-site spin-1/2 Heisenberg chain to its ground state: `tenet.models.spin_half`,
+`MPO.from_terms`, `MPS.product`, `dmrg_`, then bond energies with `expectation_2site`.
+
+- The bond energies sum to `out.energy`.
+- `<S^z_n>` is zero on every site: the Néel seed fixes `S^z_tot = 0` and the sweep keeps it.
+
+Explained step by step in the [DMRG tutorial](../tutorials/dmrg.md).
 
 ## Source
 

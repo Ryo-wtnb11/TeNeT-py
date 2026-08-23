@@ -1,15 +1,14 @@
 # Truncation
 
-Cutting a bond is the one factorization that is **not** jittable: which sectors
-survive, and how many singular values each keeps, is read off the numbers. tenet
-therefore ships the decision and the numerics as two functions, and you can call
-them together or apart.
+Cutting a bond is the one factorization that is **not** jittable: which sectors survive,
+and how many singular values each keeps, is read off the numbers. So the decision and the
+numerics are two functions, and you call them together or apart.
 
 ## One call
 
-[tenet.ops.linalg.svd_truncated][] decides and factorizes in one go. `max_bond`
-bounds the **dense** bond dimension `Σ_c qdim(c)·m_c`, `cutoff` applies one of
-quimb's six `cutoff_mode` rules, and giving both takes the intersection:
+[tenet.ops.linalg.svd_truncated][] decides and factorizes in one go. `max_bond` bounds
+the **dense** bond dimension `Σ_c qdim(c)·m_c`, `cutoff` applies one of six
+`cutoff_mode` rules, and giving both takes the intersection:
 
 ```python
 >>> import tenet
@@ -23,13 +22,31 @@ quimb's six `cutoff_mode` rules, and giving both takes the intersection:
 
 ```
 
+Passing neither `max_bond` nor `cutoff` is refused, naming [tenet.ops.linalg.svd][].
+`None` means "no truncation" on either; there are no sentinel values.
+
+| `cutoff_mode` | keeps |
+|---|---|
+| `abs` | `sigma > cutoff` |
+| `rel` | `sigma > cutoff * sigma_max` |
+| `sum2` | drops the largest set with `Σ qdim(c) sigma² < cutoff` |
+| `rsum2` (default) | as `sum2`, threshold `cutoff * norm(T)**2` |
+| `sum1` | as `sum2` at power 1, weight `qdim(c) sigma` |
+| `rsum1` | as `rsum2` at power 1 |
+
+`renorm=True` scales the kept singular values by
+`sqrt(norm(T)**2 / Σ_kept qdim(c) sigma²)`, so that `norm(U @ S @ Vh) == norm(t)`. It is
+a bool.
+
+`S` comes back as a tensor, so absorbing it into either factor is a one-line `compose`,
+and the truncation error is exactly `norm(t)**2 - norm(U @ S @ Vh)**2` by Pythagoras.
+
 ## Two calls
 
 [tenet.ops.linalg.select_bond][] makes the same decision and *returns* it as a
-[tenet.ops.linalg.BondSelection][]. [tenet.ops.linalg.svd][]'s `bond=` keyword then takes
-the bond space and does the numerics — and that half **is** jittable and
-differentiable, because a `GradedSpace` is frozen, array-free metadata the caller
-decided outside the trace:
+[tenet.ops.linalg.BondSelection][]. [tenet.ops.linalg.svd][]'s `bond=` keyword takes the
+bond space and does the numerics — and that half **is** jittable and differentiable,
+because a `GradedSpace` is frozen, array-free metadata decided outside the trace:
 
 ```python
 >>> selection = tenet.linalg.select_bond(t, max_bond=2)
@@ -39,9 +56,9 @@ True
 
 ```
 
-The two spellings are the same operator. What the second one adds is everything
-the first one throws away — the discarded weight, which is what a DMRG sweep
-reports and what an extrapolation to zero truncation error consumes:
+The two spellings are the same operator. What the second adds is what the first throws
+away — the discarded weight, which is what a DMRG sweep reports and what an
+extrapolation to zero truncation error consumes:
 
 ```python
 >>> round(selection.discarded_weight, 12) == round(
@@ -51,8 +68,8 @@ True
 
 ```
 
-The usual shape of a differentiable loop is: decide once, outside; project every
-iteration, inside.
+The shape of a differentiable loop is: decide once, outside; project every iteration,
+inside.
 
 ```python
 selection = tenet.linalg.select_bond(t0, axes, max_bond=D)   # outside jit/grad
@@ -63,14 +80,30 @@ def step(t):
     ...
 ```
 
+Calling `svd_truncated` under `jax.jit`, `jax.grad` or `jax.vmap` raises
+[StructureChangingError][tenet.symmetry.StructureChangingError], naming the pairing to
+use.
+
+## How the selection is made
+
+Selection is over **one global spectrum**, in every mode:
+
+- the sort key is the **bare** `sigma`, descending, ties broken by sector order then
+  index — how large a singular value is has nothing to do with multiplicity;
+- the **cost** and the **weight** are `qdim(c)`-weighted, because the reduced index `i`
+  in sector `c` stands for `qdim(c)` dense basis states. That is the same weight
+  [tenet.norm][] carries, which makes greedy-descending under a dense budget optimal:
+  the result is the best approximation of its achieved dense rank.
+
+The walk **stops** at the first singular value that would overflow the budget, which
+keeps the kept set nested as `max_bond` grows. The consequence is that `max_bond` may be
+undershot by up to `max qdim(c) - 1`.
+
 ## Why the decision is worth looking at: SU(2)
 
-For U(1) and fermionic parity every sector has `qdim(c) == 1`, so a `max_bond` of
-`D` keeps exactly `D` singular values and there is nothing to inspect. Under
-SU(2) a sector is a *multiplet*: `j = 1` costs three dense dimensions, `j = 0`
-costs one. The greedy walk stops at the first multiplet that would overflow the
-budget rather than scanning on for a cheaper one that still fits — which keeps
-the kept set nested as `max_bond` grows, at the price of undershooting.
+For U(1) and fermionic parity every sector has `qdim(c) == 1`, so a `max_bond` of `D`
+keeps exactly `D` singular values. Under SU(2) a sector is a *multiplet*: `j = 1` costs
+three dense dimensions, `j = 0` costs one.
 
 Take a bond carrying one singlet and three triplets, and ask for five:
 
@@ -84,8 +117,8 @@ Take a bond carrying one singlet and three triplets, and ask for five:
 
 ```
 
-One triplet was admitted, at a dense cost of three. Two units of budget are left
-over and nothing fits in them:
+One triplet was admitted, at a dense cost of three. Two units of budget are left and
+nothing fits in them:
 
 ```python
 >>> selection.undershoot
@@ -96,8 +129,8 @@ over and nothing fits in them:
 
 ```
 
-`next_multiplet` is what the cut stopped just short of and `next_dense_cost` is
-what admitting it would cost. Raising `max_bond` to 6 spends the budget exactly:
+`next_multiplet` is what the cut stopped just short of and `next_dense_cost` is what
+admitting it would cost. Raising `max_bond` to 6 spends the budget exactly:
 
 ```python
 >>> tenet.linalg.select_bond(h, max_bond=6).dense_dim
@@ -105,19 +138,22 @@ what admitting it would cost. Raising `max_bond` to 6 spends the budget exactly:
 
 ```
 
-That is the whole reason the decision is a returned object. A U(1) user reads
-`BondSelection` as a convergence log; an SU(2) user reads it as the answer to
-"why is my bond smaller than I asked for".
+That is why the decision is a returned object. A U(1) user reads `BondSelection` as a
+convergence log; an SU(2) user reads it as the answer to "why is my bond smaller than I
+asked for".
+
+The same arithmetic governs a DMRG schedule: `Sweep(chi=64)` on SU(2) legs bounds the
+dense dimension, so it keeps roughly a third the multiplets it keeps on U(1) legs — the
+same state, held in fewer, larger irreps.
 
 ## The Hermitian route
 
-An SVD of a self-adjoint operator returns `|w|` and throws away which eigenvalues
-were negative, so `U @ S @ adjoint(U)` reconstructs an indefinite operator with
-every sign flipped positive. That is structural, not a tolerance: no care at the
-call site recovers it. [tenet.ops.linalg.eigh_truncated][] is
-[tenet.ops.linalg.svd_truncated][]'s twin for that case — same keyword set, same
-keep rule, same refusal under a trace — and
-[tenet.ops.linalg.eigh][]'s `bond=` is the jittable half:
+An SVD of a self-adjoint operator returns `|w|` and drops which eigenvalues were
+negative, so `U @ S @ adjoint(U)` reconstructs an indefinite operator with every sign
+flipped positive. That is structural, not a tolerance.
+[tenet.ops.linalg.eigh_truncated][] is the twin for that case — same keyword set, same
+keep rule, same refusal under a trace — and [tenet.ops.linalg.eigh][]'s `bond=` is the
+jittable half:
 
 ```python
 >>> x = SymmetricTensor.random((Leg(W, OUT), Leg(W, IN)), seed=3)
@@ -131,14 +167,14 @@ True
 
 ```
 
-Two places where it is not a literal mirror of the SVD, both deliberate:
+Two places where it is not a literal mirror of the SVD:
 
 - **the kept set is not a prefix.** Singular values come back descending, so `svd`
-  slices; eigenvalues come back *ascending and signed*, so the `k` largest by
-  `|w|` is an `argsort` and a gather. A gather is a value-dependent permutation,
-  never a value-dependent shape, so `eigh(..., bond=)` still traces.
-- **the sign survives.** Only the ordering key is `|w|`; `W`'s retained entries
-  are the signed eigenvalues.
+  slices; eigenvalues come back ascending and signed, so the `k` largest by `|w|` is an
+  `argsort` and a gather. A gather is a value-dependent permutation, never a
+  value-dependent shape, so `eigh(..., bond=)` still traces.
+- **the sign survives.** Only the ordering key is `|w|`; `W`'s retained entries are the
+  signed eigenvalues.
 
 On a positive-definite input the two routes agree factor for factor.
 
@@ -155,5 +191,11 @@ On a positive-definite input the two routes agree factor for factor.
 | `next_multiplet` / `next_dense_cost` | what the cut stopped short of, and its price |
 | `scale` | the factor `renorm=True` applies; every magnitude above is bare |
 
-`BondSelection` is frozen and is **not** a JAX pytree: it is decided outside the
-traced region, and only its `bond` is meant to cross into one.
+`BondSelection` is frozen and is not a JAX pytree: it is decided outside the traced
+region, and its `bond` is what crosses into one.
+
+## Where next
+
+- [DMRG](dmrg.md) — where the sweep spends this budget.
+- [JAX and backends](jax-and-backends.md) — the traced half of the pairing.
+- [`tenet.linalg`](../api/linalg.md) — the reference.

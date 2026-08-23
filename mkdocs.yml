@@ -30,10 +30,16 @@ nav:
       - Tensors, legs and spaces: guide/tensors-legs-spaces.md
       - Symmetries and providers: guide/symmetries-and-providers.md
       - Contraction: guide/contraction.md
-      - Building a Hamiltonian from a site: guide/models-and-sites.md
+      - Building a Hamiltonian: guide/hamiltonians.md
+      - DMRG: guide/dmrg.md
       - Truncation: guide/truncation.md
+      - JAX and backends: guide/jax-and-backends.md
+      - Saving and loading: guide/saving-and-loading.md
   - Tutorials:
-      - DMRG: tutorials/dmrg.md
+      - DMRG end to end: tutorials/dmrg.md
+      - Fermions and the Hubbard model: tutorials/fermions.md
+      - SU(2): tutorials/su2.md
+      - Quantum chemistry: tutorials/quantum-chemistry.md
       - CTMRG: tutorials/ctmrg.md
       - VMC: tutorials/vmc.md
   - Examples:
@@ -61,10 +67,8 @@ markdown_extensions:
   - attr_list
   - toc:
       permalink: true
-  # docs/design.md writes its 29 math blocks as GitHub's ```math fences. The custom
-  # fence routes them to arithmatex, so the file is never edited *for this site*
-  # (#118) — it changes only when the design it records does (#185 renamed symbols
-  # in it).
+  # docs/design.md writes its math blocks as GitHub's ```math fences; the custom fence
+  # below routes them to arithmatex, so the file renders here unedited.
   - pymdownx.arithmatex:
       generic: true
   - pymdownx.superfences:

@@ -1,5 +1,5 @@
 # `tenet.ad`
 
-Custom JAX differentiation rules for the structure-preserving factorizations.
+Stabilized JAX differentiation rules for `svd` and `eigh` at a degenerate spectrum.
 
 ::: tenet.ad

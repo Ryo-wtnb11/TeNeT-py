@@ -1,16 +1,13 @@
 # Symmetries and providers
 
-A symmetry in `tenet` is a **provider**: a small frozen object that answers
-questions about sectors — how they fuse, what their duals are, what the
-recoupling coefficients look like. Spaces, legs and tensors all carry a
-reference to one, and every operation asks the provider for exactly the data
-it needs. This page covers the sector conventions, what a provider can and
-cannot do, and how the library tells you the difference.
+A symmetry in `tenet` is a **provider**: a small frozen object that answers questions
+about sectors — how they fuse, what their duals are, what the recoupling coefficients
+are. Spaces, legs and tensors carry a reference to one, and every operation asks the
+provider for exactly the data it needs.
 
 ## Sectors and their labels
 
-Each provider has its own frozen sector dataclass. The built-in providers and
-their labelling:
+Each provider has its own frozen sector dataclass:
 
 | provider | sector | label |
 | --- | --- | --- |
@@ -20,14 +17,12 @@ their labelling:
 | `SU2` | `SU2Sector(two_j)` | **2j**, not j |
 | `Trivial` | `TrivialSector()` | the one sector |
 
-**SU(2) sectors are labelled by `2j`.** This is the single most common trip
-for a new user: `SU2Sector(1)` is the spin-½ doublet, `SU2Sector(2)` is the
-spin-1 triplet, and there is no half-integer anywhere in a label. The
-convention keeps every label an exact integer:
+**SU(2) sectors are labelled by `2j`.** `SU2Sector(1)` is the spin-1/2 doublet,
+`SU2Sector(2)` the spin-1 triplet. The convention keeps every label an exact integer:
 
 ```python
 >>> from tenet.symmetry import SU2, SU2Sector
->>> SU2.irrep_dim(SU2Sector(1))   # spin-1/2: dimension 2j + 1 = 2
+>>> SU2.irrep_dim(SU2Sector(1))              # spin-1/2: dimension 2j + 1 = 2
 2
 >>> SU2.fusion(SU2Sector(1), SU2Sector(1))   # 1/2 x 1/2 = 0 + 1
 (SU2Sector(two_j=0), SU2Sector(two_j=2))
@@ -43,41 +38,70 @@ Abelian fusion is single-valued — a U(1) fusion is charge addition:
 
 ```
 
-Composite symmetries are built with `ProductProvider`, whose sectors are
-tuples of the factors' sectors. SU(N) (SU(3) first) lives in
-`tenet.symmetry.sun` and needs the `[sun]` extra.
+## Products
+
+`ProductProvider` is the Deligne product of two or more providers; its sectors are
+tuples of the factors' sectors, and every coefficient factorizes across them:
+
+```python
+>>> from tenet.symmetry import ProductProvider, ProductSector, Z2, Z2Sector
+>>> P = ProductProvider((U1, Z2))
+>>> P.fusion(ProductSector((U1Sector(1), Z2Sector(1))),
+...          ProductSector((U1Sector(2), Z2Sector(1))))
+(ProductSector(components=(U1Sector(charge=3), Z2Sector(parity=0))),)
+
+```
+
+## SU(N)
+
+SU(N) lives in `tenet.symmetry.sun` and is not re-exported from `tenet.symmetry`,
+because a provider carries its own `n` and there is no singleton to name:
+
+```python
+>>> from tenet.symmetry.sun import SUNProvider, SUNSector
+>>> SU3 = SUNProvider(3)
+>>> SU3.fusion(SUNSector((1, 0)), SUNSector((0, 1)))   # 3 x 3bar = 1 + 8
+(SUNSector(dynkin=(0, 0)), SUNSector(dynkin=(1, 1)))
+
+```
+
+`SUNProvider(n)` works for every `n`: the recoupling coefficients — and SU(2)'s — are
+computed by `racah-py`, a core dependency, so `import tenet.symmetry.sun` works on a
+plain `pip install tenet-py`. The coefficients carry `racah`'s gauge convention, which
+[tenet.save][] records and [tenet.load][] verifies.
+
+The provider set follows `racah`: product groups such as SU(2) × U(1), U(N), and the
+exceptional groups (G2 first) are on its roadmap and will appear here as providers when
+their coefficients land.
 
 ## Providers are data plus capabilities
 
-Every provider implements the base protocol,
-[FusionRules][tenet.symmetry.FusionRules]: a name, a unit sector, `fusion` and
-the fusion multiplicity `n_symbol`. Everything beyond that is an optional
-**data protocol** — a capability the provider may or may not have. The ones
-you will meet first:
+Every provider implements the base protocol, [FusionRules][tenet.symmetry.FusionRules]:
+a name, a unit sector, `fusion`, and the fusion multiplicity `n_symbol`. Everything
+beyond that is an optional **data protocol** — a capability the provider may or may not
+have:
 
-- [ClebschGordanData][tenet.symmetry.ClebschGordanData] — irrep dimensions and
-  CG tensors; what `to_dense` and physical `shape` need.
-- [QuantumDimensionData][tenet.symmetry.QuantumDimensionData] — `qdim`; what
-  the weighted [tenet.norm][] and [tenet.full_trace][] need.
+- [ClebschGordanData][tenet.symmetry.ClebschGordanData] — irrep dimensions and CG
+  tensors; what `to_dense` and the physical `shape` read.
+- [QuantumDimensionData][tenet.symmetry.QuantumDimensionData] — `qdim`; what the
+  weighted [tenet.norm][] and [tenet.full_trace][] read.
 - [BraidingData][tenet.symmetry.BraidingData] /
-  [AssociatorData][tenet.symmetry.AssociatorData] — R- and F-symbols, the
-  recoupling data behind leg permutations.
+  [AssociatorData][tenet.symmetry.AssociatorData] — R- and F-symbols, the recoupling
+  data behind leg permutations.
 - [BendingCoefficients][tenet.symmetry.BendingCoefficients] — line bends, what
-  [repartition][tenet.SymmetricTensor.repartition] needs.
-- [DualityData][tenet.symmetry.DualityData],
-  [DualBasis][tenet.symmetry.DualBasis],
-  [FSIndicatorData][tenet.symmetry.FSIndicatorData],
-  [TwistData][tenet.symmetry.TwistData], ... — the rest of the lattice, each
-  documented on its protocol in the [symmetry API page](../api/symmetry.md).
+  [repartition][tenet.SymmetricTensor.repartition] reads.
+- [DualityData][tenet.symmetry.DualityData], [DualBasis][tenet.symmetry.DualBasis],
+  [FSIndicatorData][tenet.symmetry.FSIndicatorData], [TwistData][tenet.symmetry.TwistData],
+  [BranchingRules][tenet.symmetry.BranchingRules] — the rest, each documented on its
+  protocol in the [symmetry API page](../api/symmetry.md).
 
-The split matters because operations gate on *exactly* the data they use. An
-operation that only routes blocks around runs on any provider; one that needs
-CG tensors demands `ClebschGordanData` and nothing more. You can query the
-lattice yourself with [supports][tenet.symmetry.supports] and
+Operations gate on exactly the data they use. One that only routes blocks around runs on
+any provider; one that needs CG tensors demands `ClebschGordanData` and nothing more.
+Query the lattice with [supports][tenet.symmetry.supports] and
 [requires][tenet.symmetry.requires]:
 
 ```python
->>> from tenet.symmetry import Z2, ClebschGordanData, BranchingRules, supports, requires
+>>> from tenet.symmetry import ClebschGordanData, BranchingRules, supports, requires
 >>> supports(U1, ClebschGordanData)
 True
 >>> supports(Z2, BranchingRules)
@@ -91,25 +115,37 @@ tenet.symmetry.base.CapabilityError: Z2Provider does not provide capability Bran
 
 ## What a `CapabilityError` means
 
-A [CapabilityError][tenet.symmetry.CapabilityError] is a **categorical
-refusal, not a missing feature**. When `full_trace` refuses a provider without
-quantum dimensions, it is not saying "unimplemented, sorry" — it is saying the
-operation *has no meaning* for that symmetry as declared: there is no such
-thing as the qdim-weighted trace of a category that has no quantum dimensions.
-The error names the provider and the capability, so the fix is never a
-workaround inside `tenet`; it is either a different operation (one that does
-not need the data) or a different symmetry declaration for your problem. The
-`Raises` sections throughout the [API reference](../api/tenet.md) tell you,
-per operation, which capabilities are gated and where.
+A [CapabilityError][tenet.symmetry.CapabilityError] is a **categorical refusal**. When
+`full_trace` refuses a provider without quantum dimensions, it says the operation has no
+meaning for that symmetry as declared: there is no qdim-weighted trace of a category
+with no quantum dimensions. The error names the provider and the capability. The
+response is a different operation — one that does not need the data — or a different
+symmetry declaration for your problem. Every operation's `Raises` section in the
+[API reference](../api/tenet.md) says which capabilities it gates on.
+
+## Restricting to a smaller symmetry
+
+A provider with [BranchingRules][tenet.symmetry.BranchingRules] can be restricted in the
+dense basis. [to_symmetry][tenet.to_symmetry] takes an SU(2) tensor to U(1) by branching
+each multiplet into its magnetic quantum numbers:
+
+```python
+>>> import tenet
+>>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+>>> S = GradedSpace.new(SU2, {SU2Sector(1): 1})
+>>> t = SymmetricTensor.random((Leg(S, OUT), Leg(S, IN)), seed=0)
+>>> u = tenet.to_symmetry(t, U1)
+>>> u.provider.name, u.shape
+('U1', (2, 2))
+
+```
 
 ## Validated properties, not declared ones
 
-Whether a provider's braiding is symmetric, whether it is spherical or
-modular or unitary, is **computed, never declared**: the
-`tenet.symmetry.coherence` module carries validators (pentagon, hexagon,
-snake, sphericality, unitarity) that check every instance of an identity over
-an explicit sector budget, and `properties()` bundles the derived
-classification, cached:
+Whether a provider's braiding is symmetric, whether it is spherical or unitary, is
+**computed**: `tenet.symmetry.coherence` carries validators (pentagon, hexagon, snake,
+sphericality, unitarity) that check every instance of an identity over an explicit
+sector budget, and `properties()` bundles the derived classification, cached:
 
 ```python
 >>> from tenet.symmetry.coherence import properties
@@ -119,24 +155,21 @@ classification, cached:
 
 ```
 
-Nothing here runs on an operation's hot path — validators run in tests and at
-two cached property gates. If you implement your own provider, the validators
-are how you prove its coefficient tables are coherent before a tensor ever
-touches them.
+Nothing here runs on an operation's hot path. If you implement your own provider, the
+validators are how you prove its coefficient tables are coherent before a tensor touches
+them.
 
 ## Gauge fingerprints
 
-Recoupling coefficients are only meaningful against the gauge conventions
-that produced them, so the SU(2), SU(N) and fZ2 providers each carry a gauge
-fingerprint that [tenet.save][] writes into every file and [tenet.load][]
-verifies — a gauge-mismatched file is refused rather than silently misread
-(see [load][tenet.load]'s `Raises`).
+Recoupling coefficients are meaningful only against the gauge conventions that produced
+them, so the SU(2), SU(N) and fZ2 providers each carry a gauge fingerprint that
+[tenet.save][] writes into every file and [tenet.load][] verifies. A gauge-mismatched
+file is refused — see [Saving and loading](saving-and-loading.md).
 
 ## Where next
 
-- [Tensors, legs and spaces](tensors-legs-spaces.md) — how spaces and legs put
-  sectors to work.
-- [Contraction](contraction.md) — where the fermionic Koszul signs actually
-  bite, and the rule that tames them.
-- The [symmetry API page](../api/symmetry.md) — every protocol, every
-  provider, every validator, with examples.
+- [Tensors, legs and spaces](tensors-legs-spaces.md) — how spaces and legs put sectors
+  to work.
+- [Contraction](contraction.md) — where the fermionic Koszul signs bite, and the rule
+  that tames them.
+- [The symmetry API page](../api/symmetry.md) — every protocol, provider and validator.

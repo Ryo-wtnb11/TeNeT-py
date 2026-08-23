@@ -1,10 +1,12 @@
 # Heisenberg, SU(2)
 
-What to look at: the `U(1) :` / `SU(2):` pair near the end. The SU(2) run lands on the
-same energy as the U(1) run it computes in-process (whose own four lines print first),
-from a mid-chain bond counted in **multiplets** — 22 of them against the 64 dense states
-U(1) keeps — which is the whole payoff of the non-Abelian grading. See the
-[DMRG tutorial](../tutorials/dmrg.md), "The same chain under SU(2)".
+The same chain under SU(2): one invariant `S.S` operator per bond, a random multiplet seed,
+and the U(1) run beside it.
+
+- Both runs give the same energy.
+- The SU(2) bond holds 22 multiplets where the U(1) bond holds 64 states.
+
+Explained in the [SU(2) tutorial](../tutorials/su2.md).
 
 ## Source
 

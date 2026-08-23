@@ -1,80 +1,133 @@
-# CTMRG — classical Ising against Onsager, then a U(1)/SU(2) iPEPS gradient
+# CTMRG — 2D Ising against Onsager, then a differentiable iPEPS
 
-Source: [`examples/toy_codes/ctmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/ctmrg.py).
-**Oracle:** Onsager's closed-form free energy per site, and its `d(βf)/dβ` as the check on
-`jax.grad` taken through the unrolled sweeps. The file is executed by
-`tests/integration/test_ctmrg.py`; read the code there rather than a copy.
+Corner transfer matrix renormalization on a C4v environment. Two problems share one core:
+the classical 2D Ising partition function, whose free energy per site has Onsager's closed
+form, and a single-site iPEPS whose energy you differentiate.
+
+[`examples/ising2d.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/ising2d.py)
+is the Ising half through the library, on a core install; its output is committed on the
+[2D Ising CTMRG](../examples/ising2d.md) page.
+[`examples/toy_codes/ctmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/ctmrg.py)
+writes the same algorithm out on the tensor layer and adds the iPEPS gradient; it needs
+the `jax` extra.
 
 ```sh
+uv run python examples/ising2d.py
 uv run --extra jax python examples/toy_codes/ctmrg.py
 ```
 
-## Two physical problems, one CTMRG core
+## The converging sweep
 
-The core is written out in the file, because that is the teaching lane's rule: `Absorb`,
-`single_layer`/`double_layer`, `init_env`, `move`, `converge` and `unrolled` are all there
-on `tenet`'s tensor layer, with the `svd_truncated`-outside / `svd(bond=)`-inside pairing,
-the leg conventions and the four environment ceilings (truncated backprop, no
-checkpointing, no pre-QR, `svd` rather than `eigh`) documented on them. The library ships
-the same algorithm as `tenet.network.ctmrg`, and `examples/ising2d.py` is the Ising half
-through it; `tests/test_examples.py` checks the two agree to `1e-12`.
+```python
+from tenet.network import ctmrg, single_layer_ctm, spectrum
 
-Around the core sits what the library must **not** decide: which bulk tensor
-(`ising_bulk`), which ansatz (`c4v` — a library that symmetrized its input would be
-silently editing the user's state), and what to measure (`_halves`/`energy` are a
-C4v-and-1×1-and-2×1 reduced density matrix with one geometry and one caller, i.e. a
-measurement API; `log_kappa`'s Baxter telescoping is classical-partition-function physics
-with no meaning for an iPEPS).
+out = ctmrg(*single_layer_ctm(bulk), chi=24)
+out.sweeps, out.converged, out.max_dsv
+env = out.env                      # CTMEnv: c, e, bond
+```
 
-The two halves:
+[`single_layer_ctm`][tenet.network.single_layer_ctm] takes a rank-4 bulk tensor and hands
+back `(absorber, c, e)` — the model's absorption closures plus a seed corner and edge.
+[`double_layer_ctm`][tenet.network.double_layer_ctm] does the same for a rank-5 iPEPS ket,
+building the bra by conjugation.
 
-- the **classical 2D Ising partition function**, whose free energy per site has a closed
-  form (Onsager) and whose internal energy `d(βf)/dβ` is therefore an oracle for
-  `jax.grad` through the unrolled sweeps;
-- a **single-site U(1) (or SU(2)) iPEPS** with a random symmetric two-site `h`, which
-  exercises graded truncation, `svd(bond=)` across sectors and multiplet degeneracies.
+An [`Absorb`][tenet.network.Absorb] is the *definition* of a model's absorption:
+`corner(c, e)` builds the enlarged corner and `edge(e, p)` absorbs one edge onto a
+projector's new bond. [`move`][tenet.network.move] is the step;
+`ctmrg` is the loop, sweeping until the corner spectrum stops
+moving.
 
-## The Ising half is Z2-graded
+[`CTMRG_out`][tenet.network.CTMRG_out] carries `sweeps`, `max_dsv`, `converged`, `history`
+— the per-sweep corner-spectrum change — and `env`, a
+[`CTMEnv`][tenet.network.CTMEnv] holding `c`, `e` and the frozen `bond` the last move
+decided. `CTMEnv` unpacks positionally: `c, e, bond = move(...)`.
 
-For the same reason YASTN's CTMRG Ising example passes `sym='Z2'`: it stops a finite-χ
-environment from breaking the symmetry spuriously in the ordered phase, which is what lets
-the example run at `β > β_c` against Onsager at all. Two further things the grading buys,
-both asserted in the integration test:
+`chi` is an input, and the realized environment bond is `env.bond`, whose `dim` and
+`reduced_dim` say what was actually kept.
 
-- **Zero magnetization becomes structural.** A spin insertion is a Z2-odd tensor, which no
-  invariant `SymmetricTensor` can hold, so `from_dense` refuses it — and the refusal is
-  the statement.
-- **The ordered-phase corner spectrum acquires exact two-fold degeneracy** across the
-  parity sectors. Because that doubling is *cross*-sector and `tenet.ad` broadens *per
-  coupled sector*, the graded run never hands one SVD a degenerate pair: grading removes
-  the `NaN`, it does not create it.
+At `chi=24` this reproduces Onsager's free energy to float precision off criticality —
+relative error `3e-16` at `beta=0.3` and `1e-15` at `beta=0.5` — and to `2e-6` at
+`beta_c`, where the correlation length outruns any finite environment.
 
-It changed no arithmetic either.
+## Grading the Ising half by Z2
 
-## The iPEPS half is a plumbing result
+The Boltzmann bulk tensor is Z2-graded. That stops a finite-`chi` environment from
+breaking the symmetry spuriously in the ordered phase, which is what lets the run go above
+`beta_c` against Onsager at all. Two further things the grading gives:
 
-It makes **no benchmark-energy claim**, and cannot with a one-site unit cell. Liao et al.
-get a single-site AFM Heisenberg cell by rotating one sublattice by π about y, which turns
-`SˣSˣ - SʸSʸ` into `(S⁺S⁺ + S⁻S⁻)/2` — an operator that changes `Sᶻ_tot` by ±2 and so
-destroys the U(1) the ansatz is graded by. The alternatives are a two-site unit cell (out
-of scope) or dropping the symmetry, which deletes the reason this half exists. So it
-follows [`vmc_mps.py`](vmc.md): random symmetric `h`, no comparison against
-`-0.669437(5)`, said out loud in the file itself.
+- **Zero magnetization is structural.** A spin insertion is a Z2-odd tensor, which no
+  invariant `SymmetricTensor` can hold, so `from_dense` refuses it. The refusal is the
+  statement.
+- **The ordered-phase corner spectrum is exactly two-fold degenerate**, the doublet
+  spanning the two parity sectors:
 
-`tenet.to_symmetry` is mentioned there and deliberately not used: building an SU(2) ansatz and
-casting it to U(1) would be a third concept in a file that already has two models. The
-SU(2) provider is instead run through the same iPEPS path via a `provider` parameter.
+```
+corner spectrum at beta=0.5: 0.6905 0.6905 0.1486 0.1486 0.0320 0.0320
+```
 
-## The usage lane
+Because that doubling is *cross*-sector, and the broadened SVD rule in `tenet.ad` broadens
+*per coupled sector*, a graded run never hands one SVD a degenerate pair.
 
-The toy code above needs `--extra jax`; for the CTMRG a **core** install can run, see
-[`examples/ising2d.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/ising2d.py) —
-it borrows `ising_bulk` and the Onsager oracle from the toy code, calls
-`ctmrg(*single_layer_ctm(bulk), chi=24)` at three temperatures, and prints the exactly
-doubled ordered-phase corner spectrum. Executed by `tests/test_examples.py`; its committed
-output is on the [2D Ising CTMRG](../examples/ising2d.md) example page.
+## The differentiable form
 
-## Reference
+`ctmrg` runs outside `jit` and `grad` and cannot be otherwise: it
+loops on a measured spectrum change and re-decides the environment bond each sweep.
+[`ctmrg_unrolled`][tenet.network.ctmrg_unrolled] is the traceable form — exactly `k`
+fixed-structure moves on a bond you decided outside:
 
-- [`tenet.network`](../api/network.md) — `ctmrg`, `ctmrg_unrolled`, `double_layer`, `move`
-- [`tenet.ad`](../api/ad.md) — the broadened SVD rule the gradient goes through
+```python
+import jax
+import tenet
+
+tenet.enable_jax(ad=True)          # pytrees + the broadened SVD/eigh VJPs
+
+def beta_f(beta):
+    absorb, c, e = single_layer_ctm(ising_bulk(beta))
+    bond = ctmrg(absorb, c, e, chi=chi).env.bond      # decided outside
+    c, e = tenet.network.ctmrg_unrolled(c, e, absorb, bond, k=4)
+    ...
+
+jax.grad(beta_f)(0.4)
+```
+
+That is the same decide-outside / project-inside pairing as
+[truncation](../guide/truncation.md): `svd_truncated` chooses a bond space out here,
+`svd(..., bond=)` reuses it in there. `move(..., bond=B)` is shape-static for the same
+reason; `move(..., chi=...)` is not.
+
+`ctmrg_unrolled` takes `c`, `e` and `bond` as three arguments. `bond` is a `GradedSpace`
+— frozen, hashable, array-free metadata — and it enters `jit` as a cache key, which is
+what keeps it out of the flattened leaves.
+
+[`normalized`][tenet.network.normalized], [`ring`][tenet.network.ring],
+[`layers`][tenet.network.layers], [`single_layer`][tenet.network.single_layer] and
+[`double_layer`][tenet.network.double_layer] are the pieces inside the traced region, and
+each says on itself which side of the trace it belongs to.
+
+The oracle for that gradient is `d(βf)/dβ` from Onsager's closed form, which
+`tests/integration/test_ctmrg.py` checks the unrolled sweeps against.
+
+## The iPEPS half
+
+A single-site U(1) (or SU(2)) iPEPS with a random symmetric two-site `h`, descending
+through the same gradient path. It exercises graded truncation, `svd(bond=)` across
+sectors and multiplet degeneracies.
+
+It makes **no benchmark-energy claim**, and a one-site unit cell cannot. A single-site AFM
+Heisenberg cell needs one sublattice rotated by π about y, which turns `SˣSˣ - SʸSʸ` into
+`(S⁺S⁺ + S⁻S⁻)/2` — an operator that changes `Sᶻ_tot` by ±2 and so destroys the U(1) the
+ansatz is graded by. The file says so in its own docstring.
+
+## What the library owns
+
+`tenet.network` owns the environment: `Absorb`, the seeds, `move`, the sweep, the
+truncation, the traced form. What it does not own, and the example supplies: the bulk
+tensor, the ansatz — a library that symmetrized your input would be silently editing your
+state — and what to measure, which is a geometry-specific reduced density matrix.
+
+## Where next
+
+- [JAX and backends](../guide/jax-and-backends.md) — `enable_jax(ad=True)` and what the
+  broadened VJP assumes.
+- [Truncation](../guide/truncation.md) — the pairing this page leans on.
+- [`tenet.network`](../api/network.md) — `ctmrg`, `ctmrg_unrolled`, `move`, `Absorb`.

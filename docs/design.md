@@ -2,6 +2,36 @@
 
 **Non-Abelian symmetric tensors with ndarray-style Python APIs and backend-native numerical execution.**
 
+## Current architecture
+
+A `SymmetricTensor` is a `TensorStructure` — an ordered tuple of `Leg`s, each a
+`GradedSpace` plus a `side` (`OUT`/`IN`), a `dual` flag and an optional name — with one
+reduced block per structurally allowed fusion channel, in `block_order`. The structure is
+frozen, hashable and array-free; the blocks are backend arrays reached through `autoray`,
+so NumPy, JAX and PyTorch all serve as storage, and the split is the JAX pytree split
+`tenet.enable_jax()` registers.
+
+A symmetry is a **provider**: a frozen object implementing `FusionRules` plus whatever
+optional data protocols it supplies — quantum dimensions, Clebsch-Gordan tensors, F- and
+R-symbols, bending coefficients, branching rules. Every operation requires exactly the
+protocols it uses and raises `CapabilityError` otherwise. U(1), Z2, fermionic Z2, SU(2),
+SU(N) and Deligne products of them ship; SU(2) and SU(N) coefficients come from `racah-py`.
+
+The tensor layer is `tenet.ops` (`einsum`, `tensordot`, `compose`, `transpose`,
+`repartition`, `fuse`, `trace`, arithmetic, block access) and `tenet.linalg` (`svd`, `qr`,
+`lq`, `eigh`, `eig`, `polar`, `expm`, the null spaces, and the truncating `svd_truncated`
+/ `eigh_truncated` / `select_bond`). An operation whose output *structure* depends on
+block values raises `StructureChangingError` under a JAX trace; the pairing is to decide a
+bond `GradedSpace` outside the trace and pass it as `svd(..., bond=)` inside.
+
+`tenet.network` is the driver layer, built on the public `tenet` API only: `MPS`/`MPO`
+with four MPO builders, the `Env` environment cache, `lanczos`, `sweep_` and `dmrg_` for
+finite two-site DMRG, and the C4v CTMRG environment with a differentiable unrolled form.
+`tenet.models` supplies standard sites above it, and `tenet.serialize` persists tensors
+with a gauge fingerprint that `load` verifies. The rest of this document is the record.
+
+---
+
 `TeNeT-py` is a pure-Python library for symmetry-aware tensor computation designed to connect non-Abelian tensor algebra with the Python numerical and machine-learning ecosystem.
 
 The central design principle is:

@@ -1,9 +1,11 @@
 # Toy VMC on an MPS
 
-What to look at: both traces are strictly decreasing across all 20 SGD steps — `jax.grad`
-taken straight through a Rayleigh quotient of `SymmetricTensor` pytrees, for a U(1) and
-an SU(2) ansatz through the identical code path. The
-[VMC tutorial](../tutorials/vmc.md) walks through the file.
+Variational Monte Carlo written on the tensor layer, on a symmetric MPS: the MPS as a JAX pytree, the
+Rayleigh quotient, `jax.grad`, and an SGD step with `jax.tree.map`. Needs the `jax` extra.
+
+- Both traces (U(1) and SU(2)) decrease on every one of the 20 steps.
+
+Explained in the [VMC tutorial](../tutorials/vmc.md).
 
 ## Source
 

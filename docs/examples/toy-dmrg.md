@@ -1,14 +1,13 @@
 # Toy DMRG
 
-What to look at: the N=12 energy against the exact `-5.142090632840532` printed beside
-it, the sweep table's monotone `dE`, and the last line, where N=32 at `chi=64` sits just
-above the Bethe-ansatz `e_inf` with the discarded weight that explains the gap. In the
-source, the thing to read is that there is no `tenet.network` import: the MPS list, the
-canonical form, the environment cache, the Lanczos step and the two-site sweep are all
-written out on `SymmetricTensor`. The [DMRG tutorial](../tutorials/dmrg.md) walks through
-the same physics through the library, and
-[Heisenberg, U(1) walkthrough](heisenberg-walkthrough.md) is this chain called rather than
-written.
+Two-site DMRG written on the tensor layer: the MPS as a list of
+`SymmetricTensor`s, canonical form, environments, a Lanczos step and the sweep, using
+`tenet.einsum` and `tenet.linalg` only. Nothing from `tenet.network` is imported.
+
+- N=12 matches exact diagonalization to twelve digits.
+- N=32 at `chi=64` sits above the Bethe-ansatz energy by the printed discarded weight.
+
+The same algorithm through the library: [Heisenberg, U(1)](heisenberg.md).
 
 ## Source
 

@@ -1,5 +1,5 @@
 # `tenet.network`
 
-MPS/MPO and DMRG, and the CTMRG environment machinery.
+MPS and MPO containers, DMRG, and the CTMRG environment machinery.
 
 ::: tenet.network

@@ -1,18 +1,16 @@
 # Tensors, legs and spaces
 
-Four objects carry the whole model: a [GradedSpace][tenet.GradedSpace] says
-*which sectors, with what degeneracy*; a [Leg][tenet.Leg] attaches a space to
-one tensor axis with a direction; a [SymmetricTensor][tenet.SymmetricTensor] is
-a tuple of legs plus one block per allowed fusion channel; and the
-[TensorStructure][tenet.TensorStructure] is the tensor's static half — legs and
-derived bookkeeping, no numbers. This page walks them in that order.
+Four objects carry the whole model. A [GradedSpace][tenet.GradedSpace] says *which
+sectors, with what degeneracy*. A [Leg][tenet.Leg] attaches a space to one tensor axis
+with a direction. A [SymmetricTensor][tenet.SymmetricTensor] is a tuple of legs plus one
+block per allowed fusion channel. A [TensorStructure][tenet.TensorStructure] is the
+tensor's static half: legs and everything derivable from them, no numbers.
 
-## `GradedSpace` — sector → degeneracy
+## `GradedSpace` — sector to degeneracy
 
 A graded space is a mapping from sectors to positive degeneracies,
-`V = ⊕_a C^{m_a} ⊗ V_a`. Build one with [new][tenet.GradedSpace.new], which
-sorts the sectors canonically and refuses duplicates, non-positive
-degeneracies and sectors of the wrong symmetry:
+`V = ⊕_a C^{m_a} ⊗ V_a`. Build one with [new][tenet.GradedSpace.new], which sorts the
+sectors canonically:
 
 ```python
 >>> from tenet import GradedSpace
@@ -22,6 +20,16 @@ degeneracies and sectors of the wrong symmetry:
 (U1Sector(charge=0), U1Sector(charge=1))
 >>> V.degeneracy(U1Sector(0))
 2
+
+```
+
+A space is immutable, hashable and array-free. It is the only place degeneracies live:
+legs, tensors and structures all read them from here.
+
+**Refusals.** `new` rejects a duplicate sector, a degeneracy of zero or less, and a
+sector belonging to another symmetry:
+
+```python
 >>> GradedSpace.new(U1, {U1Sector(0): 0})
 Traceback (most recent call last):
     ...
@@ -29,17 +37,13 @@ ValueError: degeneracy of U1Sector(charge=0) must be positive, got 0
 
 ```
 
-A space is immutable, hashable and array-free. It is the *only* place
-degeneracies live — legs, tensors and structures all read them from here.
-
 ## `dim` versus `reduced_dim`
 
-Every space answers two size questions. `reduced_dim = Σ_a m_a` counts
-degeneracies — the storage-facing size, what the stored blocks are made of.
-`dim = Σ_a m_a · d_a` weights each degeneracy by the irrep dimension `d_a` —
-the physical size, what `to_dense` produces. For U(1) every irrep is
-one-dimensional and the two agree; for SU(2) they differ as soon as a sector
-with `2j > 0` appears:
+Every space answers two size questions. `reduced_dim = Σ_a m_a` counts degeneracies —
+the storage-facing size, what the stored blocks are made of. `dim = Σ_a m_a · d_a`
+weights each degeneracy by the irrep dimension `d_a` — the physical size, what
+`to_dense` produces. For U(1) every irrep is one-dimensional and the two agree; under
+SU(2) they part as soon as a sector with `2j > 0` appears:
 
 ```python
 >>> from tenet.symmetry import SU2, SU2Sector
@@ -53,16 +57,17 @@ with `2j > 0` appears:
 
 The same split appears on tensors as
 [reduced_shape][tenet.SymmetricTensor.reduced_shape] versus
-[shape][tenet.SymmetricTensor.shape]. `reduced_dim` exists for every provider;
-`dim` needs the irrep dimensions
-([ClebschGordanData][tenet.symmetry.ClebschGordanData]), and a provider with
-non-integer quantum dimensions has no physical `dim` at all.
+[shape][tenet.SymmetricTensor.shape]. `reduced_dim` is defined for every provider;
+`dim` needs the irrep dimensions ([ClebschGordanData][tenet.symmetry.ClebschGordanData]).
+
+Keep the distinction in mind wherever a dimension is a budget: `svd_truncated`'s
+`max_bond` bounds `dim`, so on SU(2) legs it admits fewer, larger multiplets than the
+number suggests. [Truncation](truncation.md) has that in detail.
 
 ## `Leg` — a space, a side, a dual flag
 
-A leg is one tensor axis: a space, a `side` (`OUT` for the codomain, `IN` for
-the domain), a `dual` flag (`V` versus `V*`), and an
-optional `name` for bookkeeping:
+A leg is one tensor axis: a space, a `side` (`OUT` for the codomain, `IN` for the
+domain), a `dual` flag (`V` versus `V*`), and an optional `name`:
 
 ```python
 >>> from tenet import IN, OUT, Leg
@@ -73,18 +78,12 @@ optional `name` for bookkeeping:
 
 ```
 
-**The `dual` flag lives on the leg, not on the space.** `side` and `dual` are
-independent per-leg metadata, so one `GradedSpace` object can be shared by a
-dual and a non-dual leg — a bond space in an MPS is built once and reused on
-both ends. There is deliberately no `dual()` method on the space and no way to
-flip a leg's `side` in place: moving a leg between domain and codomain is a
-categorical bend, and that is [repartition][tenet.SymmetricTensor.repartition]
-on the tensor, never a leg-level setter. (Why the flag is placed here rather
-than on the space is argued in `space.py`'s docstring and the
-[design document](../design.md); this page only states the rule.)
+**The `dual` flag lives on the leg.** `side` and `dual` are independent per-leg
+metadata, so one `GradedSpace` object is shared by a dual and a non-dual leg — an MPS
+bond space is built once and used on both ends of the bond.
 
-What a dual leg changes is which sector it contributes to a fusion tree — for
-U(1), the negated charge:
+What a dual leg changes is which sector it contributes to a fusion tree — for U(1), the
+negated charge:
 
 ```python
 >>> Leg(V, OUT).fused_sector(U1Sector(1))
@@ -94,14 +93,17 @@ U1Sector(charge=-1)
 
 ```
 
-## `SymmetricTensor` — legs, not codomain × domain
+Legs are immutable. [dualized][tenet.Leg.dualized] and [renamed][tenet.Leg.renamed]
+return new legs; moving a leg between domain and codomain is a categorical bend, and it
+is [repartition][tenet.SymmetricTensor.repartition] on the tensor.
 
-A tensor is constructed over a flat tuple of legs, in public axis order — you
-never declare a codomain × domain partition the way TensorKit-style libraries
-require. The partition is *derived*: [codomain][tenet.SymmetricTensor.codomain]
-is the `OUT` legs, [domain][tenet.SymmetricTensor.domain] the `IN` legs, and
-the map view they induce is what `compose`, `svd` and friends act through.
-Sides may interleave freely in the public order:
+## `SymmetricTensor` — legs, in public axis order
+
+A tensor is constructed over a flat tuple of legs. The codomain × domain partition is
+*derived*: [codomain][tenet.SymmetricTensor.codomain] is the `OUT` legs,
+[domain][tenet.SymmetricTensor.domain] the `IN` legs, and the map view they induce is
+what `compose`, `svd` and friends act through. Sides may interleave freely in the public
+order:
 
 ```python
 >>> from tenet import SymmetricTensor
@@ -115,33 +117,40 @@ Sides may interleave freely in the public order:
 
 ```
 
-The stored data is one reduced block per allowed fusion channel — the
-symmetry-forbidden entries are never materialized. Constructors:
-[random][tenet.SymmetricTensor.random] (seeded, reproducible),
-[zeros][tenet.SymmetricTensor.zeros],
-[from_dense][tenet.SymmetricTensor.from_dense] (which *refuses* a
-non-symmetric dense array rather than silently projecting it), and
-[from_legs][tenet.SymmetricTensor.from_legs] for blocks you already have — every
-block, in `block_order`. [to_dense][tenet.SymmetricTensor.to_dense] is the
-inverse of `from_dense` and the standard self-check.
+The stored data is one reduced block per allowed fusion channel; the symmetry-forbidden
+entries are never materialized. The constructors:
+
+| call | what it takes |
+|---|---|
+| [random][tenet.SymmetricTensor.random] | legs and a seed — reproducible standard-normal blocks |
+| [zeros][tenet.SymmetricTensor.zeros] | legs and a dtype |
+| [from_legs][tenet.SymmetricTensor.from_legs] | every block, positionally, in `block_order` |
+| [from_blocks][tenet.SymmetricTensor.from_blocks] | a mapping from key to block; absent keys are zero |
+| [from_dense][tenet.SymmetricTensor.from_dense] | a dense carrier-basis array, projected onto the symmetric subspace |
+
+[to_dense][tenet.SymmetricTensor.to_dense] is `from_dense`'s inverse and the standard
+self-check.
+
+`from_dense` refuses an array that is not symmetric to within `atol`, and that refusal
+is load-bearing: it is how you learn a grading is wrong. Pass
+[PROJECT][tenet.PROJECT] as `atol` when you mean "project, do not check".
 
 ### Naming a block instead of counting it
 
 When you hold only *some* of the blocks, name them.
 [from_blocks][tenet.SymmetricTensor.from_blocks] takes a mapping from
-[FusionBlockKey][tenet.FusionBlockKey] to array and fills the keys you leave out
-with zeros; the keys come from `TensorStructure(legs).block_order`, so nothing
-has to be built first to find out what the layout is.
+[FusionBlockKey][tenet.FusionBlockKey] to array and fills the keys you leave out with
+zeros; the keys come from `TensorStructure(legs).block_order`, so nothing has to be
+built first to find out what the layout is.
 
-This matters most away from Abelian symmetries, where the reduced block per
-fusion tree is the natural datum and the dense array is the derived object. The
-SU(2) evaluation cup `V_½ ⊗ V_½* → 1` has exactly one fusion channel, and its
-whole content is that the channel carries coefficient 1:
+This is the natural spelling away from Abelian symmetries, where the reduced block per
+fusion tree is the datum and the dense array is derived. The SU(2) evaluation cup
+`V_½ ⊗ V_½* → 1` has exactly one fusion channel, and its whole content is that the
+channel carries coefficient 1:
 
 ```python
 >>> import numpy as np
->>> from tenet import SymmetricTensor, TensorStructure
->>> from tenet.symmetry import SU2, SU2Sector
+>>> from tenet import TensorStructure
 >>> S = GradedSpace.new(SU2, {SU2Sector(1): 1})       # one spin-1/2 multiplet
 >>> legs = (Leg(S, OUT), Leg(S, OUT, dual=True))
 >>> structure = TensorStructure(legs)
@@ -155,74 +164,85 @@ array([[1., 0.],
 
 ```
 
-Writing that positionally means reconstructing the full `block_order` sequence
-and checking by hand that the block you meant landed where you assumed.
-
 To *change* blocks rather than build them,
-[with_blocks][tenet.SymmetricTensor.with_blocks] takes the same mapping and
-carries every other block over — the immutable spelling of assigning to one
-block, since a `SymmetricTensor` is frozen:
+[with_blocks][tenet.SymmetricTensor.with_blocks] takes the same mapping and carries
+every other block over — the immutable spelling of assigning to one block:
 
 ```python
->>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
->>> k = t.structure.block_order[0]
->>> u = t.with_blocks({k: np.zeros(t.structure.block_shape(k))})
->>> bool(u.block(k).any()), bool(t.block(k).any())     # t is untouched
+>>> t2 = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+>>> k = t2.structure.block_order[0]
+>>> u = t2.with_blocks({k: np.zeros(t2.structure.block_shape(k))})
+>>> bool(u.block(k).any()), bool(t2.block(k).any())     # t2 is untouched
 (False, True)
 
 ```
 
-Both refuse a key that is not in `block_order`, with a message naming where the
-legal keys live, and both let the ordinary constructor refuse a block of the
-wrong shape, naming the shape it expected.
+Both refuse a key that is not in `block_order`, with a message naming where the legal
+keys live, and a block of the wrong shape is refused naming the shape expected.
 
-Moving between dtypes and backends is blockwise and returns a new tensor:
-[astype][tenet.SymmetricTensor.astype] casts every block, and
-[to_backend][tenet.SymmetricTensor.to_backend] takes an optional `dtype=`
-applied *after* the move, so the target backend's own choice of dtype does not
-get the last word:
+### Blockwise maps
+
+[apply_blocks][tenet.apply_blocks] applies a function to every reduced block and
+[zip_blocks][tenet.zip_blocks] to the aligned block pairs of two tensors sharing one
+structure. Both work in **coefficient space**: the function sees the reduced blocks, not
+the dense entries, so a nonlinear function of a tensor is a nonlinear function of its
+coefficients.
 
 ```python
->>> from tenet import SymmetricTensor
->>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
->>> t.astype("complex128").dtype
+>>> import tenet
+>>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=1)
+>>> b = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=2)
+>>> s = tenet.zip_blocks(a, b, lambda x, y: x + y)
+>>> bool(tenet.allclose(s, a + b))
+True
+
+```
+
+[map_diagonal][tenet.map_diagonal] reads the diagonal of a square map onto its codomain
+legs, giving a tensor with the structure the vectors that map acts on carry — so
+`zip_blocks` pairs the two block for block.
+
+### dtypes and backends
+
+[astype][tenet.SymmetricTensor.astype] casts every block;
+[to_backend][tenet.SymmetricTensor.to_backend] moves the blocks to `"numpy"`, `"jax"` or
+`"torch"` and takes an optional `dtype=` applied after the move, so the target backend's
+own dtype choice does not get the last word:
+
+```python
+>>> t2.astype("complex128").dtype
 dtype('complex128')
->>> t.to_backend("numpy", dtype="complex128").dtype
+>>> t2.to_backend("numpy", dtype="complex128").dtype
 dtype('complex128')
 
 ```
 
-A backend's *refusal* is a different matter from its choice: JAX has no
-per-array escape from `jax_enable_x64`, so under the default setting a request
-for `float64` truncates to float32 in `astype` exactly as it does in
-`jnp.array`. `to_backend`'s Notes say so.
+Under JAX's default configuration a request for `float64` lands on float32, exactly as
+in `jnp.array`; [JAX and backends](jax-and-backends.md) covers the setting that changes
+it.
 
 ## `TensorStructure` — the static half
 
-The structure is the tensor minus its numbers: the leg tuple plus everything
-derivable from it — the ordered [block_order][tenet.TensorStructure.block_order]
-of fusion channels, each channel's
-[block_shape][tenet.TensorStructure.block_shape], the out/in axis split. Two
-tensors with equal structures are element-wise compatible; the structure is
-hashable and is exactly what stays static under `jax.jit` while the blocks are
-traced (the pytree split, turned on by `tenet.enable_jax()`):
+The structure is the tensor minus its numbers: the leg tuple plus the ordered
+[block_order][tenet.TensorStructure.block_order] of fusion channels, each channel's
+[block_shape][tenet.TensorStructure.block_shape], and the out/in axis split. Two tensors
+with equal structures are element-wise compatible. It is hashable, and it is what stays
+static under `jax.jit` while the blocks are traced:
 
 ```python
->>> t.structure.num_blocks == len(t.blocks)
+>>> t2.structure.num_blocks == len(t2.blocks)
 True
->>> t.structure.block_order[0].coupled
+>>> t2.structure.block_order[0].coupled
 U1Sector(charge=0)
 
 ```
 
-You rarely build a `TensorStructure` yourself — every constructor above does it
-from the legs — but you read it whenever you ask *which* blocks a tensor has
-and why.
+You rarely build a `TensorStructure` yourself — every constructor above does it from the
+legs — but you read it whenever you ask which blocks a tensor has and why.
 
 ## Where next
 
-- [Symmetries and providers](symmetries-and-providers.md) — where sectors like
-  `U1Sector` and `SU2Sector` come from, and what a provider can and cannot do.
+- [Symmetries and providers](symmetries-and-providers.md) — where `U1Sector` and
+  `SU2Sector` come from, and what a provider can do.
 - [Contraction](contraction.md) — how legs decide what contracts with what.
-- The [tenet API page](../api/tenet.md) has the full reference for every class
-  named here, with runnable examples on each method.
+- [The `tenet` API page](../api/tenet.md) — the full reference for every name here.
