@@ -53,8 +53,21 @@ Krylov step ever wants.
 from typing import NamedTuple
 
 import numpy as np
-from mpo import mpo
-from mps import BOUNDARY, _as_site, canonicalize, random_mps, spectrum
+
+# ``mps.py`` holds the state and ``mpo.py`` the Hamiltonian; this file holds the
+# algorithm. Their names are re-exported here, so ``import dmrg`` still reaches the whole
+# example. The names marked ``noqa`` below are re-exports only: this file never calls
+# them, and dropping them would break every caller of the single-file version.
+from mpo import MPO_BOND, mpo, mpo_blocks  # noqa: F401
+from mps import (
+    BOUNDARY,
+    PHYS,  # noqa: F401
+    _as_site,
+    bond_spaces,  # noqa: F401
+    canonicalize,
+    random_mps,
+    spectrum,
+)
 
 import tenet
 from tenet import IN, OUT, Leg, SymmetricTensor, TensorStructure

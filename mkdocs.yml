@@ -44,13 +44,18 @@ nav:
       - VMC: tutorials/vmc.md
   - Examples:
       - examples/index.md
-      - Heisenberg, U(1): examples/heisenberg.md
-      - Heisenberg, U(1) walkthrough: examples/heisenberg-walkthrough.md
-      - Heisenberg, SU(2): examples/su2-heisenberg.md
-      - 2D Ising CTMRG: examples/ising2d.md
-      - Toy DMRG: examples/toy-dmrg.md
-      - Toy CTMRG: examples/toy-ctmrg.md
-      - Toy VMC on an MPS: examples/toy-vmc-mps.md
+      - Examples:
+          - Heisenberg, U(1): examples/heisenberg.md
+          - Heisenberg, U(1) walkthrough: examples/heisenberg-walkthrough.md
+          - Heisenberg, SU(2): examples/su2-heisenberg.md
+          - 2D Ising CTMRG: examples/ising2d.md
+      - Toy codes:
+          - Toy MPS: examples/toy-mps.md
+          - Toy MPO: examples/toy-mpo.md
+          - Toy DMRG: examples/toy-dmrg.md
+          - Toy Ising: examples/toy-ising.md
+          - Toy CTMRG: examples/toy-ctmrg.md
+          - Toy VMC on an MPS: examples/toy-vmc-mps.md
   - API:
       - tenet: api/tenet.md
       - tenet.linalg: api/linalg.md
@@ -67,6 +72,13 @@ markdown_extensions:
   - attr_list
   - toc:
       permalink: true
+  # Line numbers on the toy-code source listings, which are whole files pulled in by
+  # pymdownx.snippets and read as line-numbered listings rather than as snippets.
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
   # docs/design.md writes its math blocks as GitHub's ```math fences; the custom fence
   # below routes them to arithmatex, so the file renders here unedited.
   - pymdownx.arithmatex:

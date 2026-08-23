@@ -95,7 +95,10 @@ from typing import NamedTuple
 
 import jax.numpy as jnp
 import numpy as np
-from ising import ising_bulk, onsager
+
+# ``BETA_C`` is a re-export: this file never uses it, callers of the single-file
+# version do.
+from ising import BETA_C, ising_bulk, onsager  # noqa: F401
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure

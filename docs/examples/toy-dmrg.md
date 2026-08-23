@@ -1,8 +1,10 @@
 # Toy DMRG
 
-Two-site DMRG written on the tensor layer: the MPS as a list of
-`SymmetricTensor`s, canonical form, environments, a Lanczos step and the sweep, using
-`tenet.einsum` and `tenet.linalg` only. Nothing from `tenet.network` is imported.
+Two-site DMRG written on the tensor layer: the directed-bond environment cache and its
+invalidation, a Lanczos step over the two-site tensor, and the sweep whose truncation
+re-decides each bond space, using `tenet.einsum` and `tenet.linalg` only. Nothing from
+`tenet.network` is imported. The state it sweeps is [Toy MPS](toy-mps.md) and the
+Hamiltonian is [Toy MPO](toy-mpo.md).
 
 - N=12 matches exact diagonalization to twelve digits.
 - N=32 at `chi=64` sits above the Bethe-ansatz energy by the printed discarded weight.
@@ -11,7 +13,9 @@ The same algorithm through the library: [Heisenberg, U(1)](heisenberg.md).
 
 ## Source
 
-```python
+[`examples/toy_codes/dmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/dmrg.py)
+
+```python linenums="1"
 --8<-- "examples/toy_codes/dmrg.py"
 ```
 

@@ -2,7 +2,8 @@
 
 C4v CTMRG written on the tensor layer — corner, edge,
 absorption, projector, sweep — followed by an iPEPS gradient through it with `jax.grad`.
-Needs the `jax` extra.
+Needs the `jax` extra. The bulk tensor it contracts and the Onsager form it is judged
+against are [Toy Ising](toy-ising.md).
 
 - `move` is one CTMRG step: enlarge the corner, build the projector, absorb an edge.
   `svd_truncated` chooses the bond outside the trace; `svd(bond=)` reuses it inside.
@@ -14,7 +15,9 @@ The same algorithm through the library: [2D Ising CTMRG](ising2d.md).
 
 ## Source
 
-```python
+[`examples/toy_codes/ctmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/ctmrg.py)
+
+```python linenums="1"
 --8<-- "examples/toy_codes/ctmrg.py"
 ```
 
