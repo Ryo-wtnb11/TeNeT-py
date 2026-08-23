@@ -426,10 +426,14 @@ def _heff2_full(h: MPO, fl: SymmetricTensor, fr: SymmetricTensor, n: int, aa: Sy
     ``aa`` lives on the *ket* bonds and the result on the *bra* bonds; the two coincide
     for a one-state [Env][tenet.network.Env] and that is why ``heff2`` can iterate on it.
     """
-    t = tenet.einsum("apqr,rys->apqys", aa, fr)
-    t = _composed("apqys,mQqy->apQms", t, h[n + 1], bend="q")
-    t = _composed("apQms,xPpm->aPQxs", t, h[n], bend="p")
-    return _composed("aPQxs,axB->BPQs", t, fl, bend="a")
+    return tenet.einsum_chain(
+        [
+            ("apqr,rys->apqys", aa, fr, ""),
+            ("apqys,mQqy->apQms", None, h[n + 1], "q"),
+            ("apQms,xPpm->aPQxs", None, h[n], "p"),
+            ("aPQxs,axB->BPQs", None, fl, "a"),
+        ]
+    )
 
 
 class Env:

@@ -548,7 +548,10 @@ def lower_plan(
         else:
             # a second source summing into one destination *with* a coefficient is the
             # one term that still needs a temporary: ``out=`` scales or accumulates, not
-            # both. Only a multi-term (non-Abelian) expansion produces these.
+            # both. Only a multi-term (non-Abelian) expansion produces these, and that is
+            # also why ordering the group so a coefficient-carrying term writes first buys
+            # nothing: such a group's terms *all* carry coefficients, so the first write
+            # already scales through its ``out=`` and every later one still needs this.
             ar.do("add", dest, scaled(block, coeff), out=dest)
 
     if len(written) != structure.num_blocks:
