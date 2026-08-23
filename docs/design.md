@@ -6583,9 +6583,29 @@ left that list with M61 Stage D above.
   three runs of ten: fZ2 Hubbard N=16 χ=128 **10.1/9.6 → 9.1/9.4 ms**, U(1) Heisenberg N=32
   χ=128 **4.3/4.3 → 3.3/2.8 ms**. The U(1) fixture pays no coefficient at all, so its 25–35 %
   is the intermediate tensors alone — which is the point: the chain removes writes, and the
-  coefficient riding along is what it removes *as well*. The YASTN arm was not re-run: YASTN
-  is not installable in this environment (not on PyPI, no network), so this milestone has a
-  before/after against its own base and no cross-library ratio.
+  coefficient riding along is what it removes *as well*.
+
+  Whole sweeps, `bench_vs_yastn.py`'s bare `tenet` arm, the same session against the pre-M71
+  source, steady wall in seconds — and the energy identical to every digit at all eight
+  points:
+
+  | model | N | χ | before | after | ratio |
+  |---|---|---|---|---|---|
+  | Hubbard fZ2 | 16 | 64 | 0.249 | 0.243 | 1.02× |
+  | Hubbard fZ2 | 16 | 128 | 0.845 | 0.772 | 1.09× |
+  | Hubbard fZ2 | 16 | 256 | 2.818 | 2.717 | 1.04× |
+  | Hubbard fZ2 | 32 | 64 | 0.656 | 0.617 | 1.06× |
+  | Hubbard fZ2 | 32 | 128 | 2.299 | 2.161 | 1.06× |
+  | Hubbard fZ2 | 32 | 256 | 8.324 | 8.341 | 1.00× |
+  | Heisenberg U(1) | 32 | 64 | 0.882 | 0.829 | 1.06× |
+  | Heisenberg U(1) | 32 | 256 | 2.175 | 2.156 | 1.01× |
+
+  A matvec that is 1.2–1.7× faster moves a whole sweep by 0–9 %, which puts an upper bound on
+  what the matvec is of a sweep at these grid points and is the same story M69 and M70 told:
+  the sweep's remaining time is in the factorization and the Lanczos recurrence, still not
+  separately instrumented. The YASTN arm was not re-run: YASTN is not installable in this
+  environment (not on PyPI, no network), so this milestone has a before/after against its own
+  base and no cross-library ratio.
 
   **What it inverts, and the one test that fails on it.** #141's inequality — the prepared
   matvec issues fewer `autoray` dispatches than the four full contractions — no longer holds
