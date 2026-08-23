@@ -229,7 +229,7 @@ def _check_axes(s: TensorStructure, axes: tuple[int, ...], op: str = "fuse") -> 
         raise NotImplementedError(
             f"{op}: axes {ordered} are not a prefix of the {side.value} side's order "
             f"{side_axes}; fusing a non-prefix group needs an F-move to bring the legs "
-            "to the front of the fusion tree, which is Milestone 4"
+            "to the front of the fusion tree, which is not implemented"
         )
     return ordered, side
 
@@ -427,7 +427,7 @@ def unfuse(t: "SymmetricTensor", axis: int, legs: Sequence[Leg]) -> "SymmetricTe
     if axis != side_axes[0]:
         raise NotImplementedError(
             f"unfuse: axis {axis} is not the first axis of the {side.value} side "
-            f"{side_axes}; splitting a non-leading leg needs an F-move, which is Milestone 4"
+            f"{side_axes}; splitting a non-leading leg needs an F-move, which is not implemented"
         )
     for i, leg in enumerate(legs):
         if leg.side is not side:

@@ -181,7 +181,7 @@ def test_non_prefix_group_names_milestone_4_and_f_moves():
         t.fuse((1, 2))
     message = str(e.value)
     assert "(1, 2)" in message and "prefix" in message
-    assert "Milestone 4" in message and "F-move" in message
+    assert "not implemented" in message and "F-move" in message
 
 
 def test_fusing_across_sides_at_the_space_level_raises():
@@ -349,7 +349,7 @@ def test_unfuse_on_a_non_leading_axis_names_milestone_4():
     t = SymmetricTensor.random(SU2_WIDE, seed=17)
     with pytest.raises(NotImplementedError) as e:
         t.unfuse(1, (Leg(A, OUT), Leg(B, OUT)))
-    assert "Milestone 4" in str(e.value) and "F-move" in str(e.value)
+    assert "not implemented" in str(e.value) and "F-move" in str(e.value)
 
 
 def test_unfuse_out_of_range_axis():

@@ -631,7 +631,7 @@ def test_the_unfused_corner_gives_the_old_projector(provider):
     Fusing the converged edge is also where the old convention's hidden M4 dependency
     shows: ``tenet.fuse`` wants its pair to lead the side, and ``tenet.unfuse`` -- the
     direction the old code would have needed to get here -- refuses a non-leading leg
-    outright ("splitting a non-leading leg needs an F-move, which is Milestone 4"). The
+    outright ("splitting a non-leading leg needs an F-move, which is not implemented"). The
     redesigned example never fuses, so it never asks.
     """
     a, _, (c, e, _) = ipeps_env(provider)

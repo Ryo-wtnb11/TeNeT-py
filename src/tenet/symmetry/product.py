@@ -75,7 +75,7 @@ __all__ = [
 
 _PERM_HINT = (
     "Within-side reordering is a braid and needs that factor's own F- and R-moves "
-    "(Milestone 4 for SU(2)); it will not be faked by permuting block axes."
+    "(not implemented for SU(2)); it will not be faked by permuting block axes."
 )
 _CGC_HINT = "A product's Clebsch-Gordan tensor is the outer product of the factors'."
 
