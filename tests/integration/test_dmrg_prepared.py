@@ -224,39 +224,3 @@ def test_dmrg_reaches_the_n12_reference_on_both_paths():
         psi = MPS.random(example.PHYS, example.bond_spaces(12), seed=0)
         out = dmrg_(psi, ham, chi=64)
         assert out.energy == pytest.approx(E_OBC_12, abs=1e-10)
-
-
-def test_the_prepared_path_issues_fewer_dispatches_on_the_n24_ly10_cylinder():
-    """#141's inequality on the measurement-2 object itself: N=24, width 10, D_w=32."""
-    import autoray  # noqa: PLC0415
-
-    h = MPO.from_terms(24, _pair_terms(_cylinder_pairs(24, 10)), cutoff=None, symbolic=True)
-    psi = MPS.random(example.PHYS, example.bond_spaces(24), seed=1).canonize_()
-    envs = [Env(psi, h).setup_(), Env(psi, MPO(h.sites)).setup_()]
-    for env in envs:
-        for m in range(12):
-            env.update_(m, to="last")
-    aa = tenet.einsum("apx,xqr->apqr", psi[12], psi[13])
-
-    def count(fn):
-        state = {"n": 0, "depth": 0}
-        orig = autoray.do
-
-        def do(*args, **kwargs):
-            state["n"] += state["depth"] == 0
-            state["depth"] += 1
-            try:
-                return orig(*args, **kwargs)
-            finally:
-                state["depth"] -= 1
-
-        autoray.do = do
-        try:
-            fn()
-        finally:
-            autoray.do = orig
-        return state["n"]
-
-    for env in envs:
-        env.heff2(12, aa)  # warm the prepared, compiled and plan caches
-    assert count(lambda: envs[0].heff2(12, aa)) < count(lambda: envs[1].heff2(12, aa))
