@@ -100,6 +100,7 @@ traced region, and tracing plus compiling them dominates a short run.
 from collections.abc import Callable, Sequence
 from typing import NamedTuple
 
+import jax.numpy as jnp
 import numpy as np
 
 import tenet
@@ -138,16 +139,6 @@ SPACES = {
 # --- the two bulk tensors ----------------------------------------------------------
 
 
-def _namespace(x):
-    """``x``'s own array namespace, or ``numpy`` for a plain Python float.
-
-    ``beta`` and the closed networks below may be *traced* scalars -- ``jax.grad``
-    differentiates the Boltzmann weight and the free energy -- and a tracer's namespace is
-    ``jax.numpy``. A Python float has none to ask, so numpy is the fallback.
-    """
-    return getattr(x, "__array_namespace__", lambda: np)()
-
-
 def ising_bulk(beta):
     """Classical 2D Ising partition-function tensor, legs ``(l OUT, u OUT, r IN, d IN)``.
 
@@ -163,10 +154,9 @@ def ising_bulk(beta):
     ``2 W[0,l] W[0,u] W[0,r] W[0,d]``. The eight structurally zero entries have no block to
     live in and are never built.
 
-    ``beta`` may be a *traced scalar*, so the block values are built in :func:`_namespace`.
+    ``beta`` may be a *traced scalar*, so the block values are built with ``jax.numpy``.
     """
-    xp = _namespace(beta)
-    c, s = xp.sqrt(xp.cosh(beta)), xp.sqrt(xp.sinh(beta))
+    c, s = jnp.sqrt(jnp.cosh(beta)), jnp.sqrt(jnp.sinh(beta))
     space = GradedSpace.new(Z2, {Z2Sector(0): 1, Z2Sector(1): 1})
     legs = (Leg(space, OUT), Leg(space, OUT), Leg(space, IN), Leg(space, IN))
     structure = TensorStructure(legs)
@@ -174,7 +164,7 @@ def ising_bulk(beta):
     for key in structure.block_order:  # the key names (l, u) and (r, d)
         w = [c if sector.parity == 0 else s for sector in key.output_tree.uncoupled]
         w += [c if sector.parity == 0 else s for sector in key.input_tree.uncoupled]
-        blocks[key] = xp.full((1, 1, 1, 1), 2.0 * (w[0] * w[1] * w[2] * w[3]))
+        blocks[key] = jnp.full((1, 1, 1, 1), 2.0 * (w[0] * w[1] * w[2] * w[3]))
     return SymmetricTensor.from_blocks(legs, blocks)
 
 
@@ -572,7 +562,7 @@ def log_kappa(beta, env, k: int = 4):
             optimize=PATH,
         )
     )
-    return _namespace(z_a).log(z_a * z_c / z_h**2)
+    return jnp.log(z_a * z_c / z_h**2)
 
 
 def free_energy(beta, env, k: int = 4):
