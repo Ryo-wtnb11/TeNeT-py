@@ -235,6 +235,46 @@ def _bands(
     return tuple(bands)
 
 
+@cache
+def _tables(
+    structure: TensorStructure,
+) -> tuple[tuple[tuple[tuple[FusionTree, int, int], ...], ...], tuple[tuple[int, ...], ...]]:
+    """Per-sector ``(row bands, column bands)`` and per-block shapes in ``axes_order``.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure to tabulate, in the layout's own sector order.
+
+    Returns
+    -------
+    bands : tuple
+        ``(row_bands(c), col_bands(c))`` per coupled sector, aligned with
+        ``map_layout(structure).grid``.
+    shapes : tuple of tuple of int
+        Per block of ``block_order``, its degeneracies permuted into
+        ``axes_order`` — the shape ``from_matrices`` reshapes a slice to.
+
+    Notes
+    -----
+    Both are pure functions of ``structure``, so they are cached beside
+    [map_layout][tenet.map_layout] rather than rebuilt inside the assembly loops.
+    They used to be: the band tuples once per coupled sector per call (each an
+    ``O(bands)`` filter of ``rows``/``cols``, so ``O(bands²)`` for the call), and
+    the shapes once per block per call (a ``FusionBlockKey`` hash and a dict lookup
+    through ``block_shape``). On a many-small-blocks structure that re-derivation is
+    most of what an assembly costs, and it is what makes ``from_matrices`` — which
+    moves no bytes, every piece being a view — the more expensive of the two
+    directions there (docs/design.md "M69").
+    """
+    layout = map_layout(structure)
+    order = layout.axes_order
+    return (
+        tuple((layout.row_bands(c), layout.col_bands(c)) for c in layout.sectors),
+        tuple(tuple(structure.block_shape(key)[a] for a in order) for key in structure.block_order),
+    )
+
+
 def to_matrices(t: "SymmetricTensor") -> dict[Sector, Any]:
     """``{c: B_c}``, one dense backend matrix per coupled sector. ``t`` is untouched.
 
@@ -262,17 +302,18 @@ def to_matrices(t: "SymmetricTensor") -> dict[Sector, Any]:
     (2, 2)
     """
     layout = map_layout(t.structure)
-    identity = tuple(range(t.ndim))
+    bands, _ = _tables(t.structure)
+    order = layout.axes_order
+    permuted = order != tuple(range(t.ndim))
     mats: dict[Sector, Any] = {}
-    for c, cells in layout.grid:
-        cbands = layout.col_bands(c)
+    for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
         rows = []
-        for (_, _, dr), indices in zip(layout.row_bands(c), cells, strict=True):
+        for (_, _, dr), indices in zip(rbands, cells, strict=True):
             parts = []
             for i, (_, _, dc) in zip(indices, cbands, strict=True):
                 block = t.blocks[i]
-                if layout.axes_order != identity:
-                    block = ar.do("transpose", block, layout.axes_order)
+                if permuted:
+                    block = ar.do("transpose", block, order)
                 parts.append(ar.do("reshape", block, (dr, dc)))
             rows.append(parts[0] if len(parts) == 1 else ar.do("concatenate", parts, axis=1))
         mats[c] = rows[0] if len(rows) == 1 else ar.do("concatenate", rows, axis=0)
@@ -317,21 +358,20 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
     layout = map_layout(structure)
     _check(layout, mats)
 
+    bands, shapes = _tables(structure)
     order = layout.axes_order
     identity = tuple(range(structure.ndim))
     inverse = tuple(sorted(identity, key=order.__getitem__))
+    permuted = order != identity
     blocks: list[Any] = [None] * structure.num_blocks
-    for c, cells in layout.grid:
+    for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
         mat = mats[c]
-        cbands = layout.col_bands(c)
-        for (_, ro, dr), indices in zip(layout.row_bands(c), cells, strict=True):
+        for (_, ro, dr), indices in zip(rbands, cells, strict=True):
             for i, (_, co, dc) in zip(indices, cbands, strict=True):
                 # basic slicing, not an ar.do: every backend spells a contiguous
                 # 2-D slice the same way (as in ops.fusion._unapply)
-                piece = mat[ro : ro + dr, co : co + dc]
-                shape = structure.block_shape(structure.block_order[i])
-                piece = ar.do("reshape", piece, tuple(shape[a] for a in order))
-                blocks[i] = piece if order == identity else ar.do("transpose", piece, inverse)
+                piece = ar.do("reshape", mat[ro : ro + dr, co : co + dc], shapes[i])
+                blocks[i] = ar.do("transpose", piece, inverse) if permuted else piece
     return SymmetricTensor(structure, tuple(blocks))
 
 
