@@ -19,12 +19,16 @@ What this demonstrates, entirely with library code that already exists (no new
   the pairing of the two, ``compress`` deciding a bond space out here and ``project``
   running ``svd(t, bond=...)`` in there.
 
+The tensor operations it is built on: ``SymmetricTensor.random`` for the ansatz and the
+operator, ``tenet.einsum`` for every contraction, ``tenet.adjoint`` for the bra,
+``tenet.linalg.svd`` and ``tenet.linalg.svd_truncated`` for the factorizations, and
+``tenet.full_trace`` to leave the tensor world.
+
 **Trivial boundary legs, not a rank-0 tensor.** ``SymmetricTensor`` has no rank 0, and
 it does not need one: the standard MPS convention gives the left and right boundary
 legs the unit sector with degeneracy 1, so the fully closed network is a rank-2 tensor
-with two trivial legs and a single ``(1, 1)`` block. That block *is* the scalar, and
-:func:`scalar` is where the tensor world is explicitly left -- the same move
-``tenet.norm`` makes.
+whose two trivial legs are a square map. Closing it is ``tenet.full_trace``, which is
+where the tensor world is left -- the same move ``tenet.norm`` makes.
 
 **Honest limitation on batching.** ``jax.vmap`` batches samples that share one
 ``TensorStructure``, because the structure is the treedef. A per-sample
@@ -155,17 +159,13 @@ def contract(mps: list[SymmetricTensor]) -> SymmetricTensor:
     return psi
 
 
-def scalar(t: SymmetricTensor):
-    """Leave the tensor world: a rank-2 tensor on two trivial legs is its 1x1 block."""
-    return t.blocks[0][0, 0]
-
-
 def energy(mps: list[SymmetricTensor], h: SymmetricTensor):
     """``<psi|h|psi> / <psi|psi>`` with ``h`` acting on sites 0 and 1.
 
     The bra is ``tenet.adjoint(psi)`` (every leg flips side, blocks conjugated), so
     contracting it against the ket over every physical leg *and* the left boundary
-    leaves the two right-boundary legs open: rank 2, one ``(1, 1)`` block.
+    leaves the two right-boundary legs open: a rank-2 square map on the trivial space,
+    which ``tenet.full_trace`` closes to the scalar it holds.
     """
     psi = contract(canonicalize(mps))
     n = psi.ndim - 2
@@ -174,7 +174,7 @@ def energy(mps: list[SymmetricTensor], h: SymmetricTensor):
     bra = tenet.adjoint(psi)
     num = tenet.einsum(f"aBC{rest}s,aBC{rest}z->sz", bra, hpsi)
     den = tenet.einsum(f"a{phys}{rest}s,a{phys}{rest}z->sz", bra, psi)
-    return scalar(num) / scalar(den)
+    return tenet.full_trace(num) / tenet.full_trace(den)
 
 
 def step(mps: list[SymmetricTensor], h: SymmetricTensor, lr: float):

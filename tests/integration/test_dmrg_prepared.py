@@ -16,9 +16,11 @@ import sys
 import numpy as np
 import pytest
 
+sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples"))
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples" / "toy_codes"))
 
 import dmrg as example  # noqa: E402
+import heisenberg_walkthrough as walkthrough  # noqa: E402
 
 import tenet  # noqa: E402
 from tenet import GradedSpace  # noqa: E402
@@ -29,7 +31,7 @@ E_OBC_12 = -5.142090632840532  # the open-boundary N=12 reference test_dmrg.py d
 
 
 def _ops():
-    _, sz, sp, sm = example._spin_half()
+    _, sz, sp, sm = walkthrough._spin_half()
     return (
         local_op(sz, phys=example.PHYS, charge=U1Sector(0)),
         local_op(sp, phys=example.PHYS, charge=U1Sector(-2)),
@@ -112,7 +114,7 @@ def test_prepared_agrees_with_dense_on_the_ly6_cylinder():
 
 def test_prepared_agrees_with_dense_on_a_mixed_rank3_and_rank2k_term_set():
     op_sz, op_sp, op_sm = _ops()
-    _, sz, _, _ = example._spin_half()
+    _, sz, _, _ = walkthrough._spin_half()
     op_zz = local_op(np.kron(sz, sz), phys=example.PHYS)
     terms = [
         (0.5, [(op_sp, 1), (op_sm, 4)]),
@@ -127,7 +129,7 @@ def test_prepared_agrees_with_dense_on_a_mixed_rank3_and_rank2k_term_set():
 def test_prepared_agrees_with_dense_on_the_su2_heisenberg_chain():
     """The dual-convention MPO: k-site splits, capped boundary legs, graded aux bonds."""
     su2_phys = GradedSpace.new(SU2, {SU2Sector(1): 1})
-    _, sz, sp, sm = example._spin_half()
+    _, sz, sp, sm = walkthrough._spin_half()
     ss = local_op(np.kron(sz, sz) + (np.kron(sp, sm) + np.kron(sm, sp)) / 2, phys=su2_phys)
     h = MPO.from_terms(8, [(1.0, [(ss, (i, i + 1))]) for i in range(7)], cutoff=None, symbolic=True)
     tri = GradedSpace.new(SU2, {SU2Sector(0): 1})

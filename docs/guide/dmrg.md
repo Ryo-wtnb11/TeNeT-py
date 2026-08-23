@@ -115,7 +115,7 @@ wrong bond structure: nothing moved because nothing could. The check that is not
 test is the energy variance:
 
 ```python
->>> round(h.variance(out.psi), 9)
+>>> round(abs(h.variance(out.psi)), 9)
 0.0
 
 ```

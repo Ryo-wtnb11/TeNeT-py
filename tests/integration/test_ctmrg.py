@@ -421,15 +421,18 @@ def test_the_retired_nan_criterion(beta, chi):
 
 @pytest.mark.parametrize("beta", [0.3, 0.44, 0.6])
 def test_the_graded_bulk_is_the_same_numbers(beta):
-    """The regrade changed the legs and no arithmetic, asserted at ``0.0``.
+    """The Z2-block weight is the dense ``sum_s W W W W`` tensor.
 
-    ``W = [[sqrt cosh b, sqrt sinh b], [sqrt cosh b, -sqrt sinh b]]`` *is* the parity
-    change of basis, so summing over ``s`` already annihilated every entry with an odd
-    number of odd legs: eight of sixteen are exactly zero in the file we always shipped.
-    The example was not missing a symmetry, it was declining to declare one.
+    ``W = [[sqrt cosh b, sqrt sinh b], [sqrt cosh b, -sqrt sinh b]]`` is the parity
+    change of basis, so summing over ``s`` annihilates every entry with an odd number of
+    odd legs: eight of sixteen are exactly zero. The blocks are written as the product
+    ``2 w_l w_u w_r w_d`` while the dense reference sums two terms, so the two agree to
+    rounding, not bit for bit.
     """
     dense = ising_block(beta)
-    np.testing.assert_array_equal(np.asarray(ctmrg.ising_bulk(beta).to_dense()), dense)
+    np.testing.assert_allclose(
+        np.asarray(ctmrg.ising_bulk(beta).to_dense()), dense, rtol=0, atol=1e-15
+    )
     odd = [idx for idx in np.ndindex(dense.shape) if sum(idx) % 2]
     assert len(odd) == 8
     assert all(dense[idx] == 0.0 for idx in odd)

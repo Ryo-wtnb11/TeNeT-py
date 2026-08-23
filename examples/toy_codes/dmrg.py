@@ -1,72 +1,29 @@
-"""Finite-chain two-site DMRG written out by hand: U(1) Heisenberg against exact diagonalization.
+"""Finite-chain two-site DMRG, written out: the U(1) Heisenberg chain against exact diagonalization.
 
 Run it standalone::
 
     uv run python examples/toy_codes/dmrg.py
 
-**The lane rule, and what this file is.** ``examples/toy_codes/`` teaches what the library
-does not own: the algorithm is written here, on ``tenet``'s *tensor* layer --
-``SymmetricTensor``, ``tenet.einsum``, ``tenet.linalg`` -- and **nothing is imported from
-``tenet.network``**, which ``tests/test_examples.py`` asserts for every file in this
-directory. The MPS list, the canonical form, the directed-bond environment cache and its
-invalidation, the Krylov step and the two-site sweep are what the reader is here to see.
-The library ships all five (``MPS``, ``Env``, ``lanczos``, ``sweep_``, ``dmrg_``); this is
-the same code before it was promoted (#112), restored (#183), and the split is tenpy's --
-``tenpy_toycodes`` writes MPS/TEBD/DMRG out with numpy only, tenpy's own ``examples/``
-calls the library. Adapted, because the symmetric-tensor layer *is* tenet's subject matter:
-a toy code here may use it, and must not use the algorithms built on it.
-``examples/heisenberg_walkthrough.py`` is the same physics through ``tenet.network``, and
-is where a reader who wants the library's version should go.
+The algorithm is the file: the MPS list and its canonical form, the Heisenberg MPO, the
+directed-bond environment cache and its invalidation, a Lanczos step over the two-site
+tensor, and the sweep whose truncation re-decides each bond space. Nothing is imported
+from ``tenet.network``, which ships all of it; ``examples/heisenberg_walkthrough.py`` is
+the same physics through the library.
 
-**The per-helper rule, stated once and applied throughout.** Some of what follows exists
-in ``tenet`` already. The rule is: **a helper stays local when writing it out is the
-lesson, and is called from ``tenet`` when it is the tensor layer this file is built on.**
-So :func:`scalar`, :func:`inner` and :func:`spectrum` are written here even though
-``tenet.full_trace``, ``tenet.inner`` and ``tenet.network.spectrum`` exist -- *how a
-tensor network produces a number* is exactly what a first reader is missing, and each is
-five lines. So is :func:`_composed`, whose bend is the file's one categorical subtlety.
-Everything below the tensor layer -- ``einsum``, ``svd_truncated``, ``lq``,
-``repartition``, ``norm``, ``adjoint``, ``add``/``subtract`` -- is called, never
-reimplemented: rewriting a graded SVD would teach nothing about DMRG.
-
-What it demonstrates (no ``scipy``, no ``quimb``, no ``jax``):
-
-* a **U(1) MPS whose target sector is fixed by the boundary legs alone**. The physical
-  charge is ``t = 2 S^z in {-1, +1}`` (``vmc_mps.SPACES["u1"]``'s spin doublet) and both
-  boundary legs are :data:`BOUNDARY`, the unit sector with degeneracy 1. Invariance of
-  every site tensor then forces ``Sum_i 2 S^z_i = 0``, i.e. **``S^z_tot = 0``, the sector
-  the ground state of an even chain lives in, enforced structurally and for free** -- no
-  penalty term, no projector, no ``project=`` argument;
-* the Heisenberg MPO built by ``tenet.SymmetricTensor.from_dense`` (#82) at the
-  **default** relative ``atol`` from the 5x5 ``W`` matrix written out in the carrier
-  basis, on the graded MPO bond :data:`MPO_BOND`. A wrong grading makes ``from_dense``
-  *raise*, and that refusal -- asserted in ``tests/integration/test_dmrg.py`` -- is the
-  proof the grading is right. A passing ``allclose`` would not be;
-* ``tenet.linalg.svd_truncated`` (#77) deciding a bond :class:`~tenet.GradedSpace` at
-  **every bond of every sweep**, with the discarded weight reported by Pythagoras --
-  the mirror image of CTMRG's frozen bond;
-* an **iterative Krylov eigensolver written over ``SymmetricTensor`` as a vector**:
-  :func:`lanczos` needs only ``tenet.add``/``subtract``, scalar multiply/divide,
-  ``tenet.norm`` and :func:`inner`. No ``scipy.sparse.linalg``, no dense reshaping of the
-  local problem.
-
-**Why there is no ``jit`` and no ``grad`` here, and why that is a decision.** DMRG is a
-fixed-point solver whose control flow is data-dependent at every level: the truncation
-re-decides the bond space each sweep (``tenet.StructureChangingError`` under a trace, by
-design), :func:`lanczos`'s happy breakdown tests a norm against ``tol``, and :func:`dmrg`'s
-loop exits on a measured energy change. Every one of those is precisely what tenet refuses
-to trace, and correctly. So this module runs on the eager NumPy backend and makes no
-differentiability claim of any kind. The #77 pairing -- ``svd_truncated`` *outside* the
-trace, ``svd(bond=)`` *inside* it -- has **two** legitimate halves, and this file uses one:
-``ctmrg.py`` needs the inside half because it differentiates through its sweeps; DMRG needs
-only the outside half because it does not. There is also, for the same reason, no XLA
-compile floor here.
+The tensor operations it is built on: ``SymmetricTensor.from_blocks`` and
+``SymmetricTensor.random`` for the inputs, ``tenet.einsum`` for every contraction,
+``tenet.repartition`` for the leg bends, ``tenet.linalg.lq`` and
+``tenet.linalg.svd_truncated`` for the factorizations, ``tenet.add``, ``tenet.subtract``,
+``tenet.norm`` and ``tenet.inner`` for the Krylov vector space, and ``tenet.to_matrices``
+to read the Schmidt values off a bond.
 
 **Leg conventions**, the part worth reading before the code:
 
 * MPS site ``A_n``: ``(left bond OUT, physical OUT, right bond IN)``, the
   ``examples/toy_codes/vmc_mps.py`` convention. Charge flows left to right,
-  ``bond_n (x) phys_n -> bond_{n+1}``, and both end bonds are :data:`BOUNDARY`;
+  ``bond_n (x) phys_n -> bond_{n+1}``, and both end bonds are :data:`BOUNDARY`, the unit
+  sector with degeneracy 1 -- which forces ``Sum_i 2 S^z_i = 0``, i.e. ``S^z_tot = 0``,
+  structurally and for free;
 * MPO site ``W_n``: ``(wl IN, p OUT, p IN, wr OUT)``. Invariance reads
   ``q(p_out) + q(wr) = q(wl) + q(p_in)``, so an ``S^-`` emitted from the start channel
   sends the MPO bond to ``+2`` and an ``S^+`` sends it to ``-2``. The first and last
@@ -76,55 +33,46 @@ compile floor here.
   environment ``F[(n, n-1)]``: ``(ket OUT, mpo IN, bra IN)``, built from sites ``>= n``.
 
 **Operand order is part of the arithmetic, not a style choice.** Every ``tenet.einsum``
-below is a *composition*: **operand 1 supplies the ``IN`` end of every shared wire**
-(M23's rule, ``docs/design.md`` "Milestone 11"). Meeting ``IN`` against ``OUT`` is not enough
--- that condition is symmetric, while the cap direction, and hence the Koszul sign a
-fermionic provider pays, depends on which operand supplies which end. The wires that
-genuinely turn around -- the MPS bond arrow and the MPO bond arrow cross the two-site cell
-in opposite directions, so closing either cap reverses one rail -- are bent *explicitly*
-by :func:`_composed` rather than left to ``einsum``. This chain is U(1), where every such
-sign is ``+1`` and nothing here can measure the difference; the orders are still written
-correctly, because a reader copying this file for a fermionic model would otherwise copy a
-silent sign error. The pre-promotion revision of this file argued the symmetric reading
-out loud and was wrong; ``tests/integration/test_dmrg.py`` now asserts the rule on every
-contraction below, and ``tests/network/test_hygiene.py`` measures the library's copy of
-these same contractions against a dense Jordan-Wigner oracle.
+below is a *composition*: operand 1 supplies the ``IN`` end of every shared wire. Meeting
+``IN`` against ``OUT`` is not enough -- that condition is symmetric, while the cap
+direction, and hence the Koszul sign a fermionic provider pays, depends on which operand
+supplies which end. The wires that genuinely turn around are bent *explicitly* by
+:func:`_composed`. This chain is U(1), where every such sign is ``+1``; the orders are
+still written correctly, because a reader copying this file for a fermionic model would
+otherwise copy a silent sign error.
 
-Deliberate simplifications, each with its ceiling:
+There is no ``jit`` and no ``grad`` here, and that is a decision: DMRG's control flow is
+data-dependent at every level -- the truncation re-decides a bond space each sweep,
+:func:`lanczos` tests a norm against a tolerance, :func:`dmrg` exits on a measured energy
+change -- so this module runs on the eager NumPy backend and makes no differentiability
+claim. ``ctmrg.py`` is the half of the library that lives under a trace.
 
-Simplification: **two-site DMRG only; single-site plus subspace expansion is deferred, and
-``tenet.linalg.left_null`` (#88) therefore gets no demo here.** Two-site is what makes
-``svd_truncated`` the bond-deciding step, which is the tenet feature this example exists
-to exercise, and it grows a bond by a factor of ``d`` per site with no extra concept.
-Strictly-single-site DMRG at fixed bond *cannot grow a bond at all*, so it is only honest
-with subspace expansion (Hubig-McCulloch-Schollwoeck-Wall, PRB 91, 155115 (2015)) -- which
-needs ``left_null``, a mixing factor ``alpha``, its own schedule and a second ``heff1``
-contraction chain. Named upgrade path, and a good one.
+Simplification: **two-site DMRG only.** It is what makes ``svd_truncated`` the
+bond-deciding step, and it grows a bond by a factor of ``d`` per site with no extra
+concept. Single-site DMRG cannot grow a bond at all, so it is only honest with subspace
+expansion (Hubig-McCulloch-Schollwoeck-Wall, PRB 91, 155115 (2015)), which wants
+``tenet.linalg.left_null``, a mixing factor and a second contraction chain.
 
 Simplification: **hand-written pairwise contraction orders, not ``optimize=`` on a
-five-operand einsum.** Same reason as ``ctmrg._halves``: ``opt_einsum`` costs a graded
-network from *physical* leg sizes, and a U(1) MPS bond whose sectors are unevenly filled
-is exactly where that estimate is wrong. The orders here are YASTN's own
-(``yastn/tn/mps/_env.py``:496-518), which its ``_dmrg.py``:102-108 documents as
-``O(D^3 M d + D^2 M^2 d^2)`` per matvec -- optimal for *one* matvec, which is all a Krylov
-step ever wants.
+five-operand einsum.** ``opt_einsum`` costs a graded network from *physical* leg sizes,
+and a U(1) MPS bond whose sectors are unevenly filled is exactly where that estimate is
+wrong. The orders here are YASTN's own (``yastn/tn/mps/_env.py``:496-518), documented as
+``O(D^3 M d + D^2 M^2 d^2)`` per matvec -- optimal for *one* matvec, which is all a
+Krylov step ever wants.
 
-Simplification: **the MPO is written out, not generated, and there is no sweep schedule.**
-Deriving MPO bonds from a term list and ramping ``chi`` with noise are library features
-(``MPO.from_terms``, ``Sweep``); both are demonstrated in
-``examples/heisenberg_walkthrough.py``. Here the Hamiltonian is one 5x5 matrix of physics
-and the loop runs at one ``chi``, which is what a first reading wants.
-
-See :func:`lanczos` for the no-reorthogonalization and numpy-``eigh`` notes.
+Simplification: **the MPO is written out, not generated, and there is no sweep
+schedule.** Deriving MPO bonds from a term list and ramping ``chi`` with noise are
+library features (``MPO.from_terms``, ``Sweep``), both demonstrated in
+``examples/heisenberg_walkthrough.py``. Here the Hamiltonian is one page of blocks and
+the loop runs at one ``chi``.
 """
 
 from typing import NamedTuple
 
-import autoray as ar
 import numpy as np
 
 import tenet
-from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
 from tenet.symmetry import U1, U1Sector
 
 # Physical space: charge t = 2 S^z, so the spin doublet is {-1, +1} -- exactly
@@ -134,71 +82,39 @@ PHYS = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
 BOUNDARY = GradedSpace.new(U1, {U1Sector(0): 1})
 
 # The MPO bond: three charge-0 channels (start, S^z, end) and the two S^± channels at
-# +-2, because S^± shifts 2 S^z by +-2. The sign convention is **not derived by hand**:
-# the dense W below is handed to ``from_dense`` at the default relative atol, and a wrong
-# grading makes it raise. See ``test_dmrg.py::test_mpo_refuses_a_perturbed_grading``.
+# +-2, because S^± shifts 2 S^z by +-2.
 MPO_BOND = GradedSpace.new(U1, {U1Sector(0): 3, U1Sector(2): 1, U1Sector(-2): 1})
 
-# Dense positions of the five MPO channels. ``GradedSpace`` sorts its sectors ascending,
-# so the -2 channel is index 0, the three charge-0 channels are 1..3 and the +2 channel is
-# index 4. The names, not the numbers, are what the W matrix is written in below:
-# ``_SM_CHANNEL`` is the channel *entered* by emitting an S^-, which raises the MPO bond
-# charge by +2, and ``_SP_CHANNEL`` the one entered by emitting an S^+.
-_SP_CHANNEL, _END, _SZ_CHANNEL, _START, _SM_CHANNEL = 0, 1, 2, 3, 4
+# The sectors the blocks below are named in: physical down and up, and the three MPO bond
+# charges. ``S^-`` raises the bond charge by 2 and ``S^+`` lowers it by 2.
+DOWN, UP = U1Sector(-1), U1Sector(1)
+ZERO, PLUS, MINUS = U1Sector(0), U1Sector(2), U1Sector(-2)
+
+# Degeneracy indices inside the charge-0 MPO channel: the "nothing emitted yet" channel,
+# the S^z channel and the "term finished" channel. ``GradedSpace`` keeps a sector's
+# degeneracies in the order they were given, so these three names are the whole layout.
+_END, _SZ, _START = 0, 1, 2
 
 # The thermodynamic limit, 1/4 - ln 2 (Bethe 1931; Hulthen 1938), for main()'s report.
 E_INF = -0.4431471805599453
 
 
-# --- leaving the tensor world ------------------------------------------------------
-
-
-def scalar(t: SymmetricTensor):
-    """The categorical trace of a rank-2 map ``(X OUT, X IN)``: ``sum_c d_c tr(M_c)``.
-
-    ``SymmetricTensor`` has no rank 0, so every fully closed network here contracts down
-    to a rank-2 tensor with one bond left open, and closing that bond is a trace carrying
-    the same ``qdim`` weight :func:`tenet.norm` carries. **This is where the tensor world
-    is left**, and writing it out is the point: the library spells it
-    ``tenet.full_trace`` (#126), which is these five lines plus a square-map refusal.
-    """
-    qdim = t.provider.qdim
-    return sum(qdim(c) * ar.do("trace", m) for c, m in tenet.to_matrices(t).items())
-
-
-def inner(a: SymmetricTensor, b: SymmetricTensor):
-    """``<a|b> = sum_tau qdim(c_tau) * <A_tau, B_tau>``, block by block, at any rank.
-
-    ``tenet.inner`` (#126) is this function verbatim, and it is ``tenet.norm``'s body
-    with the square replaced by a conjugated pair -- which is why ``inner(a, a)`` *is*
-    ``norm(a)**2`` rather than merely equalling it numerically, and why
-    :func:`lanczos` can be a plain vector-space algorithm at any rank.
-
-    A sesquilinear pairing is **not** a composition, and it is not a diagram either:
-    drawn as one (contract every axis but the first, close axis 0 with :func:`scalar`)
-    the open axis-0 lines cross the contracted ones, and on a graded provider each
-    crossing of two odd lines pays -1 -- which flipped the sign of every odd-sector
-    block until M62/#236. Coefficient space has no crossing to pay for.
-    """
-    qdim = a.provider.qdim
-    return sum(
-        qdim(key.coupled) * ar.do("sum", ar.do("conj", x) * y)
-        for (key, x), y in zip(a.items(), b.blocks, strict=True)
-    )
+# --- reading numbers off a tensor --------------------------------------------------
 
 
 def spectrum(s: SymmetricTensor) -> list[float]:
-    """The Schmidt values on a bond, descending -- ``tenet.network.spectrum``'s body.
+    """The Schmidt values on a bond, descending.
 
     ``s`` comes from :func:`tenet.linalg.svd_truncated` and is diagonal by construction,
-    so this reads its diagonal; the ``sqrt(qdim)`` weight is the same one
+    so this reads the diagonal of each coupled-sector matrix ``tenet.to_matrices`` hands
+    back -- the public way to read block values. The ``sqrt(qdim)`` weight is the same one
     :func:`tenet.norm` carries, and it is 1 throughout for U(1).
     """
     qdim = s.provider.qdim
     out = [
-        float(v)
+        float(m[i, i]) * qdim(sector) ** 0.5
         for sector, m in tenet.to_matrices(s).items()
-        for v in ar.do("diag", m) * qdim(sector) ** 0.5
+        for i in range(m.shape[0])
     ]
     return sorted(out, reverse=True)
 
@@ -231,27 +147,36 @@ def _composed(equation: str, a: SymmetricTensor, b: SymmetricTensor, bend: str =
     return tenet.einsum(equation, a, b)
 
 
-# --- the Hamiltonian, as an MPO through from_dense ---------------------------------
+# --- the Hamiltonian, as an MPO built block by block --------------------------------
 
 
-def _spin_half() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """``(I, Sz, S+, S-)`` as 2x2 dense arrays in this module's physical basis.
+def _blocks(legs, values: dict) -> SymmetricTensor:
+    """Build from ``{(sector on each leg, in axis order): block}``.
 
-    Index 0 is charge ``-1`` (spin down) and index 1 is charge ``+1`` (spin up), because
-    :data:`PHYS` sorts its sectors ascending. The matrices are ``O[out, in]``.
+    ``SymmetricTensor.from_blocks`` is keyed by a ``FusionBlockKey``, which for these legs
+    carries the ``OUT`` sectors and the ``IN`` sectors in axis order; naming the sector on
+    each leg is the same statement, read left to right off the leg list. Keys not named
+    are zero. A sector combination the legs do not allow is not in ``block_order`` at all
+    and raises here -- which is why a wrong MPO bond grading is a *refusal* rather than a
+    silent projection onto some other operator.
     """
-    eye = np.eye(2)
-    sz = np.diag([-0.5, 0.5])
-    sp = np.array([[0.0, 0.0], [1.0, 0.0]])  # |down> -> |up>
-    return eye, sz, sp, sp.T
+    structure = TensorStructure(tuple(legs))
+    outs = [i for i, leg in enumerate(legs) if leg.side is OUT]
+    ins = [i for i, leg in enumerate(legs) if leg.side is IN]
+    keys = {}
+    for key in structure.block_order:
+        sectors = dict(zip(outs, key.output_tree.uncoupled, strict=True))
+        sectors.update(zip(ins, key.input_tree.uncoupled, strict=True))
+        keys[tuple(sectors[i] for i in range(len(legs)))] = key
+    return SymmetricTensor.from_blocks(legs, {keys[s]: values[s] for s in values})
 
 
-def mpo_array() -> np.ndarray:
-    """The 5x5 Heisenberg ``W``, dense, indexed ``[wl, p_out, p_in, wr]``.
+def mpo_blocks() -> dict:
+    """The Heisenberg ``W``, one block per allowed sector tuple ``(wl, p_out, p_in, wr)``.
 
-    ``H = Sum_i (S^z_i S^z_{i+1} + (S^+_i S^-_{i+1} + S^-_i S^+_{i+1}) / 2)``, J = 1,
-    **open** boundaries. In the channel names of :data:`_START` and friends the standard
-    lower-triangular matrix reads
+    ``H = Sum_i (S^z_i S^z_{i+1} + (S^+_i S^-_{i+1} + S^-_i S^+_{i+1}) / 2)``, J = 1, open
+    boundaries. As the standard lower-triangular MPO, with ``SM``/``SP`` naming the channel
+    entered by emitting an ``S^-``/``S^+``,
 
     * ``W[START, START] = I``   -- nothing emitted yet;
     * ``W[START, SM] = S^-/2``, ``W[SM, END] = S^+``   -- the ``S^- S^+/2`` term;
@@ -259,42 +184,53 @@ def mpo_array() -> np.ndarray:
     * ``W[START, SZ] = S^z``,  ``W[SZ, END] = S^z``    -- the ``S^z S^z`` term;
     * ``W[END, END] = I``      -- the term is finished.
 
-    The left boundary vector is ``e_START`` and the right one ``e_END``; both are spelled
-    as ``D=1`` MPO bond legs in :func:`mpo`, which is what makes every ``W_n`` rank 4.
+    The symmetry is what splits that matrix into blocks rather than something checked
+    afterwards. ``I`` and ``S^z`` keep the physical charge and so live in the two blocks
+    on ``wl = wr = 0``, indexed ``[wl channel, 1, 1, wr channel]``; each ``S^±`` moves the
+    bond charge by ``-+2`` and so is a block of its own, of extent 1 on that end.
     """
-    eye, sz, sp, sm = _spin_half()
-    w = np.zeros((5, 2, 2, 5))
-    w[_START, :, :, _START] = eye
-    w[_END, :, :, _END] = eye
-    w[_START, :, :, _SM_CHANNEL] = 0.5 * sm
-    w[_SM_CHANNEL, :, :, _END] = sp
-    w[_START, :, :, _SP_CHANNEL] = 0.5 * sp
-    w[_SP_CHANNEL, :, :, _END] = sm
-    w[_START, :, :, _SZ_CHANNEL] = sz
-    w[_SZ_CHANNEL, :, :, _END] = sz
-    return w
+    return {
+        # I and S^z: the charge-0 corner of the bond, as a 3x3 channel matrix
+        (ZERO, DOWN, DOWN, ZERO): np.array(
+            [[1.0, 0.0, 0.0], [-0.5, 0.0, 0.0], [0.0, -0.5, 1.0]]
+        ).reshape(3, 1, 1, 3),
+        (ZERO, UP, UP, ZERO): np.array([[1.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.5, 1.0]]).reshape(
+            3, 1, 1, 3
+        ),
+        # S^-/2 and S^+/2 leaving the START channel
+        (ZERO, DOWN, UP, PLUS): np.array([0.0, 0.0, 0.5]).reshape(3, 1, 1, 1),
+        (ZERO, UP, DOWN, MINUS): np.array([0.0, 0.0, 0.5]).reshape(3, 1, 1, 1),
+        # S^+ and S^- arriving at the END channel
+        (PLUS, UP, DOWN, ZERO): np.array([1.0, 0.0, 0.0]).reshape(1, 1, 1, 3),
+        (MINUS, DOWN, UP, ZERO): np.array([1.0, 0.0, 0.0]).reshape(1, 1, 1, 3),
+    }
 
 
 def mpo(n_sites: int, bond: GradedSpace = MPO_BOND) -> list[SymmetricTensor]:
     """The Heisenberg MPO, one rank-4 ``SymmetricTensor`` per site.
 
-    Legs ``(wl IN, p OUT, p IN, wr OUT)``. The bulk tensor is :func:`mpo_array` on
-    ``bond`` at both ends; the first site keeps only the ``START`` row and the last only
-    the ``END`` column, each on a ``D=1`` :data:`BOUNDARY` MPO leg.
+    Legs ``(wl IN, p OUT, p IN, wr OUT)``. The bulk tensor is :func:`mpo_blocks` on
+    ``bond`` at both ends; the first site is its ``START`` row and the last its ``END``
+    column, each on a ``D=1`` :data:`BOUNDARY` MPO leg -- which is what makes every ``W_n``
+    rank 4 and removes the boundary-vector special case.
 
-    ``from_dense`` is called at its **default** (relative) ``atol``, so it *refuses* an
-    array that is not symmetric for the declared legs. ``bond`` is a parameter for
-    exactly one reason: so a test can hand it a perturbed grading and assert the refusal.
+    ``bond`` is a parameter for one reason: so a test can hand it a grading the blocks do
+    not fit and assert the refusal.
     """
-    w = mpo_array()
+    blocks = mpo_blocks()
 
-    def make(array, left, right):
-        legs = (Leg(left, IN), Leg(PHYS, OUT), Leg(PHYS, IN), Leg(right, OUT))
-        return SymmetricTensor.from_dense(array, legs)
+    def legs(left: GradedSpace, right: GradedSpace):
+        return (Leg(left, IN), Leg(PHYS, OUT), Leg(PHYS, IN), Leg(right, OUT))
 
-    first = make(w[_START : _START + 1], BOUNDARY, bond)
-    bulk = make(w, bond, bond)
-    last = make(w[:, :, :, _END : _END + 1], bond, BOUNDARY)
+    bulk = _blocks(legs(bond, bond), blocks)
+    first = _blocks(
+        legs(BOUNDARY, bond),
+        {key: blocks[key][_START : _START + 1] for key in blocks if key[0] == ZERO},
+    )
+    last = _blocks(
+        legs(bond, BOUNDARY),
+        {key: blocks[key][..., _END : _END + 1] for key in blocks if key[3] == ZERO},
+    )
     return [first, *[bulk] * (n_sites - 2), last]
 
 
@@ -372,9 +308,15 @@ def canonicalize(psi: list[SymmetricTensor]) -> list[SymmetricTensor]:
 
 
 def _ones(legs) -> SymmetricTensor:
-    """A tensor of ones on ``legs`` -- ``ctmrg.init_env``'s seed spelling."""
-    t = SymmetricTensor.zeros(tuple(legs))
-    return t.apply_blocks(lambda b: ar.do("ones_like", b))
+    """A tensor with every structurally allowed entry equal to 1.
+
+    ``TensorStructure`` already knows which blocks the grading allows and how big each one
+    is, so the seed is "fill the blocks that exist": there is no dense array here to build
+    and project.
+    """
+    structure = TensorStructure(tuple(legs))
+    blocks = {key: np.ones(structure.block_shape(key)) for key in structure.block_order}
+    return SymmetricTensor.from_blocks(legs, blocks)
 
 
 def boundary_envs(n_sites: int) -> dict[tuple[int, int], SymmetricTensor]:
@@ -466,7 +408,7 @@ def lanczos(matvec, v: SymmetricTensor, ncv: int = 3, tol: float = 1e-13):
     (``_dmrg.py``:151-152) and are not knobs this example tunes.
 
     The only tensor operations are ``tenet.add``/``subtract``, scalar multiply/divide,
-    ``tenet.norm`` and :func:`inner` -- a Krylov solver needs a vector space and nothing
+    ``tenet.norm`` and ``tenet.inner`` -- a Krylov solver needs a vector space and nothing
     else, and a ``SymmetricTensor`` is one.
 
     Simplification: **no reorthogonalization**, and neither has YASTN. At ``ncv=3`` the
@@ -483,7 +425,7 @@ def lanczos(matvec, v: SymmetricTensor, ncv: int = 3, tol: float = 1e-13):
     betas: list[float] = []
     for j in range(ncv):
         w = matvec(vecs[j])
-        alphas.append(float(inner(vecs[j], w)))
+        alphas.append(float(tenet.inner(vecs[j], w)))
         w = tenet.subtract(w, vecs[j] * alphas[j])
         if j:
             w = tenet.subtract(w, vecs[j - 1] * betas[j - 1])
@@ -557,8 +499,8 @@ def _schmidt_change(old: dict, new: dict) -> float:
     if not old:
         return float("inf")
     worst = 0.0
-    for n, current in new.items():
-        previous = old.get(n, [])
+    for n in new:
+        previous, current = old.get(n, []), new[n]
         m = max(len(previous), len(current))
         a = previous + [0.0] * (m - len(previous))
         b = current + [0.0] * (m - len(current))
