@@ -170,7 +170,7 @@ def test_mpo_is_the_heisenberg_hamiltonian_at_n8():
     order = list(range(0, 2 * n_sites, 2)) + list(range(1, 2 * n_sites, 2))
     from_mpo = acc.transpose(order).reshape(2**n_sites, 2**n_sites)
 
-    eye, sz, sp, sm = dmrg._spin_half()
+    eye, sz, sp, sm = walkthrough._spin_half()
 
     def at(op, site):
         out = np.array([[1.0]])
@@ -186,16 +186,17 @@ def test_mpo_is_the_heisenberg_hamiltonian_at_n8():
 
 
 def test_mpo_refuses_a_perturbed_grading():
-    """Move the ``+2`` sector of the MPO bond to ``-2`` and ``from_dense`` must *raise*.
+    """Move the ``+2`` sector of the MPO bond to ``-2`` and building the MPO must *raise*.
 
-    This is the proof that the grading in :data:`dmrg.MPO_BOND` is right. A passing
-    ``allclose`` on the dense reconstruction would not be: the projection onto a wrong
-    grading is still *a* tensor, just not this Hamiltonian. Same argument #104 makes for
-    the Z2 magnetization, applied to construction instead of to a symmetry claim.
+    This is the proof that the grading in :data:`dmrg.MPO_BOND` is right. The blocks
+    ``dmrg.mpo_blocks`` names are sector tuples, and on a wrong grading the ``S^-``
+    channel's block is not a block this structure has -- so the construction raises rather
+    than projecting the Hamiltonian onto some other operator. A passing ``allclose`` on a
+    dense reconstruction would not be the same statement.
     """
     perturbed = GradedSpace.new(U1, {U1Sector(0): 3, U1Sector(-2): 2})
     assert perturbed.dim == dmrg.MPO_BOND.dim
-    with pytest.raises(ValueError, match="not symmetric"):
+    with pytest.raises(KeyError):
         dmrg.mpo(6, bond=perturbed)
 
 
@@ -266,11 +267,8 @@ def test_every_contraction_in_the_toy_is_a_composition(monkeypatch):
     for a fermionic model would otherwise copy a silent sign error. ``dmrg._composed``
     routes through ``tenet.einsum`` after bending, so one wrapper sees every call.
 
-    ``dmrg.inner`` is the one exception, and it is the *library's* exception too: a
-    sesquilinear pairing is not a composition. ``adjoint`` turns every leg around, so the
-    domain wires of a rank-3 vector meet OUT-against-IN by construction, and
-    ``tenet.inner`` (``ops/contraction.py``) writes the identical einsum. Excluded by
-    frame, not by ignoring a violation.
+    ``tenet.inner`` is not in scope: a sesquilinear pairing is not a composition and the
+    library computes it in coefficient space, with no einsum to check.
     """
     real = tenet.einsum
     violations = []
@@ -383,7 +381,7 @@ def test_bond_energies_match_the_mpskit_profile(main_runs):
     """
     _, big = main_runs
     psi = network.MPS.from_tensors(big.psi)  # the toy returns a plain list of site tensors
-    _, sz, sp, sm = dmrg._spin_half()
+    _, sz, sp, sm = walkthrough._spin_half()
     h2 = np.einsum("Pp,Qq->PQpq", sz, sz)
     h2 = h2 + 0.5 * np.einsum("Pp,Qq->PQpq", sp, sm) + 0.5 * np.einsum("Pp,Qq->PQpq", sm, sp)
     legs = (
