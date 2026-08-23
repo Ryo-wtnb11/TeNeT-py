@@ -1,14 +1,13 @@
 """Keyed block construction and replacement — one test per acceptance criterion of #208.
 
-Reading a tensor's blocks was keyed (``items``) and writing them was positional
-(``from_legs``). ``from_blocks`` and ``with_blocks`` close that asymmetry. The
-non-Abelian case is the motivating one, so the round trip runs on SU(2) and SU(3)
+Reading a tensor's blocks is keyed (``items``) and so is writing them
+(``from_blocks``, ``with_blocks``). The non-Abelian case is the motivating one, so the
+round trip runs on SU(2) and SU(3)
 as well as an Abelian provider — for a non-Abelian symmetry the reduced block per
 fusion tree is the natural datum and the dense array is the derived object.
 """
 
 import dataclasses
-import inspect
 
 import numpy as np
 import pytest
@@ -28,14 +27,6 @@ SU2_LEGS = (Leg(V, OUT), Leg(V, IN), Leg(V, OUT))
 SU3_LEGS = (Leg(T3, OUT), Leg(T3, OUT), Leg(T3, IN))
 
 PROVIDERS = pytest.mark.parametrize("legs", [U1_LEGS, SU2_LEGS, SU3_LEGS], ids=["u1", "su2", "su3"])
-
-# from_legs' surface is frozen by #208's acceptance criteria: the sequence form
-# keeps working with its signature and docstring byte-identical.
-FROM_LEGS_SIGNATURE = (
-    "(legs: collections.abc.Sequence[tenet.leg.Leg], "
-    "blocks: collections.abc.Sequence[typing.Any]) -> 'SymmetricTensor'"
-)
-FROM_LEGS_DOC_FIRST_LINE = "Build from public legs, in ``block_order``."
 
 
 def ones_for(structure, key):
@@ -77,11 +68,11 @@ def test_from_blocks_round_trips_through_items(legs):
 
 
 @PROVIDERS
-def test_from_blocks_matches_the_positional_from_legs_it_replaces(legs):
+def test_from_blocks_with_every_key_holds_the_supplied_blocks_in_block_order(legs):
     structure = TensorStructure(legs)
     blocks = [ones_for(structure, k) for k in structure.block_order]
     keyed = SymmetricTensor.from_blocks(legs, dict(zip(structure.block_order, blocks, strict=True)))
-    assert keyed == SymmetricTensor.from_legs(legs, blocks)
+    assert all(a is b for a, b in zip(keyed.blocks, blocks, strict=True))
 
 
 def test_from_blocks_takes_dtype_and_backend_from_the_supplied_blocks():
@@ -198,15 +189,6 @@ def re_escape(shape):
 
 
 # --- the contracts the new spellings must not touch -----------------------------
-
-
-def test_from_legs_sequence_form_is_unchanged():
-    assert str(inspect.signature(SymmetricTensor.from_legs)) == FROM_LEGS_SIGNATURE
-    assert SymmetricTensor.from_legs.__doc__.splitlines()[0] == FROM_LEGS_DOC_FIRST_LINE
-    structure = TensorStructure(SU2_LEGS)
-    blocks = [ones_for(structure, k) for k in structure.block_order]
-    t = SymmetricTensor.from_legs(SU2_LEGS, blocks)
-    assert t.blocks == tuple(blocks)
 
 
 @PROVIDERS

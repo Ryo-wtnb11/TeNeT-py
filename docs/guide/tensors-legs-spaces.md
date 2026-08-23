@@ -124,7 +124,6 @@ entries are never materialized. The constructors:
 |---|---|
 | [random][tenet.SymmetricTensor.random] | legs and a seed — reproducible standard-normal blocks |
 | [zeros][tenet.SymmetricTensor.zeros] | legs and a dtype |
-| [from_legs][tenet.SymmetricTensor.from_legs] | every block, positionally, in `block_order` |
 | [from_blocks][tenet.SymmetricTensor.from_blocks] | a mapping from key to block; absent keys are zero |
 | [from_dense][tenet.SymmetricTensor.from_dense] | a dense carrier-basis array, projected onto the symmetric subspace |
 

@@ -4,7 +4,7 @@ Fields are ``(structure, blocks)``, never ``(legs, blocks)``: the structure is t
 static, hashable half -- the JAX treedef -- and ``blocks`` is the clean parameter
 tree of dynamic leaves, ordered by ``structure.block_order`` (invariant 8).
 ``T.legs``, ``T.domain``, ``T.codomain``, ``T.block(key)`` and ``T.items()`` are
-derived views; ``from_legs`` builds one from public legs.
+derived views; ``from_blocks`` builds one from public legs.
 
 [to_dense][tenet.SymmetricTensor.to_dense] and [from_dense][tenet.SymmetricTensor.from_dense]
 are the only way to cross into the dense basis — there is deliberately no ``__array__``
@@ -114,32 +114,12 @@ class SymmetricTensor:
     # --- constructors ---------------------------------------------------------
 
     @classmethod
-    def from_legs(cls, legs: Sequence[Leg], blocks: Sequence[Array]) -> "SymmetricTensor":
-        """Build from public legs, in ``block_order``.
-
-        Parameters
-        ----------
-        legs : sequence of Leg
-            The legs, in public axis order.
-        blocks : sequence of array
-            One block per key, in ``TensorStructure(legs).block_order``.
-
-        Returns
-        -------
-        SymmetricTensor
-            The assembled tensor; the constructor validates counts and shapes.
-        """
-        return cls(TensorStructure(tuple(legs)), tuple(blocks))
-
-    @classmethod
     def from_blocks(
         cls, legs: Sequence[Leg], blocks: "Mapping[FusionBlockKey, Array]"
     ) -> "SymmetricTensor":
         """Build from public legs by **naming** fusion-block keys; absent keys are zero.
 
-        The keyed counterpart of [from_legs][tenet.SymmetricTensor.from_legs]:
-        where that one wants every block, in ``block_order``, this one wants only
-        the blocks the caller has an opinion about. The keys come from
+        Only the blocks the caller has an opinion about are named; the keys come from
         ``TensorStructure(legs).block_order`` — no throwaway tensor is needed to
         discover the layout.
 

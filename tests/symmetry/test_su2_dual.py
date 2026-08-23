@@ -24,6 +24,11 @@ def cg_tensor(dj1: int, dj2: int, dj3: int) -> np.ndarray:
     return SU2.cgc(SU2Sector(dj1), SU2Sector(dj2), SU2Sector(dj3))[..., 0]
 
 
+def keyed(legs, blocks):
+    """Every block, keyed in ``block_order``."""
+    return dict(zip(TensorStructure(tuple(legs)).block_order, blocks, strict=True))
+
+
 def frobenius_schur(dj: int) -> int:
     return SU2.frobenius_schur(SU2Sector(dj))
 
@@ -152,7 +157,7 @@ def dualize_axis(t: SymmetricTensor, axis: int) -> SymmetricTensor:
         dataclasses.replace(leg, dual=not leg.dual) if i == axis else leg
         for i, leg in enumerate(t.legs)
     )
-    return SymmetricTensor.from_legs(legs, t.blocks)
+    return SymmetricTensor.from_blocks(legs, keyed(legs, t.blocks))
 
 
 def test_to_dense_on_a_dual_su2_leg_succeeds():
