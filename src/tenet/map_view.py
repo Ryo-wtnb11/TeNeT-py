@@ -29,11 +29,32 @@ them:
   ``to_dense`` already agree on.
 
 The ``(output tree, input tree)`` grid of a coupled sector is *complete*
-(``_block_order`` pairs the two sides' trees by cross product), so ``B_c``
-assembles by pure concatenation: no zeros, no scatter, no in-place writes, and
-therefore nothing that would refuse to trace under JAX. Blocks move only through
-``ar.do("transpose"/"reshape"/"concatenate")`` plus basic slicing; there is no
-NumPy call, no ``to_dense`` and no provider branching in this module.
+(``_block_order`` pairs the two sides' trees by cross product), so every cell of
+``B_c`` is written exactly once and none is left zero. That completeness admits
+two assemblies, and [to_matrices][tenet.to_matrices] chooses between them on the
+blocks' **backend**, never on their shapes:
+
+* On an **immutable** backend -- JAX -- ``B_c`` is built by pure concatenation:
+  no ``zeros``, no scatter, no in-place write, nothing that would refuse to
+  trace. This is the reference path and it is what defines the values.
+* On a **mutable** backend -- NumPy, PyTorch -- ``B_c`` is one ``empty`` per
+  coupled sector into which each block is copied once. The *destination* slice is
+  reshaped, never the source: splitting a 2-D slice's two axes into the block's
+  axes only subdivides strides, so it is always a view, and the assignment is one
+  strided copy per block. The concatenating path costs three passes (materialise
+  the transposed view, join the row band, join the sector), and on a
+  bandwidth-bound block geometry that is most of what a contraction costs
+  (docs/design.md "M69").
+
+The two produce bit-identical matrices -- the mutable path writes exactly the
+cells the concatenating path would place, in the same layout -- and the tests run
+them against each other on every provider. The split is over array *mutability*,
+a property of the backend resolved once per call by ``ar.infer_backend``; it is
+not a size heuristic and it never branches on a traced value.
+
+Blocks move only through ``ar.do("transpose"/"reshape"/"concatenate"/"empty")``
+plus basic slicing; there is no NumPy call, no ``to_dense`` and no *symmetry
+provider* branching in this module.
 """
 
 from collections.abc import Mapping
@@ -281,6 +302,55 @@ def _tables(
     )
 
 
+_MUTABLE = frozenset({"numpy", "torch"})
+"""Backends whose arrays accept an in-place write; every other one concatenates."""
+
+
+def _concatenated(
+    t: "SymmetricTensor",
+    layout: MapLayout,
+    bands: tuple[
+        tuple[tuple[tuple[FusionTree, int, int], ...], tuple[tuple[FusionTree, int, int], ...]],
+        ...,
+    ],
+    order: tuple[int, ...],
+    permuted: bool,
+) -> dict[Sector, Any]:
+    """Assemble by pure concatenation -- the immutable-backend path, and the reference.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to lower.
+    layout : MapLayout
+        Its layout, already looked up.
+    bands : tuple
+        The per-sector band tables from [_tables][tenet.map_view._tables].
+    order : tuple of int
+        ``layout.axes_order``.
+    permuted : bool
+        Whether ``order`` is anything but the identity.
+
+    Returns
+    -------
+    dict of Sector to array
+        One matrix per coupled sector.
+    """
+    mats: dict[Sector, Any] = {}
+    for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
+        rows = []
+        for (_, _, dr), indices in zip(rbands, cells, strict=True):
+            parts = []
+            for i, (_, _, dc) in zip(indices, cbands, strict=True):
+                block = t.blocks[i]
+                if permuted:
+                    block = ar.do("transpose", block, order)
+                parts.append(ar.do("reshape", block, (dr, dc)))
+            rows.append(parts[0] if len(parts) == 1 else ar.do("concatenate", parts, axis=1))
+        mats[c] = rows[0] if len(rows) == 1 else ar.do("concatenate", rows, axis=0)
+    return mats
+
+
 def to_matrices(t: "SymmetricTensor") -> dict[Sector, Any]:
     """``{c: B_c}``, one dense backend matrix per coupled sector. ``t`` is untouched.
 
@@ -308,21 +378,29 @@ def to_matrices(t: "SymmetricTensor") -> dict[Sector, Any]:
     (2, 2)
     """
     layout = map_layout(t.structure)
-    bands, _ = _tables(t.structure)
+    bands, shapes = _tables(t.structure)
     order = layout.axes_order
     permuted = order != tuple(range(t.ndim))
+    if not t.blocks or ar.infer_backend(t.blocks[0]) not in _MUTABLE:
+        return _concatenated(t, layout, bands, order, permuted)
+
+    ref = t.blocks[0]
+    dtype = ar.to_backend_dtype(ar.get_dtype_name(ref), like=ref)
     mats: dict[Sector, Any] = {}
     for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
-        rows = []
-        for (_, _, dr), indices in zip(rbands, cells, strict=True):
-            parts = []
-            for i, (_, _, dc) in zip(indices, cbands, strict=True):
+        out = ar.do("empty", layout.shape(c), dtype=dtype, like=ref)
+        for (_, ro, dr), indices in zip(rbands, cells, strict=True):
+            for i, (_, co, dc) in zip(indices, cbands, strict=True):
                 block = t.blocks[i]
                 if permuted:
                     block = ar.do("transpose", block, order)
-                parts.append(ar.do("reshape", block, (dr, dc)))
-            rows.append(parts[0] if len(parts) == 1 else ar.do("concatenate", parts, axis=1))
-        mats[c] = rows[0] if len(rows) == 1 else ar.do("concatenate", rows, axis=0)
+                # The *destination* is reshaped, never the source. Splitting the
+                # slice's two axes into the block's only subdivides strides, so this
+                # ``.reshape`` is a view on NumPy and on PyTorch alike (asserted with
+                # ``shares_memory`` in the tests) and the write lands in ``out``.
+                # Reshaping the source instead is the copy this path exists to avoid.
+                out[ro : ro + dr, co : co + dc].reshape(shapes[i])[...] = block
+        mats[c] = out
     return mats
 
 
