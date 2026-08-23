@@ -37,8 +37,8 @@ The shipped sites:
 
 Any other provider is refused by name. `tenet.network` never imports `tenet.models`: the
 driver layer decides nothing about what your operators mean, and this layer is a
-convenience above it. There is no lattice geometry and no `heisenberg(L)` — the set of
-standard sites is finite, and the Hamiltonian stays yours.
+convenience above it. The library ships *sites*, which are a finite set; the lattice and
+the Hamiltonian stay yours.
 
 Each entry of `ops` is rank 3: the two physical legs plus a `D=1` leg carrying the charge
 the operator emits. That third leg is what makes `S+` expressible as a term operator.

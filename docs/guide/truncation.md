@@ -38,9 +38,8 @@ Passing neither `max_bond` nor `cutoff` is refused, naming [tenet.ops.linalg.svd
 `sqrt(norm(T)**2 / Σ_kept qdim(c) sigma²)`, so that `norm(U @ S @ Vh) == norm(t)`. It is
 a bool.
 
-There is no `absorb` enum and no fourth return value: `S` is a tensor, so absorbing it is
-a one-line `compose`, and the truncation error is exactly
-`norm(t)**2 - norm(U @ S @ Vh)**2` by Pythagoras.
+`S` comes back as a tensor, so absorbing it into either factor is a one-line `compose`,
+and the truncation error is exactly `norm(t)**2 - norm(U @ S @ Vh)**2` by Pythagoras.
 
 ## Two calls
 

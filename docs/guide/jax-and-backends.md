@@ -135,8 +135,8 @@ Three things to know before you pass `ad=True`:
 - **It is process-global for the JAX backend.** The seam is
   `autoray.register_function("jax", "linalg.svd", ...)`, autoray's own extension point,
   so afterwards any `ar.do("linalg.svd", jax_array)` in the process — another library's
-  included — gets the broadened VJP. That is why it is an explicit argument rather than
-  the default.
+  included — gets the broadened VJP. Mutating another library's dispatch table is your
+  act, so you name it: `ad=True`, every time you want it.
 - **The broadened gradient is correct exactly when the objective is gauge-invariant on
   each degenerate subspace.** Within a degenerate multiplet the singular vectors are
   defined only up to a unitary, so `dU/dA` does not exist; what exists is the derivative

@@ -1,5 +1,5 @@
 # `tenet.serialize`
 
-`save`/`load` for symmetric tensors.
+`save` and `load` for symmetric tensors.
 
 ::: tenet.serialize

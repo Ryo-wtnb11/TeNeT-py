@@ -66,10 +66,9 @@ True
 
 ```
 
-It goes through `tenet.save` per site, which is what keeps the gauge verification on the
-path: a serializer that bypassed it would be the one place gauge-mismatched coefficients
-could enter silently. A directory rather than a zip of `.npz` files because `np.load`
-refuses nesting.
+It goes through `tenet.save` per site, which keeps the gauge verification on the path for
+every tensor in the chain. The container is a directory because `np.load` reads a flat
+`.npz` and does not descend into a nested one.
 
 `MPS.save` raises `FileExistsError` if the directory exists and is not empty, **before
 anything is written**. Sites load as NumPy; restore a device with `.to_backend("jax")`

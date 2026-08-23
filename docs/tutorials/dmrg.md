@@ -62,7 +62,8 @@ psi = MPS.product(PHYS, [U1Sector(1 if n % 2 else -1) for n in range(n_sites)])
 A Néel product state: one physical sector per site, and the bonds derived backwards from
 those charges. Both boundary legs then carry the unit sector with degeneracy 1, and
 invariance of every site tensor forces `Σ_i 2 S^z_i = 0` — the sector an even chain's
-ground state lives in. There is no penalty term, no projector and no `project=` argument.
+ground state lives in. The sector is held structurally, by the seed's charges and the
+tensors' invariance, for the whole run.
 
 The general recipe: a `D=1` boundary leg carrying `U1Sector(q)` targets `S^z_tot = q/2`.
 

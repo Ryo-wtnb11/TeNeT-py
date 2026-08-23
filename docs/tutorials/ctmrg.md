@@ -34,7 +34,7 @@ building the bra by conjugation.
 An [`Absorb`][tenet.network.Absorb] is the *definition* of a model's absorption:
 `corner(c, e)` builds the enlarged corner and `edge(e, p)` absorbs one edge onto a
 projector's new bond. [`move`][tenet.network.move] is the step;
-[`ctmrg`][tenet.network.ctmrg] is the loop, sweeping until the corner spectrum stops
+`ctmrg` is the loop, sweeping until the corner spectrum stops
 moving.
 
 [`CTMRG_out`][tenet.network.CTMRG_out] carries `sweeps`, `max_dsv`, `converged`, `history`
@@ -70,7 +70,7 @@ Because that doubling is *cross*-sector, and the broadened SVD rule in `tenet.ad
 
 ## The differentiable form
 
-[`ctmrg`][tenet.network.ctmrg] runs outside `jit` and `grad` and cannot be otherwise: it
+`ctmrg` runs outside `jit` and `grad` and cannot be otherwise: it
 loops on a measured spectrum change and re-decides the environment bond each sweep.
 [`ctmrg_unrolled`][tenet.network.ctmrg_unrolled] is the traceable form — exactly `k`
 fixed-structure moves on a bond you decided outside:
@@ -95,9 +95,9 @@ That is the same decide-outside / project-inside pairing as
 `svd(..., bond=)` reuses it in there. `move(..., bond=B)` is shape-static for the same
 reason; `move(..., chi=...)` is not.
 
-`ctmrg_unrolled` deliberately does not take a `CTMEnv`: a `NamedTuple` is a registered
-pytree, and `bond` is a `GradedSpace` — frozen, hashable, array-free metadata, a `jit`
-cache key rather than a leaf.
+`ctmrg_unrolled` takes `c`, `e` and `bond` as three arguments. `bond` is a `GradedSpace`
+— frozen, hashable, array-free metadata — and it enters `jit` as a cache key, which is
+what keeps it out of the flattened leaves.
 
 [`normalized`][tenet.network.normalized], [`ring`][tenet.network.ring],
 [`layers`][tenet.network.layers], [`single_layer`][tenet.network.single_layer] and

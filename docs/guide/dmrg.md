@@ -65,7 +65,7 @@ is printable:
 ```
 
 The general recipe is a `D=1` boundary leg carrying `U1Sector(q)`, targeting
-`S^z_tot = q/2`. No projector and no penalty term is involved. `MPS.product` is
+`S^z_tot = q/2`; the boundary charge and the tensors' invariance hold it. `MPS.product` is
 Abelian-only: a single sector is not a non-Abelian multiplet, so under SU(2) the route is
 [`MPS.random`][tenet.network.MPS.random] with a charged boundary leg.
 
@@ -324,13 +324,13 @@ slower end to end than the plain NumPy one; and `Env` rebuilds its prepared oper
 every bond visit and so invokes `compile` again each time, one XLA trace per bond per
 sweep.
 
-## What `dmrg_` does not do
+## The sweep's fixed choices
 
-- **Two-site updates only.** The extrapolation recipe above needs them.
-- **The two mixers above.** A different mixer is a different split.
-- **Hand-written pairwise contraction orders** inside the sweep, rather than a path
-  chosen from physical leg sizes: a U(1) MPS bond with unevenly filled sectors is
-  exactly where that cost estimate is wrong.
+Every sweep is a **two-site** update, which is what the extrapolation recipe above
+consumes. The split is `svd_truncated`, or `eigh` of a density matrix under perturbative
+noise, per the table above. The contractions inside the sweep run in hand-written pairwise
+orders, which is what keeps them right on a U(1) bond with unevenly filled sectors, where
+a cost model reading physical leg sizes misprices the network.
 
 ## Where next
 
