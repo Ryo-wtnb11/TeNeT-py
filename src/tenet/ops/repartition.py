@@ -1,7 +1,7 @@
-"""Line bending — ``T.repartition(outputs=..., inputs=...)`` — Milestone 3.
+"""Line bending — ``T.repartition(outputs=..., inputs=...)``.
 
 Moving a leg between domain and codomain is a categorical **bend**, not a
-Boolean flip of ``side`` (docs/design.md "Repartitioning is different from viewing").
+Boolean flip of ``side``.
 Two structural facts outlive whatever coefficients a provider supplies, and both
 are fixed here:
 
@@ -10,7 +10,7 @@ are fixed here:
   changes is ``Leg.fused_sector``, which now returns the dualized label the new
   tree needs (a U(1) charge ``q`` arrives on the other side as ``-q``). A model
   that identified IN with ``dual`` could not express this at all — invariant 2
-  doing real work. Since #142 that sentence names two separate operations:
+  doing real work. Two separate operations sit behind that sentence:
   [flip_dual][tenet.flip_dual] toggles ``dual`` alone (relabelling the space and paying the
   Z-isomorphism's scalar), while a bend is the operation that moves ``side``.
 * **Our two trees are independent, both in ascending public-axis order.**
@@ -25,7 +25,7 @@ are fixed here:
 
 [bend][tenet.bend] is the only new mathematics, and it is deliberately minimal: it
 bends the **last leg of its own side** and nothing else. Everything else is
-reached by ``transpose`` (#21), so all reordering refusals come from that
+reached by ``transpose``, so all reordering refusals come from that
 already-tested capability gate:
 
 ```text
@@ -36,7 +36,7 @@ transpose  deliver (*outputs, *inputs)
 
 The coefficient is ``sqrt(dim(c)/dim(a)) · B(a,b,c)`` times a Frobenius-Schur
 phase, and for Trivial and U(1) it is provably exactly ``1``; SU(2) computes it
-from its B-symbols (#38). A provider that supplies none of that does not
+from its B-symbols. A provider that supplies none of that does not
 implement ``BendingCoefficients`` and is refused loudly rather than handed a
 plausible tensor with the wrong norm.
 
@@ -123,7 +123,7 @@ def bend_plan(structure: TensorStructure, axis: int) -> BendPlan:
 
     The **body** is cached one level down, on ``_pattern(structure)``: block indices and
     bending coefficients read no degeneracy, so structures that differ only in degeneracy
-    share one plan and this entry holds nothing but ``new_structure`` (#248).
+    share one plan and this entry holds nothing but ``new_structure``.
     """
     plan = _pattern_bend_plan(_pattern(structure), axis)
     legs = _bent_legs(structure, axis)
@@ -323,13 +323,13 @@ def repartition_plan(
 ) -> RepartitionPlan:
     """Plan the whole ``repartition``. Cached: repeat calls return one object.
 
-    The **body** is cached one level down, on ``_pattern(structure)`` (#248): the composed
+    The **body** is cached one level down, on ``_pattern(structure)``: the composed
     permutation and the composed block map are functions of the legs' sectors, sides and
     duals alone, and this entry holds only ``new_structure`` — ``structure``'s own legs in
     the requested order, with ``side`` and ``dual`` flipped on each leg that crossed.
     Without that split a growing U(1) bond rebuilds the whole transpose-bend-transpose
-    chain at every bond whose degeneracies moved, which is where M65 found the first
-    sweeps of an `N = 64` chain going.
+    chain at every bond whose degeneracies moved, which dominates the early sweeps of a
+    long chain.
     """
     plan = _pattern_repartition_plan(_pattern(structure), outputs, inputs)
     want = {ax: OUT for ax in outputs} | {ax: IN for ax in inputs}
@@ -345,9 +345,8 @@ def _pattern_repartition_plan(
 ) -> RepartitionPlan:
     """[repartition_plan][tenet.repartition_plan]'s body, on a degeneracy-free structure.
 
-    Walks exactly the chain [repartition][tenet.SymmetricTensor.repartition] used to
-    execute — transpose the
-    crossing leg to the end, bend it, and one final transpose — but over
+    Walks exactly the chain [repartition][tenet.SymmetricTensor.repartition] executes --
+    transpose the crossing leg to the end, bend it, and one final transpose -- but over
     structures instead of tensors, composing the sparse block maps and the
     permutations as it goes. ``bend``'s own permutation is the identity here (the
     leg has just been transposed to the end), so only the transposes' axes
@@ -522,17 +521,16 @@ def apply_plan(
 
     Notes
     -----
-    One transpose per *distinct source*, not per term (#123): ``perm`` is per-plan and
-    only the coefficient is per-term, so every term sharing a source used to recompute
-    a byte-identical array — 2.87 terms per source at SU(2) ``chi=6`` against exactly
-    1.00 at U(1), the multi-term expansion being what a non-Abelian provider's
-    coefficients produce and an Abelian one never does. #74's batched alternative
-    (stack a shape bucket, transpose once, slice back out) was prototyped and measured
-    slower on every axis — see #123 for the table and the refusal.
+    One transpose per *distinct source*, not per term: ``perm`` is per-plan and only the
+    coefficient is per-term, so terms sharing a source would otherwise recompute a
+    byte-identical array — 2.87 terms per source at SU(2) ``chi=6`` against exactly 1.00
+    at U(1), the multi-term expansion being what a non-Abelian provider's coefficients
+    produce and an Abelian one never does. Batching instead (stack a shape bucket,
+    transpose once, slice back out) is slower on every axis.
 
     A term with coefficient 1 leaves its transposed **view** in place and moves no
     element at all; the first consumer that needs contiguity pays for it, which on the
-    contraction path is the sector-matrix assembly (docs/design.md "M69", "M70").
+    contraction path is the sector-matrix assembly.
     """
     from tenet.tensor import SymmetricTensor
 
@@ -665,8 +663,8 @@ def flip_dual(
     operation TensorKit spells ``flip``. The name is qualified here and not there
     because Python has ``numpy.flip``, which reverses element order along an axis
     of the *tensor* while this toggles a flag on a *leg* -- a different operand and
-    a different operation under one name, reachable through autoray's module lookup
-    (#185). YASTN, the Python API reference, qualifies the same operation the same
+    a different operation under one name, reachable through autoray's module lookup.
+    YASTN, the Python API reference, qualifies the same operation the same
     way (``flip_signature`` / ``flip_charges``); ``dual`` is this package's noun for
     the flag. ``side`` and ``name`` are unchanged:
     moving a leg between domain and codomain stays

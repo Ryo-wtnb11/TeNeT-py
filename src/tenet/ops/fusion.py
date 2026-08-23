@@ -1,4 +1,4 @@
-"""Explicit leg fusion and its inverse — the primitive docs/design.md puts in place of ``reshape``.
+"""Explicit leg fusion and its inverse — this package's primitive in place of ``reshape``.
 
 The whole operation rests on one observation: a left-associated fusion tree
 ``uncoupled = (u_0, u_1, u_2, ...)`` *already contains* the map that fuses its
@@ -7,7 +7,7 @@ tree ``uncoupled = (e_1, u_2, ...)`` with coefficient exactly ``1``, for any
 provider, multiplicity included. So there is one code path, uniform across
 Trivial / U(1) / SU(2), it is exact, and it never touches a Clebsch-Gordan
 array. What is *not* reachable this way is fusing a group that is not a prefix
-of its side's order — that needs an F-move (Milestone 4).
+of its side's order — that needs an F-move, which is not implemented.
 
 Conventions fixed here once and depended on downstream:
 
@@ -342,7 +342,7 @@ def fuse(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
         If an axis is not an ``int``.
     NotImplementedError
         If the axes are not a prefix of their side's order; fusing a
-        non-prefix group needs an F-move, which is Milestone 4.
+        non-prefix group needs an F-move, which is not implemented.
 
     Examples
     --------
@@ -395,7 +395,7 @@ def unfuse(t: "SymmetricTensor", axis: int, legs: Sequence[Leg]) -> "SymmetricTe
         ``t.legs[axis]`` (a ``dual`` or space mismatch, named in the message).
     NotImplementedError
         If ``axis`` is not the first axis of its side; splitting a
-        non-leading leg needs an F-move, which is Milestone 4.
+        non-leading leg needs an F-move, which is not implemented.
 
     Examples
     --------

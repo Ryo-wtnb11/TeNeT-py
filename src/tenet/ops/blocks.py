@@ -1,19 +1,19 @@
-"""Elementwise maps over the reduced blocks — issue #93.
+"""Elementwise maps over the reduced blocks.
 
 **Coefficient space, not dense space.** This is the one module in ``ops`` that is
 *non-linear* in the blocks, and non-linearity is exactly what does not commute
 with dense expansion: ``T = Σ_τ A^(τ) ⊗ C^(τ)`` is a sum of tensor products, so
 ``apply_blocks(t, f).to_dense()`` and ``f(t.to_dense())`` are two different
-operations whenever the Clebsch-Gordan factor is not all-ones. Measured on a
-rank-3 tensor with positive blocks: the two agree to ``0.0`` for U(1), and differ
-by ``1.673`` on a dense scale of ``3.82`` for SU(2).
+operations whenever the Clebsch-Gordan factor is not all-ones. On a rank-3 tensor
+with positive blocks the two agree exactly for U(1) and differ by ``1.673`` on a
+dense scale of ``3.82`` for SU(2).
 
-That measurement is why nothing here is registered in ``array/dispatch.py``:
+That difference is why nothing here is registered in ``array/dispatch.py``:
 ``ar.do("sqrt", t)`` must keep raising, because autoray's ``"sqrt"`` means the
 dense elementwise one and this is not it.
 
-It is also why the functions are ``block_sqrt`` / ``block_power`` since #185
-rather than YASTN's and symmray's bare ``sqrt``. Those two are Abelian (and
+It is also why the functions are ``block_sqrt`` / ``block_power`` rather than
+YASTN's and symmray's bare ``sqrt``. Those two are Abelian (and
 fermionic-Abelian), where a blockwise map and a dense elementwise map are the
 same numbers in a different order, so one name serves both; the ``1.673`` above
 is the non-Abelian case where it stops serving. The precedent is ``reshape``:
@@ -82,8 +82,8 @@ def apply_blocks(t: "SymmetricTensor", fn: Callable[[Array], Array]) -> "Symmetr
 
     What it does **not** do is commute with dense expansion. ``T = Σ_τ A^(τ) ⊗
     C^(τ)``, so for a non-Abelian provider ``apply_blocks(t, f).to_dense() !=
-    f(t.to_dense())`` — measured off by ``1.673`` on a dense scale of ``3.82`` for
-    a rank-3 SU(2) tensor with ``f = sqrt``. For every shipped Abelian provider
+    f(t.to_dense())`` — off by ``1.673`` on a dense scale of ``3.82`` for a rank-3
+    SU(2) tensor with ``f = sqrt``. For every shipped Abelian provider
     (all-ones CG, ``d_a == 1``) they agree exactly. If you want dense-elementwise
     semantics, densify explicitly.
     """

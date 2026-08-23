@@ -1,8 +1,8 @@
-"""Symmetry restriction — ``to_symmetry`` (issue #92).
+"""Symmetry restriction — ``to_symmetry``.
 
 The module keeps its ``cast.py`` file name on purpose: a submodule named after
 the public function is what makes griffe resolve ``tenet.to_symmetry`` to the
-module and drop the function from the API page (#173).
+module and drop the function from the API page.
 
 Let a tensor forget part of its symmetry: ``to_symmetry(t, U1)`` takes an SU(2)-symmetric
 tensor and returns the U(1)-symmetric tensor describing the same physical object,

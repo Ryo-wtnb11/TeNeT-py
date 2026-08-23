@@ -1,7 +1,7 @@
-"""Graded-space plumbing: ``embed`` (#83), ``restrict`` (#90), ``direct_sum`` (#91).
+"""Graded-space plumbing: ``embed``, ``restrict`` and ``direct_sum``.
 
-The *growing* direction of a bond. ``svd_truncated`` (#64) shrinks a graded bond
-space by deciding it from data and ``svd(..., bond=B)`` (#77) holds one fixed;
+The *growing* direction of a bond. ``svd_truncated`` shrinks a graded bond space
+by deciding it from data and ``svd(..., bond=B)`` holds one fixed;
 ``embed`` is the only way to make one bigger, or to give a tensor a sector it did
 not have. ``restrict`` is its adjoint — the slice back down to a contained space,
 refusing rather than silently discarding whatever leaves the target — and
@@ -21,10 +21,10 @@ whenever ``d_a > 1`` the embedded data is strided in the dense array and every
 later sector's slab offset moves as well.
 
 ``embed`` changes the ``TensorStructure``, but it is **traceable**, and calling
-it structure-changing would be a category error. What #64's
+it structure-changing would be a category error. What
 ``StructureChangingError`` refuses is a structure decided *from block values*;
 here the target comes from ``legs``, which is static metadata the caller chose —
-the same argument #77 makes for ``bond=``. So it composes inside ``jit`` (which
+the same argument that makes ``bond=`` traceable. So it composes inside ``jit`` (which
 retraces when ``legs`` changes, not when block values do) and inside ``grad``
 (``pad`` is linear, and its adjoint is the slice back down, which every backend
 derives on its own).
@@ -125,14 +125,14 @@ def _check_containment(small: TensorStructure, large: TensorStructure, *, op: st
 
 
 def _pad(x: Any, pad_width: tuple[tuple[int, int], ...]) -> Any:
-    """``ar.do("pad", x, pad_width)``, spelled so every backend agrees (#95).
+    """``ar.do("pad", x, pad_width)``, spelled so every backend agrees.
 
     autoray 0.10.1's torch translation is
     ``tuple(chain.from_iterable(pad_width))[::-1]``, which reverses each
     ``(before, after)`` pair as well as the axis order that torch wants — so a
     ``((0, 1), (0, 2))`` pad lands the data in the *trailing* slots instead of the
-    leading ones. Right shape, wrong slots, no error: measured on autoray 0.10.1
-    with torch 2.13.0. Concatenation against a zero slab needs no translation and
+    leading ones — right shape, wrong slots, no error, on autoray 0.10.1 with
+    torch 2.13.0. Concatenation against a zero slab needs no translation and
     is the same values on every backend, so it replaces ``pad`` here rather than a
     backend test being written around it.
     """
@@ -272,20 +272,20 @@ def restrict(
     -----
     Placement is the same **prefix in the degeneracy index** ``embed`` uses, so
     the two agree about which slots are the "old" ones, and so does a subsequent
-    ``svd(..., bond=B)`` (#77).
+    ``svd(..., bond=B)``.
 
     Data outside the kept slots is **refused**, not discarded: the residual
     ``sqrt(‖t‖² - ‖restrict(t)‖²)`` — exact by Pythagoras, since kept and dropped
     occupy disjoint slots under the same ``qdim`` weight — is compared against
     ``atol``, which defaults to ``sqrt(eps(dtype)) * ‖t‖``, the relative spelling
-    ``from_dense`` uses (#82) for the same units reason.
+    ``from_dense`` uses for the same units reason.
     [``atol=tenet.PROJECT``][tenet.PROJECT] projects without checking, and that is
     the form that goes inside ``jit``; the comparison is a concrete-value question
     and raises JAX's own ``ConcretizationTypeError`` under a trace otherwise.
 
     This is *not* a truncation. The target comes from ``legs``, static metadata
     the caller chose, so ``restrict`` is shape-static and traceable and sits with
-    ``embed`` and ``svd(..., bond=)`` on the traceable side of #64's
+    ``embed`` and ``svd(..., bond=)`` on the traceable side of
     ``StructureChangingError``. A target decided *from the block values* ("drop
     whatever falls below 1e-8") is
     [tenet.linalg.svd_truncated][tenet.ops.linalg.svd_truncated]'s job.

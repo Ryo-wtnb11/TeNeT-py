@@ -1,4 +1,4 @@
-"""Morphism composition ``a ∘ b``, ``identity`` and the adjoint ``T†`` — Milestone 3.
+"""Morphism composition ``a ∘ b``, ``identity`` and the adjoint ``T†``.
 
 Composition is one ``matmul`` per coupled sector and nothing else. Nothing
 recouples: ``a``'s domain and ``b``'s codomain are the *same ordered legs*, so
@@ -11,20 +11,20 @@ concrete payoff of keeping the coupled-sector matrix representation.
 Compatibility is ``(space, dual, order)``, exactly, never dimension: comparing
 only sizes would let a charge-reversed U(1) partner through and silently produce
 a non-equivariant result. Order cannot be waived either — matching "up to a
-reordering" would need a within-side transpose, which is a braid (#21).
+reordering" would need a within-side transpose, which is a braid.
 
 [adjoint][tenet.adjoint] is the dagger, and it is one of four operations that are easy to
-confuse and are deliberately kept apart (invariant 2, docs/design.md "Conjugation,
-duality, and adjoint are distinct"):
+confuse and are deliberately kept apart (invariant 2: conjugation, duality and the
+adjoint are distinct):
 
-======================  ==========  ==========  =======================  ==============
-operation               ``side``    ``dual``    blocks                   coefficients
-======================  ==========  ==========  =======================  ==============
-``conj`` (#20)          unchanged   unchanged   conjugated               none
-``leg.dualized`` (#6)   unchanged   flipped     Z-isomorphism (M4)       FS signs
-``repartition`` (#32)   some flip   same flip   bent                     B-symbols
-``adjoint`` (#31)       all flip    unchanged   conjugated, key-swapped  none
-======================  ==========  ==========  =======================  ==============
+=================  ==========  ==========  =======================  ==============
+operation          ``side``    ``dual``    blocks                   coefficients
+=================  ==========  ==========  =======================  ==============
+``conj``           unchanged   unchanged   conjugated               none
+``leg.dualized``   unchanged   flipped     Z-isomorphism            FS signs
+``repartition``    some flip   same flip   bent                     B-symbols
+``adjoint``        all flip    unchanged   conjugated, key-swapped  none
+=================  ==========  ==========  =======================  ==============
 
 ``adjoint`` needs no bending coefficient precisely because it flips *every* side
 at once: ``⊕_c B_c ⊗ id_c`` is simply re-read as ``⊕_c B_c† ⊗ id_c``, so trees,
@@ -37,7 +37,7 @@ No ``to_dense`` here and no provider branching. NumPy appears as
 [identity][tenet.identity]'s default dtype and as
 [random_isometry][tenet.random_isometry]'s draw — a
 constructor runs at setup time, outside any trace, and ``to_backend`` is the
-documented route onto a device (#9's convention, unchanged).
+documented route onto a device.
 """
 
 from collections.abc import Mapping, Sequence
@@ -142,9 +142,9 @@ def compose(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
     Notes
     -----
     For a long chain at a *fixed* partition in eager NumPy, the matrix form can
-    be kept between steps by hand (measured ~1.1x asymptotically; a persisted
-    layout in the library was evaluated and rejected — zero cache-hit rate in
-    real ``tensordot`` chains, and ``from_matrices`` is already zero-copy)::
+    be kept between steps by hand -- worth about 1.1x asymptotically, and the reason
+    the library does not persist the layout itself is that real ``tensordot`` chains
+    never hit such a cache and ``from_matrices`` is already zero-copy::
 
         acc = to_matrices(ts[0])
         for t in ts[1:]:
@@ -185,7 +185,7 @@ def compose_lowered(
     -----
     Split out of [compose][tenet.compose] so that ``ops.contraction`` can hand it
     matrices assembled straight from the *unrepartitioned* operands
-    ([lower_plan][tenet.map_view.lower_plan], docs/design.md "M70"); the matmul and
+    ([lower_plan][tenet.map_view.lower_plan]); the matmul and
     the missing-sector rule are the ones ``compose`` always applied.
     """
     layout = map_layout(structure)
@@ -242,7 +242,7 @@ def identity(
     -----
     ``space``, ``dual`` and ``name`` are kept and only ``side`` is set, so that
     ``identity(t.codomain) @ t == t``. Dualizing the mirror would build a cup, a
-    different morphism (#32).
+    different morphism.
 
     ``B_c = eye`` for every coupled sector, and nothing else — which is also the
     sharpest test of ``MapLayout``: this is the identity morphism only because the
@@ -252,8 +252,8 @@ def identity(
     ``like`` is anything ``ar.do`` accepts — a backend name or a reference array —
     and defaults to today's ``"numpy"``: ``identity(legs)`` has no tensor to infer
     a backend from, so a caller that *does* have one (``ops/contraction.py::trace``)
-    passes it. Before #95 this was hard-coded, which made ``trace`` on a torch
-    tensor contract torch blocks against NumPy ones.
+    passes it; hard-coding it would make ``trace`` on a torch tensor contract torch
+    blocks against NumPy ones.
     """
     legs = tuple(legs)
     structure = TensorStructure(
@@ -608,7 +608,7 @@ def map_diagonal(m: "SymmetricTensor") -> "SymmetricTensor":
     trees*, not by a tuple of external sectors, and this reads the labels: for
     SU(2) at external tuple ``(1, ½, ½, 1)`` two inner lines share one sector
     tuple and are two distinct blocks with unrelated diagonal entries. What cannot
-    be done — measured in issue #230 — is to *manufacture* the diagonal by
+    be done is to *manufacture* the diagonal by
     contracting per-leg diagonals of the operator's factors, which is a per-leg
     reading of that relational basis and loses both the inner line and the
     graded braiding sign. Given the map itself, both are already in its blocks.
