@@ -459,8 +459,8 @@ def move(
     by a diagonal of signs.
 
     Simplification: one isometry for a bilinear corner whose ``u`` and ``v`` coincide only
-    when it is positive. Fixing the indefinite case wants ``eigh(t, bond=)`` -- #77's
-    explicit non-goal -- or four directional moves.
+    when it is positive. Fixing the indefinite case wants a fixed-bond ``eigh`` -- which the
+    library does not offer -- or four directional moves.
     """
     big_c = absorb.corner(c, e)
     n = big_c.ndim // 2  # (0..n-1 | n..2n-1): 2 for a single layer, 3 for a double one
@@ -620,7 +620,7 @@ def _halves(r, ket, bra, phys1: str = "", phys2: str = ""):
     sizes -- which for an unevenly filled graded tensor it picks badly and unpredictably:
     the same network measured 0.7 s and 3.6 s for two SU(2) environments differing only in
     how ``chi`` split across sectors. Upgrade path: a path planner that costs a graded
-    network by its *blocks*, which is M9.
+    network by its *blocks*.
     """
     cc, ca, ec, ea = r
     k1, b1 = (phys1[1], phys1[0]) if phys1 else ("s", "s")
