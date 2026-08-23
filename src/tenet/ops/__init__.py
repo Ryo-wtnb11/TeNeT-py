@@ -16,7 +16,7 @@ from tenet.ops.basic import (
 )
 from tenet.ops.blocks import apply_blocks, block_power, block_sqrt, zip_blocks
 from tenet.ops.cast import to_symmetry
-from tenet.ops.contraction import einsum, full_trace, inner, tensordot, trace
+from tenet.ops.contraction import einsum, einsum_chain, full_trace, inner, tensordot, trace
 from tenet.ops.dense import PROJECT
 from tenet.ops.embed import direct_sum, embed, restrict
 from tenet.ops.fusion import fuse, unfuse
@@ -45,6 +45,7 @@ __all__ = [
     "direct_sum",
     "divide",
     "einsum",
+    "einsum_chain",
     "embed",
     "flip_dual",
     "full_trace",

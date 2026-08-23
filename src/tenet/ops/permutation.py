@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
+from tenet.map_view import scaled
 from tenet.structure import FusionBlockKey, TensorStructure, _pattern
 from tenet.symmetry.base import (
     BraidingData,
@@ -260,7 +261,7 @@ def transpose(t: "SymmetricTensor", axes: Sequence[int] | None = None) -> "Symme
         contrib = moved[src]
         if coeff != 1:
             # keep a real coefficient real, so a real tensor stays real
-            contrib = contrib * (coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)
+            contrib = scaled(contrib, coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)
         blocks[dst] = contrib if dst not in blocks else blocks[dst] + contrib
 
     n = plan.new_structure.num_blocks

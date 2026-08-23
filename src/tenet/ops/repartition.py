@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 
 from tenet.leg import IN, OUT, Leg, Side
+from tenet.map_view import scaled
 from tenet.ops.permutation import permutation_plan
 from tenet.space import GradedSpace
 from tenet.structure import TensorStructure, _pattern
@@ -236,7 +237,7 @@ def bend(t: "SymmetricTensor", axis: int) -> "SymmetricTensor":
         contrib = moved[src]
         if coeff != 1:
             # keep a real coefficient real, so a real tensor stays real
-            contrib = contrib * (coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)
+            contrib = scaled(contrib, coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)
         blocks[dst] = contrib if dst not in blocks else blocks[dst] + contrib
 
     n = plan.new_structure.num_blocks
@@ -385,6 +386,43 @@ def _pattern_repartition_plan(
     )
 
 
+def sides_plan(
+    structure: TensorStructure, outputs: tuple[int, ...], inputs: tuple[int, ...]
+) -> tuple[TensorStructure, tuple[int, ...], tuple[tuple[int, int, complex], ...]]:
+    """The plan ``repartition(t, outputs, inputs)`` applies, as ``(structure, perm, terms)``.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure the plan reads.
+    outputs, inputs : tuple of int
+        The public axes that end up OUT and IN; together a permutation of the axes.
+
+    Returns
+    -------
+    new_structure : TensorStructure
+        The repartitioned structure.
+    perm : tuple of int
+        The one per-block axis permutation.
+    terms : tuple of (int, int, complex)
+        ``(source block, target block, coefficient)``.
+
+    Notes
+    -----
+    A repartition that moves no leg across sides is a plain transpose, and its plan is
+    the plain permutation plan; asking ``repartition_plan`` for it would build the same
+    thing through the bend chain's composition. Callers that want the *plan* rather than
+    the tensor -- the operand lowering, the factorizations' ``_lower`` -- share this one
+    branch instead of repeating it.
+    """
+    want = {ax: OUT for ax in outputs} | {ax: IN for ax in inputs}
+    if any(structure.legs[ax].side is not want[ax] for ax in range(len(structure.legs))):
+        plan = repartition_plan(structure, outputs, inputs)
+        return plan.new_structure, plan.perm, plan.terms
+    step = permutation_plan(structure, (*outputs, *inputs))
+    return step.new_structure, step.axes, step.terms
+
+
 def repartition(
     t: "SymmetricTensor", outputs: Sequence[int], inputs: Sequence[int]
 ) -> "SymmetricTensor":
@@ -505,7 +543,7 @@ def apply_plan(
         contrib = moved[src]
         if coeff != 1:
             # keep a real coefficient real, so a real tensor stays real
-            contrib = contrib * (coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)
+            contrib = scaled(contrib, coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)
         blocks[dst] = contrib if dst not in blocks else blocks[dst] + contrib
 
     n = structure.num_blocks

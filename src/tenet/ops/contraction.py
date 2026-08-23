@@ -68,7 +68,7 @@ from tenet.ops.basic import _check_same_structure
 from tenet.ops.map import compose_lowered, identity
 from tenet.ops.permutation import permutation_plan, transpose
 from tenet.ops.repartition import _compose as compose_terms
-from tenet.ops.repartition import apply_plan, repartition, repartition_plan
+from tenet.ops.repartition import apply_plan, repartition, repartition_plan, sides_plan
 from tenet.structure import TensorStructure
 from tenet.symmetry.base import (
     BendingCoefficients,
@@ -86,6 +86,7 @@ __all__ = [
     "contractible",
     "contraction_plan",
     "einsum",
+    "einsum_chain",
     "full_trace",
     "inner",
     "outward_dual",
@@ -403,17 +404,234 @@ def _tensordot(
     is the same rewriting one level up, not a new rule. The terms and their coefficients
     are unchanged; only the number of passes over them is.
     """
+    return _contracted(a, b, axes, after).realized("tensordot")
+
+
+@dataclass(frozen=True, slots=True)
+class _Pending:
+    """A tensor and a plan that has not been applied to it yet -- the chain's carrier.
+
+    ``structure`` is what the tensor *will* have once ``(perm, terms)`` is applied;
+    ``source`` still holds the blocks the plan reads. Nothing is moved until a lowering
+    composes onto it or [realized][tenet.ops.contraction._Pending.realized] is asked
+    for the tensor.
+    """
+
+    source: "SymmetricTensor"
+    structure: TensorStructure
+    perm: tuple[int, ...]
+    terms: tuple[tuple[int, int, complex], ...]
+
+    @property
+    def legs(self) -> tuple[Leg, ...]:
+        """The legs the plan's result carries."""
+        return self.structure.legs
+
+    @property
+    def ndim(self) -> int:
+        """The rank the plan's result carries."""
+        return len(self.structure.legs)
+
+    def then(
+        self,
+        structure: TensorStructure,
+        perm: tuple[int, ...],
+        terms: tuple[tuple[int, int, complex], ...],
+    ) -> "_Pending":
+        """This plan followed by ``(perm, terms)``, composed into one plan."""
+        return _Pending(
+            self.source,
+            structure,
+            tuple(self.perm[i] for i in perm),
+            compose_terms(self.terms, terms),
+        )
+
+    def realized(self, caller: str) -> "SymmetricTensor":
+        """Apply the plan and hand back the tensor."""
+        return apply_plan(self.source, self.structure, self.perm, self.terms, caller)
+
+
+Operand = Any
+"""A chain step's operand: a ``SymmetricTensor`` or a ``_Pending`` standing for one."""
+
+
+def _ref(x: Operand) -> Any:
+    """A block to take a backend and a dtype from."""
+    return x.source.blocks[0] if isinstance(x, _Pending) else x.blocks[0]
+
+
+def _lower_operand(
+    x: Operand, outputs: tuple[int, ...], inputs: tuple[int, ...]
+) -> tuple[TensorStructure, Mapping[Any, Any]]:
+    """``_lowered`` for an operand that may still be carrying an unapplied plan.
+
+    Parameters
+    ----------
+    x : SymmetricTensor or _Pending
+        The operand.
+    outputs, inputs : tuple of int
+        The repartition the contraction needs, in ``x``'s public numbering.
+
+    Returns
+    -------
+    structure : TensorStructure
+        The lowered operand's structure.
+    mats : Mapping
+        Its coupled-sector matrices.
+
+    Notes
+    -----
+    The whole point of the chain: a ``_Pending``'s plan and this lowering compose into
+    **one** matrix-to-matrix plan, so the tensor between two lowerings is never written.
+    Where ``lower_plan`` declines -- an immutable backend -- the pending plan is applied
+    and the ordinary route taken, which is the same values by a longer road.
+    """
+    if isinstance(x, _Pending):
+        fused = x.then(*sides_plan(x.structure, outputs, inputs))
+        mats = lower_plan(fused.source, fused.structure, fused.perm, fused.terms)
+        if mats is not None:
+            return fused.structure, mats
+        x = x.realized("einsum_chain")
+    return _lowered(x, outputs, inputs)
+
+
+def _contracted(
+    a: Operand, b: Operand, axes: tuple[tuple[int, ...], ...], after: tuple[tuple[int, ...], ...]
+) -> _Pending:
+    """``_tensordot``'s body, stopping one step short: the restore is left unapplied."""
     plan = contraction_plan(a.structure, b.structure, axes)
-    sa, ma = _lowered(a, plan.a_outputs, plan.a_inputs)
-    sb, mb = _lowered(b, plan.b_outputs, plan.b_inputs)
+    sa, ma = _lower_operand(a, plan.a_outputs, plan.a_inputs)
+    sb, mb = _lower_operand(b, plan.b_outputs, plan.b_inputs)
     joined = TensorStructure(
         (*(sa.legs[i] for i in sa.out_axes), *(sb.legs[i] for i in sb.in_axes))
     )
-    c = compose_lowered(joined, ma, mb, a.blocks[0])
-    structure, perm, terms = _restore_plan(
-        c.structure, plan.restore_outputs, plan.restore_inputs, (plan.final_transpose, *after)
+    c = compose_lowered(joined, ma, mb, _ref(a))
+    return _Pending(
+        c,
+        *_restore_plan(
+            c.structure, plan.restore_outputs, plan.restore_inputs, (plan.final_transpose, *after)
+        ),
     )
-    return apply_plan(c, structure, perm, terms, "tensordot")
+
+
+def _bent(x: Operand, term: str, bend: str) -> tuple[Operand, str]:
+    """``x`` with every wire named in ``bend`` moved to the other side, plan deferred.
+
+    The bend the composition rule demands (``docs/design.md`` "Milestone 11"): both ends
+    of a wire that turns around in the intended planar diagram are repartitioned before
+    the composition, which pays the categorical bending coefficient by construction. In
+    a chain the repartition is a *plan*, composed onto whatever the operand is already
+    carrying, so the bent tensor is never written.
+    """
+    flip = set(bend)
+    outs = tuple(i for i, label in enumerate(term) if (x.legs[i].side is OUT) != (label in flip))
+    ins = tuple(i for i in range(len(term)) if i not in outs)
+    plan = sides_plan(x.structure, outs, ins)
+    pending = x.then(*plan) if isinstance(x, _Pending) else _Pending(x, *plan)
+    return pending, "".join(term[i] for i in (*outs, *ins))
+
+
+def _step(equation: str, a: Operand, b: Operand, bend: str) -> _Pending:
+    """One pair-contraction of a chain, its result left as an unapplied plan."""
+    (ta, tb), out = _parse(equation, (a, b))
+    if bend:
+        a, ta = _bent(a, ta, bend)
+        b, tb = _bent(b, tb, bend)
+    shared = [label for label in ta if label in tb]
+    free = [label for label in ta if label not in shared]
+    free += [label for label in tb if label not in shared]
+    axes = _validated(
+        a.structure,
+        b.structure,
+        (
+            tuple(ta.index(label) for label in shared),
+            tuple(tb.index(label) for label in shared),
+        ),
+    )
+    return _contracted(a, b, axes, (tuple(free.index(label) for label in out),))
+
+
+def einsum_chain(
+    steps: Sequence[tuple[str, "SymmetricTensor | None", "SymmetricTensor | None", str]],
+) -> "SymmetricTensor":
+    """A run of pair-contractions with nothing materialized between them.
+
+    Parameters
+    ----------
+    steps : sequence of (equation, a, b, bend)
+        One entry per pair-contraction, in order. ``equation`` is a two-operand
+        [einsum][tenet.einsum] equation. ``a`` and ``b`` are its operands, and exactly
+        one of them is ``None`` in every step after the first, standing for the previous
+        step's result -- which side it stands on is the operand order, and operand order
+        is categorical data (a Koszul sign for a fermionic provider), so it is written
+        out rather than assumed. ``bend`` names the wires whose two ends are moved to
+        the other side before the composition, as
+        [repartition][tenet.repartition] would; ``""`` is a straight composition.
+
+    Returns
+    -------
+    SymmetricTensor
+        The last step's result.
+
+    Raises
+    ------
+    ValueError
+        If ``steps`` is empty, if the first step names ``None``, or from the delegated
+        parsing and contraction of any step.
+    CapabilityError
+        If a step needs a bend the provider cannot supply, as in
+        [tensordot][tenet.tensordot].
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> b = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=1)
+    >>> c = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=2)
+    >>> chained = tenet.einsum_chain(
+    ...     [("ab,bc->ac", a, b, ""), ("ab,bc->ac", None, c, "")]
+    ... )
+    >>> bool(tenet.allclose(chained, tenet.einsum("ab,bc->ac", tenet.einsum("ab,bc->ac", a, b), c)))
+    True
+
+    Notes
+    -----
+    Step ``k``'s restore -- the repartition that puts the product back on its public legs,
+    with the final transpose already folded in -- and step ``k+1``'s operand lowering are
+    both plans of ``(source, target, coefficient)`` over blocks that are *views* into
+    step ``k``'s sector matrices. Composing them gives one plan from step ``k``'s
+    matrices to step ``k+1``'s: one strided pass per term, the coefficients multiplied
+    through, and no tensor written in between. The terms and their coefficients are the
+    ones the separate calls apply -- only when they are applied changes.
+
+    The steps are the caller's, not a path finder's: a chain states the intermediate leg
+    order and the bends at each pair, which is what the composition rule fixes and what
+    a single multi-operand equation would leave to ``opt_einsum``.
+    """
+    if not steps:
+        raise ValueError(
+            "einsum_chain: no steps were given; a chain is one or more (equation, a, b, "
+            "bend) pair-contractions, as in einsum_chain([('ab,bc->ac', a, b, '')])"
+        )
+    acc: _Pending | None = None
+    for k, (equation, a, b, bend) in enumerate(steps):
+        if a is None or b is None:
+            if acc is None:
+                raise ValueError(
+                    f"einsum_chain: step 0 of {equation!r} names None, which stands for the "
+                    "previous step's result; the first step's two operands are both tensors"
+                )
+            if a is None and b is None:
+                raise ValueError(
+                    f"einsum_chain: step {k} of {equation!r} names None on both sides; one "
+                    "operand is the previous step's result, the other is a tensor"
+                )
+        acc = _step(equation, acc if a is None else a, acc if b is None else b, bend)
+    # steps is non-empty, so the loop assigned; ty sees only the None seed
+    return acc.realized("einsum_chain")  # ty: ignore[possibly-unbound-attribute]
 
 
 @cache
@@ -491,15 +709,7 @@ def _lowered(
     remains the fallback wherever ``lower_plan`` declines (an immutable backend, so JAX
     is unaffected).
     """
-    axes = (*outputs, *inputs)
-    want = {ax: OUT for ax in outputs} | {ax: IN for ax in inputs}
-    if any(t.legs[ax].side is not want[ax] for ax in range(t.ndim)):
-        rplan = repartition_plan(t.structure, outputs, inputs)
-        structure, perm, terms = rplan.new_structure, rplan.perm, rplan.terms
-    else:
-        # no leg crosses: repartition is a plain transpose, and so is the plan
-        pplan = permutation_plan(t.structure, axes)
-        structure, perm, terms = pplan.new_structure, pplan.axes, pplan.terms
+    structure, perm, terms = sides_plan(t.structure, outputs, inputs)
     mats = lower_plan(t, structure, perm, terms)
     return structure, to_matrices(repartition(t, outputs, inputs)) if mats is None else mats
 
