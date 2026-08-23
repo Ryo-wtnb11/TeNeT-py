@@ -31,7 +31,7 @@ uv add "tenet-py[jax]"      # jax>=0.10 — pytrees, jit, grad
 uv add "tenet-py[torch]"    # torch>=2.0 — eager blocks
 ```
 
-## First example
+## Quickstart
 
 A 20-site spin-1/2 Heisenberg chain, U(1)-graded by `2 S^z`, to its ground state:
 
@@ -59,6 +59,20 @@ The Néel product state's own charges put the run in the `S^z_tot = 0` sector, a
 site tensors' invariance keeps it there — no projector, no penalty term.
 [Getting started](https://ryo-wtnb11.github.io/TeNeT-py/getting-started/) reads this
 example line by line.
+
+With the `jax` extra, the same tensors are JAX pytrees: `jit`, `grad` and `vmap` reach
+through to the blocks while the symmetry structure stays static.
+
+```python
+import jax
+import tenet
+
+tenet.enable_jax()
+
+t = out.psi[0].to_backend("jax")
+g = jax.jit(jax.grad(lambda x: tenet.norm(x) ** 2))(t)
+assert g.legs == t.legs
+```
 
 ## What it supports
 
