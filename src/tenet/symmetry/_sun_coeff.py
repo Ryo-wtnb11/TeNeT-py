@@ -1,12 +1,11 @@
-"""SU(N) coefficients from the ``racah`` crate, through the ``racah-py`` wheel.
+"""SU(N) recoupling coefficients, computed by ``racah-py``.
 
 Every array this module returns is read-only and indexed by Dynkin *tuples*, not
 by :class:`~tenet.symmetry.sun.SUNSector`, so the provider stays array-free.
 
-``racah`` is a core dependency (#180), so this module imports unconditionally and
-``tenet.symmetry.sun`` works on a plain ``pip install tenet-py``. There is no
-pure-Python fallback and there will not be one: a second implementation of these
-coefficients would be a second gauge.
+``racah-py`` is a core dependency: ``tenet.symmetry.sun`` works on a plain
+``pip install tenet-py`` for every ``N``, and the coefficients carry ``racah``'s gauge,
+recorded as ``GAUGE`` and verified by :func:`tenet.load`.
 """
 
 from functools import cache

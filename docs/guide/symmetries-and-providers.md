@@ -65,9 +65,14 @@ because a provider carries its own `n` and there is no singleton to name:
 
 ```
 
-Its coefficients — and SU(2)'s — come from `racah-py`, a core dependency, so
-`import tenet.symmetry.sun` works on a plain `pip install tenet-py`. The coefficients
-*are* the gauge, so there is one source for them.
+`SUNProvider(n)` works for every `n`: the recoupling coefficients — and SU(2)'s — are
+computed by `racah-py`, a core dependency, so `import tenet.symmetry.sun` works on a
+plain `pip install tenet-py`. The coefficients carry `racah`'s gauge convention, which
+[tenet.save][] records and [tenet.load][] verifies.
+
+The provider set follows `racah`: product groups such as SU(2) × U(1), U(N), and the
+exceptional groups (G2 first) are on its roadmap and will appear here as providers when
+their coefficients land.
 
 ## Providers are data plus capabilities
 
