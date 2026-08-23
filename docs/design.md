@@ -6292,6 +6292,180 @@ left that list with M61 Stage D above.
   committed, for M66's reason: an in-repo copy of the function bodies it clones would rot
   at the first change to any of them.
 
+- **M70** — shipped, and it is a **negative result with an exact address**: the plan and the
+  lowering it feeds are now one pass, so a coefficient-carrying block on the
+  `einsum → compose` operand path crosses memory **once** instead of twice (#259) — and that
+  path turns out to carry **288 of the 2 384 352 coefficient-scaled elements** a steady fZ2
+  matvec moves. The mechanism M69 left open is built, tested and free; the 1.6 ms it was
+  meant to remove is applied somewhere else, and this entry says exactly where.
+
+  **What was fused, and where.** `tensordot` lowers each operand by
+  `repartition(t, outputs, inputs)` and then `to_matrices` of the result. The tensor between
+  the two exists only to be copied: applying the plan writes one array per term — a
+  transposed **view** when the coefficient is 1, and a materialised array when it is not,
+  because `contrib * coeff` has to land somewhere — and `to_matrices` then copies every
+  block again. `map_view.lower_plan` composes the plan's own permutation with the layout's
+  `axes_order` into the single transpose that takes a *source* block straight to matrix
+  form, looks its destination slot up in a cached `_slots` table, and writes it with the
+  scalar riding in the `out=` of that same pass:
+
+  ```text
+  before   t --plan--> t' --to_matrices--> B_c        coeff terms: 2 passes, others: 1
+  after    t --lower_plan-------------->   B_c        every term: 1 pass
+  ```
+
+  That is YASTN's `transpose_and_merge` shape — its meta carries order and destination slot
+  together — reached independently and described, not copied. A second fusion in the same
+  spirit: `tensordot`'s restore-repartition and its final transpose each re-applied their own
+  coefficients, so `_restore_plan` composes them into one plan the way `repartition_plan`
+  already composes its own transpose/bend/transpose sandwich, and `apply_plan` — which is
+  `repartition`'s body, now shared rather than a fourth copy of the same loop — runs the
+  result once.
+
+  **The floor, per coefficient-carrying block.**
+
+  | | passes | why |
+  |---|---|---|
+  | before | **2** | `contrib * coeff` materialises the transposed view (`D`), `to_matrices` copies it into the sector matrix (`D`) |
+  | after | **1** | `multiply(view, coeff, out=dest_view)` — the scale rides the pass that was happening anyway |
+  | identity coefficient, before and after | **1** | the plan leaves a view; the assembly's copy is the only move (M69) |
+
+  Identity coefficients cost nothing to keep free: the test is `coeff != 1` on a Python
+  scalar the plan already holds, and on an ungraded provider it is false for every term.
+
+  **Where the coefficient volume actually is.** Every plan term applied anywhere in one
+  steady `_heff2_full`, fZ2 Hubbard `N = 16`, `chi = 128`, counted by the site that applies
+  it and weighted by the elements each scaled block holds:
+
+  | applied at | calls | terms | coeff terms | elements scaled |
+  |---|---|---|---|---|
+  | `env._composed`'s explicit bend `repartition` | 6 | 68 | 22 | 811 200 |
+  | `tensordot`'s restore `repartition` | 3 | 40 | 18 | 950 272 |
+  | `einsum`'s output `transpose` | 4 | 56 | 12 | 622 592 |
+  | **`tensordot`'s operand lowering** — what M70 fuses | 6 | 68 | **8** | **288** |
+  | `tensordot`'s final `transpose` | 4 | 56 | 0 | 0 |
+  | `transpose` elsewhere in the matvec | 3 | 28 | 0 | 0 |
+  | **total** | 26 | **316** | **60** | **2 384 352** |
+
+  The `316` terms and `60` coefficient-carrying ones are #254's counts, reproduced here
+  independently and now *located*. **99.99 % of the scaled elements are applied outside the
+  operand lowering**, at sites that materialise a tensor a later operation consumes — and
+  none of those sites has a destination pass for the scalar to ride in. After M70 the
+  standalone total is 2 384 064 elements against 2 384 352: the fusion is real and it is
+  0.012 % of the problem.
+
+  **Why the rest cannot be reached from here, stated as the design question it is.** A
+  coefficient rides for free only into a pass that is already happening. `lower_plan` has
+  one — the assembly's copy. `transpose`, `repartition` and `einsum`'s output reordering do
+  not: they hand back a *tensor*, whose identity-coefficient blocks are deliberately lazy
+  views (M69's design, and the reason the non-coefficient path is already at its floor). To
+  make their coefficients free, the scalar must be **carried** past them and applied by the
+  next operation that copies — a `SymmetricTensor` holding an unapplied per-block scale, which
+  every consumer (`norm`, `add`, `to_dense`, the linalg factorizations, `tenet.ad`'s VJPs)
+  would have to honour. That changes what `compose` — and everything else — receives, which
+  is the boundary #259 set for stopping and writing the finding rather than crossing it. The
+  issue's other two candidates do not escape it: folding into the GEMM `alpha` needs the whole
+  matrix to share one scalar, which the per-`(output tree, input tree)` cell grid does not give;
+  a band-scale vector on `MapLayout` is the same carried scalar wearing a different name, and
+  it would still have to survive `transpose` and `repartition` to reach the GEMM. **The
+  coefficient pass' theoretical minimum of zero stands, and reaching it is a lazy-tensor
+  design conversation, not an implementation detail.**
+
+  One site is reachable without that and is deliberately left alone: `einsum` could hand its
+  output reordering to the contraction's restore plan (`_tensordot` already takes it as
+  `after=`), folding 622 592 of the scaled elements into a pass that runs anyway. It is not
+  done because `einsum` would then no longer call `tensordot`, and
+  `tests/ops/test_einsum.py::test_shared_labels_are_ordered_by_first_appearance_in_the_first_operand`
+  asserts on the `axes` handed to `tensordot` itself. Editing that test to buy 26 % of a
+  1.6 ms row was not worth the test; the hook is in place for whoever takes the carried-scalar
+  design and needs it.
+
+  **Accumulating terms — two sources into one destination.** `out=` scales or accumulates,
+  never both, so a term that both carries a coefficient *and* sums into an already-written
+  destination still needs one temporary; the fused path spends it there and nowhere else.
+  These come only from a non-Abelian provider's multi-term expansion. On both benchmark
+  fixtures the count is **zero** — every Abelian plan is one term per destination — and #260's
+  audit puts it at **20 of 66 terms on SU(2)** and **12 of 45 on SU(3)**. So the branch is
+  never taken in the regime this milestone measures, and where it is taken it is a minority
+  of terms which each still cost no more than they did before.
+
+  **Predicted against measured.** 288 elements at M69's calibrated 0.978 ns/element for the
+  scattered class is **0.28 µs**, against an `_heff2_full` wall of ~9 ms. The prediction is
+  therefore that the wall does **not** move, and it does not. Milliseconds per steady
+  `_heff2_full`, same session, interleaved three times, the route switched by making
+  `lower_plan` decline (which is the fallback an immutable backend takes):
+
+  | | before (route declined) | after (fused) |
+  |---|---|---|
+  | fZ2 Hubbard N=16 χ=128, `_heff2_full` wall | 9.24 / 8.67 / 9.08 | 9.14 / 9.17 / 9.06 |
+  | fZ2 Hubbard, assembly (`to_matrices` → `lower_plan`) | 3.56 / 3.46 / 3.54 | 3.59 / 3.62 / 3.68 |
+  | fZ2 Hubbard, `from_matrices` | 0.117 / 0.117 / 0.121 | 0.117 / 0.124 / 0.122 |
+  | U(1) Heisenberg N=32 χ=128, `_heff2_full` wall | 3.70 | 3.49 |
+  | U(1) Heisenberg, coefficient terms anywhere in the matvec | **0** | **0** |
+
+  The U(1) row is the control and it is unchanged in the only sense that matters: **zero
+  coefficient-carrying terms before and after**, at every one of the six sites in the table
+  above, so nothing there can have been made faster or slower by a coefficient rule.
+
+  **Bit-for-bit, everywhere it was checked.** The fused assembly is `tobytes()`-identical to
+  `to_matrices(repartition(t, ...))` on Trivial, U(1), Z2, fZ2 (one and two crossing legs) and
+  SU(2) (including a multi-band case), with the fixtures asserted to carry at least one
+  coefficient ≠ 1 — without that assertion the identity test would prove nothing about the
+  coefficient pass. M69's steady-matvec byte check repeated on the fused path: every block and
+  every sector matrix of `_heff2_full` identical, `sha256` over both fixtures unchanged
+  (fZ2 8 blocks / 2 matrices, U(1) 46 blocks / 12 matrices). Five sweeps of `dmrg_` at `N=12`,
+  `chi=64` on both models and at both settings of `symbolic=`: the energy of **every** sweep
+  identical by `float.hex` to the M69 base, all twenty values. This milestone moves no bit
+  anywhere — unlike M69, whose realignment of `empty` buffers did.
+
+  **The steady sweep.** `bench_vs_yastn.py` bare `tenet` arm with the YASTN arm re-run in the
+  same session as its control. Seconds per steady sweep; bond dimensions identical at every
+  point, and the tenet energies identical to M69's to every printed digit.
+
+  | model | N | chi | YASTN (this session) | tenet | ratio | M69's ratio |
+  |---|---|---|---|---|---|---|
+  | Heisenberg U(1) | 32 | 64 | 0.477 s | **0.383 s** | **0.80x** | 0.87x |
+  | Heisenberg U(1) | 32 | 256 | 0.809 s | **0.811 s** | **1.00x** | 0.87x |
+  | Hubbard fZ2 | 16 | 64 | 0.189 s | **0.234 s** | **1.24x** | 1.22x |
+  | Hubbard fZ2 | 16 | 128 | 0.488 s | **0.679 s** | **1.39x** | 1.20x |
+  | Hubbard fZ2 | 16 | 256 | 1.795 s | **2.579 s** | **1.44x** | 1.21x |
+  | Hubbard fZ2 | 32 | 64 | 0.440 s | **0.583 s** | **1.32x** | 1.29x |
+  | Hubbard fZ2 | 32 | 128 | 1.346 s | **1.945 s** | **1.45x** | 1.24x |
+  | Hubbard fZ2 | 32 | 256 | 5.501 s | **8.145 s** | **1.48x** | 1.18x |
+
+  **The ratio column moved and tenet did not**, which is the one thing this table must not be
+  read carelessly. tenet's own walls are within run-to-run spread of M69's (2.579 against
+  2.590 at 16/256; 8.145 against 7.989 at 32/256; 1.945 against 2.007 at 32/128) — as they
+  have to be, the matvec being bit-identical. The YASTN arm ran **15–19 % faster in this
+  session than in M69's** (1.795 against 2.133 at 16/256, 5.501 against 6.782 at 32/256), on a
+  YASTN installed fresh here at `1.6.2.dev401`. A cross-session ratio is therefore not a
+  measurement of anything; only the same-session ratio is, and the honest statement is that
+  M70 changes neither arm.
+
+  **What is left on fZ2, updated.** Against the ~9 ms matvec, and superseding M69's list only
+  in the first item:
+
+  - **The coefficient pass, ~1.6 ms and still there.** Now located to the element: 2 384 064
+    scaled elements per matvec across three sites, none of which has a pass for the scalar to
+    ride. Its minimum is still zero and reaching it is the carried-scalar design above.
+  - **The strided copy, ~2.4 ms**, unchanged from M69 and level with YASTN's own.
+  - **Per-call Python, ~1.5 ms**, unchanged; M70 removes one plan application and one
+    intermediate `SymmetricTensor` per `tensordot` (the restore chain), which is inside the
+    noise of this fixture but is the direction that item wants.
+  - **The SVD and the Lanczos recurrence are still not separately instrumented.** M69 named
+    this hole and M70 does not close it: nothing here measures the non-matvec phases, and the
+    inference that they are not where tenet loses remains an inference from the two ratios.
+
+  **Generality and scope.** One procedure, any band grid, any rank, any provider: no size
+  threshold, no shape test, no provider branch. `lower_plan` declines — and the ordinary route
+  runs — on three conditions only: no blocks, an immutable backend (`ar.infer_backend` not in
+  `_MUTABLE`, autoray's own dispatch axis), or a genuinely complex coefficient, which would
+  have to promote the destination's dtype. Simplification: every provider shipped here has real
+  permutation and bending coefficients, so the promotion case is left to the ordinary route
+  rather than given a dtype rule of its own. JAX therefore keeps the functional path untouched
+  and every gradient test passes unchanged, `tests/backends/` included. Public signatures,
+  results and `__all__` are unchanged, no existing test is edited, and no dependency is added.
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
