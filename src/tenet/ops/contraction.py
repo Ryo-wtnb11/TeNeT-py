@@ -55,7 +55,7 @@ No ``to_dense``, no NumPy and no provider branching here (invariants 8/9).
 
 import operator
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING, Any
@@ -63,11 +63,11 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 
 from tenet.leg import IN, OUT, Leg
-from tenet.map_view import check_square, to_matrices
+from tenet.map_view import check_square, lower_plan, to_matrices
 from tenet.ops.basic import _check_same_structure
-from tenet.ops.map import compose, identity
-from tenet.ops.permutation import transpose
-from tenet.ops.repartition import repartition
+from tenet.ops.map import compose_lowered, identity
+from tenet.ops.permutation import permutation_plan, transpose
+from tenet.ops.repartition import repartition, repartition_plan
 from tenet.structure import TensorStructure
 from tenet.symmetry.base import (
     BendingCoefficients,
@@ -367,13 +367,59 @@ def tensordot(a: "SymmetricTensor", b: "SymmetricTensor", axes: Axes) -> "Symmet
     """
     # normalize first so the integer form and NumPy integer scalars share one entry
     plan = contraction_plan(a.structure, b.structure, _validated(a.structure, b.structure, axes))
-    c = compose(
-        repartition(a, plan.a_outputs, plan.a_inputs),
-        repartition(b, plan.b_outputs, plan.b_inputs),
+    sa, ma = _lowered(a, plan.a_outputs, plan.a_inputs)
+    sb, mb = _lowered(b, plan.b_outputs, plan.b_inputs)
+    joined = TensorStructure(
+        (*(sa.legs[i] for i in sa.out_axes), *(sb.legs[i] for i in sb.in_axes))
     )
+    c = compose_lowered(joined, ma, mb, a.blocks[0])
     return transpose(
         repartition(c, plan.restore_outputs, plan.restore_inputs), plan.final_transpose
     )
+
+
+def _lowered(
+    t: "SymmetricTensor", outputs: tuple[int, ...], inputs: tuple[int, ...]
+) -> tuple[TensorStructure, Mapping[Any, Any]]:
+    """``repartition(t, outputs, inputs)``'s structure and its sector matrices.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The operand, as the caller passed it.
+    outputs, inputs : tuple of int
+        The repartition ``tensordot`` would apply; together a permutation of
+        ``range(t.ndim)``, already validated by ``contraction_plan``.
+
+    Returns
+    -------
+    structure : TensorStructure
+        The repartitioned operand's structure.
+    mats : Mapping
+        Its coupled-sector matrices, as [to_matrices][tenet.to_matrices] returns them.
+
+    Notes
+    -----
+    ``compose`` consumes an operand only as matrices, so the repartitioned *tensor*
+    between the two is a temporary that exists to be copied: applying the plan writes
+    every term once and lowering copies every block again. ``lower_plan`` composes the
+    two and writes each term straight into its slot, one pass whether or not the term
+    carries a coefficient (docs/design.md "M70"). Which terms are applied, and with
+    which coefficients, is untouched -- only when the writes happen. The ordinary route
+    remains the fallback wherever ``lower_plan`` declines (an immutable backend, so JAX
+    is unaffected).
+    """
+    axes = (*outputs, *inputs)
+    want = {ax: OUT for ax in outputs} | {ax: IN for ax in inputs}
+    if any(t.legs[ax].side is not want[ax] for ax in range(t.ndim)):
+        rplan = repartition_plan(t.structure, outputs, inputs)
+        structure, perm, terms = rplan.new_structure, rplan.perm, rplan.terms
+    else:
+        # no leg crosses: repartition is a plain transpose, and so is the plan
+        pplan = permutation_plan(t.structure, axes)
+        structure, perm, terms = pplan.new_structure, pplan.axes, pplan.terms
+    mats = lower_plan(t, structure, perm, terms)
+    return structure, to_matrices(repartition(t, outputs, inputs)) if mats is None else mats
 
 
 def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":

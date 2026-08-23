@@ -40,7 +40,7 @@ constructor runs at setup time, outside any trace, and ``to_backend`` is the
 documented route onto a device (#9's convention, unchanged).
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import cache
 from typing import TYPE_CHECKING, Any
@@ -153,10 +153,42 @@ def compose(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
         out = from_matrices(TensorStructure((*ts[0].codomain, *ts[-1].domain)), acc)
     """
     _check_composable(a, b)
-    ma, mb = to_matrices(a), to_matrices(b)
     structure = TensorStructure((*a.codomain, *b.domain))
-    layout = map_layout(structure)
+    return compose_lowered(structure, to_matrices(a), to_matrices(b), a.blocks[0])
 
+
+def compose_lowered(
+    structure: TensorStructure,
+    ma: Mapping[Any, Any],
+    mb: Mapping[Any, Any],
+    ref: Any,
+) -> "SymmetricTensor":
+    """[compose][tenet.compose]'s body once both operands are already lowered.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The composition's structure, ``(*a.codomain, *b.domain)``.
+    ma, mb : Mapping
+        The operands' coupled-sector matrices, as
+        [to_matrices][tenet.to_matrices] returns them.
+    ref : array
+        A block to take a backend and a dtype from when a coupled sector is
+        missing from both products.
+
+    Returns
+    -------
+    SymmetricTensor
+        The composition.
+
+    Notes
+    -----
+    Split out of [compose][tenet.compose] so that ``ops.contraction`` can hand it
+    matrices assembled straight from the *unrepartitioned* operands
+    ([lower_plan][tenet.map_view.lower_plan], docs/design.md "M70"); the matmul and
+    the missing-sector rule are the ones ``compose`` always applied.
+    """
+    layout = map_layout(structure)
     mats: dict[Any, Any] = {
         c: ar.do("matmul", ma[c], mb[c]) for c in layout.sectors if c in ma and c in mb
     }
@@ -164,7 +196,7 @@ def compose(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
         # A coupled sector carried by only one operand contributes nothing: the
         # missing side has zero trees there, so the product is zero. Deliberate
         # (the result structure still declares the sector), not a KeyError.
-        ref = next(iter(mats.values()), a.blocks[0])
+        ref = next(iter(mats.values()), ref)
         dtype = ar.get_dtype_name(ref)
         for c in layout.sectors:
             if c not in mats:
