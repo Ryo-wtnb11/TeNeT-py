@@ -6127,6 +6127,94 @@ left that list with M61 Stage D above.
   table carries the keyword on the quantum-chemistry row.
 
 
+- **M69** — block assembly attributed per sector and per block, and the one part of it
+  that is local to the map view fixed (#257). M66 read the 5.99 ms `to_matrices` on the
+  fZ2 Hubbard `N = 16`, `chi = 128` matvec as "3.04 ms strided reshape plus 2.80 ms
+  `concatenate`, and only 0.8 ms of that is the no-scatter rule". Re-probing it per block
+  corrects two of those three statements.
+
+  **The harness.** M66's, rebuilt in the scratchpad and again not committed: probe-carrying
+  clones of `to_matrices`/`from_matrices` installed over `ops/map.py`'s module-level names,
+  driven by the arguments of one steady middle-bond `_heff2_full` captured after two
+  `bench_vs_yastn.py` sweeps. Every number is NumPy, single-threaded BLAS, one process, and
+  the **minimum** of seven timing loops rather than a mean — the run-to-run spread on this
+  laptop is 10–15 % and a mean hides changes smaller than it.
+
+  **`to_matrices`' 5.23 ms, split by stage** (ms per `_heff2_full`, eight operands):
+
+  | | fZ2 Hubbard N=16 | U(1) Heisenberg N=32 |
+  |---|---|---|
+  | `to_matrices`, as shipped | 5.23 | 0.99 |
+  |  · per-block strided copy (`transpose` view + `reshape`) | 2.50 | 0.68 |
+  |  · the join (`concatenate`, row bands then column bands) | 2.73 | 0.31 |
+  | `from_matrices`, as shipped | 0.18 | 1.36 |
+  | *reference*: one preallocation + one fused strided write per block | 3.56 | 1.20 |
+  | *reference*: the same copies read in the mirror (IN, OUT) order | 0.90 | 0.81 |
+
+  **The blocks arrive already strided, and `axes_order` is the identity.** Per block, on
+  the Hubbard fixture, with the stride permutation of the array `to_matrices` is handed:
+
+  | block shape | stride order | C-contiguous | `(dr, dc)` | `axes_order` | per call | µs/block |
+  |---|---|---|---|---|---|---|
+  | (64, 2, 64, 2, 4) | (0, 3, 2, 1, 4) | no | (8192, 8) | identity | 8 | 71.2 |
+  | (64, 2, 64, 2, 2) | (0, 3, 2, 1, 4) | no | (8192, 4) | identity | 8 | 68.8 |
+  | (2, 2, 64, 64, 4) | (3, 1, 2, 0, 4) | no | (256, 256) | identity | 8 | 63.8 |
+  | (2, 2, 64, 64, 2) | (3, 1, 2, 0, 4) | no | (256, 128) | identity | 8 | 58.1 |
+  | (64, 2, 64, 2, 4) | (0, 1, 3, 4, 2) | no | (8192, 8) | identity | 8 | 51.3 |
+  | (64, 2, 64, 2, 2) | (0, 1, 3, 4, 2) | no | (8192, 4) | identity | 8 | 41.5 |
+  | (64, 2, 2, 64) | (0, 1, 2, 3) | **yes** | (256, 64) | identity | 8 | 0.7 |
+  | (64, 2, 64) | (0, 1, 2) | **yes** | (64, 128) | identity | 2 | 0.9 |
+  | (64, 4, 64) | (2, 0, 1) | no | (256, 64) | identity | 2 | 0.8 |
+
+  `axes_order` is the **identity on every block of this fixture**, so the map view performs
+  no permutation at all and M66's "strided reshape" is not a reshape *of a transpose the
+  map view chose*. It is a reshape of an array that is already a non-contiguous view,
+  because the categorical `transpose` upstream is lazy (M66's own "axis transposes, NumPy
+  views, no copy" row) and defers its copy to whoever first needs contiguity. The two
+  contiguous rows in the table cost 0.7–0.9 µs and the strided ones 41–71 µs for the same
+  32768 doubles: a 60× spread, set entirely by the arriving strides.
+
+  **The four questions the issue asked, answered by those numbers.**
+
+  - *Where is the extra pass.* The **join**: 2.73 ms of 5.23 (52 %) on Hubbard. The
+    reference row above is the check — a single preallocation written once per block with
+    one fused strided write costs 3.56 ms where the shipped path costs 5.23, and it lands
+    within noise of the 2.50 ms strided copy alone. So the strided pass is irreducible
+    given the arriving strides, and everything above it is the join.
+  - *Can the visiting/laying order make the copy cheap.* **No, not without reading strides
+    at runtime.** Joining column bands before row bands measures 5.72 on Hubbard (worse)
+    and 0.93 on U(1) (2 % better). Assembling the transpose and returning a transposed
+    view measures 3.62 on Hubbard and 1.10 on U(1) — and its whole win is in the copy
+    stage (0.90 against 2.50), i.e. it comes from the arriving blocks' *memory* strides,
+    which are not in the layout. Choosing it would be a runtime inspection of
+    `.strides`, which is both a size heuristic and a data-dependent branch under `jit`.
+    The layout offers no order that is cheaper on both fixtures.
+  - *Can the no-scatter rule be kept and the concatenate still avoided.* **No, and it costs
+    more than M66 priced it.** 5.23 − 3.56 = **1.67 ms, 32 % of `to_matrices` and 15 % of
+    the matvec**, not 0.8 ms: M66's `zeros`-plus-slice-assignment variant still ran the
+    separate per-block reshape, so it measured the difference between two joins rather
+    than between a join and no join. Avoiding it needs the fused write, which is
+    `arr[...] = x` on NumPy and `arr.at[...].set(x)` on JAX — a runtime dispatch this
+    module exists to not have. On the U(1) fixture the preallocating variant is
+    *slower* (1.20 against 0.99), so the rule is free-to-positive in the regime where the
+    per-call cost dominates. It stands, now priced correctly.
+  - *What the many-small-blocks regime looks like.* Not bandwidth at all. On U(1) the
+    join is 0.31 ms of 0.99 and `from_matrices` — 0.18 ms on Hubbard — costs **1.36 ms**,
+    more than `to_matrices`. Both are per-call Python re-derivation of tables that are
+    pure functions of a structure the layout is already `@cache`d on: `MapLayout.row_bands`
+    and `.col_bands` rebuild their tuples by filtering `rows`/`cols` once per sector per
+    call, and `from_matrices` re-derives each block's matrix-order shape through
+    `structure.block_shape(structure.block_order[i])` — a `FusionBlockKey` hash and a dict
+    lookup — once per block per call. Walking `to_matrices`' loops on U(1) with the array
+    calls removed costs 0.33 ms of its 0.99; with those tables hoisted, 0.08.
+
+  **What this milestone changes, therefore.** The block-assembly bandwidth gap on the
+  Hubbard geometry is **not local to the map view** and is recorded here rather than
+  patched: 2.50 of its 5.23 ms is a copy whose cost is fixed by strides the map view is
+  handed, and the remaining 2.73 ms is the join, whose removal needs the scatter the
+  module's stated rule forbids. What *is* local is the per-call table re-derivation, and
+  that is what is fixed.
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
