@@ -1,13 +1,13 @@
-"""M67 (#251): the lattice lane runs on the site-tensor path, and it says so in the code.
+"""M68 (#255): the lattice lane runs on the site-tensor path, and it is the default.
 
 The routing was never in doubt -- ``Env.heff2`` branches on ``self.h.edges is not None``
 and on nothing else -- so what these tests hold down is the *spelling*: that a caller who
-follows ``docs/guide/models-and-sites.md`` (a ``tenet.models`` site, a builder,
-``dmrg_``) lands on the site-tensor path without ever meeting an ``EdgeTable``, and that
-the same builder without ``materialize()`` still lands on the prepared one, which is what
-the quantum-chemistry lane depends on. Which branch ran is *instrumented*, the way
-``test_deferred.py`` instruments its allocation claim, rather than inferred from
-``h.edges``.
+follows ``docs/guide/models-and-sites.md`` (a ``tenet.models`` site, a builder, ``dmrg_``)
+lands on the site-tensor path with no keyword and without ever meeting an ``EdgeTable``,
+and that ``symbolic=True`` still lands on the prepared one, which is what the
+quantum-chemistry lane depends on. ``materialize()`` is the route back from the second to
+the first. Which branch ran is *instrumented*, the way ``test_deferred.py`` instruments
+its allocation claim, rather than inferred from ``h.edges``.
 """
 
 import numpy as np
@@ -22,7 +22,7 @@ from tenet.symmetry import FZ2Sector, U1Sector, fZ2
 # --- the two models, built exactly as the guide builds them ---------------------------
 
 
-def guide_heisenberg(n=8):
+def guide_heisenberg(n=8, *, symbolic=False):
     """The guide's "A spin model, end to end", verbatim but for its ``n``."""
     site = spin_half()
     bond = [(i, i + 1) for i in range(n - 1)]
@@ -34,12 +34,13 @@ def guide_heisenberg(n=8):
             ("S+ S-", bond, [0.5] * (n - 1)),
             ("S- S+", bond, [0.5] * (n - 1)),
         ],
+        symbolic=symbolic,
     )
     psi = MPS.product(site.phys, [U1Sector(1 if i % 2 else -1) for i in range(n)])
     return h, psi
 
 
-def guide_hubbard(n=6, u=4.0):
+def guide_hubbard(n=6, u=4.0, *, symbolic=False):
     """The guide's "A fermionic model, end to end", verbatim but for its ``n``."""
     site = spinful_fermion()
     fwd = [(m, m + 1) for m in range(n - 1)]
@@ -49,7 +50,7 @@ def guide_hubbard(n=6, u=4.0):
         expr = f"c+_{flavour} c_{flavour}"
         blocks += [(expr, fwd, [-1.0] * (n - 1)), (expr, bwd, [-1.0] * (n - 1))]
     blocks.append(("n_up n_dn", [(m, m) for m in range(n)], [u] * n))
-    h = MPO.from_arrays(n, site.ops, blocks)
+    h = MPO.from_arrays(n, site.ops, blocks, symbolic=symbolic)
     # The d=4 site has degeneracy 2 per parity, so ``MPS.product`` -- which names a basis
     # vector by sector alone -- cannot seed this one; a random state on a fixed bond does.
     triv = GradedSpace.new(fZ2, {FZ2Sector(0): 1})
@@ -89,27 +90,27 @@ def branches(monkeypatch):
 
 @pytest.mark.parametrize("model", sorted(MODELS))
 def test_the_guide_lands_a_lattice_user_on_the_site_tensor_path(model, branches):
-    """``tenet.models`` site -> builder -> ``materialize()`` -> ``dmrg_``, and no symbols.
+    """``tenet.models`` site -> builder -> ``dmrg_``, no keyword and no symbols.
 
-    Nothing in the chain names ``EdgeTable``, ``edges`` or ``edge_blocks``; the only
-    thing the caller writes is the ``materialize()`` the guide teaches.
+    Nothing in the chain names ``EdgeTable``, ``edges``, ``edge_blocks`` or
+    ``materialize``: since #255 the builder's own default is this path.
     """
     h, psi = MODELS[model]()
-    out = dmrg_(psi, h.materialize(), chi=16, max_sweeps=2)
+    out = dmrg_(psi, h, chi=16, max_sweeps=2)
     assert branches["sites"] > 0
     assert branches["prepared"] == 0
     assert np.isfinite(out.energy)
 
 
 @pytest.mark.parametrize("model", sorted(MODELS))
-def test_the_builder_without_materialize_still_takes_the_prepared_path(model, branches):
-    """The quantum-chemistry lane's default, unchanged: symbols kept, prepared engine.
+def test_the_builder_with_symbolic_still_takes_the_prepared_path(model, branches):
+    """The quantum-chemistry lane, now asked for by keyword: symbols kept, prepared engine.
 
     ``from_arrays`` is the ab initio front end and this is the routing #218 decided for
     it. The N2 ``K=16`` and C2 ``K=26`` runs behind that decision need an FCIDUMP off the
     network and live in ``benchmarks/``; the routing they depend on is asserted here.
     """
-    h, psi = MODELS[model]()
+    h, psi = MODELS[model](symbolic=True)
     dmrg_(psi, h, chi=16, max_sweeps=2)
     assert branches["prepared"] > 0
     assert branches["sites"] == 0
@@ -118,7 +119,7 @@ def test_the_builder_without_materialize_still_takes_the_prepared_path(model, br
 @pytest.mark.parametrize("model", sorted(MODELS))
 def test_materialize_changes_the_path_and_not_the_operator(model):
     """The same operator on both paths -- dense, and to solver precision through DMRG."""
-    h, psi = MODELS[model]()
+    h, psi = MODELS[model](symbolic=True)
     sites = h.materialize()
     assert h.edges is not None and sites.edges is None
     assert np.allclose(h.to_dense(), sites.to_dense(), atol=1e-12)
@@ -130,7 +131,7 @@ def test_materialize_changes_the_path_and_not_the_operator(model):
 
 def test_materialize_on_an_operator_that_already_carries_no_symbols():
     """Idempotent, and it copies the container rather than aliasing it."""
-    h, _ = guide_heisenberg(6)
+    h, _ = guide_heisenberg(6, symbolic=True)
     once = h.materialize()
     twice = once.materialize()
     assert twice.edges is None and twice is not once
@@ -141,7 +142,7 @@ def test_the_families_read_falls_back_to_one_vector_on_the_site_tensor_path():
     """What the lattice path gives up, asserted rather than described (M61 Stage C)."""
     import tenet
 
-    h, psi = guide_heisenberg(6)
+    h, psi = guide_heisenberg(6, symbolic=True)
     psi.canonize_()
     aa = tenet.einsum("apx,xqr->apqr", psi[0], psi[1])
     assert len(Env(psi, h).setup_().heff2_families(0, aa)) > 1

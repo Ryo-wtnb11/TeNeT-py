@@ -13,15 +13,16 @@ and then run with ``uv run --no-sync`` so the sync does not remove it again.
 
 The three arms
 --------------
-``--arm tenet`` builds its Hamiltonian with ``MPO.from_terms``, which keeps an
-``EdgeTable``, so ``Env.heff2`` -- which routes on ``self.h.edges is not None`` -- takes
-the **prepared** path. ``--arm tenet-sites`` is the same run with ``h.materialize()`` --
-M67's recommended lattice spelling, which is what M64b spelled ``MPO(h.sites)``: the
-same tensors, the description dropped, so the same call takes the **site-tensor** path,
-which is YASTN's ``Heff2`` contraction order. Nothing else differs between the two --
-same state, same seed, same ``chi``, same sweeps -- so ``tenet / tenet-sites`` prices the
-prepared machinery and ``tenet-sites / yastn`` prices the rest. ``--arm yastn`` is YASTN
-itself (#245). The split is the question #247 left open, measured rather than argued.
+``--arm tenet`` builds its Hamiltonian with a bare ``MPO.from_terms``, which since M68
+(#255) hands back **site tensors**: ``Env.heff2`` -- which routes on
+``self.h.edges is not None`` -- takes the **site-tensor** path, YASTN's ``Heff2``
+contraction order. ``--arm tenet-sites`` is the same run with ``h.materialize()`` on top,
+which is now a copy of an operator that already carries no description, so the two tenet
+arms measure the same path and their numbers must agree; the arm is kept because M64b's
+and M67's grids are recorded under that name. The **prepared** path is reached by
+building with ``MPO.from_terms(..., symbolic=True)`` -- ``bench_qc_mpo.py`` and
+``bench_dmrg_compile.py`` are where it is measured. ``--arm yastn`` is YASTN itself
+(#245). The split is the question #247 left open, measured rather than argued.
 
 The conditions, each held equal
 -------------------------------
@@ -274,9 +275,9 @@ def run_tenet(
     terms = [(a, [(ops[name], i) for name, i in prod]) for a, prod in model_terms(model, n)]
     h = MPO.from_terms(n, terms)
     if sites:
-        # The same tensors, with the edge description dropped: ``Env.heff2`` routes on
-        # ``self.h.edges is not None``, so this is the only difference between the two
-        # tenet arms and it selects the site-tensor path (YASTN's ``Heff2`` order).
+        # Since M68 the builder above already handed back site tensors, so this is a
+        # copy of the same operator; it is kept so the arm's spelling still matches the
+        # grids recorded under it in M64b and M67.
         h = h.materialize()
     bonds = [
         GradedSpace.new(sym, {sector(q): d for q, d in space.items()})

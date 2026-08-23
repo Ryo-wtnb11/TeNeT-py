@@ -63,11 +63,11 @@ terms = [(0.5, [(sp, i), (sm, i + 1)]) for i in range(n_sites - 1)] + ...
 h = network.MPO.from_terms(n_sites, terms)
 ```
 
-A term-list operator keeps a symbolic description, which routes `Env.heff2` onto its
-prepared engine; a finite-range chain like this one wants the site tensors instead and
-spells it `MPO.from_terms(n_sites, terms).materialize()`. This page leaves it off because
-what it teaches is the operator's structure, not how to run one fast —
-[the models guide](../guide/models-and-sites.md) is where the choice is made and measured.
+That call hands back the site tensors, which is what a finite-range chain like this one
+wants: `Env.heff2` contracts them directly. `MPO.from_terms(n_sites, terms, symbolic=True)`
+would keep the symbolic description instead and route onto the prepared engine, which is
+the quantum-chemistry answer — [the models guide](../guide/models-and-sites.md) is where
+that choice is made and measured.
 
 The two routes agree as operators, and `from_terms` recovers the hand-written `MPO_BOND`
 sector for sector — `{0: 3, +2: 1, −2: 1}` — with no grading written down anywhere. The

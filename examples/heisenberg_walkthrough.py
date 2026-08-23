@@ -176,11 +176,16 @@ def mpo(n_sites: int, bond: GradedSpace = MPO_BOND) -> network.MPO:
     )
 
 
-def mpo_from_terms(n_sites: int) -> network.MPO:
+def mpo_from_terms(n_sites: int, *, symbolic: bool = False) -> network.MPO:
     """The same Heisenberg MPO as :func:`mpo`, listed as terms instead of written as ``W``.
 
     The charges are the only symmetry input, one per operator, and the MPO bond spaces
     fall out of the compressing SVD sweep -- :data:`MPO_BOND` is never mentioned.
+
+    ``symbolic`` is the builder's own keyword, passed through so ``main`` can print what
+    it decides: at its default the builder hands back site tensors, which is the
+    finite-range lattice model's engine path (M68, #255); ``symbolic=True`` keeps the
+    finite-state-machine description and the prepared, term-family matvec with it.
     """
     _, sz, sp, sm = _spin_half()
     op = {
@@ -192,10 +197,10 @@ def mpo_from_terms(n_sites: int) -> network.MPO:
         terms.append((1.0, [(op[0], i), (op[0], i + 1)]))
         terms.append((0.5, [(op[-2], i), (op[2], i + 1)]))
         terms.append((0.5, [(op[2], i), (op[-2], i + 1)]))
-    return network.MPO.from_terms(n_sites, terms)
+    return network.MPO.from_terms(n_sites, terms, symbolic=symbolic)
 
 
-def mpo_entries(n_sites: int) -> network.MPO:
+def mpo_entries(n_sites: int, *, symbolic: bool = False) -> network.MPO:
     """The same ``W`` as :func:`mpo_array`, named entry by entry instead of written out.
 
     This is the middle route, and the one to reach for when the ``W`` matrix *is* what you
@@ -214,9 +219,10 @@ def mpo_entries(n_sites: int) -> network.MPO:
     the start channel, ``1``/``2``/``3`` are ``S^-``/``S^+``/``S^z`` and ``-1`` is the end,
     which is how the lower-triangular ``W`` is printed.
 
-    What it buys beyond the writing: the result carries an edge description, so ``Env``
-    cannot tell it from :func:`mpo_from_terms`' operator and it runs on the prepared engine
-    path. :func:`mpo`'s output carries none and takes the compatibility entry instead.
+    What it buys beyond the writing: under ``symbolic=True`` the result carries an edge
+    description, so ``Env`` cannot tell it from :func:`mpo_from_terms`' operator and it
+    runs on the prepared engine path. At the default both hand back site tensors, which is
+    what :func:`mpo`'s ``from_w`` output has always been.
     """
     _, sz, sp, sm = _spin_half()
     op = {
@@ -233,7 +239,7 @@ def mpo_entries(n_sites: int) -> network.MPO:
         (3, -1): op[0],  # ... closed by S^z
         (-1, -1): None,  # I -- the term is finished
     }
-    return network.MPO.from_entries([w] * n_sites)
+    return network.MPO.from_entries([w] * n_sites, symbolic=symbolic)
 
 
 def bond_spaces(n_sites: int) -> list[GradedSpace]:
@@ -294,6 +300,11 @@ def main(n_sites: int = 12, chi: int = 64):
         "from_terms": mpo_from_terms(n_sites).edges is not None,
     }
     print(f"  carries an edge description: {carries}")
+    kept = {
+        "from_entries": mpo_entries(n_sites, symbolic=True).edges is not None,
+        "from_terms": mpo_from_terms(n_sites, symbolic=True).edges is not None,
+    }
+    print(f"  the same two under symbolic=True: {kept}")
 
     def grading(space: GradedSpace) -> str:
         return " ".join(f"{sector.charge:+d}:{m}" for sector, m in space.sectors)

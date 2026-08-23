@@ -81,7 +81,7 @@ def widths(sites):
 
 def measure(name, n_sites, terms, cutoff=1e-13, dense_check=False):
     t0 = time.perf_counter()
-    free = free_sites(MPO.from_terms(n_sites, terms, cutoff=None).edges, cutoff)
+    free = free_sites(MPO.from_terms(n_sites, terms, cutoff=None, symbolic=True).edges, cutoff)
     t_free = time.perf_counter() - t0
     t0 = time.perf_counter()
     pinned = MPO.from_terms(n_sites, terms, cutoff=cutoff)
@@ -228,11 +228,12 @@ def dmrg_run(name, variant, chi, sweeps):
     t0 = time.perf_counter()
     n_sites, terms = qc_terms(name)
     if variant == "pinned":
-        h = MPO.from_terms(n_sites, terms, cutoff=1e-13)
+        h = MPO.from_terms(n_sites, terms, cutoff=1e-13, symbolic=True)
     elif variant == "fsm":
-        h = MPO.from_terms(n_sites, terms, cutoff=None)
+        h = MPO.from_terms(n_sites, terms, cutoff=None, symbolic=True)
     else:
-        h = MPO(free_sites(MPO.from_terms(n_sites, terms, cutoff=None).edges, 1e-13))
+        tab = MPO.from_terms(n_sites, terms, cutoff=None, symbolic=True).edges
+        h = MPO(free_sites(tab, 1e-13))
     t_build = time.perf_counter() - t0
     qc.note(event="build", name=name, variant=variant, t=round(t_build, 1), rss=round(rss(), 2))
 
@@ -308,7 +309,7 @@ def grid_point(model, chi, path, sweeps=2):
         mid = GradedSpace.new(fZ2, {FZ2Sector(0): chi - chi // 2, FZ2Sector(1): chi // 2})
         bonds = [triv] + [mid] * (n_sites - 1) + [triv]
     t0 = time.perf_counter()
-    h = MPO.from_terms(n_sites, terms, cutoff=1e-13)
+    h = MPO.from_terms(n_sites, terms, cutoff=1e-13, symbolic=True)
     t_build = time.perf_counter() - t0
     widths = [t.legs[0].space.dim for t in h.sites]
     if path == "dense":

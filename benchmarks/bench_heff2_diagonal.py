@@ -140,7 +140,11 @@ def u1_chain(n=6):
             (0.5, [(sp, i), (sm, i + 1)]),
             (0.5, [(sm, i), (sp, i + 1)]),
         ]
-    return MPO.from_terms(n, terms, cutoff=None), example.PHYS, example.bond_spaces(n)
+    return (
+        MPO.from_terms(n, terms, cutoff=None, symbolic=True),
+        example.PHYS,
+        example.bond_spaces(n),
+    )
 
 
 def fz2_chain(n=5):
@@ -153,7 +157,11 @@ def fz2_chain(n=5):
         terms += [(1.0, [(cd, i), (c, j)]), (1.0, [(cd, j), (c, i)])]
     unit = GradedSpace.new(fZ2, {FZ2Sector(0): 1})
     both = GradedSpace.new(fZ2, {FZ2Sector(0): 2, FZ2Sector(1): 2})
-    return MPO.from_terms(n, terms, cutoff=None), phys, [unit] + [both] * (n - 1) + [unit]
+    return (
+        MPO.from_terms(n, terms, cutoff=None, symbolic=True),
+        phys,
+        [unit] + [both] * (n - 1) + [unit],
+    )
 
 
 def su2_chain(n=6):
@@ -164,7 +172,11 @@ def su2_chain(n=6):
     terms += [(0.41, [(ss, (i, i + 2))]) for i in range(n - 2)]  # J2, so J1's degeneracy lifts
     tri = GradedSpace.new(SU2, {SU2Sector(0): 1})
     mid = GradedSpace.new(SU2, {SU2Sector(0): 2, SU2Sector(1): 2, SU2Sector(2): 1})
-    return MPO.from_terms(n, terms, cutoff=None), phys, [tri] + [mid] * (n - 1) + [tri]
+    return (
+        MPO.from_terms(n, terms, cutoff=None, symbolic=True),
+        phys,
+        [tri] + [mid] * (n - 1) + [tri],
+    )
 
 
 def cost():

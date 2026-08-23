@@ -2557,11 +2557,11 @@ class MPO:
         The rank-4 site tensors, left to right. Exactly one of ``sites`` and
         ``edges`` is given.
     edges : EdgeTable or None, optional
-        The edge description [from_terms][tenet.network.MPO.from_terms] and
-        [from_arrays][tenet.network.MPO.from_arrays] keep -- the finite-state
-        machine at ``cutoff=None``, the compressed sites and their per-cut
-        slabs at a float cutoff -- from which sites and block tables come on
-        request; ``None`` for every other MPO. Keyword-only.
+        The edge description the builders keep under ``symbolic=True`` -- the
+        finite-state machine at ``cutoff=None``, the compressed sites and their
+        per-cut slabs at a float cutoff -- from which sites and block tables
+        come on request; ``None`` for every other MPO, which since #255
+        includes every builder's default. Keyword-only.
 
     Raises
     ------
@@ -2648,16 +2648,16 @@ class MPO:
 
         Notes
         -----
-        Every ``from_terms`` / ``from_arrays`` operator carries a table, at either
+        Every operator built ``symbolic=True`` carries a table, at either
         cutoff. The float cutoff used to give one up, because the compressing sweep's SVD
         gauge mixed the FSM states and left zero identity edges on every model (#141);
         since #204 both sweeps pin the two corner channels, so a compressed bond still
         decomposes as ``IdL (+) open (+) IdR`` and still has a table -- one open state per
         cut rather than one per open string. [from_w][tenet.network.MPO.from_w] never had
         a description and returns ``None``, which routes
-        [Env.heff2][tenet.network.Env.heff2] onto its site-tensor path -- as does
-        [materialize][tenet.network.MPO.materialize], which is the lattice lane's
-        deliberate way of asking for that path (#251).
+        [Env.heff2][tenet.network.Env.heff2] onto its site-tensor path -- as do the three
+        builders at their default and
+        [materialize][tenet.network.MPO.materialize] (#255).
 
         Since #200 the table is *built* here rather than stored here: the call goes
         through to ``EdgeTable.edge_blocks``, which places one
@@ -2685,33 +2685,33 @@ class MPO:
         >>> from tenet.symmetry import U1, U1Sector
         >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
         >>> sz = local_op(np.diag([-0.5, 0.5]), phys=phys, charge=U1Sector(0))
-        >>> h = MPO.from_terms(3, [(1.0, [(sz, i), (sz, i + 1)]) for i in range(2)])
+        >>> terms = [(1.0, [(sz, i), (sz, i + 1)]) for i in range(2)]
+        >>> h = MPO.from_terms(3, terms, symbolic=True)
         >>> h.edges is not None, h.materialize().edges is None
         (True, True)
 
         Notes
         -----
-        **The lattice lane's spelling** (#251). The two engine paths are priced against
-        each other in ``docs/design.md`` "M64b": on U(1) Heisenberg the site-tensor path
-        runs at 1.10-1.28x YASTN per steady sweep and the prepared, symbolic path adds
-        1.63-2.06x on top of that, because a ``D_w = 5`` bond does not repay block2's
-        per-bond cores, prepared operator and structure-keyed cache. So a **finite-range
-        lattice model** wants ``materialize()``; a **quantum-chemistry** operator, whose
-        bond is wide and whose terms are ``O(K^4)``, wants the description kept -- there
-        the prepared path is 0.97x the site-tensor one at ``chi = 64`` and the only route
-        that fits ``K = 26`` in memory at all (M39).
+        **Going the other way** (#255). Since M68 the three builders return site tensors
+        by *default*, so a lattice model needs nothing here: this is the route back for an
+        operator built ``symbolic=True`` that a caller later wants on the site-tensor
+        path -- a wide-bond operator handed to a differently gauged environment, say, or a
+        second run priced on the other path. It is also what
+        [from_terms][tenet.network.MPO.from_terms]'s own default now applies internally.
+
+        The two engine paths are priced against each other in ``docs/design.md`` "M64b":
+        on U(1) Heisenberg the site-tensor path runs at 1.10-1.28x YASTN per steady sweep
+        and the prepared, symbolic path adds 1.63-2.06x on top of that, because a
+        ``D_w = 5`` bond does not repay block2's per-bond cores, prepared operator and
+        structure-keyed cache. A **quantum-chemistry** operator, whose bond is wide and
+        whose terms are ``O(K^4)``, is the case that keeps the description: there the
+        prepared path is 0.97x the site-tensor one at ``chi = 64`` and the only route that
+        fits ``K = 26`` in memory at all (M39).
 
         The choice is the caller's and it is made **at build time, in the open**, exactly
         as [from_terms][tenet.network.MPO.from_terms]'s ``cutoff=None`` against a float
         already chooses the exact finite-state machine against the compressed operator.
         Nothing dispatches on bond width, on ``chi`` or on how the bond structure churns.
-        A method rather than a ``symbolic=`` keyword on the three builders because
-        **nothing about the assembly changes**: the description is built either way (it is
-        how the site tensors are produced), so a builder argument would advertise a
-        different build where there is only a different thing to keep. The keyword would
-        also have to be answered three times, and the two builders cannot split the
-        default between them -- ``docs/guide/models-and-sites.md`` teaches
-        [from_arrays][tenet.network.MPO.from_arrays] for lattice models too.
 
         What is given up is stated in
         [heff2_families][tenet.network.Env.heff2_families]: a materialized operator has no
@@ -2845,7 +2845,9 @@ class MPO:
         return cls([first, *[bulk] * (n_sites - 2), last])
 
     @classmethod
-    def from_entries(cls, entries: Iterable[Mapping[tuple[int, int], Any]]) -> "MPO":
+    def from_entries(
+        cls, entries: Iterable[Mapping[tuple[int, int], Any]], *, symbolic: bool = False
+    ) -> "MPO":
         """The non-zero ``(i, j)`` entries of each site's ``W``, as a graded MPO with symbols.
 
         Parameters
@@ -2864,14 +2866,20 @@ class MPO:
               [local_op][tenet.network.local_op];
             * the pair ``(c, op)`` -- ``c`` times that operator.
 
+        symbolic : bool, optional
+            Keep the finite-state-machine description, so
+            [Env.heff2][tenet.network.Env.heff2] runs the term-family matvec on the
+            prepared path. Default ``False``: the builder returns the site tensors, which
+            is what a finite-range lattice model wants. Keyword-only.
+
         Returns
         -------
         MPO
-            The assembled operator, carrying the per-site
-            [edge_blocks][tenet.network.MPO.edge_blocks] table -- so it takes
-            [Env.heff2][tenet.network.Env.heff2]'s prepared, symbolic path. A lattice
-            model wants [materialize][tenet.network.MPO.materialize] on the result; see
-            Notes.
+            The assembled operator as rank-4 site tensors, so it takes
+            [Env.heff2][tenet.network.Env.heff2]'s **site-tensor** path. With
+            ``symbolic=True`` it carries the per-site
+            [edge_blocks][tenet.network.MPO.edge_blocks] table instead and takes the
+            **prepared, symbolic** path; see Notes.
 
         Raises
         ------
@@ -2909,12 +2917,12 @@ class MPO:
         ...     (-1, -1): None,
         ... }
         >>> h = MPO.from_entries([w] * 3)
-        >>> len(h), h.to_dense().shape, h.edges is not None
+        >>> len(h), h.to_dense().shape, h.edges is None
         (3, (8, 8), True)
 
         Notes
         -----
-        **The hand-build entry that keeps its symbols.** [from_w][tenet.network.MPO.from_w]
+        **The hand-build entry that derives its bonds.** [from_w][tenet.network.MPO.from_w]
         takes a fully-formed rank-4 ``W``, so its caller writes every zero of the
         finite-state machine out, gets four legs and a ``dual`` convention right, and
         hands over a grading by hand -- and what comes back is numeric, with no edge
@@ -2967,18 +2975,20 @@ class MPO:
         ``jit``/``grad`` like the rest of this
         module, because the assembly decides [GradedSpace][tenet.GradedSpace]\\ s.
 
-        **Which engine path this operator takes, and how a caller chooses** (#251). The
-        description is what routes [Env.heff2][tenet.network.Env.heff2] onto its prepared,
-        symbolic path, and keeping it is this builder's default. That is the right default
-        for **quantum chemistry** -- ``O(K^4)`` terms over a bond in the thousands, where
-        the prepared path is 0.97x the site-tensor one at ``chi = 64`` and the only route
-        that fits ``K = 26`` in memory (``docs/design.md`` "Milestone 39"). A
-        **finite-range lattice model** wants the other path: at ``D_w`` of order ten the
-        prepared machinery costs 1.6-2.1x per steady sweep and buys nothing back, so the
-        spelling is [materialize][tenet.network.MPO.materialize] --
-        ``MPO.from_entries(...).materialize()`` -- and ``docs/design.md`` "M64b" and "M67" carry the
-        grid. Nothing dispatches at run time; the caller states it here, at build time,
-        exactly as ``cutoff`` does.
+        **Which engine path this operator takes, and how a caller chooses** (#255). By
+        default this builder hands back the **site tensors**: the description is what
+        produces them and is then dropped, so [Env.heff2][tenet.network.Env.heff2] takes
+        its site-tensor contraction. That is the path a **finite-range lattice model**
+        wants -- at ``D_w`` of order ten the prepared machinery costs 1.6-2.1x per steady
+        sweep and buys nothing back, while the site-tensor path runs at 1.10-1.28x YASTN
+        on U(1) (``docs/design.md`` "M64b", "M67", "M68"). ``symbolic=True`` keeps the
+        description and routes ``heff2`` onto the prepared, symbolic term-family matvec,
+        which is what **quantum chemistry** wants: ``O(K^4)`` terms over a bond in the
+        thousands, where the prepared path is 0.97x the site-tensor one at ``chi = 64``
+        and the only route that fits ``K = 26`` in memory at all ("Milestone 39").
+        Nothing dispatches at run time; the caller states it here, at build time. An
+        operator built ``symbolic=True`` moves to the site-tensor path afterwards with
+        [materialize][tenet.network.MPO.materialize].
         """
         rows = [dict(e) for e in entries]
         n_sites = len(rows)
@@ -3129,10 +3139,18 @@ class MPO:
                 f"named it is either unreachable from IdL at bond 0 or unable to reach IdR at "
                 f"bond {n_sites}, so no part of the operator runs through it"
             )
-        return cls(edges=tab)
+        built = cls(edges=tab)
+        return built if symbolic else built.materialize()
 
     @classmethod
-    def from_terms(cls, n_sites: int, terms: Iterable, *, cutoff: float | None = 1e-13) -> "MPO":
+    def from_terms(
+        cls,
+        n_sites: int,
+        terms: Iterable,
+        *,
+        cutoff: float | None = 1e-13,
+        symbolic: bool = False,
+    ) -> "MPO":
         """A term list ``[(coeff, [(op, sites), ...]), ...]`` as a graded MPO.
 
         Parameters
@@ -3150,15 +3168,20 @@ class MPO:
             finite-state machine's block table (see Notes for the three-way
             behaviour and what ``None`` does *not* affect). Default ``1e-13``.
             Keyword-only.
+        symbolic : bool, optional
+            Keep the finite-state-machine description, so
+            [Env.heff2][tenet.network.Env.heff2] runs the term-family matvec on the
+            prepared path. Default ``False``: the builder returns the site tensors, which
+            is what a finite-range lattice model wants. Keyword-only.
 
         Returns
         -------
         MPO
-            The assembled operator, carrying the per-site
-            [edge_blocks][tenet.network.MPO.edge_blocks] table at either cutoff -- so it
-            takes [Env.heff2][tenet.network.Env.heff2]'s prepared, symbolic path. A
-            lattice model wants [materialize][tenet.network.MPO.materialize] on the
-            result; see Notes.
+            The assembled operator as rank-4 site tensors, so it takes
+            [Env.heff2][tenet.network.Env.heff2]'s **site-tensor** path. With
+            ``symbolic=True`` it carries the per-site
+            [edge_blocks][tenet.network.MPO.edge_blocks] table instead and takes the
+            **prepared, symbolic** path; see Notes.
 
         Raises
         ------
@@ -3236,11 +3259,13 @@ class MPO:
         ``cutoff=None``; it runs at the default ``1e-13`` in that case.
 
         **``cutoff`` is the regime knob, and it is a build-time choice rather than a
-        hidden runtime one.** Both settings now keep the block table
+        hidden runtime one, and it is orthogonal to ``symbolic``.** Under
+        ``symbolic=True`` both settings keep the block table
         [edge_blocks][tenet.network.MPO.edge_blocks] exposes, so both reach
         [Env.heff2][tenet.network.Env.heff2]'s prepared path, because the sweeps pin
         the ``IdL``/``IdR`` channels through their SVDs (#204) instead of rotating them
-        away (#141). What the choice decides is the operator the engine runs on:
+        away (#141). What ``cutoff`` decides either way is the operator the engine runs
+        on:
 
         * ``cutoff=None`` for a **finite-range lattice model**. The compressing sweeps
           reduce its bond by exactly nothing, and the finite-state machine keeps its
@@ -3257,18 +3282,26 @@ class MPO:
         The default stays ``1e-13``. The measurements are in ``docs/design.md``
         "Milestone 16" and "Milestone 39".
 
-        **Which engine path this operator takes, and how a caller chooses** (#251). The
-        description is what routes [Env.heff2][tenet.network.Env.heff2] onto its prepared,
-        symbolic path, and keeping it is this builder's default. That is the right default
-        for **quantum chemistry** -- ``O(K^4)`` terms over a bond in the thousands, where
-        the prepared path is 0.97x the site-tensor one at ``chi = 64`` and the only route
-        that fits ``K = 26`` in memory (``docs/design.md`` "Milestone 39"). A
-        **finite-range lattice model** wants the other path: at ``D_w`` of order ten the
-        prepared machinery costs 1.6-2.1x per steady sweep and buys nothing back, so the
-        spelling is [materialize][tenet.network.MPO.materialize] --
-        ``MPO.from_terms(...).materialize()`` -- and ``docs/design.md`` "M64b" and "M67" carry the
-        grid. Nothing dispatches at run time; the caller states it here, at build time,
-        exactly as ``cutoff`` does.
+        **Which engine path this operator takes, and how a caller chooses** (#255). By
+        default this builder hands back the **site tensors**: the description is what
+        produces them and is then dropped, so [Env.heff2][tenet.network.Env.heff2] takes
+        its site-tensor contraction. That is the path a **finite-range lattice model**
+        wants -- at ``D_w`` of order ten the prepared machinery costs 1.6-2.1x per steady
+        sweep and buys nothing back, while the site-tensor path runs at 1.10-1.28x YASTN
+        on U(1) (``docs/design.md`` "M64b", "M67", "M68"). ``symbolic=True`` keeps the
+        description and routes ``heff2`` onto the prepared, symbolic term-family matvec,
+        which is what **quantum chemistry** wants: ``O(K^4)`` terms over a bond in the
+        thousands, where the prepared path is 0.97x the site-tensor one at ``chi = 64``
+        and the only route that fits ``K = 26`` in memory at all ("Milestone 39").
+        Nothing dispatches at run time; the caller states it here, at build time, exactly
+        as ``cutoff`` does. An operator built ``symbolic=True`` moves to the site-tensor
+        path afterwards with [materialize][tenet.network.MPO.materialize].
+
+        **``symbolic`` and ``cutoff`` are independent.** ``cutoff`` decides whether the
+        operator is *compressed*; ``symbolic`` decides whether the description is *kept*.
+        ``cutoff=None`` with the default therefore yields exact, uncompressed site
+        tensors -- on a finite-range lattice model the minimal bond anyway, and the
+        plain-NumPy path "Milestone 16" first measured.
 
         **There is no** ``phys=`` **argument**: the operators carry the physical space and
         a second source of truth could disagree with them, which would surface as a
@@ -3334,10 +3367,11 @@ class MPO:
         # truncating as it goes -- so what comes back is already at the operator Schmidt
         # rank and the full-width MPO never exists.
         tab = _edge_table(n_sites, phys, dual, states, order, moves, stops, spectators)
-        if cutoff is None:
-            return cls(edges=tab)
-        sites, cuts = _instantiate(tab, cutoff)
-        return cls(edges=_compressed_table(_compress_forward(sites, cuts, cutoff), cuts, phys))
+        if cutoff is not None:
+            sites, cuts = _instantiate(tab, cutoff)
+            tab = _compressed_table(_compress_forward(sites, cuts, cutoff), cuts, phys)
+        built = cls(edges=tab)
+        return built if symbolic else built.materialize()
 
     @classmethod
     def from_arrays(
@@ -3348,6 +3382,7 @@ class MPO:
         *,
         cutoff: float | None = 1e-13,
         screen: float = 1e-12,
+        symbolic: bool = False,
     ) -> "MPO":
         """Blocks of terms as arrays -- ``(expr, indices, data)`` -- as a graded MPO.
 
@@ -3376,15 +3411,20 @@ class MPO:
             Coefficient magnitude threshold, applied **after** the merge:
             a merged term survives when ``abs(coeff) > screen``. Default
             ``1e-12``. Keyword-only.
+        symbolic : bool, optional
+            Keep the finite-state-machine description, so
+            [Env.heff2][tenet.network.Env.heff2] runs the term-family matvec on the
+            prepared path. Default ``False``: the builder returns the site tensors, which
+            is what a finite-range lattice model wants. Keyword-only.
 
         Returns
         -------
         MPO
-            The assembled operator, carrying the per-site
-            [edge_blocks][tenet.network.MPO.edge_blocks] table at either cutoff -- so it
-            takes [Env.heff2][tenet.network.Env.heff2]'s prepared, symbolic path, which is
-            what an ab initio operator wants. A lattice model built through this front end
-            wants [materialize][tenet.network.MPO.materialize] on the result; see Notes.
+            The assembled operator as rank-4 site tensors, so it takes
+            [Env.heff2][tenet.network.Env.heff2]'s **site-tensor** path. With
+            ``symbolic=True`` it carries the per-site
+            [edge_blocks][tenet.network.MPO.edge_blocks] table instead and takes the
+            **prepared, symbolic** path; see Notes.
 
         Raises
         ------
@@ -3455,24 +3495,32 @@ class MPO:
         nothing else; it is an accuracy/size trade the caller can take deliberately at
         ``1e-4`` and above, not a performance lever.
 
-        **Which engine path this operator takes, and how a caller chooses** (#251). The
-        description is what routes [Env.heff2][tenet.network.Env.heff2] onto its prepared,
-        symbolic path, and keeping it is this builder's default. That is the right default
-        for **quantum chemistry** -- ``O(K^4)`` terms over a bond in the thousands, where
-        the prepared path is 0.97x the site-tensor one at ``chi = 64`` and the only route
-        that fits ``K = 26`` in memory (``docs/design.md`` "Milestone 39"). A
-        **finite-range lattice model** wants the other path: at ``D_w`` of order ten the
-        prepared machinery costs 1.6-2.1x per steady sweep and buys nothing back, so the
-        spelling is [materialize][tenet.network.MPO.materialize] --
-        ``MPO.from_arrays(...).materialize()`` -- and ``docs/design.md`` "M64b" and "M67" carry the
-        grid. Nothing dispatches at run time; the caller states it here, at build time,
-        exactly as ``cutoff`` does.
+        **Which engine path this operator takes, and how a caller chooses** (#255). By
+        default this builder hands back the **site tensors**: the description is what
+        produces them and is then dropped, so [Env.heff2][tenet.network.Env.heff2] takes
+        its site-tensor contraction. That is the path a **finite-range lattice model**
+        wants -- at ``D_w`` of order ten the prepared machinery costs 1.6-2.1x per steady
+        sweep and buys nothing back, while the site-tensor path runs at 1.10-1.28x YASTN
+        on U(1) (``docs/design.md`` "M64b", "M67", "M68"). ``symbolic=True`` keeps the
+        description and routes ``heff2`` onto the prepared, symbolic term-family matvec,
+        which is what **quantum chemistry** wants: ``O(K^4)`` terms over a bond in the
+        thousands, where the prepared path is 0.97x the site-tensor one at ``chi = 64``
+        and the only route that fits ``K = 26`` in memory at all ("Milestone 39").
+        Nothing dispatches at run time; the caller states it here, at build time, exactly
+        as ``cutoff`` does. An operator built ``symbolic=True`` moves to the site-tensor
+        path afterwards with [materialize][tenet.network.MPO.materialize].
 
-        This builder's shape is the ab initio one, so its default is also its own lane's
-        answer -- but it is **not** an ab initio front end only:
-        ``docs/guide/models-and-sites.md`` teaches it for lattice models too, because a
-        [Site][tenet.models.Site]'s ``ops`` is exactly the table it takes. That is why the
-        representation is chosen after the build rather than by which builder was called.
+        **``symbolic`` and ``cutoff`` are independent.** ``cutoff`` decides whether the
+        operator is *compressed*; ``symbolic`` decides whether the description is *kept*.
+        ``cutoff=None`` with the default therefore yields exact, uncompressed site
+        tensors -- on a finite-range lattice model the minimal bond anyway, and the
+        plain-NumPy path "Milestone 16" first measured.
+
+        This builder's shape is the ab initio one, but it is **not** an ab initio front
+        end only: ``docs/guide/models-and-sites.md`` teaches it for lattice models too,
+        because a [Site][tenet.models.Site]'s ``ops`` is exactly the table it takes. That
+        is why the default here is the lattice one, the same as the other two builders' --
+        the representation follows the *model*, not the builder that was called (#255).
         """
         phys, table, merged = _canonical_blocks(n_sites, ops, blocks, screen)
         # No k-site split runs here, so the MPO stays on the non-dual convention.
@@ -3500,10 +3548,11 @@ class MPO:
             walk.stops,
             walk.spectators,
         )
-        if cutoff is None:
-            return cls(edges=tab)
-        sites, cuts = _instantiate(tab, cutoff)
-        return cls(edges=_compressed_table(_compress_forward(sites, cuts, cutoff), cuts, phys))
+        if cutoff is not None:
+            sites, cuts = _instantiate(tab, cutoff)
+            tab = _compressed_table(_compress_forward(sites, cuts, cutoff), cuts, phys)
+        built = cls(edges=tab)
+        return built if symbolic else built.materialize()
 
     def to_dense(self) -> Any:
         """The full ``d**N x d**N`` operator, ``D=1`` boundaries dropped.

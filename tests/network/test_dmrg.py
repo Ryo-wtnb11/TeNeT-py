@@ -412,7 +412,7 @@ def test_dmrg_forwards_compile_to_the_prepared_matvec_without_changing_the_run()
     """
     from .test_heff2 import _heis  # noqa: PLC0415
 
-    h = MPO.from_terms(6, _heis(6), cutoff=None)
+    h = MPO.from_terms(6, _heis(6), cutoff=None, symbolic=True)
     runs = []
 
     def stub(fn):

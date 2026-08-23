@@ -123,7 +123,11 @@ def _both(model, n):
     """The same Hamiltonian through both builders."""
     make_w, make_terms = MODELS[model]
     phys, w = make_w()
-    return phys, MPO.from_entries([w] * n), MPO.from_terms(n, make_terms(n), cutoff=None)
+    return (
+        phys,
+        MPO.from_entries([w] * n, symbolic=True),
+        MPO.from_terms(n, make_terms(n), cutoff=None, symbolic=True),
+    )
 
 
 # --- the oracle: the same operator, both routes ---------------------------------------

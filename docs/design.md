@@ -6025,6 +6025,107 @@ left that list with M61 Stage D above.
   M65 landed; M65 touches how a structure records its pattern, not how many bytes a block
   assembly moves, so the steady-state split above is not waiting on it.
 
+- **M68** — shipped: the three builders return **site tensors by default**, and the
+  symbolic description is the advanced option, asked for by keyword (#255). `from_terms`,
+  `from_arrays` and `from_entries` each gained one keyword-only `symbolic: bool = False`;
+  at the default they hand back exactly the object `MPO.materialize()` returns, so
+  `Env.heff2` — which routes on `self.h.edges is not None` and on nothing else — takes the
+  site-tensor contraction. `symbolic=True` keeps the finite-state-machine description and
+  the prepared, term-family matvec with it. `MPO.materialize()` is unchanged and is now
+  the route *back*, for an operator built symbolic that a caller later wants on the other
+  path.
+
+  **Why the default moved, when M67 had just argued it should not.** M67's spelling —
+  `builder(...).materialize()` — put the lattice lane on the right path only for a caller
+  who writes the method. `from_terms(...)` handed straight to `dmrg_`, which is what every
+  first script does, still paid 1.63–2.06× per steady sweep on U(1) Heisenberg, 1.85–2.07×
+  on the fZ2 Hubbard chain, the 3.8× bond-growth transient M64b measured, and the per-bond
+  cache memory. The architecture this repository states is *simple Hamiltonians on
+  MPSKit/YASTN-shaped structures by default, block2 machinery as the advanced option*, and
+  a default that only the well-read caller escapes is that statement inverted. M67's own
+  objection does not survive the flip being made on **all three** builders: it rejected
+  flipping `from_terms` alone because `docs/guide/models-and-sites.md` teaches
+  `from_arrays` for lattice models too (a `models.Site`'s `ops` is exactly the table it
+  takes), which would have left the guide's recommended route on the prepared path. Three
+  flipped defaults have no such hole, and the quantum-chemistry callers — the QC
+  benchmarks and the QC tests — now say `symbolic=True` in the open, which is what "the
+  advanced option, in the open" means.
+
+  **#218's scope, stated one more time and now exactly.** #218 settled the engine as one
+  path **for symbolic operators, which a caller asks for**: an MPO carrying an edge
+  description gets the prepared term-family matvec at either cutoff, and later parallelism
+  and accelerator work attaches there and nowhere else. Nothing about that changes. What
+  changes is that being symbolic is no longer something an operator *is* by accident of
+  which builder produced it — it is something the caller requests. "One path for symbolic
+  operators" plus "the builders always build symbolic" had silently become "one path"; M67
+  separated the statements and M68 makes the second one false by default.
+
+  **`symbolic` and `cutoff` are independent, and both are build-time.** `cutoff` decides
+  whether the operator is *compressed*; `symbolic` decides whether the description is
+  *kept*. `cutoff=None` with the default therefore yields exact, uncompressed site tensors
+  — the plain-NumPy path Milestone 16 first measured, and on a finite-range lattice model
+  the minimal bond anyway. Nothing dispatches at run time: no bond-width threshold, no
+  `chi` threshold, no probe, no `path=` keyword.
+
+  **The name.** `symbolic=` is the word `Env.heff2`'s own Notes, `MPO.edges`' docstring and
+  M39/M64b/M67 already use for the representation ("the prepared, symbolic path", "the
+  symbolic layer"), so it is the package's vocabulary rather than a coinage (#120/#185).
+  `prepared=` names the engine instead of the operator and would have to be re-explained
+  the moment a second consumer of the description appears; `keep_edges=`/`fsm=` name the
+  implementation. The docstring explains it in one sentence — *keep the
+  finite-state-machine description, so `Env.heff2` runs the term-family matvec* — which is
+  the test a keyword has to pass to be worth three signatures.
+
+  **Measured: the bare builder is the fast one.** `benchmarks/bench_vs_yastn.py --arm
+  tenet`, unchanged (no `materialize()` in the script), against M67's `tenet-sites` column,
+  and against `origin/main`'s own `--arm tenet-sites` run on this machine:
+
+  | model | N | chi | M68 `--arm tenet` | main `--arm tenet-sites` | M67 | E |
+  |---|---|---|---|---|---|---|
+  | Heisenberg U(1) | 32 | 64 | 0.52 s | — | 0.60 s | -13.997315618007251 |
+  | Heisenberg U(1) | 32 | 256 | 0.99 s | — | 0.95 s | -13.997315618224434 |
+  | Hubbard fZ2 | 16 | 64 | 0.30 s | 0.30 s | 0.31 s | -12.541840348005870 |
+  | Hubbard fZ2 | 16 | 256 | 3.14 s | 3.03 s | 3.44 s | -12.541411654258997 |
+
+  The Heisenberg energies are M67's to every digit it printed. The two Hubbard energies are
+  **bit-identical** to `origin/main`'s `tenet-sites` arm run here — the control that matters,
+  because M67's printed Hubbard energies (-12.541897370651, -12.541952156541) were produced
+  on another machine and are not reproduced by main's own arm on this one either. Walls are
+  within run-to-run spread on a laptop.
+
+  **Measured: the keyword is the old path, bit for bit.** N=12 U(1) Heisenberg,
+  `cutoff=None`, `chi=64`, five sweeps, seed 0: `origin/main`'s default build and this
+  branch's `symbolic=True` build agree on `float.hex` for the converged energy
+  (`-0x1.4918034f478c0p+2`) and for every sweep in the history.
+
+  **The quantum-chemistry lane, re-checked under the keyword.** N2 `K=16` through
+  `from_arrays(..., symbolic=True)` keeps its description (`edges`, `edge_blocks(0)`) and
+  routes every matvec to the prepared branch — instrumented on the two module globals
+  `Env.heff2` chooses between: `{prepared: 186, sites: 0}` over one sweep at `chi=16`, first
+  sweep energy -27.480379787. C2 `K=26` still completes through
+  `bench_pinned_mpo.py --dmrg pinned` with the keyword added to that script: build 41.0 s
+  at 6.12 GiB, sweep 2.7 s, first-sweep energy -11.823302501 at `chi=16` (M67: 43.2 s,
+  6.05 GiB, 4.9 s). M39's
+  corner-exactness property and the deferred-instantiation instrumentation pass unchanged
+  under it.
+
+  **What the default gives up, and where that is written down.** A materialized operator has
+  no term families, so `Env.heff2_families` returns the single vector `H_eff aa` and
+  `sweep_`'s `noise_type="perturbative"` falls back to the one-vector mixer. M67 measured
+  that cost on the lattice models: one sweep of head start, no accuracy, the same converged
+  -8.682473226. The perturbative-noise suite therefore keeps its subject by passing
+  `symbolic=True`, and `sweep_`'s own docstring now says which operators get the
+  family-resolved mixer.
+
+  **Public surface.** Three keyword-only additions, nothing else changed in any signature;
+  `MPO.materialize` unchanged. Docstrings: the three builders state the rule a caller
+  predicts from their own model, `Env.heff2`'s Notes lead with the default path as the
+  lattice lane's engine, `Env.heff2_families` states the default fallback, and
+  `MPO.materialize`'s Notes drop the argument against a `symbolic=` keyword that this
+  milestone overrides. `docs/guide/models-and-sites.md` spells every lattice model as a bare
+  builder and keeps a short "going the other way" section for `materialize()`; the decision
+  table carries the keyword on the quantum-chemistry row.
+
 
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic

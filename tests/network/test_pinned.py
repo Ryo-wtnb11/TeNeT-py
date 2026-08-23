@@ -123,7 +123,9 @@ def test_the_pinned_sweeps_build_the_operator_the_free_sweeps_did(model):
     n, terms = MODELS[model]
     ref = np.asarray(MPO.from_terms(n, terms, cutoff=None).to_dense())
     free = np.asarray(
-        MPO(_free_sites(MPO.from_terms(n, terms, cutoff=None).edges, 1e-13)).to_dense()
+        MPO(
+            _free_sites(MPO.from_terms(n, terms, cutoff=None, symbolic=True).edges, 1e-13)
+        ).to_dense()
     )
     pinned = np.asarray(MPO.from_terms(n, terms, cutoff=1e-13).to_dense())
     scale = np.abs(ref).max()
@@ -146,7 +148,7 @@ def test_every_compressed_cut_keeps_its_corner_channels_exact(model):
     exactly the four zeros of MPSKit's ``(1 C D; . A B; . . 1)``.
     """
     n, terms = MODELS[model]
-    h = MPO.from_terms(n, terms, cutoff=1e-13)
+    h = MPO.from_terms(n, terms, cutoff=1e-13, symbolic=True)
     tab = h.edges
     assert tab is not None
     sym = tab.phys.provider
@@ -177,7 +179,7 @@ def test_the_compressed_block_table_reassembles_the_compressed_site(model):
     is not the dense ``idmap (x) eye`` a naive reassembly would write).
     """
     n, terms = MODELS[model]
-    h = MPO.from_terms(n, terms, cutoff=1e-13)
+    h = MPO.from_terms(n, terms, cutoff=1e-13, symbolic=True)
     tab = h.edges
     for site in range(n):
         blocks = h.edge_blocks(site)

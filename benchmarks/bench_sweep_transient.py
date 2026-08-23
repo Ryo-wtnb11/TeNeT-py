@@ -289,7 +289,7 @@ def build(model: str, n: int, chi: int, sites: bool):
             "nud": local_op(fixture.N_UP @ fixture.N_DN, phys=phys, charge=even),
         }
     terms = [(a, [(ops[name], i) for name, i in prod]) for a, prod in fixture.model_terms(model, n)]
-    h = MPO.from_terms(n, terms)
+    h = MPO.from_terms(n, terms, symbolic=True)
     if sites:
         # The edge description dropped: ``Env.heff2`` takes the site-tensor path (#250).
         h = MPO(h.sites) if not hasattr(h, "materialize") else h.materialize()

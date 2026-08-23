@@ -55,7 +55,10 @@ def ramp(chi):
 
 def heisenberg(n_sites):
     return MPO.from_terms(
-        n_sites, prepared._pair_terms([(i, i + 1) for i in range(n_sites - 1)]), cutoff=None
+        n_sites,
+        prepared._pair_terms([(i, i + 1) for i in range(n_sites - 1)]),
+        cutoff=None,
+        symbolic=True,
     )
 
 
@@ -80,7 +83,7 @@ def test_the_mpskit_hubbard_fixture_survives_the_mixer():
     fix = json.loads(hubbard.FIXTURE.read_text())
     for u_key, entry in fix["N4"].items():
         u = float(u_key[1:])
-        h = MPO.from_terms(4, hubbard._rank3_terms(4, u))
+        h = MPO.from_terms(4, hubbard._rank3_terms(4, u), symbolic=True)
         out = dmrg_(hubbard._state(4, 8, 8, seed=2), h, schedule=ramp(16), max_sweeps=40)
         assert out.energy == pytest.approx(entry["energy"], abs=2e-9), f"U={u}"
 
@@ -91,7 +94,7 @@ def _su2_model():
     ss = local_op(np.kron(sz, sz) + (np.kron(sp, sm) + np.kron(sm, sp)) / 2, phys=phys)
     tri = GradedSpace.new(SU2, {SU2Sector(0): 1})
     mid = GradedSpace.new(SU2, {SU2Sector(0): 2, SU2Sector(1): 2, SU2Sector(2): 1})
-    h = MPO.from_terms(8, [(1.0, [(ss, (i, i + 1))]) for i in range(7)], cutoff=None)
+    h = MPO.from_terms(8, [(1.0, [(ss, (i, i + 1))]) for i in range(7)], cutoff=None, symbolic=True)
     return h, phys, [tri] + [mid] * 7 + [tri]
 
 
@@ -106,7 +109,7 @@ def _fermionic_model():
         terms += [(1.0, [(op_cd, i), (op_c, j)]), (1.0, [(op_cd, j), (op_c, i)])]
     unit = GradedSpace.new(fZ2, {FZ2Sector(0): 1})
     both = GradedSpace.new(fZ2, {FZ2Sector(0): 2, FZ2Sector(1): 2})
-    return MPO.from_terms(5, terms, cutoff=None), phys, [unit] + [both] * 4 + [unit]
+    return MPO.from_terms(5, terms, cutoff=None, symbolic=True), phys, [unit] + [both] * 4 + [unit]
 
 
 def _mixed_model():
@@ -118,19 +121,28 @@ def _mixed_model():
         (2.5, [(op_sz, 0), (op_sz, 2), (op_sz, 5)]),
         (-1.3, [(op_sz, 3)]),
     ]
-    return MPO.from_terms(6, terms, cutoff=None), example.PHYS, example.bond_spaces(6)
+    return (
+        MPO.from_terms(6, terms, cutoff=None, symbolic=True),
+        example.PHYS,
+        example.bond_spaces(6),
+    )
 
 
 def _power_law_model():
     pairs = [(i, j) for i in range(10) for j in range(i + 1, min(i + 5, 10))]
     h = MPO.from_terms(
-        10, prepared._pair_terms(pairs, coeff=lambda i, j: (j - i) ** -2.0), cutoff=None
+        10,
+        prepared._pair_terms(pairs, coeff=lambda i, j: (j - i) ** -2.0),
+        cutoff=None,
+        symbolic=True,
     )
     return h, example.PHYS, example.bond_spaces(10)
 
 
 def _cylinder_model():
-    h = MPO.from_terms(12, prepared._pair_terms(prepared._cylinder_pairs(12, 6)), cutoff=None)
+    h = MPO.from_terms(
+        12, prepared._pair_terms(prepared._cylinder_pairs(12, 6)), cutoff=None, symbolic=True
+    )
     return h, example.PHYS, example.bond_spaces(12)
 
 

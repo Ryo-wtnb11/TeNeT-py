@@ -34,13 +34,13 @@ def _bond(psi, h, n):
 
 def _spin_case():
     psi = MPS.random(example.PHYS, example.bond_spaces(10), seed=0)
-    h = example.mpo_from_terms(10)
+    h = example.mpo_from_terms(10, symbolic=True)
     dmrg_(psi, h, chi=16, max_sweeps=3)
     return psi, h
 
 
 def _fermionic_case():
-    h = MPO.from_terms(6, hubbard_test._rank3_terms(6, 4.0))
+    h = MPO.from_terms(6, hubbard_test._rank3_terms(6, 4.0), symbolic=True)
     psi = hubbard_test._state(6, 6, 6, seed=3)
     dmrg_(psi, h, chi=16, max_sweeps=3)
     return psi, h
@@ -132,7 +132,7 @@ def test_perturbative_noise_fills_a_sector_the_eigensolver_left_empty():
     directions the *Hamiltonian couples to*, so the bond comes back strictly wider. It is
     a superset, never a different set: every direction here is one ``H`` can populate.
     """
-    h = example.mpo_from_terms(6)
+    h = example.mpo_from_terms(6, symbolic=True)
     spaces = {}
     for noise in (0.0, 1e-2):
         psi = MPS.product(example.PHYS, [U1Sector(1), U1Sector(-1)] * 3).canonize_()
@@ -147,7 +147,7 @@ def test_perturbative_noise_fills_a_sector_the_eigensolver_left_empty():
 def test_a_perturbative_sweep_leaves_the_mps_normalized():
     """The carrier factor is divided by its own norm, so Pythagoras still holds."""
     psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0).canonize_()
-    h = example.mpo_from_terms(6)
+    h = example.mpo_from_terms(6, symbolic=True)
     env = Env(psi, h).setup_()
     _, dw = sweep_(psi, h, env, {}, chi=8, cutoff=1e-14, noise=1e-3, noise_type="perturbative")
     assert psi.norm() == pytest.approx(1.0, abs=1e-12)
@@ -159,7 +159,7 @@ def test_a_perturbative_sweep_leaves_the_mps_normalized():
 
 def test_an_unknown_noise_type_is_refused():
     psi = MPS.random(example.PHYS, example.bond_spaces(6), seed=0).canonize_()
-    h = example.mpo_from_terms(6)
+    h = example.mpo_from_terms(6, symbolic=True)
     env = Env(psi, h).setup_()
     with pytest.raises(ValueError, match="noise_type"):
         sweep_(psi, h, env, {}, chi=8, cutoff=1e-14, noise=1e-4, noise_type="density_matrix")
@@ -185,7 +185,7 @@ def _ramp(chi):
 def test_the_hubbard_ground_state_is_unchanged_with_the_mixer_on():
     """N=4 against even-parity ED, at U/t in {0, 4}: a mixer must not move the answer."""
     for u in (0.0, 4.0):
-        h = MPO.from_terms(4, hubbard_test._rank3_terms(4, u))
+        h = MPO.from_terms(4, hubbard_test._rank3_terms(4, u), symbolic=True)
         # max_sweeps raised for the same M62 reason as the u-sweep oracle: the budget
         # was calibrated against the twisted pairing's accidentally fast direction.
         out = dmrg_(hubbard_test._state(4, 8, 8, seed=1), h, schedule=_ramp(16), max_sweeps=24)
@@ -194,9 +194,13 @@ def test_the_hubbard_ground_state_is_unchanged_with_the_mixer_on():
 
 def test_the_heisenberg_ground_state_is_unchanged_with_the_mixer_on():
     psi = MPS.random(example.PHYS, example.bond_spaces(8), seed=0)
-    mixed = dmrg_(psi, example.mpo_from_terms(8), schedule=_ramp(16), max_sweeps=6).energy
+    mixed = dmrg_(
+        psi, example.mpo_from_terms(8, symbolic=True), schedule=_ramp(16), max_sweeps=6
+    ).energy
     plain = dmrg_(
-        MPS.random(example.PHYS, example.bond_spaces(8), seed=0), example.mpo_from_terms(8), chi=16
+        MPS.random(example.PHYS, example.bond_spaces(8), seed=0),
+        example.mpo_from_terms(8, symbolic=True),
+        chi=16,
     )
     assert mixed == pytest.approx(plain.energy, abs=1e-10)
 

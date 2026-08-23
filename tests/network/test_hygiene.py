@@ -303,10 +303,11 @@ def test_every_two_operand_einsum_is_a_composition(monkeypatch):
         qs = (-1, 1) if i % 2 else (-2, 0, 2)
         bonds.append(GradedSpace.new(U1, {U1Sector(q): 2 for q in qs}))
     bonds.append(unit)
-    built = [MPO.from_terms(n, terms, cutoff=c) for c in (None, 1e-13)]
-    # Both builders now hand back a description (#204), so the third operator is the one
-    # that still has none -- a bare container over the compressed sites, which is what
-    # keeps ``update_``'s and ``heff2``'s site-tensor branches on the smoke's path.
+    built = [MPO.from_terms(n, terms, cutoff=c, symbolic=True) for c in (None, 1e-13)]
+    # ``symbolic=True`` at either cutoff hands back a description (#204, #255), which is
+    # what puts the prepared branches on the smoke's path; the third operator is the one
+    # that has none -- a bare container over the compressed sites, which is what keeps
+    # ``update_``'s and ``heff2``'s site-tensor branches on it too.
     built.append(MPO(built[1].sites))
     for h in built:
         h.to_dense()

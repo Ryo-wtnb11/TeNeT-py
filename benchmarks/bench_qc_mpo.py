@@ -607,7 +607,7 @@ def measure(name, cutoff):
     note(event="phase", name=name, cutoff=cutoff, phase="from_terms", status="start")
     with Phases() as ph:
         t1 = time.perf_counter()
-        h = MPO.from_terms(n_sites, terms, cutoff=cutoff)
+        h = MPO.from_terms(n_sites, terms, cutoff=cutoff, symbolic=True)
         t2 = time.perf_counter()
     note(
         event="phase", name=name, cutoff=cutoff, phase="from_terms", status="done",
@@ -728,7 +728,7 @@ def dmrg_run(name, chi, sweeps, budget):
     screen = 1e-6 if name.startswith("syn-") else SCREEN
     terms = to_tenet_terms(fold_terms(spin_orbital_terms(recs, screen=screen))[0])
     n_sites = 2 * norb
-    h = MPO.from_terms(n_sites, terms, cutoff=None)
+    h = MPO.from_terms(n_sites, terms, cutoff=None, symbolic=True)
     note(
         event="dmrg_build", name=name, k=norb, sites=n_sites, chi=chi, budget=budget,
         t=time.perf_counter() - t0, rss=rss_gib(), widths=bond_widths(h),
@@ -1025,7 +1025,7 @@ def _self_check():
     pairs = [(i, j) for i in range(6) for j in range(6) if i != j]
     cd, c = _label(MAT["cd"], True), _label(MAT["c"], True)
     symbolic = [(1.0, ((cd, i), (c, j))) for i, j in pairs]
-    h = MPO.from_terms(6, to_tenet_terms(symbolic), cutoff=None)
+    h = MPO.from_terms(6, to_tenet_terms(symbolic), cutoff=None, symbolic=True)
     predicted = fsm_profile(6, symbolic)
     assert bond_widths(h) == predicted, (bond_widths(h), predicted)
     cover = mvc_profile(6, symbolic)

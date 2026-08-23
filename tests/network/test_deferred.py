@@ -160,7 +160,7 @@ def test_the_prepared_matvec_allocates_no_full_width_site_tensor(monkeypatch):
     """
     n, bond = 8, 3
     seen = _recording_place(monkeypatch)
-    h = MPO.from_terms(n, _spin_terms(n), cutoff=None)
+    h = MPO.from_terms(n, _spin_terms(n), cutoff=None, symbolic=True)
     assert seen == []  # the description is symbolic: assembly allocates nothing at all
     full = [(h.edges.bonds[m].dim, h.edges.bonds[m + 1].dim) for m in range(n)]
     assert min(min(pair) for pair in full[1:-1]) >= 4  # narrower is a real statement here
@@ -181,7 +181,7 @@ def test_a_deferred_mpo_holds_no_site_tensor_until_one_is_asked_for():
     description until a consumer that needs a dense site turns up, and ``to_dense`` is
     such a consumer while ``Env`` is not.
     """
-    h = MPO.from_terms(6, _spin_terms(6), cutoff=None)
+    h = MPO.from_terms(6, _spin_terms(6), cutoff=None, symbolic=True)
     assert h.edges is not None
     assert h._sites == {}
     assert len(h) == 6
@@ -204,7 +204,7 @@ def test_group_embedding_happens_in_the_core_builder_not_in_assembly(monkeypatch
         "_group_embedding",
         lambda *a, **kw: calls.append(1) or original(*a, **kw),
     )
-    h = MPO.from_terms(8, _spin_terms(8), cutoff=None)
+    h = MPO.from_terms(8, _spin_terms(8), cutoff=None, symbolic=True)
     assert calls == []  # assembly embeds nothing
     h.to_dense()
     assert calls == []  # neither does full numeric instantiation
@@ -251,7 +251,7 @@ def test_the_deferred_and_numeric_heff2_paths_agree(model, chi):
     """
     phys, terms = MODELS[model]
     n, bond = 6, 2
-    h = MPO.from_terms(n, terms(n), cutoff=None)
+    h = MPO.from_terms(n, terms(n), cutoff=None, symbolic=True)
     psi, (env, ref) = _walk_to([h, MPO(h.sites)], phys, n, bond, chi)
     aa = tenet.einsum("apx,xqr->apqr", psi[bond], psi[bond + 1])
     yp, yd = env.heff2(bond, aa), ref.heff2(bond, aa)
@@ -275,7 +275,7 @@ def _sweep_caches(h, env):
 def _swept(n, chi, model="spinless", seed=1):
     """One full sweep of a ``cutoff=None`` MPO, and the ``(h, env)`` whose caches it filled."""
     phys, terms = MODELS[model]
-    h = MPO.from_terms(n, terms(n), cutoff=None)
+    h = MPO.from_terms(n, terms(n), cutoff=None, symbolic=True)
     psi = MPS.random(phys, _bonds(phys, n, chi), seed=seed)
     psi.canonize_(0)
     env = Env(psi, h).setup_(0)
@@ -373,7 +373,7 @@ def test_the_budget_changes_no_energy(monkeypatch):
     out = {}
     for tag, budget in (("evicting", 8 * 1024), ("unbounded", 1 << 40)):
         monkeypatch.setattr(common, "CACHE_BUDGET", budget)
-        h = MPO.from_terms(n, terms(n), cutoff=None)
+        h = MPO.from_terms(n, terms(n), cutoff=None, symbolic=True)
         psi = MPS.random(HUBBARD, _bonds(HUBBARD, n, 8), seed=3)
         out[tag] = dmrg_(psi, h, chi=8, cutoff=1e-12, max_sweeps=3).history
     assert out["evicting"] == out["unbounded"]

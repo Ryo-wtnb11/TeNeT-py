@@ -66,7 +66,7 @@ def lattice(n):
             terms.append((j, [(op[0], i), (op[0], i + d)]))
             terms.append((0.5 * j, [(op[-2], i), (op[2], i + d)]))
             terms.append((0.5 * j, [(op[2], i), (op[-2], i + d)]))
-    return MPO.from_terms(n, terms, cutoff=None), phys, U1
+    return MPO.from_terms(n, terms, cutoff=None, symbolic=True), phys, U1
 
 
 def qc_model(name):
@@ -78,7 +78,7 @@ def qc_model(name):
     norb, _, recs = qc.fetch(name)
     terms = qc.to_tenet_terms(qc.fold_terms(qc.spin_orbital_terms(recs))[0])
     phys = GradedSpace.new(fZ2, {FZ2Sector(0): 1, FZ2Sector(1): 1})
-    return MPO.from_terms(2 * norb, terms), phys, fZ2
+    return MPO.from_terms(2 * norb, terms, symbolic=True), phys, fZ2
 
 
 def bond_spaces(sym, n, chi):
