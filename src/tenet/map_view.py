@@ -238,7 +238,13 @@ def _bands(
 @cache
 def _tables(
     structure: TensorStructure,
-) -> tuple[tuple[tuple[tuple[FusionTree, int, int], ...], ...], tuple[tuple[int, ...], ...]]:
+) -> tuple[
+    tuple[
+        tuple[tuple[tuple[FusionTree, int, int], ...], tuple[tuple[FusionTree, int, int], ...]],
+        ...,
+    ],
+    tuple[tuple[int, ...], ...],
+]:
     """Per-sector ``(row bands, column bands)`` and per-block shapes in ``axes_order``.
 
     Parameters
