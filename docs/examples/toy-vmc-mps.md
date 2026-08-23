@@ -1,9 +1,11 @@
 # Toy VMC on an MPS
 
-What to look at: both traces are strictly decreasing across all 20 SGD steps — `jax.grad`
-taken straight through a Rayleigh quotient of `SymmetricTensor` pytrees, for a U(1) and
-an SU(2) ansatz through the identical code path. The
-[VMC tutorial](../tutorials/vmc.md) walks through the file.
+A symmetric MPS as a JAX pytree, `jax.grad` through a Rayleigh quotient, and an SGD step
+written with `jax.tree.map`. Needs the `jax` extra.
+
+What to look at: both traces are strictly decreasing across all 20 SGD steps, for a U(1)
+and an SU(2) ansatz through the identical code path. The
+[VMC tutorial](../tutorials/vmc.md) walks the file through.
 
 ## Source
 

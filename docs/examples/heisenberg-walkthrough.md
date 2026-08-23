@@ -1,18 +1,25 @@
 # Heisenberg, U(1) — the walkthrough
 
-What to look at: the three MPO routes. `MPO.from_w` takes the hand-graded MPO bond the
-file writes out; `MPO.from_entries` names the same `W`'s eight non-zero entries and
-declares no grading at all; `MPO.from_terms` derives one from the operators' own charges —
-and the two gradings printed below are the same grading, sector for sector, so all three
-runs land on the same twelve digits. The two lines after them say which of the three
-carries an **edge description** — the finite-state machine that decides whether
-`Env.heff2` takes the prepared, symbolic engine path or contracts the site tensors. At the
-builders' default none of them does, which is the lattice model's path; `symbolic=True`
-keeps it, and writing a `W` by hand does not cost you that option.
-Below them, the seed's bond dimensions are the *reachable* U(1) charges at each cut (`1 2 3 4 …`, the whole `S^z_tot = 0` statement) and the final ones
-are what `svd_truncated` decided sweep by sweep. `examples/heisenberg.py` is the same
-chain with none of this spelled out; `examples/toy_codes/dmrg.py` writes the algorithm
-underneath it. The [DMRG tutorial](../tutorials/dmrg.md) walks through the physics.
+The same chain as [Heisenberg, U(1)](heisenberg.md), with the symmetry input spelled out:
+the hand-graded 5x5 `W`, the reachable-charge bond spaces, and three MPO routes
+cross-checked against each other.
+
+What to look at: the three routes. `MPO.from_w` takes the hand-graded MPO bond the file
+writes out; `MPO.from_entries` names the same `W`'s eight non-zero entries and declares no
+grading; `MPO.from_terms` derives one from the operators' own charges. The two gradings
+printed below are the same grading, sector for sector, so all three runs land on the same
+twelve digits.
+
+The two lines after them say which route carries an **edge description** — the
+finite-state machine that decides whether `Env.heff2` takes the prepared, symbolic engine
+path or contracts the site tensors. At the builders' default none of them does, which is
+the lattice model's path; `symbolic=True` keeps it, and writing a `W` by hand does not
+cost you that option. See
+[Building a Hamiltonian](../guide/hamiltonians.md#symbolictrue).
+
+Below them, the seed's bond dimensions are the *reachable* U(1) charges at each cut
+(`1 2 3 4 …`, the whole `S^z_tot = 0` statement) and the final ones are what
+`svd_truncated` decided sweep by sweep.
 
 ## Source
 

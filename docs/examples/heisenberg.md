@@ -1,10 +1,13 @@
 # Heisenberg, U(1)
 
-What to look at: the sum of the 19 bond energies reproduces `out.energy` to twelve
-digits — `expectation_2site` and `dmrg_` weigh the same state on the same scale — and
-`max_n |<S^z_n>|` is float noise, because the `S^z_tot = 0` sector is enforced by the
-Néel seed's own charges, not by a projector. See the [DMRG tutorial](../tutorials/dmrg.md)
-for the physics.
+`local_op` to `MPO.from_terms` to `MPS.product` to `dmrg_` to `expectation_2site`, on a
+core install. No `W` matrix is written anywhere: the MPO bond grading is derived from the
+operators' own charges.
+
+What to look at: the sum of the 19 bond energies reproduces `out.energy` to twelve digits
+— `expectation_2site` and `dmrg_` weigh the same state on the same scale — and
+`max_n |<S^z_n>|` is float noise, because the `S^z_tot = 0` sector is fixed by the Neel
+seed's own charges. The [DMRG tutorial](../tutorials/dmrg.md) walks the file through.
 
 ## Source
 
