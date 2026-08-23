@@ -6127,6 +6127,171 @@ left that list with M61 Stage D above.
   table carries the keyword on the quantum-chemistry row.
 
 
+- **M69** — shipped: the sector-matrix assembly moves each element **once** instead of
+  three times, on every backend whose arrays can be written (#257). M66 read the
+  `to_matrices` cost on the fZ2 Hubbard `N = 16`, `chi = 128` matvec as "strided reshape
+  plus `concatenate`, and only 0.8 ms of it is the no-scatter rule". Both halves of that
+  were wrong, and the correction is an accounting one.
+
+  **The accounting, in element moves.** Write `D` for the total element count of a
+  tensor's blocks. Every element has to leave block storage and arrive in matrix storage
+  exactly once, so **`D` moves is the floor** — and the floor is `0` only in the
+  degenerate case where `axes_order` is the identity, the coupled sector has one row band
+  and one column band, and the block is already contiguous, because then the matrix *is*
+  the block reshaped.
+
+  | | moves per call | why |
+  |---|---|---|
+  | tenet, before | **3D** | `reshape` of the transposed view materialises it (`D`), `concatenate(axis=1)` joins each row band (`D`), `concatenate(axis=0)` joins the sector (`D`) |
+  | YASTN | **2D** | `backend_np.py`:656-663 — `.transpose(order).reshape(Drsh)` materialises (`D`), then `temp[slcs] = ...` writes the slot (`D`) |
+  | tenet, after | **D** | one strided copy per block, straight into the preallocated matrix |
+
+  tenet is now one pass below YASTN, and for the same reason YASTN is one below the old
+  tenet: YASTN materialises its transposed view *before* the slot assignment because it
+  reshapes the **source**, and reshaping a non-contiguous source is a copy. Reshaping the
+  **destination** is not. That is the whole change.
+
+  **Why the destination reshape is free — a theorem about strides, not an observation.**
+  The destination is `out[r0:r1, c0:c1]`, a 2-D strided view with strides
+  `(C·itemsize, itemsize)`. It is reshaped into the block's degeneracy shape, which
+  *splits* each of its two axes and never merges any: splitting an axis of extent `n`
+  and stride `s` into extents `n₁…n_k` yields strides `(n₂⋯n_k·s, …, s)`, which always
+  exists. A reshape that only subdivides is therefore always a view, on any strided array
+  library. Merging is the operation that can fail, and this path never merges. The claim
+  is pinned by `np.shares_memory` in `tests/test_map_view_assembly.py` rather than left
+  as reasoning, because if it were ever false the assignment would land in a discarded
+  temporary and every matrix would silently hold whatever `empty` allocated.
+
+  **What the remaining single copy costs, and the prediction it makes.** A move is not a
+  move: its cost is set by the *innermost contiguous run* of the source view, the chunk
+  length the copy engine gets. Classifying every block of one steady `_heff2_full` by that
+  run and calibrating each class on isolated `copyto` calls over the fixture's own blocks
+  (so the prediction is not fitted to the measurement it is compared against):
+
+  | | fZ2 Hubbard N=16 χ=128 | U(1) Heisenberg N=32 χ=128 |
+  |---|---|---|
+  | `axes_order` on every operand | identity | identity |
+  | `D` | 2 589 248 elements (20.71 MB) | 166 809 elements (1.33 MB) |
+  | · contiguous run = whole block | 180 224 (7 %) | 21 266 (13 %) |
+  | · run < 8 elements ("scattered") | 2 409 024 (93 %) | 145 543 (87 %) |
+  | calibrated ns/element, contiguous | 0.088 | 2.271 |
+  | calibrated ns/element, scattered | 0.978 | 1.515 |
+  | (a) predicted `D` × class cost | **2.371 ms** | 0.269 ms |
+  | (b) the same `D` copies into the real strided destination | 2.434 ms | 0.178 ms |
+  | (c) measured `to_matrices` | **3.951 ms** | 0.841 ms |
+  | unexplained, (c) − (b) | **+1.517 ms (38 %)** | +0.663 ms (79 %) |
+
+  The `axes_order` row is the surprise and it is the reason M66's reading was wrong: the
+  map view applies **no permutation at all** on either fixture. The strided copy is of an
+  array that is *already* a non-contiguous view, because the categorical `transpose`
+  upstream is lazy and defers its copy to the first consumer that needs contiguity. The
+  11× spread between the two calibrated classes (0.088 against 0.978 ns/element) is the
+  same effect #254 measured as 9.6 µs contiguous against 85 µs reversed on a ~98 k-element
+  block, i.e. 8.9×, reached independently.
+
+  On Hubbard the accounting closes to 38 %, and the unexplained part is per-call Python:
+  the assembly issues one `empty`, then per block a slice, a reshape and an assignment,
+  and at ~80 blocks per call that is ~19 µs of interpreter per block. On the U(1) fixture
+  the accounting closes to only 79 % and the calibration itself is inverted — "contiguous"
+  prices *higher* per element than "scattered" — which is not a contradiction but a
+  diagnosis: blocks there average ~370 elements, so what is being timed is the cost of
+  *making a call*, not of moving bytes. **The U(1) regime is not bandwidth-bound and this
+  change is not aimed at it**; what helps there is removing per-call work, which is the
+  other half of this milestone.
+
+  **The other half: the layout's derived tables.** `MapLayout.row_bands`/`.col_bands`
+  rebuilt their tuples by filtering `rows`/`cols` once per coupled sector per call
+  (`O(bands²)` for the call), and `from_matrices` re-derived each block's matrix-order
+  shape through `structure.block_shape(structure.block_order[i])` — a `FusionBlockKey`
+  hash and a dict lookup — once per block per call. Both are pure functions of the
+  structure the layout is already cached on, so they moved next to it. That is why
+  `from_matrices`, which moves no bytes at all (every piece is a view, asserted), was the
+  *more* expensive direction on U(1) before this milestone.
+
+  **Generality.** The in-place assembly is one procedure for any band grid `R × C`, any
+  rank, any symmetry provider and any coupled-sector count; there is no size threshold, no
+  shape test, no provider branch and nothing that inspects a block's strides. The only
+  branch is whether the backend's arrays can be written in place — `ar.infer_backend` in
+  `_MUTABLE`, autoray's own dispatch axis, resolved once per call and never on a traced
+  value. JAX keeps the pure-concatenation path unchanged, so the traceability contract and
+  every `jit` test hold byte for byte; the two paths are checked bit-identical on every
+  provider, including a multi-band SU(2) case where one coupled sector carries two output
+  trees with identical external sectors.
+
+  **Measured, same session, interleaved three times so drift cannot pass as effect.**
+  Milliseconds per steady `_heff2_full`:
+
+  | | before | after |
+  |---|---|---|
+  | fZ2 Hubbard N=16 χ=128, `to_matrices` | 5.46 / 5.17 / 5.43 | **3.42 / 3.37 / 3.45** |
+  | fZ2 Hubbard, `from_matrices` | 0.178 / 0.181 / 0.182 | **0.119 / 0.121 / 0.121** |
+  | fZ2 Hubbard, `_heff2_full` wall | 10.50 / 10.50 / 9.31 | **8.04 / 8.31 / 8.12** |
+  | U(1) Heisenberg N=32 χ=128, `to_matrices` | 0.990 / 0.983 / 0.990 | **0.688 / 0.691 / 0.677** |
+  | U(1) Heisenberg, `from_matrices` | 1.376 / 1.381 / 1.385 | **0.846 / 0.838 / 0.824** |
+  | U(1) Heisenberg, `_heff2_full` wall | 4.75 / 4.71 / 4.76 | **3.94 / 3.91 / 3.89** |
+
+  Against M66's 5.99 / 0.22 ms the pair is now 3.4 / 0.12. The U(1) pair, 2.37 → 1.53 ms,
+  is almost entirely the table hoist, as the accounting above predicts.
+
+  **The steady sweep**, `bench_vs_yastn.py` bare `tenet` arm, and the YASTN arm re-run in
+  the same session as its control. Seconds per steady sweep. Bond dimensions are identical
+  before and after at every point, and so are the fZ2 energies **exactly**, to the last
+  bit; the two U(1) energies move by 8e-16 and 4e-15 relative. That is not the assembly
+  changing an answer -- the sector matrices it hands back are byte-identical on these very
+  operands (82 matrices and 616 blocks checked with ``tobytes()``, both fixtures) -- but
+  ``empty`` and ``concatenate`` return differently aligned buffers, and BLAS picks its
+  kernel and blocking by alignment, so a reduction downstream can associate differently.
+
+  | model | N | chi | YASTN | tenet before | tenet after | before/YASTN | after/YASTN |
+  |---|---|---|---|---|---|---|---|
+  | Heisenberg U(1) | 32 | 64 | 0.513 s | 0.511 s | **0.446 s** | 1.00x | **0.87x** |
+  | Heisenberg U(1) | 32 | 256 | 0.997 s | 1.039 s | **0.870 s** | 1.04x | **0.87x** |
+  | Hubbard fZ2 | 16 | 64 | 0.209 s | 0.288 s | **0.255 s** | 1.38x | **1.22x** |
+  | Hubbard fZ2 | 16 | 128 | 0.593 s | 0.835 s | **0.709 s** | 1.41x | **1.20x** |
+  | Hubbard fZ2 | 16 | 256 | 2.133 s | 3.143 s | **2.590 s** | 1.47x | **1.21x** |
+  | Hubbard fZ2 | 32 | 64 | 0.486 s | 0.708 s | **0.626 s** | 1.46x | **1.29x** |
+  | Hubbard fZ2 | 32 | 128 | 1.622 s | 2.328 s | **2.007 s** | 1.44x | **1.24x** |
+  | Hubbard fZ2 | 32 | 256 | 6.782 s | 9.448 s | **7.989 s** | 1.39x | **1.18x** |
+
+  **What is left on fZ2, accounted rather than reported.** The flop counts are identical
+  on both sides — #254 established the same four pairwise contractions over the same
+  intermediates — so the residual is not arithmetic. Against the matvec:
+
+  - **The coefficient pass, ~1.6 ms.** M66 priced it two ways that agreed: 1.62 ms
+    measured directly, and 1.77 ms as the fZ2-minus-Z2 control. YASTN pays none of it,
+    having folded the Jordan-Wigner string into its MPO once at construction. Its
+    *theoretical* minimum is **zero extra passes** — a per-block scalar is a band scale
+    that folds into the following GEMM's `alpha`, so nothing needs to be re-materialised —
+    which makes it an implementation gap and not, as M66 concluded, the price of the
+    design. **It is deliberately not touched here** and wants its own issue.
+  - **The strided copy, now ~+0.1 ms and no longer a differentiator.** tenet's `D` moves
+    cost 2.37 ms (row (a) above); M66 measured YASTN's eight transpose-and-merges at
+    2.27 ms. Having gone from `3D` to `D` tenet is level with YASTN on the copy itself,
+    where it used to be 2.6× behind. If every copy were contiguous the same `D` would cost
+    0.23 ms, so ~2.1 ms of the call is stride penalty that **both** libraries pay.
+  - **Per-call Python, ~1.5 ms.** Row (c) − (b). YASTN's merge/dot meta is 0.04 ms because
+    it is precomputed into NumPy arrays once per structure; tenet walks Python tuples per
+    block. This is the largest remaining single item and it is the same mechanism the
+    table hoist attacked from the other end.
+  - **Phases outside the matvec** — the SVD and the Lanczos recurrence — are **not
+    separately measured here**, and that is the gap in this accounting. The sweep ratio
+    (1.18–1.29×) is markedly better than the matvec ratio implied by these parts, which
+    means the non-matvec phases are *not* where tenet loses; but their split is not
+    instrumented in this milestone and the statement stands as an inference from the two
+    ratios, not a measurement.
+
+  Summing the three measured items against M66's YASTN matvec baseline over-predicts the
+  observed gap by roughly 1 ms, because the YASTN matvec figures are M66's session and the
+  tenet ones are this one. The honest form of the claim is the ratio table above, which is
+  same-session throughout.
+
+  **What is not measured.** Every number is NumPy on one machine, single-threaded BLAS.
+  The PyTorch path takes the same in-place assembly and is covered by
+  `tests/backends/test_torch.py`'s existing suite, including under autograd, but is not
+  benchmarked. The probe harness is a scratchpad rebuild of M66's and is again not
+  committed, for M66's reason: an in-repo copy of the function bodies it clones would rot
+  at the first change to any of them.
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
