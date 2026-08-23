@@ -1,32 +1,46 @@
-"""The MPS: the list of site tensors, its canonical form and a bond's Schmidt values.
+"""The MPS: the list of site tensors, how to seed it, its canonical form, and what it measures.
 
-The state ``examples/toy_codes/dmrg.py`` sweeps. ``mpo.py`` imports the physical space
-from here and ``dmrg.py`` imports the rest.
+The state ``tebd.py`` evolves and ``dmrg.py`` sweeps. The physical space comes from
+``model.py``; nothing here knows the Hamiltonian, which is why the same container serves
+both algorithms and both measurements below.
 
 **MPS leg convention**, the part worth reading before the code: site ``A_n`` is
 ``(left bond OUT, physical OUT, right bond IN)``, the ``examples/toy_codes/vmc_mps.py``
 convention. Charge flows left to right, ``bond_n (x) phys_n -> bond_{n+1}``, and both end
-bonds are :data:`BOUNDARY`, the unit sector with degeneracy 1 -- which forces
+bonds are ``model.BOUNDARY``, the unit sector with degeneracy 1 -- which forces
 ``Sum_i 2 S^z_i = 0``, i.e. ``S^z_tot = 0``, structurally and for free.
 
-The tensor operations it is built on: ``SymmetricTensor.random`` for the seed,
-``tenet.einsum`` for every contraction, ``tenet.repartition`` for the leg bends,
-``tenet.linalg.lq`` for the canonical form, ``tenet.norm``, and ``tenet.to_matrices`` to
-read the Schmidt values off a bond.
+The tensor operations it is built on: ``SymmetricTensor.from_blocks`` and
+``SymmetricTensor.random`` for the seeds, ``tenet.einsum`` for every contraction,
+``tenet.adjoint`` for the bra, ``tenet.repartition`` for the leg bends,
+``tenet.linalg.lq`` for the canonical form, ``tenet.norm``, ``tenet.full_trace`` to close
+the measured network, and ``tenet.to_matrices`` to read the Schmidt values off a bond.
 """
 
+import math
+
+import numpy as np
+from model import BOUNDARY, PHYS
+
 import tenet
-from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
 from tenet.symmetry import U1, U1Sector
 
-# Physical space: charge t = 2 S^z, so the spin doublet is {-1, +1} -- exactly
-# ``vmc_mps.SPACES["u1"]``'s physical leg. BOUNDARY is the unit sector with degeneracy 1,
-# used for *both* ends of the MPS (fixing S^z_tot = 0) and for both ends of the MPO.
-PHYS = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
-BOUNDARY = GradedSpace.new(U1, {U1Sector(0): 1})
-
-
 # --- the state ---------------------------------------------------------------------
+
+
+def ones(legs) -> SymmetricTensor:
+    """A tensor with every structurally allowed entry equal to 1.
+
+    ``TensorStructure`` already knows which blocks the grading allows and how big each one
+    is, so the seed is "fill the blocks that exist": there is no dense array here to build
+    and project. Where the grading allows exactly one entry -- a ``D=1`` bond either side
+    of a site, as in :func:`product_mps` -- that is a basis state written without naming a
+    basis.
+    """
+    structure = TensorStructure(tuple(legs))
+    blocks = {key: np.ones(structure.block_shape(key)) for key in structure.block_order}
+    return SymmetricTensor.from_blocks(legs, blocks)
 
 
 def bond_spaces(n_sites: int) -> list[GradedSpace]:
@@ -59,6 +73,25 @@ def random_mps(n_sites: int, seed: int = 0) -> list[SymmetricTensor]:
             (Leg(spaces[i], OUT), Leg(PHYS, OUT), Leg(spaces[i + 1], IN)), seed=seed + i
         )
         for i in range(n_sites)
+    ]
+
+
+def product_mps(n_sites: int) -> list[SymmetricTensor]:
+    """The Neel state ``|up down up down ...>``, every bond ``D=1``.
+
+    The charge on bond ``i`` is fixed -- it is the running sum of the alternating physical
+    charges -- so each bond space holds one sector of degeneracy 1, and then each site has
+    exactly one structurally allowed entry: :func:`ones` fills it and the result *is* the
+    product state, with no dense basis written anywhere. ``n_sites`` must be even, or the
+    chain does not close on ``S^z_tot = 0``.
+
+    This is ``tebd.py``'s starting state: an unentangled state at the right total charge,
+    which imaginary time then has to do all the work on.
+    """
+    charges = [sum(1 if k % 2 == 0 else -1 for k in range(i)) for i in range(n_sites + 1)]
+    spaces = [GradedSpace.new(U1, {U1Sector(q): 1}) for q in charges]
+    return [
+        ones((Leg(spaces[i], OUT), Leg(PHYS, OUT), Leg(spaces[i + 1], IN))) for i in range(n_sites)
     ]
 
 
@@ -114,3 +147,53 @@ def spectrum(s: SymmetricTensor) -> list[float]:
         for i in range(m.shape[0])
     ]
     return sorted(out, reverse=True)
+
+
+def entropy(schmidt: list[float]) -> float:
+    """Von Neumann entanglement entropy of a cut, from its Schmidt values.
+
+    ``S = -Sum_k p_k ln p_k`` with ``p_k = s_k**2``, the standard measure of how much a
+    bond has to carry. Values at or below zero after truncation are dropped rather than
+    fed to ``log``: they are the discarded tail, and they contribute nothing.
+    """
+    return -sum(s**2 * math.log(s**2) for s in schmidt if s > 0.0)
+
+
+def expectation(psi: list[SymmetricTensor], op: SymmetricTensor, n: int) -> float:
+    """``<psi|op|psi> / <psi|psi>`` for ``op`` on site ``n`` (rank 2) or bond ``(n, n+1)`` (rank 4).
+
+    One left-to-right pass of the transfer matrix, environment ``(ket IN, bra OUT)``,
+    absorbing the ket, then the operator where there is one, then the bra -- the same three
+    steps ``dmrg.update_env`` takes with an MPO in the middle, minus the MPO. Sweeping only
+    left to right is what keeps every contraction a plain composition: operand 1 supplies
+    the ``IN`` end of every shared wire and no wire turns around, so no bend and no
+    :func:`dmrg._composed` is needed here.
+
+    A two-site ``op`` is applied to the merged ``theta``; the split is never undone,
+    because the merged tensor is thrown away with the environment.
+
+    Simplification: **the whole chain is contracted, per measurement.** That is ``O(N D^3)``
+    for a number the canonical form could give in ``O(D^3)`` if this container stored its
+    Schmidt values on every bond the way ``tenet.network.MPS`` does. At the sizes here that
+    trade buys nothing and costs the reader a second invariant to hold; the upgrade path is
+    to keep the singular values from :func:`canonicalize` and cut the sweep short.
+    """
+    sites = list(psi)
+    two_site = op.ndim == 4
+    if two_site:
+        sites[n : n + 2] = [tenet.einsum("apx,xqr->apqr", psi[n], psi[n + 1])]
+    env = ones((Leg(BOUNDARY, IN), Leg(BOUNDARY, OUT)))
+    for i, a in enumerate(sites):
+        bra = tenet.adjoint(a)
+        if i != n:
+            t = tenet.einsum("aB,apr->Bpr", env, a)
+            env = tenet.einsum("Bps,Bpr->rs", bra, t)
+        elif two_site:
+            t = tenet.einsum("aB,apqr->Bpqr", env, a)
+            t = tenet.einsum("PQpq,Bpqr->BPQr", op, t)
+            env = tenet.einsum("BPQs,BPQr->rs", bra, t)
+        else:
+            t = tenet.einsum("aB,apr->Bpr", env, a)
+            t = tenet.einsum("Pp,Bpr->BPr", op, t)
+            env = tenet.einsum("BPs,BPr->rs", bra, t)
+    return float(tenet.full_trace(env))

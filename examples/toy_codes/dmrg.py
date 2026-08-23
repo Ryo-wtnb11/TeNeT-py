@@ -4,18 +4,17 @@ Run it standalone::
 
     uv run python examples/toy_codes/dmrg.py
 
-The algorithm is the file: the directed-bond environment cache and its invalidation, a
-Lanczos step over the two-site tensor, and the sweep whose truncation re-decides each bond
-space. The state it sweeps comes from ``mps.py`` and the Hamiltonian from ``mpo.py``, each
-of which carries its own leg convention. Nothing is imported from ``tenet.network``, which
-ships all of it; ``examples/heisenberg_walkthrough.py`` is the same physics through the
-library.
+The algorithm is the file: the directed-bond environment cache and its invalidation, the
+two-site effective Hamiltonian, and the sweep whose truncation re-decides each bond space.
+The state comes from ``mps.py``, the Hamiltonian from ``model.py`` as an MPO, and the
+eigensolver from ``lanczos.py``. Nothing is imported from ``tenet.network``, which ships
+all of it; ``examples/heisenberg_walkthrough.py`` is the same physics through the library.
+``tebd.py`` reaches the same ground state from the same model's two-site gates, and
+``exact.py`` is the number both are judged against.
 
-The tensor operations it is built on: ``SymmetricTensor.from_blocks`` for the boundary
-environments, ``tenet.einsum`` for every contraction, ``tenet.repartition`` for the leg
-bends, ``tenet.linalg.svd_truncated`` for the bond-deciding factorization, and
-``tenet.add``, ``tenet.subtract``, ``tenet.norm`` and ``tenet.inner`` for the Krylov
-vector space.
+The tensor operations it is built on: ``tenet.einsum`` for every contraction,
+``tenet.repartition`` for the leg bends, and ``tenet.linalg.svd_truncated`` for the
+bond-deciding factorization.
 
 **Leg convention** for the piece this file owns: environment ``F[(n, n+1)]`` is
 ``(ket IN, mpo OUT, bra OUT)``, built from sites ``<= n``; environment ``F[(n, n-1)]`` is
@@ -52,28 +51,24 @@ Krylov step ever wants.
 
 from typing import NamedTuple
 
-import numpy as np
+from lanczos import lanczos
 
-# ``mps.py`` holds the state and ``mpo.py`` the Hamiltonian; this file holds the
-# algorithm. Their names are re-exported here, so ``import dmrg`` still reaches the whole
-# example. The names marked ``noqa`` below are re-exports only: this file never calls
-# them, and dropping them would break every caller of the single-file version.
-from mpo import MPO_BOND, mpo, mpo_blocks  # noqa: F401
+# ``mps.py`` holds the state, ``model.py`` the Hamiltonian and ``lanczos.py`` the
+# eigensolver; this file holds the algorithm. The names marked ``noqa`` below are
+# re-exports only: this file never calls them, and dropping them would break every caller
+# that imports this module as the whole example.
+from model import BOUNDARY, E_INF, MPO_BOND, PHYS, mpo, mpo_blocks  # noqa: F401
 from mps import (
-    BOUNDARY,
-    PHYS,  # noqa: F401
     _as_site,
     bond_spaces,  # noqa: F401
     canonicalize,
+    ones,
     random_mps,
     spectrum,
 )
 
 import tenet
-from tenet import IN, OUT, Leg, SymmetricTensor, TensorStructure
-
-# The thermodynamic limit, 1/4 - ln 2 (Bethe 1931; Hulthen 1938), for main()'s report.
-E_INF = -0.4431471805599453
+from tenet import IN, OUT, Leg, SymmetricTensor
 
 
 def _composed(equation: str, a: SymmetricTensor, b: SymmetricTensor, bend: str = ""):
@@ -107,18 +102,6 @@ def _composed(equation: str, a: SymmetricTensor, b: SymmetricTensor, bend: str =
 # --- the environment: YASTN's directed-bond dict ------------------------------------
 
 
-def _ones(legs) -> SymmetricTensor:
-    """A tensor with every structurally allowed entry equal to 1.
-
-    ``TensorStructure`` already knows which blocks the grading allows and how big each one
-    is, so the seed is "fill the blocks that exist": there is no dense array here to build
-    and project.
-    """
-    structure = TensorStructure(tuple(legs))
-    blocks = {key: np.ones(structure.block_shape(key)) for key in structure.block_order}
-    return SymmetricTensor.from_blocks(legs, blocks)
-
-
 def boundary_envs(n_sites: int) -> dict[tuple[int, int], SymmetricTensor]:
     """``{(-1, 0): left, (n, n-1): right}``, both the trivial 1x1x1 tensor.
 
@@ -130,8 +113,8 @@ def boundary_envs(n_sites: int) -> dict[tuple[int, int], SymmetricTensor]:
     that is *plausible and wrong*, the worst failure mode a DMRG has.
     """
     return {
-        (-1, 0): _ones((Leg(BOUNDARY, IN), Leg(BOUNDARY, OUT), Leg(BOUNDARY, OUT))),
-        (n_sites, n_sites - 1): _ones((Leg(BOUNDARY, OUT), Leg(BOUNDARY, IN), Leg(BOUNDARY, IN))),
+        (-1, 0): ones((Leg(BOUNDARY, IN), Leg(BOUNDARY, OUT), Leg(BOUNDARY, OUT))),
+        (n_sites, n_sites - 1): ones((Leg(BOUNDARY, OUT), Leg(BOUNDARY, IN), Leg(BOUNDARY, IN))),
     }
 
 
@@ -195,52 +178,6 @@ def heff2(envs, w1, w2, n: int, aa: SymmetricTensor) -> SymmetricTensor:
     t = _composed("apqys,mQqy->apQms", t, w2, bend="q")
     t = _composed("apQms,xPpm->aPQxs", t, w1, bend="p")
     return _composed("aPQxs,axB->BPQs", t, envs[n - 1, n], bend="a")
-
-
-def lanczos(matvec, v: SymmetricTensor, ncv: int = 3, tol: float = 1e-13):
-    """Ground eigenpair ``(value, vector)`` of a Hermitian ``matvec`` over SymmetricTensors.
-
-    YASTN's three-term recurrence (``yastn/tensor/_krylov.py``:34-42) and its happy
-    breakdown (``H[(j+1,j)] < tol`` -> stop and drop the row, :39-43), then ``eigh`` of
-    the ``(m, m)`` tridiagonal and one recombination
-    (``yastn/krylov/_krylov.py``:226-239, a single iteration with no restart at :217-219).
-    ``hermitian=True, ncv=3, which='SR'`` are YASTN's own DMRG defaults
-    (``_dmrg.py``:151-152) and are not knobs this example tunes.
-
-    The only tensor operations are ``tenet.add``/``subtract``, scalar multiply/divide,
-    ``tenet.norm`` and ``tenet.inner`` -- a Krylov solver needs a vector space and nothing
-    else, and a ``SymmetricTensor`` is one.
-
-    Simplification: **no reorthogonalization**, and neither has YASTN. At ``ncv=3`` the
-    recurrence has not had time to lose orthogonality, and the vector is reseeded from the
-    current MPS at every bond -- this is an inner solver inside an outer sweep, not a
-    standalone eigensolver. Ceiling: raise ``ncv`` past ~10 and full reorthogonalization
-    against the stored ``vecs`` becomes the two-line addition.
-
-    Simplification: numpy ``eigh`` on the ``(3, 3)`` tridiagonal, not ``tenet.linalg.eigh``. The
-    projected matrix has no symmetry structure to respect -- it is 9 floats.
-    """
-    vecs = [v / tenet.norm(v)]
-    alphas: list[float] = []
-    betas: list[float] = []
-    for j in range(ncv):
-        w = matvec(vecs[j])
-        alphas.append(float(tenet.inner(vecs[j], w)))
-        w = tenet.subtract(w, vecs[j] * alphas[j])
-        if j:
-            w = tenet.subtract(w, vecs[j - 1] * betas[j - 1])
-        beta = float(tenet.norm(w))
-        if j + 1 == ncv or beta < tol:  # happy breakdown: drop the row, keep the space
-            break
-        betas.append(beta)
-        vecs.append(w / beta)
-    tri = np.diag(alphas) + np.diag(betas, 1) + np.diag(betas, -1)
-    values, states = np.linalg.eigh(tri)
-    ground = states[:, 0]
-    out = vecs[0] * float(ground[0])
-    for k in range(1, len(vecs)):
-        out = tenet.add(out, vecs[k] * float(ground[k]))
-    return float(values[0]), out / tenet.norm(out)
 
 
 # --- the sweep ---------------------------------------------------------------------
