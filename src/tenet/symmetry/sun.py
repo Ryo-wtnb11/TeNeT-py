@@ -13,7 +13,7 @@ Both are served through the matrix-valued [FMatrixData][tenet.symmetry.FMatrixDa
 [DualBasis][tenet.symmetry.DualBasis], so ``transpose``, ``repartition`` and
 ``to_dense`` are total for SU(N).
 
-Coefficients come from ``racah-py``, a core dependency since #180, so this module
+Coefficients come from ``racah-py``, a core dependency, so this module
 works on a plain ``pip install tenet-py`` — see ``tenet.symmetry._sun_coeff``.
 """
 

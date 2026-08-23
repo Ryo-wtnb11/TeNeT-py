@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 
 
 class _HashMemo:
-    """Mixin supplying a ``_hash`` slot for frozen value types (M9, #59).
+    """Mixin supplying a ``_hash`` slot for frozen value types.
 
     Python's dataclass ``__hash__`` re-hashes every field on every call, so a
     nested frozen value (space → leg → structure) costs a full recursive walk per
@@ -538,9 +538,9 @@ class TwistData(Protocol):
 
     Notes
     -----
-    Split out of the old bundled ``chi * theta`` flip product on the criterion
-    #142 wrote down: closed loops (``trace``, ``adjoint``, any fermion loop) need
-    the *bare* twist. ``1`` for every symmetric bosonic category, ``(-1)^parity``
+    Separate from the ``chi * theta`` flip product, because closed loops
+    (``trace``, ``adjoint``, any fermion loop) need the *bare* twist. ``1`` for
+    every symmetric bosonic category, ``(-1)^parity``
     for fermion parity, ``e^{4 pi i / 5}`` on Fibonacci's ``tau``.
     """
 
@@ -678,7 +678,7 @@ class _TreeBraider(FusionRules, AssociatorData, BraidingData, Protocol):
     """What ``permute_braided_tree`` / ``_artin_braid`` actually read:
     fusion data (``fusion``/``n_symbol``/``unit``/``name``) plus the scalar F-
     and R-symbols. They never read ``b_symbol``, ``frobenius_schur`` or
-    ``qdim`` — the pre-M24 bundled annotation over-asked."""
+    ``qdim``, so this annotation asks for none of them."""
 
 
 class _TreeBender(
@@ -686,8 +686,7 @@ class _TreeBender(
 ):
     """What ``bend_braided`` actually reads: fusion data plus ``dual``,
     ``b_symbol``, ``frobenius_schur`` and ``qdim`` (under the hardcoded pivotal
-    convention). It never reads ``f_symbol`` or ``r_symbol`` — and ``qdim``,
-    which the pre-M24 bundled annotation did not declare, is
+    convention). It never reads ``f_symbol`` or ``r_symbol``; ``qdim`` is
     declared by ``QuantumDimensionData``."""
 
 
@@ -706,7 +705,7 @@ class StructureChangingError(TypeError):
     """Raised when an operation whose *output structure depends on block values*
     is asked to run inside a traced (jit/grad/vmap) region.
 
-    docs/design.md "Structure-changing differentiation", invariants 9 and 10: the library
+    Invariants 9 and 10: the library
     never hides the distinction between a shape-static operation and one that
     decides its own output structure from the numbers. Lives here next to
     [CapabilityError][tenet.symmetry.CapabilityError], subclasses ``TypeError``
@@ -811,7 +810,7 @@ def permute_unique_tree(
 
     Not a capability check: a provider must opt in by defining ``permute_tree``
     (fermionic parity also has unique multiplicity-free fusion and still carries a
-    sign, so uniqueness alone must never be taken as permission — see #21).
+    sign, so uniqueness alone must never be taken as permission).
     """
     from tenet.fusion_tree import fusion_trees
 

@@ -18,7 +18,7 @@ across processes, resting on the ordering chain ``Sector`` â†’ ``FusionTree`` â†
 Block *shapes* follow **public axis order** (invariant 7): legs ``(C1, D1, C2,
 D2)`` give shape ``(m_c1, m_d1, m_c2, m_d2)``, not the ``(out..., in...)``
 regrouping. ``out_axes``/``in_axes`` exist so the coupled-sector matrix
-lowering can be written later (Milestone 3) without touching storage.
+lowering ([tenet.to_matrices][]) is written without touching storage.
 
 Derived values are cached by module-level ``functools.cache`` functions
 keyed on the structure, not by ``cached_property``: the dataclass stays

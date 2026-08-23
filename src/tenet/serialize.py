@@ -291,9 +291,10 @@ def load(path: str | os.PathLike) -> "SymmetricTensor":
         running build's: block coefficients are only meaningful against the
         CG / F / R conventions that produced them, so a gauge-mismatched file
         is refused rather than silently misread. The one exception is the SU(2)
-        fingerprint files carried before #180 moved the coefficients to racah:
-        it is accepted, because the two sets were measured to agree to 4.95e-14.
-        Also for a future ``format``
+        fingerprint listed in ``tenet.serialize._LEGACY_GAUGES``
+        (``3j=condon-shortley;cg=condon-shortley;f=tks-su2irrep;r=tks-su2irrep;fs=tks-su2irrep``),
+        whose coefficients agree with the running build's to 4.95e-14 and which
+        is therefore accepted. Also for a future ``format``
         version, a header block count that contradicts the structure, or a
         member set that is not exactly the header plus ``b0..b{n-1}``.
     KeyError

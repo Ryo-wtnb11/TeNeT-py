@@ -4,7 +4,7 @@
 **independent** (invariant 2). There is deliberately no way to change ``side``:
 moving a leg between domain and codomain is a categorical bend requiring
 (co)evaluation maps and possibly Frobenius-Schur signs — that is
-``T.repartition(...)`` on the tensor (Milestone 3), never a leg-level setter.
+``T.repartition(...)`` on the tensor, never a leg-level setter.
 
 The leg holds no fusion-tree data of any kind (invariant 4).
 """
@@ -162,7 +162,7 @@ class Leg(_HashMemo):
         ``dual`` flag: it also relabels the space through ``provider.dual`` and
         pays the Z-isomorphism's scalar per fusion tree. ``repartition`` is the
         route that changes ``side`` together with ``dual``, paying the bending
-        coefficient (#38). ``dualized()`` itself is metadata-only, and it is
+        coefficient. ``dualized()`` itself is metadata-only, and it is
         **not** the metadata half of ``flip_dual``: toggling the flag alone changes
         which sector the leg contributes to a fusion tree (``fused_sector`` goes
         from ``a`` to ``dual(a)``), so the block set genuinely changes and no
