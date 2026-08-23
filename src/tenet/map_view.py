@@ -404,6 +404,149 @@ def to_matrices(t: "SymmetricTensor") -> dict[Sector, Any]:
     return mats
 
 
+@cache
+def _slots(structure: TensorStructure) -> tuple[tuple[Sector, int, int, int, int], ...]:
+    """Per block of ``block_order``, the cell it occupies: ``(c, row, rows, col, cols)``.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure to tabulate.
+
+    Returns
+    -------
+    tuple
+        ``(coupled sector, row offset, row extent, column offset, column extent)``
+        indexed by block.
+
+    Notes
+    -----
+    The grid walk [to_matrices][tenet.to_matrices] does inline, inverted so that a
+    *term* -- which knows its destination block, not its position in the grid -- can
+    find its slot in one lookup. Cached beside [map_layout][tenet.map_layout] for the
+    same reason [_tables][tenet.map_view._tables] is.
+    """
+    layout = map_layout(structure)
+    bands, _ = _tables(structure)
+    slots: list[Any] = [None] * structure.num_blocks
+    for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
+        for (_, ro, dr), indices in zip(rbands, cells, strict=True):
+            for i, (_, co, dc) in zip(indices, cbands, strict=True):
+                slots[i] = (c, ro, dr, co, dc)
+    return tuple(slots)
+
+
+def _real(coeff: complex) -> Any:
+    """A coefficient with no imaginary part, as a real scalar -- the plan layers' rule."""
+    return coeff.real if getattr(coeff, "imag", 0) == 0 else coeff
+
+
+def lower_plan(
+    t: "SymmetricTensor",
+    structure: TensorStructure,
+    perm: tuple[int, ...],
+    terms: tuple[tuple[int, int, complex], ...],
+) -> dict[Sector, Any] | None:
+    """``to_matrices`` of the tensor ``(perm, terms)`` would build, assembled from ``t``.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor the plan reads, *before* the plan is applied.
+    structure : TensorStructure
+        The plan's ``new_structure`` -- the structure of the tensor it would build.
+    perm : tuple of int
+        The plan's single per-block axis permutation.
+    terms : tuple of (int, int, complex)
+        ``(source block, target block, coefficient)``, the plan's own terms.
+
+    Returns
+    -------
+    dict of Sector to array or None
+        One matrix per coupled sector, bit-identical to ``to_matrices`` of the tensor
+        the plan builds; ``None`` where this route does not apply and the caller must
+        take the ordinary one.
+
+    Notes
+    -----
+    The fusion of "apply the plan" and "lower the result" (docs/design.md "M70").
+    Applying a plan writes one array per term -- a transposed view, materialised by the
+    scalar multiply when the coefficient is not 1 -- and lowering then copies every one
+    of them into its sector matrix, so a coefficient-carrying block crosses memory twice
+    for one pass' worth of movement. Composing the plan's permutation with
+    ``axes_order`` gives the one transpose that takes a *source* block straight to
+    matrix form, and the scalar rides in the ``out=`` of that same pass: one pass per
+    term, coefficient or not. YASTN fuses the same two steps for the same reason, its
+    meta carrying order and destination slot together (its NumPy backend's
+    ``transpose_and_merge``).
+
+    ``None`` is returned where the route does not apply: no blocks, an immutable backend
+    (which has no ``out=``, and whose ``to_matrices`` concatenates), or a genuinely
+    complex coefficient, which would have to promote the destination's dtype.
+    Simplification: every provider shipped here has real permutation and bending
+    coefficients, so the promotion case is left to the ordinary route rather than given
+    a dtype rule of its own.
+
+    Examples
+    --------
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, to_matrices
+    >>> from tenet.map_view import lower_plan
+    >>> from tenet.ops.permutation import permutation_plan
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+    >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> plan = permutation_plan(t.structure, (2, 0, 1))
+    >>> got = lower_plan(t, plan.new_structure, plan.axes, plan.terms)
+    >>> want = to_matrices(t.transpose((2, 0, 1)))
+    >>> all(got[c].tobytes() == want[c].tobytes() for c in want)
+    True
+    """
+    if not t.blocks or ar.infer_backend(t.blocks[0]) not in _MUTABLE:
+        return None
+    scaled = tuple((src, dst, _real(coeff)) for src, dst, coeff in terms)
+    if any(isinstance(coeff, complex) for _, _, coeff in scaled):
+        return None
+
+    layout = map_layout(structure)
+    _, shapes = _tables(structure)
+    slots = _slots(structure)
+    order = tuple(perm[i] for i in layout.axes_order)
+    permuted = order != tuple(range(len(order)))
+
+    ref = t.blocks[0]
+    dtype = ar.to_backend_dtype(ar.get_dtype_name(ref), like=ref)
+    mats = {c: ar.do("empty", layout.shape(c), dtype=dtype, like=ref) for c in layout.sectors}
+
+    written: set[int] = set()
+    for src, dst, coeff in scaled:
+        block = t.blocks[src]
+        if permuted:
+            block = ar.do("transpose", block, order)
+        c, ro, dr, co, dc = slots[dst]
+        # the *destination* is reshaped, never the source -- see ``to_matrices``
+        dest = mats[c][ro : ro + dr, co : co + dc].reshape(shapes[dst])
+        if dst not in written:
+            written.add(dst)
+            if coeff == 1:
+                dest[...] = block
+            else:
+                ar.do("multiply", block, coeff, out=dest)
+        elif coeff == 1:
+            ar.do("add", dest, block, out=dest)
+        else:
+            # a second source summing into one destination *with* a coefficient is the
+            # one term that still needs a temporary: ``out=`` scales or accumulates, not
+            # both. Only a multi-term (non-Abelian) expansion produces these.
+            ar.do("add", dest, block * coeff, out=dest)
+
+    if len(written) != structure.num_blocks:
+        raise ValueError(
+            f"lower_plan: the plan fills {len(written)} of {structure.num_blocks} target "
+            f"blocks -- {t.provider.name}'s coefficients dropped terms"
+        )
+    return mats
+
+
 def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "SymmetricTensor":
     """Inverse of [to_matrices][tenet.to_matrices] against the same ``structure``. Exact round-trip.
 

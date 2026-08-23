@@ -55,7 +55,7 @@ No ``to_dense``, no NumPy and no provider branching here (invariants 8/9).
 
 import operator
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING, Any
@@ -63,11 +63,12 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 
 from tenet.leg import IN, OUT, Leg
-from tenet.map_view import check_square, to_matrices
+from tenet.map_view import check_square, lower_plan, to_matrices
 from tenet.ops.basic import _check_same_structure
-from tenet.ops.map import compose, identity
-from tenet.ops.permutation import transpose
-from tenet.ops.repartition import repartition
+from tenet.ops.map import compose_lowered, identity
+from tenet.ops.permutation import permutation_plan, transpose
+from tenet.ops.repartition import _compose as compose_terms
+from tenet.ops.repartition import apply_plan, repartition, repartition_plan
 from tenet.structure import TensorStructure
 from tenet.symmetry.base import (
     BendingCoefficients,
@@ -366,14 +367,141 @@ def tensordot(a: "SymmetricTensor", b: "SymmetricTensor", axes: Axes) -> "Symmet
     what is left here is the execution of four already-tested operations.
     """
     # normalize first so the integer form and NumPy integer scalars share one entry
-    plan = contraction_plan(a.structure, b.structure, _validated(a.structure, b.structure, axes))
-    c = compose(
-        repartition(a, plan.a_outputs, plan.a_inputs),
-        repartition(b, plan.b_outputs, plan.b_inputs),
+    return _tensordot(a, b, _validated(a.structure, b.structure, axes), ())
+
+
+def _tensordot(
+    a: "SymmetricTensor",
+    b: "SymmetricTensor",
+    axes: tuple[tuple[int, ...], ...],
+    after: tuple[tuple[int, ...], ...],
+) -> "SymmetricTensor":
+    """[tensordot][tenet.tensordot] on validated axes, with ``after`` folded into the restore.
+
+    Parameters
+    ----------
+    a, b : SymmetricTensor
+        The operands.
+    axes : tuple of tuple of int
+        The contracted axes, already through ``_validated``.
+    after : tuple of tuple of int
+        Further transposes the caller would apply to the result, outermost last.
+        [einsum][tenet.einsum] passes its output reordering here.
+
+    Returns
+    -------
+    SymmetricTensor
+        The contraction, transposed by ``after``.
+
+    Notes
+    -----
+    ``after`` exists so that the restore-repartition and every transpose that follows it
+    are **one** plan: each of them re-applies its own coefficients, and a block that
+    carries one at two steps used to be materialised twice for a movement that is one
+    pass' worth (docs/design.md "M70"). Composing plans is ``repartition_plan``'s own
+    idiom — the transpose/bend/transpose sandwich is composed exactly this way — so this
+    is the same rewriting one level up, not a new rule. The terms and their coefficients
+    are unchanged; only the number of passes over them is.
+    """
+    plan = contraction_plan(a.structure, b.structure, axes)
+    sa, ma = _lowered(a, plan.a_outputs, plan.a_inputs)
+    sb, mb = _lowered(b, plan.b_outputs, plan.b_inputs)
+    joined = TensorStructure(
+        (*(sa.legs[i] for i in sa.out_axes), *(sb.legs[i] for i in sb.in_axes))
     )
-    return transpose(
-        repartition(c, plan.restore_outputs, plan.restore_inputs), plan.final_transpose
+    c = compose_lowered(joined, ma, mb, a.blocks[0])
+    structure, perm, terms = _restore_plan(
+        c.structure, plan.restore_outputs, plan.restore_inputs, (plan.final_transpose, *after)
     )
+    return apply_plan(c, structure, perm, terms, "tensordot")
+
+
+@cache
+def _restore_plan(
+    structure: TensorStructure,
+    outputs: tuple[int, ...],
+    inputs: tuple[int, ...],
+    transposes: tuple[tuple[int, ...], ...],
+) -> tuple[TensorStructure, tuple[int, ...], tuple[tuple[int, int, complex], ...]]:
+    """The restore-repartition followed by ``transposes``, composed into one plan.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The composition's structure, before the free legs are put back.
+    outputs, inputs : tuple of int
+        The restore-repartition's axes.
+    transposes : tuple of tuple of int
+        Applied in order after it; each a permutation of ``range(ndim)``.
+
+    Returns
+    -------
+    new_structure : TensorStructure
+        The result's structure.
+    perm : tuple of int
+        The one per-block axis permutation of the whole chain.
+    terms : tuple of (int, int, complex)
+        ``(source block, target block, coefficient)``, the coefficients multiplied
+        through and duplicate ``(source, target)`` pairs summed.
+
+    Notes
+    -----
+    Cached like every other plan, and on the same key shape. ``repartition_plan`` is
+    asked for the restore even when nothing crosses — with an empty crossing list its
+    body is a single ``permutation_plan``, which is what the chain needs anyway.
+    """
+    plan = repartition_plan(structure, outputs, inputs)
+    new_structure, perm, terms = plan.new_structure, plan.perm, plan.terms
+    for axes in transposes:
+        step = permutation_plan(new_structure, axes)
+        perm = tuple(perm[i] for i in step.axes)
+        terms = compose_terms(terms, step.terms)
+        new_structure = step.new_structure
+    return new_structure, perm, terms
+
+
+def _lowered(
+    t: "SymmetricTensor", outputs: tuple[int, ...], inputs: tuple[int, ...]
+) -> tuple[TensorStructure, Mapping[Any, Any]]:
+    """``repartition(t, outputs, inputs)``'s structure and its sector matrices.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The operand, as the caller passed it.
+    outputs, inputs : tuple of int
+        The repartition ``tensordot`` would apply; together a permutation of
+        ``range(t.ndim)``, already validated by ``contraction_plan``.
+
+    Returns
+    -------
+    structure : TensorStructure
+        The repartitioned operand's structure.
+    mats : Mapping
+        Its coupled-sector matrices, as [to_matrices][tenet.to_matrices] returns them.
+
+    Notes
+    -----
+    ``compose`` consumes an operand only as matrices, so the repartitioned *tensor*
+    between the two is a temporary that exists to be copied: applying the plan writes
+    every term once and lowering copies every block again. ``lower_plan`` composes the
+    two and writes each term straight into its slot, one pass whether or not the term
+    carries a coefficient (docs/design.md "M70"). Which terms are applied, and with
+    which coefficients, is untouched -- only when the writes happen. The ordinary route
+    remains the fallback wherever ``lower_plan`` declines (an immutable backend, so JAX
+    is unaffected).
+    """
+    axes = (*outputs, *inputs)
+    want = {ax: OUT for ax in outputs} | {ax: IN for ax in inputs}
+    if any(t.legs[ax].side is not want[ax] for ax in range(t.ndim)):
+        rplan = repartition_plan(t.structure, outputs, inputs)
+        structure, perm, terms = rplan.new_structure, rplan.perm, rplan.terms
+    else:
+        # no leg crosses: repartition is a plain transpose, and so is the plan
+        pplan = permutation_plan(t.structure, axes)
+        structure, perm, terms = pplan.new_structure, pplan.axes, pplan.terms
+    mats = lower_plan(t, structure, perm, terms)
+    return structure, to_matrices(repartition(t, outputs, inputs)) if mats is None else mats
 
 
 def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
@@ -788,6 +916,11 @@ def einsum(
     free += [label for label in terms[1] if label not in shared]
     # exactly two operands on this path (the len() checks above); a tuple
     # unpack of statically unknown length is what the checker refuses
+    # The output reordering stays a separate ``transpose`` and is *not* folded into the
+    # contraction's restore plan, though ``_tensordot`` would take it: the reordering is
+    # applied to a value ``tensordot`` has already returned, and folding it would mean
+    # ``einsum`` no longer calling ``tensordot``. docs/design.md "M70" measures what that
+    # costs and where the coefficient passes that are left actually sit.
     return transpose(
         tensordot(*operands, axes),  # ty: ignore[too-many-positional-arguments]
         tuple(free.index(label) for label in out),
