@@ -209,3 +209,44 @@ def test_tensordot_through_the_fused_path_matches_the_unfused_chain(
     assert got.structure == want.structure
     for x, y in zip(got.blocks, want.blocks, strict=True):
         assert x.tobytes() == y.tobytes()
+
+
+@pytest.mark.parametrize(
+    "legs,outputs,inputs", [p.values for p in CASES], ids=[p.id for p in CASES]
+)
+def test_lower_writes_one_pass_per_term_and_matches_the_old_route(
+    monkeypatch, legs, outputs, inputs
+):
+    """``linalg._lower``'s destination is a matrix, so the plan goes straight into it.
+
+    The factorizations read the matrices and only the *structure* of the tensor beside
+    them, so the repartitioned tensor no longer has to be written before it is copied
+    down (issue #260). One transposed view per term, one preallocation per coupled
+    sector, no standalone multiply or add, and the same bytes as
+    ``to_matrices(repartition(t, ...))``.
+    """
+    from tenet.ops.linalg import _lower
+
+    t = SymmetricTensor.random(legs, seed=3)
+    _, _, terms = _plan(t, outputs, inputs)
+    counts = _count_ar_do(monkeypatch, lambda: _lower(t, (outputs, inputs)))
+
+    assert counts.get(("transpose", False), 0) == len(terms)
+    assert counts.get(("multiply", False), 0) == 0
+    assert counts.get(("add", False), 0) == 0
+    assert ("concatenate", False) not in counts
+    # the only ``reshape`` left is ``from_matrices``'' view back onto the matrices, which
+    # is where the tensor beside them now comes from and moves no element
+    m, bond, mats = _lower(t, (outputs, inputs))
+    assert all(any(np.shares_memory(block, mat) for mat in mats.values()) for block in m.blocks)
+    want = to_matrices(repartition(t, outputs, inputs))
+    assert sorted(mats) == sorted(want)
+    for c in want:
+        assert mats[c].tobytes() == want[c].tobytes(), c
+    assert m.structure == repartition(t, outputs, inputs).structure
+    assert (
+        bond.sectors
+        == GradedSpace.new(
+            t.provider, {c: min(map_layout(m.structure).shape(c)) for c in mats}
+        ).sectors
+    )

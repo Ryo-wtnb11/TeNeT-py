@@ -40,8 +40,16 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 
 from tenet.leg import IN, OUT, Leg
-from tenet.map_view import MapLayout, check_square, from_matrices, map_layout, to_matrices
-from tenet.ops.repartition import repartition
+from tenet.map_view import (
+    MapLayout,
+    check_square,
+    from_matrices,
+    lower_plan,
+    map_layout,
+    to_matrices,
+)
+from tenet.ops.repartition import _validated as _validated_sides
+from tenet.ops.repartition import repartition, sides_plan
 from tenet.space import GradedSpace
 from tenet.structure import TensorStructure
 from tenet.symmetry.base import QuantumDimensionData, Sector, StructureChangingError, requires
@@ -72,22 +80,37 @@ Axes = tuple[Sequence[int], Sequence[int]] | None
 def _lower(t: "SymmetricTensor", axes: Axes) -> tuple["SymmetricTensor", GradedSpace, dict]:
     """``(repartitioned tensor, bond space, {c: B_c})``.
 
-    Everything goes through ``repartition``, including the ``axes=None`` /
-    ``as_map()`` path: when ``left``/``right`` already match the current sides it
-    performs zero bends and one transpose, and when they match the current order
-    too that transpose is the identity permutation. No fast path to maintain, and
-    ``repartition`` owns the axis validation (original numbering, no negatives,
-    no repeats, every axis exactly once across the two sides).
+    Everything goes through one repartition plan, including the ``axes=None`` /
+    ``as_map()`` path: when ``left``/``right`` already match the current sides that plan
+    is one transpose, and when they match the current order too its permutation is the
+    identity. No fast path to maintain, and the axis validation is ``repartition``'s own
+    (original numbering, no negatives, no repeats, every axis exactly once across the two
+    sides).
+
+    The destination here is a *matrix* -- LAPACK reads it, never the tensor -- so the
+    plan is applied straight into the sector matrices: one strided pass per term, the
+    coefficient riding the ``out=`` of the write that was happening anyway, instead of
+    one pass to build the repartitioned tensor and a second to copy it down. The tensor
+    is then the zero-copy view back (``from_matrices`` is the exact inverse), which is
+    all the callers want it for: they read its structure, never its blocks. Where
+    ``lower_plan`` declines -- an immutable backend -- the ordinary route runs and the
+    values are the same.
     """
     if axes is None:
         axes = (t.structure.out_axes, t.structure.in_axes)
-    left, right = axes
-    m = repartition(t, left, right)
-    layout = map_layout(m.structure)
+    left, right = _validated_sides(t.ndim, *axes)
+    structure, perm, terms = sides_plan(t.structure, left, right)
+    mats = lower_plan(t, structure, perm, terms)
+    if mats is None:
+        m = repartition(t, left, right)
+        mats = to_matrices(m)
+    else:
+        m = from_matrices(structure, mats)
+    layout = map_layout(structure)
     # min(rows_c, cols_c) is metadata, never the numerical rank: taking the rank
     # would make the output structure depend on block values (invariant 10).
-    bond = GradedSpace.new(m.provider, {c: min(layout.shape(c)) for c in layout.sectors})
-    return m, bond, to_matrices(m)
+    bond = GradedSpace.new(structure.provider, {c: min(layout.shape(c)) for c in layout.sectors})
+    return m, bond, mats
 
 
 def _keep_counts(bond: GradedSpace | None, untruncated: GradedSpace) -> dict:

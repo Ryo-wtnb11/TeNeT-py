@@ -631,7 +631,7 @@ def einsum_chain(
                 )
         acc = _step(equation, acc if a is None else a, acc if b is None else b, bend)
     # steps is non-empty, so the loop assigned; ty sees only the None seed
-    return acc.realized("einsum_chain")  # ty: ignore[possibly-unbound-attribute]
+    return acc.realized("einsum_chain")  # ty: ignore[unresolved-attribute]
 
 
 @cache
