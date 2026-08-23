@@ -288,9 +288,9 @@ def _families2(p: _Prepared, aa: SymmetricTensor) -> list[SymmetricTensor]:
             )
         )
     if p.caf is not None:  # IC + ID + CB + CA: the IdL channel left of the bond is gauge-1
-        parts.append(_composed("PpQqrs,apqr->aPQs", p.caf, aa, bend="r"))
+        parts.append(tenet.einsum_chain([("PpQqrs,apqr->aPQs", p.caf, aa, "r")]))
     if p.abf is not None:  # AB + BE + DE: the IdR channel right of the bond is gauge-1
-        parts.append(tenet.einsum("aPpQqB,apqr->BPQr", p.abf, aa))
+        parts.append(tenet.einsum_chain([("aPpQqB,apqr->BPQr", p.abf, aa, "")]))
     if p.ra1 is not None:  # AA remainder, left factor operator-carrying
         parts.append(
             tenet.einsum_chain(
