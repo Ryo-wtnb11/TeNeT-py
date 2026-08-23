@@ -1,12 +1,5 @@
 """What every driver in this package needs: a bond spectrum and a ones seed.
 
-Moved here by #114, **bodies unchanged**, from ``network/mps.py`` (``scalar``, ``inner``,
-``spectrum``) and ``network/env.py`` (``_ones``, now public as
-[ones][tenet.network.ones]). #126 then took the two scalar exits the rest of the way out:
-``scalar`` is now [tenet.full_trace][] and ``inner`` is [tenet.inner][], both in
-``tenet.ops`` next to ``trace``, with the same arithmetic plus a square-map refusal. No
-alias is kept.
-
 Why a module rather than a second copy or a cross-driver import. ``network/ctmrg.py``
 needs the same diagonal read as ``network/mps.py``; importing it *from* ``mps.py`` would
 assert a dependency between two drivers that share no concept, and ``env._ones`` cannot
@@ -33,19 +26,14 @@ from tenet.symmetry import Sector
 __all__ = ["entropy", "ones", "spectrum", "spectrum_sectors"]
 
 #: How many bytes of cached tensor payload each of the sweep's per-bond caches may hold.
-#: **This is the whole cache policy and it is one number in one place** (#202):
+#: **This is the whole cache policy and it is one number in one place**:
 #: ``EdgeTable``'s block tables and group embeddings and ``Env``'s merged cores, prepared
 #: operators and compiled matvecs all use it through [Recent][tenet.network.common.Recent],
 #: so there is no per-cache flag to thread and no way for two of them to disagree.
 #:
-#: A **byte** budget rather than a count of entries, and the count was measured before it
-#: was rejected: a bound of four entries costs +22 to +26 % wall time on the small models
-#: this package is otherwise used for, because a small MPO's whole block table is a few
-#: megabytes and evicting any of it buys nothing at all. A byte budget is never reached by
-#: those models, so they keep every entry and pay exactly nothing, and it is only the
-#: operator that is measured in gibibytes per site that ever evicts. That is the "the
-#: common case must not get slower to fix the rare one" criterion, met by construction
-#: instead of by tuning. ``docs/design.md`` "Milestone 38" carries the measurements.
+#: A **byte** budget rather than a count of entries: a small MPO's whole block table is a
+#: few megabytes, so every model under the budget keeps every entry and pays nothing, and
+#: only an operator weighing gibibytes per site ever evicts.
 CACHE_BUDGET = 1 << 30  # 1 GiB
 
 
@@ -90,9 +78,8 @@ class Recent[K, V](dict[K, V]):
     -----
     A DMRG sweep visits bonds in a sliding order, so a cache of the last few bonds hits on
     everything the sweep asks for twice while the entries behind it are dead weight -- at
-    quantum-chemistry scale, weight measured in gibibytes (#202). Recency is refreshed on
-    read as well as write, so a bond revisited immediately on the return leg of a sweep is
-    a hit.
+    quantum-chemistry scale, weight in gibibytes. Recency is refreshed on read as well as
+    write, so a bond revisited immediately on the return leg of a sweep is a hit.
 
     Eviction is oldest-used first, and never below two entries: a two-site bond asks for
     site ``n`` and site ``n + 1`` in one breath, so a cache that can hold fewer than two
@@ -152,8 +139,7 @@ def spectrum(s: SymmetricTensor) -> list[float]:
     else. Both callers hand it exactly that, and read it for two different
     things -- ``network/dmrg.py`` for the Schmidt values of a bond,
     ``network/ctmrg.py`` for the corner spectrum whose convergence ends a sweep
-    -- which is why the name stays the general one rather than either caller's
-    (#120, reaffirmed #185).
+    -- which is why the name stays the general one rather than either caller's.
 
     Parameters
     ----------
@@ -199,7 +185,7 @@ def spectrum_sectors(s: SymmetricTensor) -> dict[Sector, list[float]]:
     The same values, unflattened: on a [GradedSpace][tenet.GradedSpace] bond the singular
     values arrive already labelled, and [spectrum][tenet.network.spectrum] sorts that label
     away because its two callers -- ``network/dmrg.py`` and ``network/ctmrg.py`` -- both
-    want one flat convergence diagnostic (#120, reaffirmed #185). A user asking *which
+    want one flat convergence diagnostic. A user asking *which
     symmetry sector carries the entanglement* wants the label back, and TenPy spells that
     ``entanglement_spectrum(by_charge=True)``.
 

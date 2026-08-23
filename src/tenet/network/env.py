@@ -1,10 +1,4 @@
-"""The environment cache: ``<psi|H|psi>`` partial contractions, keyed by *directed* bond.
-
-Promoted from ``examples/toy_codes/dmrg.py`` (#110) with no arithmetic change: ``boundary_envs``
-:318-331, ``update_env`` :334-349, ``invalidate`` :352-360, ``setup_envs`` :363-368 and
-``heff2`` :374-390. [Env.measure][tenet.network.Env.measure] is the one genuinely new
-capability in M11a.
-"""
+"""The environment cache: ``<psi|H|psi>`` partial contractions, keyed by *directed* bond."""
 
 from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple
@@ -38,7 +32,7 @@ class _Prepared(NamedTuple):
       environment folded exactly, right ``IdR`` channel the gauge identity;
     * ``ra1``/``ra2``/``sr2`` with ``gl2``/``gr2`` -- the operator-carrying
       open-to-open remainder of ``AA`` (which, for a provider that braids with signs,
-      includes the spectators whose ride would drop the string, #160), four factors
+      includes the spectators whose ride would drop the string), four factors
       exactly as MPSKit's own ``AA`` (:93): folding an environment into an open-channel
       block would cost ``chi^2 d^2 D_w`` memory.
 
@@ -62,11 +56,11 @@ def _composed(
 ) -> SymmetricTensor:
     """A two-operand ``tenet.einsum`` with the wires named in ``bend`` bent first.
 
-    The composition rule (``docs/design.md`` "Milestone 11") requires operand 1 to supply
-    the ``IN`` end of every shared wire. A wire that turns around in the intended planar
-    diagram -- one that runs through an environment's cap -- cannot meet that rule as
-    drawn, and letting ``einsum`` bend it implicitly would leave the cap direction to
-    operand order, which is #147's gate-1 sign. So the bend is spelled: both ends of
+    The package's composition rule requires operand 1 to supply the ``IN`` end of every
+    shared wire. A wire that turns around in the intended planar diagram -- one that runs
+    through an environment's cap -- cannot meet that rule as drawn, and letting ``einsum``
+    bend it implicitly would leave the cap direction to operand order, which on a
+    sign-braiding grading is a sign. So the bend is spelled: both ends of
     each named wire are moved to the other side with [tenet.repartition][], which
     pays the categorical bend coefficient by construction, and the einsum that follows
     is a plain composition again. Every call site below states its bent wires
@@ -158,13 +152,12 @@ class _Cores(NamedTuple):
 def _cores2(edges: EdgeTable, n: int, eye_p: SymmetricTensor) -> _Cores:
     """Merge bond ``n``'s edge blocks into MPSKit's prepared cores, environment-free.
 
-    Built from the MPO's **edge description**, not from its site tensors (#200): the two
-    sites' [EdgeBlocks][tenet.network.EdgeBlocks] are asked for here, which places their
+    Built from the MPO's **edge description**, not from its site tensors: the two sites'
+    [EdgeBlocks][tenet.network.EdgeBlocks] are asked for here, which places their
     operators against the group slot maps and builds the group embeddings the merge
-    needs, so nothing on this path is ever a full-width rank-4 ``W``. That is the
-    instantiation boundary #184 staged as candidate (a), and it is where the next stage's
-    per-cut assembler plugs in: this function's contract is "give me bond ``n``'s cores",
-    and how the description answers is the assembler's business.
+    needs, so nothing on this path is ever a full-width rank-4 ``W``. This function's
+    contract is "give me bond ``n``'s cores"; how the description answers is its own
+    business.
 
     The merge itself is ``hamiltonian_derivatives.jl``:272-345 in ``tenet.einsum`` --
     ``CB = C1 . B2``, ``AB = A1 . B2`` -- followed by its ``prepare_operator!!`` merging:
@@ -176,7 +169,7 @@ def _cores2(edges: EdgeTable, n: int, eye_p: SymmetricTensor) -> _Cores:
     ``idmap``/``spec_op`` already exclude any spectator whose state braids with signs
     (``EdgeBlocks``): its string crossing lives in the
     rank-4 blocks, so it reaches the matvec through the ``AA`` chains below instead of
-    the phys-free ``thru`` ride (#160).
+    the phys-free ``thru`` ride.
     """
     t1, t2 = edges.edge_blocks(n), edges.edge_blocks(n + 1)
     thru = None
@@ -323,7 +316,7 @@ def _apply2(p: _Prepared, aa: SymmetricTensor) -> SymmetricTensor:
     key -- so it is traceable and is what [Env.heff2][tenet.network.Env.heff2] hands to
     ``compile=``. Four
     contractions for a string-built Hamiltonian -- the identity-through pair plus one
-    one-sided field per anchor -- against the compatibility entry's four over the full
+    one-sided field per anchor -- against the site-tensor path's four over the full
     ``D_w``-wide ``W`` pair, and only the first pair still carries an MPO-bond leg.
 
     The one-sided ``caf``/``abf`` terms use the two-site sweep's mixed-canonical gauge,
@@ -401,9 +394,8 @@ def _fold_first(
     bra bond ``s`` -- runs through the right cap and turns around, while the physical
     wires compose straight. Each contraction therefore bends its bond-rail wire
     explicitly -- ``_composed`` for a single one, the chain's ``bend`` field for a step of
-    one -- and composes the rest; the dense Jordan-Wigner oracle fixes every one of these
-    choices (#160), and ``_fold_last``, whose rails run *out* of the left cap, needs no
-    bend at all.
+    one -- and composes the rest, while ``_fold_last``, whose rails run *out* of the left
+    cap, needs no bend at all.
     """
     t1 = _composed("rys,apr->apys", f, a, bend="r")
     out = None
@@ -449,7 +441,7 @@ def _heff2_full(h: MPO, fl: SymmetricTensor, fr: SymmetricTensor, n: int, aa: Sy
     ``precompute=False``: right environment, then ``W2``, then ``W1``, then the left
     environment. Exact for any state and for a bra that is not the ket, because nothing
     here reads an ``IdL``/``IdR`` channel as a gauge identity -- which is what makes it
-    both [Env.heff2][tenet.network.Env.heff2]'s compatibility entry *and*
+    both [Env.heff2][tenet.network.Env.heff2]'s site-tensor path *and*
     [Env.project2][tenet.network.Env.project2]'s whole body.
 
     ``aa`` lives on the *ket* bonds and the result on the *bra* bonds; the two coincide
@@ -502,9 +494,7 @@ class Env:
     with operand 1 supplying IN, and the wires that genuinely bend -- the MPS bond
     arrow and the MPO bond arrow cross the two-site cell in opposite directions, so
     closing either cap turns one rail around -- are bent explicitly through
-    ``_composed``, each choice pinned by the dense Jordan-Wigner oracle (#160). The
-    rule and why the symmetric reading is insufficient: ``docs/design.md``
-    "Milestone 11".
+    ``_composed``.
 
     A plain ``dict`` keyed by *directed* bond, exactly YASTN's ``Env``
     (``yastn/tn/mps/_env.py``:94-125). A list-of-left / list-of-right would hide the
@@ -514,9 +504,6 @@ class Env:
     therefore
     pops **both** directed bonds per site, and it runs *before* the replacement is
     written, so a missed update is a ``KeyError`` rather than a wrong number.
-
-    Why one class rather than YASTN's factory over eight: ``docs/design.md``
-    "Milestone 11".
 
     **The two-state form** (``bra=phi``) builds ``<phi| ... |psi>`` instead, which is the
     engine half of the excited-state and measurement machinery: block2's ``ext_mes`` are
@@ -701,46 +688,36 @@ class Env:
         **Two paths, and the operator's representation is which one, decided at build
         time.** An MPO that carries only site tensors takes the site-tensor contraction:
         [from_w][tenet.network.MPO.from_w], an ``MPO`` built from bare tensors, whatever
-        [MPO.materialize][tenet.network.MPO.materialize] hands back, and -- since #255 --
+        [MPO.materialize][tenet.network.MPO.materialize] hands back, and
         [from_terms][tenet.network.MPO.from_terms],
         [from_arrays][tenet.network.MPO.from_arrays] and
-        [from_entries][tenet.network.MPO.from_entries] at their default. **This default
-        path is the lattice lane's engine**, not a compatibility entry. An MPO built
-        ``symbolic=True`` carries an edge description, at *either* cutoff since #204, and
-        that is what the keyword buys: the prepared, symbolic, term-family matvec.
+        [from_entries][tenet.network.MPO.from_entries] at their default. An MPO built
+        ``symbolic=True`` carries an edge description, at *either* cutoff, and that is
+        what the keyword buys: the prepared, symbolic, term-family matvec.
         **There is no runtime dispatch either way**: no bond-width threshold, no ``chi``
         threshold, no probe, no ``path=`` keyword. The caller states the representation
         when the operator is built, exactly as ``from_terms``' ``cutoff=None`` against a
         float already states which operator is built.
 
-        **The rule, in terms a caller reads off their own model** (#255, on the three-arm
-        grid in ``docs/design.md`` "M64b"):
+        **The rule, in terms a caller reads off their own model:**
 
         * a **finite-range lattice model** -- a narrow MPO bond, ``D_w`` of order ten --
           wants the **site-tensor path**, which is the bare builder, no keyword. The
-          prepared machinery costs 1.63-2.06x per steady sweep on U(1) Heisenberg and
-          1.85-2.07x on the spinful Hubbard chain and buys nothing back at that width,
-          while the site-tensor path runs at 1.10-1.28x YASTN;
+          prepared machinery's per-bond cores and structure-keyed cache cost more per
+          steady sweep than they buy back at that width;
         * **quantum chemistry** -- ``O(K^4)`` terms, a bond in the thousands -- wants the
           **description kept**, which is ``symbolic=True``. There the prepared path is
-          0.97x the site-tensor one at ``chi = 64`` and is the only route that fits
-          ``K = 26`` in memory at all ("Milestone 39").
+          the faster of the two and the only route that fits a large orbital count in
+          memory at all.
 
-        **#218's single-path decision stands at its own scope, which is symbolic
-        operators.** It settled that a symbolic operator gets *one* engine -- the prepared
-        term-family matvec, at either cutoff, with **later parallelism and accelerator
-        work attaching there and nowhere else** -- and that is block2's engine design in
-        tenet's form: its ``EffectiveHamiltonian`` never forms the effective Hamiltonian
-        and instead dispatches the symbolic operator sum term by term against the
-        wavefunction (``effective_hamiltonian.hpp``:230-243). Its scope is therefore
-        symbolic operators, *which a caller asks for*: what #218 did not decide, and
-        #251/#255 settle, is which representation a *lattice* Hamiltonian should be in
-        before it reaches an engine at all -- site tensors, by default. The site-tensor
-        path is also still what an
+        **A symbolic operator gets exactly one engine**: the prepared term-family matvec,
+        at either cutoff, with later parallelism and accelerator work attaching there and
+        nowhere else. That is block2's engine design in tenet's form -- its
+        ``EffectiveHamiltonian`` never forms the effective Hamiltonian and instead
+        dispatches the symbolic operator sum term by term against the wavefunction
+        (``effective_hamiltonian.hpp``:230-243). The site-tensor path is what an
         externally-built MPO gets, because symbols cannot be recovered from a numeric
-        ``W`` in general (#141 measured that a compressed ``W`` retains no edge structure),
-        and block2 has no equivalent because block2 is a quantum-chemistry *program* that
-        never receives an operator from outside. Adopt block2's engine, not block2's role.
+        ``W`` in general: a compressed ``W`` retains no edge structure.
 
         **``cutoff`` is the other build-time knob, and it is orthogonal to this one.**
         ``cutoff=None`` keeps the exact finite-state machine, whose bond is already minimal
@@ -748,9 +725,7 @@ class Env:
         ``idmap``/``spec_op`` with no ``W`` contraction at all; a float ``cutoff``
         compresses, which is what an ab initio Hamiltonian needs and which -- because the
         rotation mixes the open states -- turns every open state into an operator-carrying
-        one. Measured on the prepared path at N=20 U(1) Heisenberg, ``chi=64``: 1.96 s at
-        ``cutoff=None`` against 3.53 s at ``1e-13``. ``docs/design.md`` "Milestone 39"
-        carries the ``chi`` scaling grid.
+        one, so on a lattice model ``cutoff=None`` is the cheaper of the two.
 
         **The path in detail.** The two
         environments are folded into the site blocks **once per bond** (``_build2``,
@@ -855,22 +830,15 @@ class Env:
         perturbative noise uses. It is a **read**, not a second engine: the same
         ``_prepare2`` cache, the same contractions, only not added up.
 
-        The site-tensor path -- an MPO with no edge description, which since #255 is what
-        every builder returns unless the caller writes ``symbolic=True`` -- has no
-        families to resolve, so **the default is the single vector**
-        ``(heff2(n, aa),)`` -- the operator's own
-        action on the state, unresolved. A one-vector mixer is weaker than a
-        family-resolved one, and it is what an operator that carries no symbols can offer.
-        M67 re-measured M61 Stage C's lattice table on this path and states the cost
-        exactly: at N=20 U(1) Heisenberg from a Neel seed, ``chi=24``, the perturbative
-        columns lose their **first-sweep head start** -- 5.1e-2 below every other column
-        on the symbolic path, gone here -- and reach the **same converged energy**,
-        -8.682473226, by sweep 4, as every other column does. Stage C had already measured
-        that head start spent by sweep 3 because the model is not bond-limited at that
-        ``chi``. So on a finite-range lattice model the weaker mixer costs a sweep of head
-        start and no accuracy, which is not a reason to keep such a Hamiltonian symbolic;
-        an operator that is bond-limited is a different case and keeps its description.
-        ``docs/design.md`` "M67" carries both columns.
+        The site-tensor path -- an MPO with no edge description, which is what every
+        builder returns unless the caller writes ``symbolic=True`` -- has no families to
+        resolve, so **the default is the single vector** ``(heff2(n, aa),)``: the
+        operator's own action on the state, unresolved. A one-vector mixer is weaker than
+        a family-resolved one, and it is what an operator that carries no symbols can
+        offer. On a finite-range lattice model, which is not bond-limited at a usable
+        ``chi``, the weaker mixer costs a sweep of head start and no accuracy: both
+        mixers reach the same converged energy. An operator that *is* bond-limited is a
+        different case and keeps its description.
 
         Not compiled: ``compile=`` wraps the *summed* matvec, which is what a Krylov solve
         calls thousands of times; this is called once per bond visit.
@@ -939,7 +907,7 @@ class Env:
         canonicalized alongside the sweep the way block2 canonicalizes its ``ext_mpss``
         (:893-917).
 
-        The four contractions are ``heff2``'s compatibility entry, shared verbatim: the
+        The four contractions are ``heff2``'s site-tensor path, shared verbatim: the
         one path in this class that reads no channel as a gauge identity, hence the one
         that survives ``bra is not psi``.
         """
@@ -962,10 +930,10 @@ class Env:
         """The bond's prepared operator, rebuilt only when either environment moved.
 
         Cached one per bond against the ``F`` entries *by identity*: environments are
-        frozen tensors replaced on every [update_][tenet.network.Env.update_], so holding the two
-        used to
-        build is both the invalidation test and the guarantee a stale operator can
-        never be served -- the discipline ``F`` itself uses, one level up.
+        frozen tensors replaced on every [update_][tenet.network.Env.update_], so holding
+        the two the operator was built from is both the invalidation test and the
+        guarantee a stale operator can never be served -- the discipline ``F`` itself
+        uses, one level up.
         """
         fl, fr = self.F[n - 1, n], self.F[n + 2, n + 1]
         hit = self._prepared.get(n)
@@ -1000,7 +968,7 @@ class Env:
         The first thing in this repository that measures a converged energy independently
         of the ``lanczos`` Rayleigh quotient that produced it. On a two-state
         [Env][tenet.network.Env] it is instead the engine fact the measurement API stands
-        on (#213): ``Env(psi, h, bra=phi).measure()`` **is** ``<phi|H|psi>``, and with
+        on: ``Env(psi, h, bra=phi).measure()`` **is** ``<phi|H|psi>``, and with
         ``h`` the identity ([MPO.identity][tenet.network.MPO.identity]) it is the plain
         overlap ``<phi|psi>``. No gauge is assumed of either chain. YASTN's ``measure`` is the
         same closing contraction one level down (``_env.py``:462-468, ``vdot(vecL,
@@ -1134,20 +1102,18 @@ def correlation_function(
     operator on an adjacent pair and keeps its signature untouched.
 
     **Fermions are correct here because nothing new decides their sign.** Each pair is one
-    two-operator term through [MPO.from_terms][tenet.network.MPO.from_terms], measured with
+    two-operator term through [MPO.from_terms][tenet.network.MPO.from_terms], read with
     [Env][tenet.network.Env]: the Jordan-Wigner string across the sites between ``i`` and
-    ``j`` is the fermionic-parity braiding the term builder already inserts and #147's explicit
-    Jordan-Wigner oracle already pins, and the composition rule (#160) is obeyed by the
-    contractions that were audited for it. A hand-written transfer walk carrying the charge
-    leg between the two sites would be the faster route and would re-decide that sign
-    outside the machinery that was audited, which is how #147 happened.
+    ``j`` is the fermionic-parity braiding the term builder already inserts, and the
+    composition rule is obeyed by the contractions those two are built from. A
+    hand-written transfer walk carrying the charge leg between the two sites would be the
+    faster route and would re-decide that sign outside the audited machinery.
 
     **The cost, stated rather than hidden**: one ``from_terms`` build and one
     [Env.measure][tenet.network.Env.measure] pass per requested pair, so the default
     all-pairs call is ``O(N**2)`` builds and ``O(N**3)`` transfer contractions. That is the
     ceiling; ``pairs=`` is the way around it for the row or the distance a caller actually
-    wants. The upgrade is YASTN's cached transfer walk (``_measure.py``:130, a ~75-line
-    body) and it is a change with a measurement attached, not a rewrite this needs.
+    wants. The named upgrade is YASTN's cached transfer walk (``_measure.py``:130).
     """
     n = len(psi)
     wanted = [(i, j) for i in range(n) for j in range(i + 1, n)] if pairs is None else list(pairs)

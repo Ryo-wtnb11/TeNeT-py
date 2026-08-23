@@ -1,12 +1,10 @@
 """C4v corner-transfer-matrix renormalization: the half of this package that is traced.
 
-Promoted from ``examples/toy_codes/ctmrg.py`` (#102/#104/#105/#107) by #114 with no arithmetic
-change; the example keeps the physics -- the Boltzmann tensor, the C4v ansatz constraint,
-the observables -- and this module keeps the environment machinery.
+``examples/toy_codes/ctmrg.py`` keeps the physics -- the Boltzmann tensor, the C4v ansatz
+constraint, the observables -- and this module keeps the environment machinery.
 
-**This is the first module in ``src/tenet/`` that lives on both sides of a trace**, so
-every public function below opens by saying which. The pairing is #77's:
-``ctmrg`` runs ``svd_truncated`` **outside** ``jax.grad`` (it decides a bond
+**This module lives on both sides of a trace**, so every public function below opens by
+saying which: ``ctmrg`` runs ``svd_truncated`` **outside** ``jax.grad`` (it decides a bond
 [GradedSpace][tenet.GradedSpace] from singular *values*, so it raises
 ``tenet.StructureChangingError`` under any trace), and
 [ctmrg_unrolled][tenet.network.ctmrg_unrolled] runs
@@ -23,9 +21,9 @@ is metadata: frozen, hashable, array-free, a legitimate jit *cache key* and neve
 * corner ``c`` ``(X OUT, X IN)`` -- for **both** models -- and edge ``e``
   ``(X IN, X OUT, V IN)`` for a single layer, ``(X IN, X OUT, V_ket IN, V_bra IN dual)``
   for a double one. The double-layer edge carries the ket bond and its conjugate as two
-  separate legs and **never fuses them** (#107, froSTspin ``ctm_environment.py``:16-33):
-  the ``dual=True`` is the leg bend the fused convention used to hide, only the ``X`` leg
-  is ever truncated, and the site enters as a ket and then a bra rather than as a product.
+  separate legs and **never fuses them** (froSTspin ``ctm_environment.py``:16-33): the
+  ``dual=True`` is the leg bend named rather than hidden, only the ``X`` leg is ever
+  truncated, and the site enters as a ket and then a bra rather than as a product.
   Both edges are oriented maps on the environment space, so the boundary ring closes as
   ``c -> e -> ... -> adjoint(c) -> adjoint(e) -> ...``: the far corners and edges of the
   ring are the ``tenet.adjoint`` of the near ones, which for a real environment is what
@@ -112,7 +110,7 @@ class CTMEnv(NamedTuple):
     [GradedSpace][tenet.GradedSpace] -- into a leaf. ``bond`` is metadata: frozen, hashable,
     array-free, a jit *cache key* (``static_argnums``) and never a jit *argument*. The
     inside therefore takes ``c``, ``e`` and ``bond`` as three separate arguments, and that
-    asymmetry is the #77 boundary written into the types instead of described in prose.
+    asymmetry is the trace boundary written into the types instead of described in prose.
     """
 
     c: SymmetricTensor
@@ -126,7 +124,7 @@ class Absorb(NamedTuple):
     The type is the *definition* of a model's absorption, not the absorption
     step -- that is [move][tenet.network.move]. Instances are called
     ``absorber`` throughout this module and in the docstrings that return one;
-    the type keeps the literature's noun (#120, reaffirmed #185).
+    the type keeps the literature's noun.
 
     Attributes
     ----------
@@ -274,11 +272,10 @@ def layers(ket: SymmetricTensor) -> tuple[SymmetricTensor, SymmetricTensor]:
     * bra ``repartition(adjoint(ket), (1, 2), (0, 3, 4))``, legs
       ``(L OUT dual, U OUT dual, s IN, R IN dual, D IN dual)``.
 
-    **Their product is never formed** (#107). The bend is done here, at rank 5, and it is
+    **Their product is never formed.** The bend is done here, at rank 5, and it is
     *named* rather than hidden: bending is what flips ``dual``, and it is that flip which
     makes the bra's bonds meet the ``dual=True`` bra bonds of the rank-4 environment edge.
-    The fused convention this replaced hid the same flip inside a ``fuse`` of a ``(V, V*)``
-    pair. Public because a measurement built on this environment needs the same pair.
+    Public because a measurement built on this environment needs the same pair.
     """
     return ket, tenet.repartition(tenet.adjoint(ket), (1, 2), (0, 3, 4))
 

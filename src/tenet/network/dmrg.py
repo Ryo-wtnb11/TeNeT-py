@@ -1,11 +1,8 @@
 """The driver: a Krylov step, a two-site sweep, and the loop that repeats it.
 
-Promoted from ``examples/toy_codes/dmrg.py`` (#110) with no arithmetic change: ``lanczos``
-:393-437, ``sweep_`` :443-484, ``_schmidt_change`` :487-503, ``DMRG_out`` :506-520 and
-``dmrg_`` :524-557. Function-shaped drivers, YASTN's decomposition (``_dmrg.py``:42-128),
-not TenPy's ``Sweep``/``EffectiveH`` hierarchy -- M11a ships **one** sweep, and a base
-class with one subclass is the interface-with-one-implementation the repo's own rules
-forbid.
+Function-shaped drivers, YASTN's decomposition (``_dmrg.py``:42-128), not TenPy's
+``Sweep``/``EffectiveH`` hierarchy: there is **one** sweep, and a base class with one
+subclass is the interface-with-one-implementation the repo's own rules forbid.
 
 [lanczos][tenet.network.lanczos] lives here rather than in ``tenet.linalg`` for a sharp reason:
 ``tenet.linalg`` is fixed-structure decompositions of a *tensor*, all traceable, and this
@@ -95,8 +92,8 @@ def _project_out(
 
     Divided by ``<b_k, b_k>`` rather than pre-normalized by [tenet.norm][]: the two
     are the same number -- ``inner`` is ``norm``'s sesquilinear sibling on every
-    provider since M62/#236 -- and the explicit Gram denominator is what makes the
-    projector idempotent without depending on that.
+    provider -- and the explicit Gram denominator is what makes the projector idempotent
+    without depending on that.
     """
     for b, gram in basis:
         t = tenet.subtract(t, b * (float(tenet.inner(b, t)) / gram))
@@ -394,7 +391,7 @@ def sweep_(
     Notes
     -----
     **Which decimation runs is decided by the two keywords and by nothing else.** No
-    bond width, no ``chi``, no runtime probe (#218):
+    bond width, no ``chi``, no runtime probe:
 
     ======================================== ==================================
     ``(noise, noise_type)``                  the split
@@ -461,10 +458,9 @@ def sweep_(
     perturbation on a direction the operator never visits, and on a sector-poor bond it
     fills what ``H`` can actually populate. The resolution needs the operator's
     description, so it is an operator built ``symbolic=True`` that gets the
-    family-resolved mixer; every other MPO -- the builders' default among them since
-    #255 -- gets ``heff2_families``' single-vector fallback, which on a finite-range
-    lattice model costs one sweep of head start and no accuracy (``docs/design.md``
-    "M67").
+    family-resolved mixer; every other MPO -- the builders' default among them -- gets
+    ``heff2_families``' single-vector fallback, which on a finite-range lattice model
+    costs one sweep of head start and no accuracy.
 
     Neither noise is variational: a noisy sweep's energy may sit above the same sweep at
     ``noise=0.0``.
@@ -597,7 +593,7 @@ class DMRG_out(NamedTuple):
     exact, and ``out.schedule`` alone answers whether a run actually reached its final
     ``chi`` or converged earlier. ``psi`` is the converged [MPS][tenet.network.MPS].
 
-    **No Schmidt-spectrum field, decided rather than omitted** (#215). The sweep computes
+    **No Schmidt-spectrum field.** The sweep computes
     the spectrum at every bond and this record reports ``max_dSchmidt``, how much it
     *moved*, which is the convergence criterion and is all this record is for. The spectrum
     itself is a property of the state, not of the run that produced it, and
@@ -685,16 +681,14 @@ def dmrg_(
         two-site matvec with it once per structure key. ``jax.jit`` is the
         intended argument and this layer names no accelerator, so the caller
         supplies it and the ``jax`` extra. It changes the run's performance
-        *regime* rather than its accuracy, and the measured payoff is a matvec
-        one: with ``jax.jit`` the two-site matvec runs **10.6x** faster on a
-        lattice model with ``D_w = 8`` and **1.8--3.0x** faster on ab initio
-        integrals at ``K = 16``/``K = 26``, the factor shrinking as the bond
-        widens and the work moves into BLAS. **The sweep around it is not
-        traceable** -- the truncating SVD re-decides the bond space every sweep --
-        so on the JAX backend a compiled run is today slower end to end than the
-        plain NumPy one, and ``Env`` re-invokes ``compile`` at every bond visit.
-        Default ``None``, which runs the plain Python function and is today's
-        behaviour. The grid is ``docs/design.md``, M54.
+        *regime* rather than its accuracy, and the payoff is a matvec one: with
+        ``jax.jit`` the two-site matvec runs several times faster, by a factor
+        that shrinks as the MPO bond widens and the work moves into BLAS.
+        **The sweep around it is not traceable** -- the truncating SVD re-decides
+        the bond space every sweep -- so on the JAX backend a compiled run is
+        slower end to end than the plain NumPy one, and ``Env`` re-invokes
+        ``compile`` at every bond visit. Default ``None``, which runs the plain
+        Python function.
 
     Returns
     -------
