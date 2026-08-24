@@ -8,8 +8,8 @@ tensor's static half: legs and everything derivable from them, no numbers.
 
 ## `GradedSpace` — sector to degeneracy
 
-A graded space is a mapping from sectors to positive degeneracies,
-`V = ⊕_a C^{m_a} ⊗ V_a`. Build one with [new][tenet.GradedSpace.new], which sorts the
+A graded space is a mapping from sectors to positive degeneracies, $V = \bigoplus_a
+\mathbb{C}^{m_a} \otimes V_a$. Build one with [new][tenet.GradedSpace.new], which sorts the
 sectors canonically:
 
 ```python
@@ -39,11 +39,11 @@ ValueError: degeneracy of U1Sector(charge=0) must be positive, got 0
 
 ## `dim` versus `reduced_dim`
 
-Every space answers two size questions. `reduced_dim = Σ_a m_a` counts degeneracies —
-the storage-facing size, what the stored blocks are made of. `dim = Σ_a m_a · d_a`
-weights each degeneracy by the irrep dimension `d_a` — the physical size, what
+Every space answers two size questions. `reduced_dim`, $\sum_a m_a$, counts degeneracies —
+the storage-facing size, what the stored blocks are made of. `dim`, $\sum_a m_a d_a$,
+weights each degeneracy by the irrep dimension $d_a$ — the physical size, what
 `to_dense` produces. For U(1) every irrep is one-dimensional and the two agree; under
-SU(2) they part as soon as a sector with `2j > 0` appears:
+SU(2) they part as soon as a sector with $2j > 0$ appears:
 
 ```python
 >>> from tenet.symmetry import SU2, SU2Sector
@@ -67,7 +67,7 @@ number suggests. [Truncation](truncation.md) has that in detail.
 ## `Leg` — a space, a side, a dual flag
 
 A leg is one tensor axis: a space, a `side` (`OUT` for the codomain, `IN` for the
-domain), a `dual` flag (`V` versus `V*`), and an optional `name`:
+domain), a `dual` flag ($V$ versus $V^{*}$), and an optional `name`:
 
 ```python
 >>> from tenet import IN, OUT, Leg
@@ -142,9 +142,9 @@ When you hold only *some* of the blocks, name them.
 zeros; the keys come from `TensorStructure(legs).block_order`, so nothing has to be
 built first to find out what the layout is.
 
-This is the natural spelling away from Abelian symmetries, where the reduced block per
-fusion tree is the datum and the dense array is derived. The SU(2) evaluation cup
-`V_½ ⊗ V_½* → 1` has exactly one fusion channel, and its whole content is that the
+This is the natural spelling away from Abelian symmetries, where the reduced block per fusion
+tree is the datum and the dense array is derived. The SU(2) evaluation cup $V_{1/2} \otimes
+V_{1/2}^{*} \to \mathbf{1}$ has exactly one fusion channel, and its whole content is that the
 channel carries coefficient 1:
 
 ```python

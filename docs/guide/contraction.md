@@ -120,9 +120,10 @@ leg between sides is [repartition][tenet.SymmetricTensor.repartition].
 
 ## The composition rule
 
-For a fermionic provider the two ends of a wire are not interchangeable: the cap
-`V* ⊗ V → 1` and the cap `V ⊗ V* → 1` differ by a Koszul sign on every odd sector. So
-when an einsum contracts an odd wire, which operand supplies which end is load-bearing.
+For a fermionic provider the two ends of a wire are not interchangeable: the cap $V^{*} \otimes
+V \to \mathbf{1}$ and the cap $V \otimes V^{*} \to \mathbf{1}$ differ by a Koszul sign on every
+odd sector. So when an einsum contracts an odd wire, which operand supplies which end is
+load-bearing.
 
 **The rule you follow: every two-operand einsum is a composition. Operand 1 supplies the
 `IN` end of every shared wire and operand 2 the `OUT` end.** With three or more operands

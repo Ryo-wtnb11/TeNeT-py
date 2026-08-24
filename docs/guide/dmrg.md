@@ -65,9 +65,9 @@ is printable:
 ```
 
 The general recipe is a `D=1` boundary leg carrying `U1Sector(q)`, targeting
-`S^z_tot = q/2`; the boundary charge and the tensors' invariance hold it. `MPS.product` is
-Abelian-only: a single sector is not a non-Abelian multiplet, so under SU(2) the route is
-[`MPS.random`][tenet.network.MPS.random] with a charged boundary leg.
+$S^z_{\mathrm{tot}} = q/2$; the boundary charge and the tensors' invariance hold it.
+`MPS.product` is Abelian-only: a single sector is not a non-Abelian multiplet, so under SU(2)
+the route is [`MPS.random`][tenet.network.MPS.random] with a charged boundary leg.
 
 ## Schedules
 
@@ -120,14 +120,15 @@ test is the energy variance:
 
 ```
 
-`<psi|H^2|psi> / <psi|psi> - E^2` is zero for an exact eigenstate. Run it at two bond
-dimensions: a state converging on an eigenstate has a variance falling towards zero as
-`chi` grows; a state plateaued on the wrong structure has one that does not.
+$\langle\psi\vert H^2 \vert\psi\rangle/\langle\psi\vert\psi\rangle - E^2$ is zero for an exact
+eigenstate. Run it at two bond dimensions: a state converging on an eigenstate has a variance
+falling towards zero as `chi` grows; a state plateaued on the wrong structure has one that does
+not.
 
 ### Extrapolating in the discarded weight
 
 The truncation error is linear in the discarded weight near convergence, so a fit of
-energy against discarded weight extrapolates to the `chi → ∞` energy. Fit a **reverse**
+energy against discarded weight extrapolates to the $\chi \to \infty$ energy. Fit a **reverse**
 schedule run on the already-converged state, not the forward run's history — the forward
 energies are not converged at their bond dimensions:
 
@@ -165,10 +166,10 @@ tensor's own legs after the eigensolver and before the split, then renormalizes.
 every structurally allowed coupled sector of the two-site map, including the ones the
 eigensolver left numerically empty and which the truncation therefore dropped from the
 bond. That is the local minimum a symmetric DMRG falls into: a sector that is zero stays
-zero otherwise. It cannot reach outside `bond_l ⊗ phys`.
+zero otherwise. It cannot reach outside $\mathrm{bond}_l \otimes \mathrm{phys}$.
 
 **Perturbative noise** builds the density matrix and splits with `eigh` instead. Squaring
-the two-site tensor into `rho` resolves a singular value `sigma` through `sigma**2`, so
+the two-site tensor into `rho` resolves a singular value $\sigma$ through $\sigma^2$, so
 the split's accuracy floor is the square root of machine epsilon, which is why a
 noiseless sweep — including the cooling tail of a ramp — takes the SVD split.
 
@@ -231,11 +232,11 @@ True
 
 | call | what it returns |
 |---|---|
-| [`expectation_1site`][tenet.network.expectation_1site] | `<psi\|o_n\|psi> / <psi\|psi>` at one site |
+| [`expectation_1site`][tenet.network.expectation_1site] | $\langle\psi\vert o_n \vert\psi\rangle/\langle\psi\vert\psi\rangle$ at one site |
 | [`expectation_2site`][tenet.network.expectation_2site] | the same for a rank-4 operator on `(n, n+1)` |
-| [`expectation_profile`][tenet.network.expectation_profile] | `<psi\|o_n\|psi> / <psi\|psi>` at **every** site, in one pass |
-| [`overlap`][tenet.network.overlap] | `<phi\|psi>`, undivided |
-| [`measure_mpo`][tenet.network.measure_mpo] | `<phi\|H\|psi>`, undivided |
+| [`expectation_profile`][tenet.network.expectation_profile] | $\langle\psi\vert o_n \vert\psi\rangle/\langle\psi\vert\psi\rangle$ at **every** site, in one pass |
+| [`overlap`][tenet.network.overlap] | $\langle \phi \vert\psi\rangle$, undivided |
+| [`measure_mpo`][tenet.network.measure_mpo] | $\langle\phi\vert H \vert\psi\rangle$, undivided |
 | [`correlation_function`][tenet.network.correlation_function] | `{(i, j): value}` for the pairs you ask for |
 
 Three things to know:
@@ -243,7 +244,7 @@ Three things to know:
 - **`expectation_profile` is the one to reach for over a list comprehension.** A
   per-site loop costs two full-chain transfer passes per site; the profile moves the
   orthogonality centre once along the chain and reads the operator off it. Same numbers,
-  `O(N)` instead of `O(N²)`.
+  $O(N)$ instead of $O(N^2)$.
 - **`overlap` and `measure_mpo` do not divide.** A fidelity is
   `overlap(phi, psi) / (phi.norm() * psi.norm())`, and you write the division. The
   divided readings are the ones whose names say `expectation`.
@@ -255,10 +256,10 @@ Three things to know:
 
 [`Env(psi, h, bra=phi)`][tenet.network.Env] is the object all of this stands on, and
 `measure_mpo(phi, h, psi)` is its one-line spelling. `Env.heff2` refuses on a two-state
-environment — the prepared matvec reads the `IdL`/`IdR` channels as gauge identities,
-true of a canonical chain against itself and false of a mixed transfer — which is why
-measurement and the sweep are different entry points into one cache.
-[`Env.measure`][tenet.network.Env.measure] returns the unnormalized `<psi|H|psi>`.
+environment — the prepared matvec reads the `IdL`/`IdR` channels as gauge identities, true of a
+canonical chain against itself and false of a mixed transfer — which is why measurement and the
+sweep are different entry points into one cache. [`Env.measure`][tenet.network.Env.measure]
+returns the unnormalized $\langle\psi\vert H \vert\psi\rangle$.
 
 ### The entanglement profile
 
@@ -272,13 +273,13 @@ True
 
 ```
 
-- **The unit is nats.** `S = (c/6) log(x)` on an open chain wants the natural log; divide
-  by `log(2)` for bits.
-- **The key is the bond's left site**, `0 .. N-2` — the same key the sweep's `schmidt`
+- **The unit is nats.** $S = (c/6) \log x$ on an open chain wants the natural log; divide
+  by $\log 2$ for bits.
+- **The key is the bond's left site**, $0 \dots N-2$ — the same key the sweep's `schmidt`
   dict uses. The two trivial boundary cuts are zero and are not returned.
-- **`schmidt_sectors` is the read a graded bond is for.** On an SU(2) bond a single `j`
-  multiplet stands for `2j + 1` dense Schmidt values, and the entropy accounts for that,
-  which is why a two-site singlet reports `log 2` under SU(2) and under U(1) alike.
+- **`schmidt_sectors` is the read a graded bond is for.** On an SU(2) bond a single $j$
+  multiplet stands for $2j + 1$ dense Schmidt values, and the entropy accounts for that,
+  which is why a two-site singlet reports $\log 2$ under SU(2) and under U(1) alike.
 
 Each of the three readers canonizes a **copy** of the state and runs its own SVD sweep,
 so they never re-gauge the state you hand them. Keep the result rather than calling twice
@@ -297,9 +298,9 @@ True
 ```
 
 [`compress_`][tenet.network.MPS.compress_] truncates in place and returns the **total**
-discarded weight, `sqrt(sum_bond dw)`, where a sweep reports the per-bond **maximum**.
-One answers "how much of my state did I throw away", the other "which bond is the
-convergence diagnostic".
+discarded weight, $\sqrt{\sum_{\mathrm{bonds}} \mathrm{dw}}$, where a sweep reports the
+per-bond **maximum**. One answers "how much of my state did I throw away", the other "which
+bond is the convergence diagnostic".
 
 ## `compile=`
 

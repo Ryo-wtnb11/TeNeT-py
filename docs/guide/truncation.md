@@ -7,7 +7,7 @@ numerics are two functions, and you call them together or apart.
 ## One call
 
 [tenet.ops.linalg.svd_truncated][] decides and factorizes in one go. `max_bond` bounds
-the **dense** bond dimension `Σ_c qdim(c)·m_c`, `cutoff` applies one of six
+the **dense** bond dimension $\sum_c \operatorname{qdim}(c)\, m_c$, `cutoff` applies one of six
 `cutoff_mode` rules, and giving both takes the intersection:
 
 ```python
@@ -27,19 +27,18 @@ Passing neither `max_bond` nor `cutoff` is refused, naming [tenet.ops.linalg.svd
 
 | `cutoff_mode` | keeps |
 |---|---|
-| `abs` | `sigma > cutoff` |
-| `rel` | `sigma > cutoff * sigma_max` |
-| `sum2` | drops the largest set with `Σ qdim(c) sigma² < cutoff` |
-| `rsum2` (default) | as `sum2`, threshold `cutoff * norm(T)**2` |
-| `sum1` | as `sum2` at power 1, weight `qdim(c) sigma` |
+| `abs` | $\sigma > \texttt{cutoff}$ |
+| `rel` | $\sigma > \texttt{cutoff} \cdot \sigma_{\max}$ |
+| `sum2` | drops the largest set with $\sum \operatorname{qdim}(c)\, \sigma^2 < \texttt{cutoff}$ |
+| `rsum2` (default) | as `sum2`, threshold $\texttt{cutoff} \cdot \lVert T\rVert^2$ |
+| `sum1` | as `sum2` at power 1, weight $\operatorname{qdim}(c)\, \sigma$ |
 | `rsum1` | as `rsum2` at power 1 |
 
-`renorm=True` scales the kept singular values by
-`sqrt(norm(T)**2 / Σ_kept qdim(c) sigma²)`, so that `norm(U @ S @ Vh) == norm(t)`. It is
-a bool.
+`renorm=True` scales the kept singular values by $\sqrt{\lVert T\rVert^2 / \sum_{\mathrm{kept}}
+\operatorname{qdim}(c)\, \sigma^2}$, so that `norm(U @ S @ Vh) == norm(t)`. It is a bool.
 
-`S` comes back as a tensor, so absorbing it into either factor is a one-line `compose`,
-and the truncation error is exactly `norm(t)**2 - norm(U @ S @ Vh)**2` by Pythagoras.
+`S` comes back as a tensor, so absorbing it into either factor is a one-line `compose`, and the
+truncation error is exactly $\lVert t\rVert^2 - \lVert USV^{\dagger}\rVert^2$ by Pythagoras.
 
 ## Two calls
 
@@ -88,22 +87,22 @@ use.
 
 Selection is over **one global spectrum**, in every mode:
 
-- the sort key is the **bare** `sigma`, descending, ties broken by sector order then
+- the sort key is the **bare** $\sigma$, descending, ties broken by sector order then
   index — how large a singular value is has nothing to do with multiplicity;
-- the **cost** and the **weight** are `qdim(c)`-weighted, because the reduced index `i`
-  in sector `c` stands for `qdim(c)` dense basis states. That is the same weight
+- the **cost** and the **weight** are $\operatorname{qdim}(c)$-weighted, because the reduced
+  index $i$ in sector $c$ stands for $\operatorname{qdim}(c)$ dense basis states. That is the same weight
   [tenet.norm][] carries, which makes greedy-descending under a dense budget optimal:
   the result is the best approximation of its achieved dense rank.
 
 The walk **stops** at the first singular value that would overflow the budget, which
 keeps the kept set nested as `max_bond` grows. The consequence is that `max_bond` may be
-undershot by up to `max qdim(c) - 1`.
+undershot by up to $\max_c \operatorname{qdim}(c) - 1$.
 
 ## Why the decision is worth looking at: SU(2)
 
-For U(1) and fermionic parity every sector has `qdim(c) == 1`, so a `max_bond` of `D`
-keeps exactly `D` singular values. Under SU(2) a sector is a *multiplet*: `j = 1` costs
-three dense dimensions, `j = 0` costs one.
+For U(1) and fermionic parity every sector has $\operatorname{qdim}(c) = 1$, so a `max_bond` of
+$D$ keeps exactly $D$ singular values. Under SU(2) a sector is a *multiplet*: $j = 1$ costs
+three dense dimensions, $j = 0$ costs one.
 
 Take a bond carrying one singlet and three triplets, and ask for five:
 
@@ -148,7 +147,7 @@ same state, held in fewer, larger irreps.
 
 ## The Hermitian route
 
-An SVD of a self-adjoint operator returns `|w|` and drops which eigenvalues were
+An SVD of a self-adjoint operator returns $\lvert w\rvert$ and drops which eigenvalues were
 negative, so `U @ S @ adjoint(U)` reconstructs an indefinite operator with every sign
 flipped positive. That is structural, not a tolerance.
 [tenet.ops.linalg.eigh_truncated][] is the twin for that case — same keyword set, same
@@ -170,11 +169,11 @@ True
 Two places where it is not a literal mirror of the SVD:
 
 - **the kept set is not a prefix.** Singular values come back descending, so `svd`
-  slices; eigenvalues come back ascending and signed, so the `k` largest by `|w|` is an
-  `argsort` and a gather. A gather is a value-dependent permutation, never a
+  slices; eigenvalues come back ascending and signed, so the $k$ largest by
+  $\lvert w\rvert$ is an `argsort` and a gather. A gather is a value-dependent permutation, never a
   value-dependent shape, so `eigh(..., bond=)` still traces.
-- **the sign survives.** Only the ordering key is `|w|`; `W`'s retained entries are the
-  signed eigenvalues.
+- **the sign survives.** Only the ordering key is $\lvert w\rvert$; `W`'s retained entries
+  are the signed eigenvalues.
 
 On a positive-definite input the two routes agree factor for factor.
 
@@ -183,10 +182,10 @@ On a positive-definite input the two routes agree factor for factor.
 | field | meaning |
 |---|---|
 | `bond` | the truncated `GradedSpace` — what `svd(..., bond=)` consumes |
-| `dense_dim` | `Σ_c qdim(c)·m_c`, the dimension `max_bond` bounds |
-| `reduced_dim` | `Σ_c m_c`, what the reduced blocks are made of |
+| `dense_dim` | $\sum_c \operatorname{qdim}(c)\, m_c$, the dimension `max_bond` bounds |
+| `reduced_dim` | $\sum_c m_c$, what the reduced blocks are made of |
 | `kept` / `discarded` | `(magnitude, sector, index)` triples, descending |
-| `discarded_weight` | `Σ_discarded qdim(c)·σ²` |
+| `discarded_weight` | $\sum_{\mathrm{discarded}} \operatorname{qdim}(c)\, \sigma^2$ |
 | `undershoot` | `max_bond - dense_dim`, or `None` |
 | `next_multiplet` / `next_dense_cost` | what the cut stopped short of, and its price |
 | `scale` | the factor `renorm=True` applies; every magnitude above is bare |
