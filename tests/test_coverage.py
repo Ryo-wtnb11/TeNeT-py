@@ -86,6 +86,23 @@ NO_PARAMS: dict[str, str] = {
         "an exception raised by the library; it has no introspectable signature "
         "and users never construct it"
     ),
+    "tenet.network.CheckerboardLattice": (
+        "the 2x2 bipartite geometry takes no arguments at all -- its dims, sites and "
+        "bonds are what the class name fixes"
+    ),
+    "tenet.network.Site": (
+        "a NamedTuple of two coordinates; its fields are documented in the class "
+        "docstring's Attributes section, which griffe accepts where a Parameters "
+        "section on a synthesized __init__ would warn"
+    ),
+    "tenet.network.Bond": (
+        "a NamedTuple of two sites; its fields are documented in the class "
+        "docstring's Attributes section"
+    ),
+    "tenet.network.DoubleLayer": (
+        "a NamedTuple holding a bra and a ket; its fields are documented in the "
+        "class docstring's Attributes section"
+    ),
     "tenet.network.CTMEnv": (
         "a result record built by move/ctmrg, never by users; its fields are "
         "documented in the class docstring's Attributes section"

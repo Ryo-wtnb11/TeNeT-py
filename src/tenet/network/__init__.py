@@ -17,6 +17,13 @@ Two families, independent of each other:
   [single_layer][tenet.network.single_layer], [double_layer][tenet.network.double_layer]
   and [layers][tenet.network.layers] build its absorbers from a bulk tensor or an iPEPS
   ket.
+* **Two-dimensional states.** [SquareLattice][tenet.network.SquareLattice] and its two
+  pattern subclasses carry the geometry, [Lattice][tenet.network.Lattice] the one
+  object per unique site, [Peps][tenet.network.Peps] the rank-5 state and
+  [Peps2Layers][tenet.network.Peps2Layers] the *view* whose items are lazy
+  [DoubleLayer][tenet.network.DoubleLayer] pairs -- the bra-ket product is never formed.
+  ``cor_*``, ``edge_*`` and ``append_vec_*`` are the twelve contractions every 2D
+  environment is built from.
 
 [spectrum][tenet.network.spectrum] and [ones][tenet.network.ones] are shared by both;
 [spectrum_sectors][tenet.network.spectrum_sectors] and [entropy][tenet.network.entropy]
@@ -59,6 +66,14 @@ from tenet.network.ctmrg import (
 )
 from tenet.network.dmrg import DMRG_out, Sweep, dmrg_, lanczos, sweep_
 from tenet.network.env import Env, correlation_function, measure_mpo
+from tenet.network.lattice import (
+    Bond,
+    CheckerboardLattice,
+    Lattice,
+    RectangularUnitcell,
+    Site,
+    SquareLattice,
+)
 from tenet.network.mps import (
     MPO,
     MPS,
@@ -68,22 +83,60 @@ from tenet.network.mps import (
     local_op,
     overlap,
 )
+from tenet.network.peps import (
+    DoubleLayer,
+    Peps,
+    Peps2Layers,
+    append_vec_bl,
+    append_vec_br,
+    append_vec_tl,
+    append_vec_tr,
+    cor_bl,
+    cor_br,
+    cor_tl,
+    cor_tr,
+    edge_b,
+    edge_l,
+    edge_r,
+    edge_t,
+)
 
 __all__ = [
-    "MPO",
-    "MPS",
     "Absorb",
+    "Bond",
     "CTMEnv",
     "CTMRG_out",
+    "CheckerboardLattice",
     "DMRG_out",
+    "DoubleLayer",
     "Env",
+    "Lattice",
+    "MPO",
+    "MPS",
+    "Peps",
+    "Peps2Layers",
+    "RectangularUnitcell",
+    "Site",
+    "SquareLattice",
     "Sweep",
+    "append_vec_bl",
+    "append_vec_br",
+    "append_vec_tl",
+    "append_vec_tr",
+    "cor_bl",
+    "cor_br",
+    "cor_tl",
+    "cor_tr",
     "correlation_function",
     "ctmrg",
     "ctmrg_unrolled",
     "dmrg_",
     "double_layer",
     "double_layer_ctm",
+    "edge_b",
+    "edge_l",
+    "edge_r",
+    "edge_t",
     "entropy",
     "expectation_1site",
     "expectation_2site",

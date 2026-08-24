@@ -5209,8 +5209,8 @@ The split:
   **discharged**: the caller was found, measured, and the pair it needs is shipped. What is
   left open is the driver-layer change, which now has its own two-line argument above.
 
-Not planned: TDVP, iDMRG, fermionic swap gates and PEPS containers. Excited states
-left that list with M61 Stage D above.
+Not planned: TDVP, iDMRG and fermionic swap gates. Excited states left that list
+with M61 Stage D above, and PEPS containers with M79/#277.
 - **M55** — **measured, not shipped**: the pre-placement basis choice — M39's named successor,
   block2's Part 2 position — was built as a prototype, taken to its gate, and the gate says
   the change does not belong in `src/` (#222). The measurement is the whole deliverable.
@@ -6711,8 +6711,85 @@ left that list with M61 Stage D above.
   No source behaviour, no pinned energy and no committed output moved: `ENERGY_BASELINE`
   and `toy-ctmrg.md` are untouched, and the projector stays on `svd_truncated`.
 
+- **M79a** — shipped: the 2D layer's foundation, adopted from YASTN's `yastn/tn/fpeps`
+  (b0187c4) the way DMRG was adopted from block2. `network/lattice.py` is
+  `_geometry.py` — `Site`, `Bond`, `SquareLattice` over `infinite`/`obc`/`cylinder`,
+  `CheckerboardLattice`, `RectangularUnitcell` and the site-indexed `Lattice` container.
+  `network/peps.py` is `_peps.py` plus `_doublePepsTensor.py` plus
+  `envs/_env_contractions.py`'s twelve primitives: `Peps` on rank-5 sites
+  `(t IN, l OUT, b OUT, r IN, phys OUT)`, the `Peps2Layers` view whose items are lazy
+  `DoubleLayer` pairs, and `cor_{tl,bl,br,tr}` / `edge_{t,l,b,r}` /
+  `append_vec_{tl,tr,bl,br}` as `einsum_chain`s. Out of scope and named as such: the
+  patch mechanism (it serves M79d's provisional per-site updates), `to_dict`
+  serialization, `TriangularLattice`, and the physical-leg operator YASTN's
+  `DoublePepsTensor` carries.
 
-Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
+  **The fermionic order is the geometry's, stated once.** `bonds()` emits every bond
+  already oriented left-before-right and top-before-bottom, so no caller re-derives
+  which end comes first — the same statement about operand order the composition rule
+  makes about contractions, moved to the object that knows the answer.
+
+  **Operand order is derived, and the derivation is bend-minimality.** With
+  `bra = adjoint(ket)`, every wire has a fixed answer to who supplies `IN` — `t` and
+  `r` from the ket, `l`, `b` and `phys` from the bra — so operand 1 is whichever side
+  wins that count over the wires a primitive contracts, and the losers bend. That is
+  not a preference: two composition-rule-respecting spellings of `cor_tl` (bra first
+  with one bend, ket first with two) contract the same legs into the same leg order and
+  land on **different tensors**, which
+  `tests/network/test_peps.py::test_a_second_bend_is_a_second_tensor` measures. A bend
+  is a real categorical operation, so a second bend is a wire the planar diagram does
+  not turn; minimality is therefore the criterion, and it is asserted on every step of
+  every primitive rather than argued. Two primitives tie at one bend either way,
+  `edge_t` and `edge_r`; both take the bra first, and the tie is settled by physics when
+  M79b contracts a network against its Onsager oracle, not by counting.
+
+  **What the property tests can and cannot prove at this stage.** Two oracles, both
+  independent of the fusion machinery. For `Trivial`, U(1) and SU(2) the whole chain is
+  one `np.einsum` over the dense expansions with the implementation's own index letters
+  — that pins the wiring, which legs are closed and in which order the survivors return.
+  For fZ2 that plain einsum is a *different* tensor for eleven of the twelve primitives,
+  and the oracle becomes a dense graded replay: the chain recorded off the
+  implementation's own `einsum_chain` calls and re-contracted with the Koszul sign of
+  every line reordering computed from parity vectors alone. `cor_tr` is the twelfth and
+  its agreement is not an accident — it is the corner where the ket leads and the single
+  bend lands on the physical wire — so it is listed rather than excused. The oracle
+  rests on one measured fact, re-measured per provider inside the suite: **a tensor's
+  fermionic line order is its OUT axes in public order followed by its IN axes in
+  reversed public order**, because the domain is built by bending the last codomain line
+  down and therefore reads back to front. What none of this proves is that the bends
+  reproduce YASTN's `swap_gate` placement *physically*; the primitives are not
+  contracted into a number until M79b, and that is where the claim is settled.
+
+  **Element movement, against YASTN's sequence.** YASTN fuses each `[x x']` pair; tenet
+  lowers to sector matrices and leaves the pairs adjacent and separate, so the counts
+  differ in a way worth stating before M79b measures a sweep.
+
+  * A corner or edge is, in YASTN, one `tensordot` (two operand transposes over `D^4 d`,
+    then the block gemms), one `swap_gate` (one elementwise pass over `D^4`) and one
+    `fuse_legs` (one permuting pass over `D^4`). In tenet it is one chain step: the bend
+    is a *plan* composed onto the operand lowering rather than a separate tensor, so it
+    costs no pass of its own, and the pairs are never fused. Two operand passes over
+    `D^4 d`, the same gemms, one restore pass over `D^4` — **two passes over `D^4`
+    cheaper per primitive**, the `swap_gate` and the `fuse`.
+  * The gemms themselves do not differ. YASTN's fused `[t l]` leg is still contracted
+    charge sector by charge sector, so both sides multiply the same blocks; what tenet
+    skips is building the fused-leg metadata, not arithmetic.
+  * The saving is a deferral, not a free lunch. A fused rank-2 corner is what a QR or an
+    SVD wants, so M79b's projector construction pays the fuse tenet skipped here — once,
+    at the one place a matrix shape is genuinely needed, instead of once per primitive
+    per site per move.
+  * `append_vec_*` is where the chain earns most. YASTN's is fuse, unfuse, `swap_gate`,
+    `tensordot`, `tensordot`, `swap_gate`, fuse, unfuse, transpose — two gemms and about
+    seven passes over rank-5 to rank-7 objects. Tenet's is a two-step `einsum_chain`, and
+    step 1's restore composes with step 2's lowering into one plan, so the rank-7
+    intermediate is never written: two gemms and four strided passes. Neither side ever
+    forms the `d^2 D^8` double layer, which is the point `Peps2Layers` exists to make.
+
+  These are counts argued from the plan composition, not a measurement; the measurement
+  arrives with M79b, when there is a sweep to time.
+
+Not planned: TDVP, iDMRG, excited states and fermionic swap gates. PEPS containers left
+that list with M79/#277 and now have their own lane above.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
 and the gap M13's refusal guarded against was the cap-direction convention M23/#160
