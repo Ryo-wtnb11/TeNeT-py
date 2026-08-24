@@ -34,32 +34,45 @@ def hamiltonian(n_sites: int) -> np.ndarray:
     ``S^z_tot`` by construction, so every state they reach is in the basis and there is no
     membership test to get wrong.
     """
+    # Each bond operator flattened to 4x4 on (site b, site b+1). The dense readout orders
+    # the two-site basis as (dd, du, ud, uu), which is PHYS's own sector order squared.
     gates = [np.asarray(h.to_dense()).reshape(4, 4) for h in model.h_bonds(n_sites)]
+    # The basis: every bitstring with exactly half the bits set, i.e. S^z_tot = 0. The
+    # ground state of an even Heisenberg chain lives here, so nothing else is built.
     states = [s for s in range(1 << n_sites) if bin(s).count("1") == n_sites // 2]
     index = {s: i for i, s in enumerate(states)}
     h = np.zeros((len(states), len(states)))
     for i, s in enumerate(states):
         for b, gate in enumerate(gates):
+            # The two bits this bond acts on, packed high-bit-first into 0..3 to match
+            # the gate's column order.
             ket = ((s >> b) & 1) * 2 + ((s >> (b + 1)) & 1)
             for bra, value in enumerate(gate[:, ket]):
                 if value:
+                    # Clear both bits, then write the row's two bits back in their place:
+                    # the same basis state with this one bond's pair replaced.
                     flipped = (
                         (s & ~(1 << b) & ~(1 << (b + 1)))
                         | ((bra >> 1) << b)
                         | ((bra & 1) << (b + 1))
                     )
+                    # No membership test: S.S conserves S^z_tot, so every state a nonzero
+                    # matrix element reaches has the same bit count and is already indexed.
                     h[index[flipped], i] += value
     return h
 
 
 def ground_energy(n_sites: int) -> float:
     """The lowest eigenvalue of :func:`hamiltonian`, by ``numpy.linalg.eigvalsh``."""
+    # eigvalsh, not eig: H is real symmetric, so the spectrum is real and comes sorted.
     return float(np.linalg.eigvalsh(hamiltonian(n_sites))[0])
 
 
 def main(sizes=(8, 10, 12)):
     """The open-chain ground-state energy at a few sizes, with the sector dimension."""
     energies = {}
+    # Several sizes, so E/N can be watched approaching the thermodynamic limit from
+    # above: the two open ends cost energy, and their share shrinks like 1/N.
     for n_sites in sizes:
         h = hamiltonian(n_sites)
         energies[n_sites] = float(np.linalg.eigvalsh(h)[0])

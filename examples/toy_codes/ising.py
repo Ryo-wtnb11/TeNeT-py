@@ -39,14 +39,23 @@ def ising_bulk(beta):
 
     ``beta`` may be a *traced scalar*, so the block values are built with ``jax.numpy``.
     """
+    # The two columns of W: the even one is spin-independent, the odd one flips sign
+    # with s. Their squares are cosh b and sinh b, which is the bond weight split in half.
     c, s = jnp.sqrt(jnp.cosh(beta)), jnp.sqrt(jnp.sinh(beta))
     space = GradedSpace.new(Z2, {Z2Sector(0): 1, Z2Sector(1): 1})
+    # Two OUT and two IN so a leg always meets its opposite when the lattice is tiled:
+    # l and u are emitted, r and d absorbed by the neighbours on those sides.
     legs = (Leg(space, OUT), Leg(space, OUT), Leg(space, IN), Leg(space, IN))
     structure = TensorStructure(legs)
     blocks = {}
     for key in structure.block_order:  # the key names (l, u) and (r, d)
+        # Each key names one allowed parity assignment to the four legs -- allowed
+        # meaning the parities multiply to even, which is exactly the sum over s not
+        # cancelling. Reading the parities off the two trees gives the four W columns.
         w = [c if sector.parity == 0 else s for sector in key.output_tree.uncoupled]
         w += [c if sector.parity == 0 else s for sector in key.input_tree.uncoupled]
+        # Shape (1,1,1,1): every sector has degeneracy 1, so a block is a single number.
+        # The 2 is the sum over the two values of s, which agree on every surviving term.
         blocks[key] = jnp.full((1, 1, 1, 1), 2.0 * (w[0] * w[1] * w[2] * w[3]))
     return SymmetricTensor.from_blocks(legs, blocks)
 
@@ -59,6 +68,8 @@ def onsager(beta: float, points: int = 200_001) -> float:
     ``tests/integration/test_ctmrg.py`` before this is used to judge anything.
     """
     kk = 1.0 / np.sinh(2.0 * beta) ** 2
+    # A smooth periodic integrand, so the trapezoid rule converges faster than any power
+    # of 1/points: 200k samples put the quadrature error below the 1e-12 it is judged at.
     theta = np.linspace(0.0, np.pi, points)
     integrand = np.log(
         np.cosh(2.0 * beta) ** 2 + np.sqrt(1.0 + kk**2 - 2.0 * kk * np.cos(2.0 * theta)) / kk

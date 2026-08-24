@@ -85,13 +85,32 @@ def update_bond(psi, gates, schmidt, n: int, direction: str, *, chi: int, cutoff
     -- the cut is canonical on both sides at exactly this moment, which is the only moment
     those numbers mean what their name says.
     """
+    # Merge: a = left bond, p and q the two physical legs, r = right bond, and the bond x
+    # between the two sites is summed away. The gate cannot act until both spins are here.
     theta = tenet.einsum("apx,xqr->apqr", psi[n], psi[n + 1])
+    # Apply: lowercase p, q go in, uppercase P, Q come out. The gate is a map on the pair,
+    # so it changes the numbers on the physical legs and touches no bond.
     theta = tenet.einsum("PQpq,apqr->aPQr", gates[n], theta)
+    # Split back along the same cut the merge made: (a, P) against (Q, r). The gate has
+    # entangled the pair, so the bond between them is generally wider than it was, and the
+    # truncation is where that growth is paid for -- cutoff drops singular values below a
+    # relative threshold, max_bond caps what is left.
     u, s, vh = tenet.linalg.svd_truncated(theta, ((0, 1), (2, 3)), max_bond=chi, cutoff=cutoff)
     norm_s = tenet.norm(s)
+    # By Pythagoras on the singular values: what survived over what there was, subtracted
+    # from one, is the squared weight the truncation threw away. u and vh are isometries,
+    # so norm(theta) is norm of the full singular spectrum and the ratio is meaningful.
     discarded = 1.0 - float(norm_s / tenet.norm(theta)) ** 2
+    # exp(-dt H) is not unitary -- it shrinks the state, and unevenly -- so the norm has to
+    # be put back after every gate or the energy below would be read off an unnormalized
+    # state. Rescaling s is enough, since u and vh are already isometric.
     s, vh = s / norm_s, _as_site(vh)
+    # The cut is canonical on both sides at exactly this moment, which is the only moment
+    # these singular values are the bond's Schmidt spectrum.
     schmidt[n] = mps.spectrum(s)
+    # The singular values are absorbed into the site the sweep is moving *away* from, so
+    # the site left behind is a bare isometry and the chain stays canonical behind the
+    # pass -- which is what makes the next bond's truncation optimal for the whole state.
     if direction == "right":
         psi[n], psi[n + 1] = u, tenet.einsum("xy,yqr->xqr", s, vh)
     else:
@@ -106,6 +125,9 @@ def step(psi, gates, schmidt, *, chi: int, cutoff: float) -> float:
     worst discarded weight seen, which is the number that says whether ``chi`` was enough.
     """
     max_dw = 0.0
+    # Forwards then backwards, with each gate carrying dt/2. Neighbouring bond terms do
+    # not commute, so applying them in sequence is only exp(-dt H) to first order -- but
+    # the reversed second pass cancels the leading error term, leaving O(dt**3) per step.
     for direction in ("right", "left"):
         bonds = range(len(psi) - 1) if direction == "right" else range(len(psi) - 2, -1, -1)
         for n in bonds:
@@ -128,14 +150,23 @@ def tebd(n_sites: int = 12, chi: int = 32, *, cutoff: float = 1e-14, schedule=SC
     convergence and whether the bond ever ran out. ``schmidt`` carries the last Schmidt
     spectrum written at each bond, which is what :func:`mps.entropy` reads.
     """
+    # The Neel state is unentangled but has nonzero overlap with the ground state, which
+    # is all imaginary time needs; canonical form is what makes the first truncation
+    # optimal rather than arbitrary.
     psi = mps.canonicalize(mps.product_mps(n_sites))
     bonds = model.h_bonds(n_sites)
     schmidt: dict[int, list[float]] = {}
     history = []
     for dt, steps in schedule:
+        # dt/2 because step() applies each bond's gate twice, once in each direction.
+        # The gates are built once per stage: the model is time-independent, so only the
+        # step size changes, and expm is far more expensive than applying the result.
         gates = [gate(h, dt / 2) for h in bonds]
         max_dw = 0.0
         for _ in range(steps):
+            # exp(-tau H) applied over and over multiplies each eigenstate by exp(-tau E),
+            # so the gap between the ground state and the rest grows exponentially in the
+            # accumulated tau and everything above the ground state is projected out.
             max_dw = max(max_dw, step(psi, gates, schmidt, chi=chi, cutoff=cutoff))
         history.append((dt, steps, energy(psi, bonds), max_dw))
     return psi, history, schmidt
@@ -149,11 +180,15 @@ def main(n_sites: int = 12, chi: int = 32):
     would be a bug and not a lucky run.
     """
     psi, history, schmidt = tebd(n_sites, chi)
+    # A route that shares nothing with the one above: dense diagonalization of the same
+    # bond operators, so agreement is a statement about the algorithm, not the model file.
     reference = exact.ground_energy(n_sites)
     for dt, steps, e, dw in history:
         print(f"  dt={dt:<7g} steps={steps:3d}  E={e:+.12f}  dw={dw:.3e}")
     print(
         f"N={n_sites} chi={chi}  E={history[-1][2]:+.12f}  exact={reference:+.12f}  "
+        # Bond n_sites//2 - 1 is the cut between the two halves of the chain, where the
+        # entropy is largest and where chi is decided.
         f"S(N/2)={mps.entropy(schmidt[n_sites // 2 - 1]):.6f}"
     )
     return psi, history, reference
