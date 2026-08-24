@@ -1141,12 +1141,6 @@ class EnvCTMc4v(EnvCTM):
         """The parent's sweep loop, with ``'d'`` as the move -- YASTN ``iterate_``."""
         return super().iterate_(max_bond, moves, max_sweeps, corner_tol, cutoff)
 
-    def _move_(self, move: str, max_bond: int | None, cutoff: float | None) -> None:
-        """The parent's per-move entry point, narrowed to ``'d'``."""
-        if move != "d":
-            raise ValueError(f"EnvCTMc4v: move={move!r}; a C4v environment has only 'd'")
-        self._move_d(max_bond, cutoff, None)
-
     def _move_d(self, max_bond: int | None, cutoff: float | None, bond: Any) -> None:
         """The move, YASTN ``_update_2x2_``.
 
