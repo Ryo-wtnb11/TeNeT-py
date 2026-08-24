@@ -866,7 +866,8 @@ class EnvCTM:
         its ``theta``, one per layer. Measured against a cluster contracted site by site
         with no environment at all: exact on every loop-free cluster either way (the ring
         is one-dimensional there, so ``theta`` is 1), and 1.6 and 0.79 out on the ``lr``
-        and ``tb`` bonds of a 2x2 ``fZ2`` patch without it -- 4e-15 and 1.7e-15 with it,
+        and ``tb`` bonds of a 2x2 patch under fermion parity without it -- 4e-15 and
+        1.7e-15 with it,
         and the same on an interior bond of a 3x3, where both environment wires carry
         sectors and twisting only one is wrong (``docs/design.md``, M84).
         """
