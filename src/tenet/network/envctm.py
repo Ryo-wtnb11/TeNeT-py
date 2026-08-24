@@ -159,6 +159,18 @@ class CTM_out(NamedTuple):
 # -- the composition rule, once ------------------------------------------------------
 
 
+def _supplies_in(leg: Leg) -> bool:
+    """Whether ``leg`` is the ``IN`` end of its wire.
+
+    ``side`` alone answers it for a leg nobody has moved, and every leg in
+    ``network/env.py`` is one. Here a leg can arrive from a
+    [qr][tenet.ops.linalg.qr] that repartitioned it across the map's two sides, which
+    flips ``side`` and ``dual`` together and leaves the same wire in the opposite
+    spelling -- so the predicate is the pair, not ``side``.
+    """
+    return (leg.side is IN) != leg.dual
+
+
 def _composed(equation: str, a: SymmetricTensor, b: SymmetricTensor) -> SymmetricTensor:
     """A two-operand ``tenet.einsum`` whose operand order and bends are **derived**.
 
@@ -191,10 +203,10 @@ def _composed(equation: str, a: SymmetricTensor, b: SymmetricTensor) -> Symmetri
     lhs, out = equation.split("->")
     ta, tb = lhs.split(",")
     shared = [c for c in ta if c in tb]
-    bend = "".join(c for c in shared if a.legs[ta.index(c)].side is not IN)
+    bend = "".join(c for c in shared if not _supplies_in(a.legs[ta.index(c)]))
     if len(bend) > len(shared) - len(bend):  # the other order turns fewer wires
         a, b, ta, tb = b, a, tb, ta
-        bend = "".join(c for c in shared if a.legs[ta.index(c)].side is not IN)
+        bend = "".join(c for c in shared if not _supplies_in(a.legs[ta.index(c)]))
     return tenet.einsum_chain([(f"{ta},{tb}->{out}", a, b, bend)])
 
 
