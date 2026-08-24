@@ -29,22 +29,37 @@ PHYS = SITE.phys
 def su2_mpo(n_sites: int) -> MPO:
     """``H = sum_i S_i . S_{i+1}`` as one invariant two-site term per bond."""
     op = SITE.ops["S.S"]  # the site's whole SU(2) operator set: one invariant term
+    # The site pair (i, i+1) is passed as a tuple, not two separate one-site factors:
+    # S.S is irreducible under SU(2), and from_terms splits it across the bond itself
+    # by fusing the two sites and cutting the result -- the j=0 and j=1 channels of the
+    # split are the MPO bond, and they are what the SU(2) grading is made of.
     return MPO.from_terms(n_sites, [(1.0, [(op, (i, i + 1))]) for i in range(n_sites - 1)])
 
 
 def bond_spaces(n_sites: int) -> list[GradedSpace]:
     """A small full-rank-enough seed: singlet boundaries, {j=0,1/2,1} in the middle."""
+    # SU2Sector holds 2j, so 0 is the singlet: a one-dimensional trivial space at each
+    # end is the open boundary, and it pins the whole chain to a total spin zero state.
     tri = GradedSpace.new(SU2, {SU2Sector(0): 1})
+    # Interior bonds offer j = 0, 1/2, 1 with a couple of copies each. Only the *set* of
+    # irreps has to be right -- multiplicities the ground state needs grow under the
+    # sweeps, and ones it does not are truncated away -- so this stays deliberately small.
     mid = GradedSpace.new(SU2, {SU2Sector(0): 2, SU2Sector(1): 2, SU2Sector(2): 1})
     return [tri] + [mid] * (n_sites - 1) + [tri]
 
 
 def main(n_sites: int = 20, chi: int = 64):
     """Run SU(2) and U(1) side by side; returns both DMRG_outs and the SU(2) mid bond."""
+    # A random seed already fills every offered sector, so no noise is needed to reach
+    # them; the fixed seed only makes the printed sweep count reproducible.
     psi = MPS.random(PHYS, bond_spaces(n_sites), seed=0)
+    # Flat chi, no schedule: chi counts dense states here too, so an SU(2) bond keeps
+    # (2j+1)-fold more physical states per unit of cost than the U(1) run below.
     su2 = dmrg_(psi, su2_mpo(n_sites), chi=chi)
     u1, _ = heisenberg.main(n_sites, chi)
 
+    # Same cut, both runs. dim counts dense states, reduced_dim counts multiplets: the
+    # gap between them is the (2j+1) degeneracy SU(2) never has to store.
     mid = su2.psi[n_sites // 2].legs[0].space
     mid_u1 = u1.psi[n_sites // 2].legs[0].space
     print(f"U(1) : {u1.sweeps} sweeps  E = {u1.energy:.12f}  mid bond {mid_u1.dim} states")

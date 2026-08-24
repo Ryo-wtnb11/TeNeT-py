@@ -29,28 +29,52 @@ SZ = SITE.matrices["Sz"]
 
 def heisenberg_mpo(n_sites: int) -> MPO:
     """``H = sum_i S_i . S_{i+1}``, J = 1, open boundaries, as a term list."""
+    # S+ and S- each carry charge +-2 on their own; only the product of the two is
+    # neutral, which is why they enter the list paired across a bond and never alone.
     op_sz, op_sp, op_sm = (SITE.ops[name] for name in ("Sz", "S+", "S-"))
     terms = []
     for i in range(n_sites - 1):
+        # S.S = S^z S^z + (S^+ S^- + S^- S^+)/2 -- the isotropic dot product written in
+        # the U(1) basis, where the transverse half has to be split into the two
+        # hopping directions because raising and lowering are separate operators here.
         terms.append((1.0, [(op_sz, i), (op_sz, i + 1)]))
         terms.append((0.5, [(op_sp, i), (op_sm, i + 1)]))
         terms.append((0.5, [(op_sm, i), (op_sp, i + 1)]))
+    # from_terms reads each operator's charge and grades the MPO bond itself: the bond
+    # carries one channel per partially-applied term, plus the "not started" and
+    # "finished" channels that run the identity along the rest of the chain.
     return MPO.from_terms(n_sites, terms)
 
 
 def main(n_sites: int = 20, chi: int = 64):
     """Ground state at the defaults CI runs; returns the DMRG_out and the bond profile."""
+    # Neel: up, down, up, ... Its charges sum to zero, and DMRG never leaves the sector
+    # its seed is in, so this one product state is the whole S^z_tot = 0 input.
     psi = MPS.product(PHYS, [U1Sector(1 if n % 2 else -1) for n in range(n_sites)])
+    # Staged chi: early sweeps at a small bond are cheap and move the state most, and
+    # they hand the later, expensive sweeps a starting point already near the minimum.
+    # Noise repopulates bond charges the product seed left empty -- without it a sector
+    # that starts at zero weight can never be reached, since the update only rescales
+    # what is already there. It decays because by then the missing sectors are found
+    # and further noise would only be energy the last, noiseless sweep has to undo.
     schedule = [Sweep(16, noise=1e-4)] * 3 + [Sweep(32, noise=1e-5)] * 3 + [Sweep(chi)]
     out = dmrg_(psi, heisenberg_mpo(n_sites), schedule=schedule)
+    # legs[0] of site n is its left virtual bond, so this is the cut through the middle
+    # of the chain -- the one that carries the most entanglement and the largest bond.
     mid = out.psi[n_sites // 2].legs[0].space
     print(f"N={n_sites}  {out.sweeps} sweeps  E = {out.energy:.15f}  mid bond: {mid.dim} states")
 
+    # S.S as a single two-site matrix, so the bond energy is one expectation value
+    # rather than the three-term sum the MPO was built from.
     ss = local_op(SITE.matrices["S.S"], phys=PHYS)
     profile = [expectation_2site(out.psi, ss, n) for n in range(n_sites - 1)]
     print("bond energies:", " ".join(f"{e:+.4f}" for e in profile))
+    # H is the sum of those bonds, so the profile summing to out.energy checks the
+    # variational energy against a route that never touches the environment caches.
     print(f"sum of bond energies = {sum(profile):.15f}  vs  out.energy = {out.energy:.15f}")
 
+    # <S^z_n> = 0 site by site is not convergence but symmetry: a state living in one
+    # U(1) sector has no local magnetisation to round-off, however far from the minimum.
     op_sz = local_op(SZ, phys=PHYS)
     max_sz = max(abs(expectation_1site(out.psi, op_sz, n)) for n in range(n_sites))
     print(f"max_n |<S^z_n>| = {max_sz:.1e}")

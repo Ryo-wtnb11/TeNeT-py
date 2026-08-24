@@ -129,8 +129,12 @@ def _spin_half() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     :data:`PHYS` sorts its sectors ascending. The matrices are ``O[out, in]``.
     """
     eye = np.eye(2)
+    # S^z is diagonal in this basis, and its entries are half the U(1) charge -- that is
+    # the whole content of "t = 2 S^z".
     sz = np.diag([-0.5, 0.5])
     sp = np.array([[0.0, 0.0], [1.0, 0.0]])  # |down> -> |up>
+    # S^- is S^+ transposed because both are real; for spin-1/2 no sqrt(S(S+1) - m(m+-1))
+    # factor survives, the single matrix element being 1.
     return eye, sz, sp, sp.T
 
 
@@ -151,9 +155,16 @@ def mpo_array() -> np.ndarray:
     as ``D=1`` MPO bond legs by ``MPO.from_w``, which is what makes every ``W_n`` rank 4.
     """
     eye, sz, sp, sm = _spin_half()
+    # [wl, p_out, p_in, wr]: the two MPO bond indices sandwich the physical pair, so one
+    # entry of W is "arrive in channel wl, act with this 2x2, leave in channel wr".
     w = np.zeros((5, 2, 2, 5))
+    # The two diagonal identity channels run the machine along the chain: START keeps the
+    # term not-yet-started to the left, END keeps it finished to the right. Without both,
+    # a two-site term could only ever sit on one particular bond.
     w[_START, :, :, _START] = eye
     w[_END, :, :, _END] = eye
+    # Each remaining pair is one term, opened on site i and closed on site i+1. The 1/2
+    # is carried on the opening operator; putting it on either factor gives the same H.
     w[_START, :, :, _SM_CHANNEL] = 0.5 * sm
     w[_SM_CHANNEL, :, :, _END] = sp
     w[_START, :, :, _SP_CHANNEL] = 0.5 * sp
@@ -188,15 +199,23 @@ def mpo_from_terms(n_sites: int, *, symbolic: bool = False) -> network.MPO:
     finite-state-machine description and the prepared, term-family matvec with it.
     """
     _, sz, sp, sm = _spin_half()
+    # local_op turns a 2x2 into a rank-3 operator whose third leg carries the charge it
+    # moves. Keyed by that charge: S^z is neutral, and by the invariance rule in the
+    # module docstring an emitted S^+ sends the MPO bond to -2, an emitted S^- to +2.
+    # That charge is the *only* symmetry input here -- no MPO_BOND is ever named.
     op = {
         q: network.local_op(o, phys=PHYS, charge=U1Sector(q))
         for q, o in ((0, sz), (-2, sp), (2, sm))
     }
     terms = []
     for i in range(n_sites - 1):
+        # The same three terms per bond as the W above, in the same order: S^z S^z, then
+        # the two halves of (S^+ S^- + S^- S^+)/2 that make the exchange isotropic.
         terms.append((1.0, [(op[0], i), (op[0], i + 1)]))
         terms.append((0.5, [(op[-2], i), (op[2], i + 1)]))
         terms.append((0.5, [(op[2], i), (op[-2], i + 1)]))
+    # from_terms compresses the term list by an SVD sweep, and the bond spaces it lands on
+    # are MPO_BOND sector for sector -- the grading recovered rather than declared.
     return network.MPO.from_terms(n_sites, terms, symbolic=symbolic)
 
 
@@ -229,6 +248,8 @@ def mpo_entries(n_sites: int, *, symbolic: bool = False) -> network.MPO:
         q: network.local_op(o, phys=PHYS, charge=U1Sector(q))
         for q, o in ((0, sz), (-2, sp), (2, sm))
     }
+    # Keys are (channel in, channel out) and a value of None means the identity, so this
+    # dict is the lower-triangular W with every zero and every explicit I left out.
     w = {
         (0, 0): None,  # I -- nothing emitted yet
         (0, 1): (0.5, op[2]),  # S^-/2 out of the start channel ...
@@ -239,6 +260,8 @@ def mpo_entries(n_sites: int, *, symbolic: bool = False) -> network.MPO:
         (3, -1): op[0],  # ... closed by S^z
         (-1, -1): None,  # I -- the term is finished
     }
+    # The same dict on every site: the model is translation-invariant, and the two D=1
+    # ends come from 0 being the IdL channel and -1 the IdR one at every bond.
     return network.MPO.from_entries([w] * n_sites, symbolic=symbolic)
 
 
@@ -259,13 +282,20 @@ def bond_spaces(n_sites: int) -> list[GradedSpace]:
     """
     spaces = []
     for i in range(n_sites + 1):
+        # Two constraints at once: i spins to the left can reach at most charge +-i, and
+        # n_sites - i spins to the right can bring at most that much back to zero. The
+        # tighter of the two is the half-width of the reachable window.
         w = min(i, n_sites - i)
+        # Step 2, because each site adds +-1: a bond crossed by i sites carries a charge
+        # of the same parity as i, and the other half of the integers is unreachable.
         spaces.append(GradedSpace.new(U1, {U1Sector(q): 1 for q in range(-w, w + 1, 2)}))
     return spaces
 
 
 def dmrg(n_sites: int, chi: int = 64, *, seed: int = 0, **kwargs) -> network.DMRG_out:
     """Seed a random U(1) MPS in the ``S^z_tot = 0`` sector and hand it to the driver."""
+    # The seed's boundary legs are BOUNDARY, so invariance of every site tensor already
+    # forces S^z_tot = 0; no penalty term and no projector enters anywhere below.
     psi = network.MPS.random(PHYS, bond_spaces(n_sites), seed=seed)
     return network.dmrg_(psi, mpo(n_sites), chi=chi, **kwargs)
 
@@ -282,9 +312,15 @@ def main(n_sites: int = 12, chi: int = 64):
     """
     out = dmrg(n_sites, chi)
     print(f"from_w      N={n_sites} chi={chi}  E={out.energy:+.12f}  exact={E_OBC_12:+.12f}")
+    # Per sweep: the energy, its change, the entropy change, and dw -- the discarded
+    # weight, the sum of squared singular values the truncation threw away. dw is the
+    # variational error bar: it is what separates this energy from the chi=infinity one,
+    # and it falling to round-off is what "converged at this chi" means.
     for i, (e, de, ds, dw) in enumerate(out.history, start=1):
         print(f"  sweep {i:2d}  E={e:+.12f}  dE={de:.3e}  dS={ds:.3e}  dw={dw:.3e}")
 
+    # Same seed for every route: the comparison below is between MPOs, so the state they
+    # start from has to be the identical random tensor and not merely a similar one.
     seeded = network.MPS.random(PHYS, bond_spaces(n_sites), seed=0)
     terms = network.dmrg_(seeded, mpo_from_terms(n_sites), chi=chi)
     print(f"from_terms  N={n_sites} chi={chi}  E={terms.energy:+.12f}")
@@ -309,12 +345,18 @@ def main(n_sites: int = 12, chi: int = 64):
     def grading(space: GradedSpace) -> str:
         return " ".join(f"{sector.charge:+d}:{m}" for sector, m in space.sectors)
 
+    # legs[0] of the middle MPO tensor is its left bond: the two routes are compared
+    # sector by sector there, where the finite-state machine is at full width.
     hand = mpo(n_sites)[n_sites // 2].legs[0].space
     derived = mpo_from_terms(n_sites)[n_sites // 2].legs[0].space
     print(f"  MPO bond, hand-graded: {grading(hand)}")
     print(f"  MPO bond, derived:     {grading(derived)}")
 
+    # Seed against converged: the seed is one state per reachable charge, the final bonds
+    # are what the sweeps grew and the truncation kept -- the entanglement, measured.
     seed_bonds = [s.dim for s in bond_spaces(n_sites)]
+    # legs[2] is each site's *right* bond, so the left bond of site 0 has to be prepended
+    # to get all n_sites + 1 cuts rather than only the ones a site tensor emits.
     final = [out.psi[0].legs[0].space.dim] + [t.legs[2].space.dim for t in out.psi]
     print(f"  seed bond dims:  {seed_bonds}")
     print(f"  final bond dims: {final}")

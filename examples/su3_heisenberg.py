@@ -38,12 +38,21 @@ SWAP = np.eye(9).reshape(3, 3, 3, 3).transpose(0, 1, 3, 2)
 
 def exchange() -> SymmetricTensor:
     """``P`` on two fundamental sites: ``+1`` on the ``6``, ``-1`` on the ``3bar``."""
+    # Two OUT (ket) then two IN (bra) legs: an operator's row indices are what it emits,
+    # its column indices what it absorbs, and that ordering is what expectation_2site
+    # and MPO.from_terms both read the term through.
     legs = (Leg(PHYS, OUT), Leg(PHYS, OUT), Leg(PHYS, IN), Leg(PHYS, IN))
     eigenvalue = {SIX: 1.0, THREEBAR: -1.0}  # symmetric, antisymmetric
     structure = TensorStructure(legs)
     return SymmetricTensor.from_blocks(
         legs,
         {
+            # A FusionBlockKey names one way the four legs fuse to a singlet: an output
+            # tree fusing the two kets, an input tree fusing the two bras, joined on the
+            # coupled irrep they share. Here 3 x 3 = 6 + 3bar gives exactly two keys, and
+            # the coupled irrep of the key is the eigenvalue's whole address. The block
+            # is a constant times the identity on the multiplicity space -- degeneracy 1
+            # on both sides, so np.full and the Clebsch-Gordan coefficients stay implicit.
             key: np.full(structure.block_shape(key), eigenvalue[key.output_tree.coupled])
             for key in structure.block_order
         },
@@ -60,7 +69,12 @@ def su3_mpo(n_sites: int) -> MPO:
 
 def bond_spaces(n_sites: int) -> list[GradedSpace]:
     """Singlet boundaries -- the target sector -- and the low irreps in between."""
+    # The trivial irrep at both ends: an open chain's outermost bonds are one-dimensional,
+    # and choosing the singlet there is what selects an SU(3)-invariant ground state.
     end = GradedSpace.new(SU3, {ONE: 1})
+    # Every irrep reachable from a few fundamentals -- (1,1) is the adjoint 8, (0,2) the
+    # 6bar. The seed offers all of them, including the triality-nonzero 3 and 3bar an even
+    # cut cannot use; the sweeps drop those, which is the symmetry doing the bookkeeping.
     mid = GradedSpace.new(
         SU3, {ONE: 2, THREE: 2, THREEBAR: 2, SUNSector((1, 1)): 2, SIX: 1, SUNSector((0, 2)): 1}
     )
@@ -69,37 +83,55 @@ def bond_spaces(n_sites: int) -> list[GradedSpace]:
 
 def ed_energy(n_sites: int) -> float:
     """Dense ED of the same permutation chain on ``(C^3)^n``, numpy only, no tenet."""
+    # The rank-4 exchange flattened to the 9x9 matrix acting on one neighbouring pair.
     swap = SWAP.reshape(9, 9)
+    # Identity on everything left of the bond, the swap on the pair, identity on the
+    # rest: the Kronecker embedding of a two-site term into the full 3^n Hilbert space.
     h = sum(
         np.kron(np.kron(np.eye(3**i), swap), np.eye(3 ** (n_sites - i - 2)))
         for i in range(n_sites - 1)
     )
+    # H is real symmetric, so eigvalsh returns the spectrum sorted -- [0] is the ground
+    # state of the full space, with no symmetry sector assumed anywhere in this route.
     return float(np.linalg.eigvalsh(h)[0])
 
 
 def run(n_sites: int, chi: int):
+    # Random seed rather than a product state: a single fundamental is not an SU(3)
+    # singlet, so there is no product state in the target sector to start from.
     psi = MPS.random(PHYS, bond_spaces(n_sites), seed=0)
     return dmrg_(psi, su3_mpo(n_sites), chi=chi)
 
 
 def main(n_sites: int = 24, chi: int = 96, n_ed: int = 6):
     """DMRG at the defaults CI runs, against ED at ``n_ed`` and against Sutherland."""
+    # The Dynkin labels of P's two blocks, read straight off the fusion structure:
+    # (2,0) is the 6 and (0,1) the 3bar, which is 3 x 3 decomposed.
     coupled = [key.output_tree.coupled for key in TensorStructure(P.legs).block_order]
     print(f"P: one block per coupled sector of 3 x 3, {[c.dynkin for c in coupled]}")
+    # Two numbers written into two blocks reproduce the dense permutation matrix to
+    # round-off: the Clebsch-Gordan coefficients the library supplies are the rest of it.
     print(f"      max |P_dense - permutation matrix| = {abs(P.to_dense() - SWAP).max():.1e}")
+    # Small chain first, where dense ED is still affordable and can pin DMRG exactly.
     short = run(n_ed, chi)
     exact = ed_energy(n_ed)
     print(f"N={n_ed:2d}  {short.sweeps} sweeps  E = {short.energy:.12f}  ED = {exact:.12f}")
     print(f"      |E_dmrg - E_ed| = {abs(short.energy - exact):.1e}")
 
+    # Long chain: too large for ED, so it is judged against Sutherland's infinite-chain
+    # value instead, which the finite open chain approaches from a bracketed pair below.
     long = run(n_sites, chi)
     mid = long.psi[n_sites // 2].legs[0].space
+    # <P> on a middle bond: away from the ends, this is the bulk energy density, and it
+    # sits between E/N and E/(N-1) for exactly the reason those two bracket Sutherland.
     bulk = expectation_2site(long.psi, P, n_sites // 2)
     print(
         f"N={n_sites:2d}  {long.sweeps} sweeps  E = {long.energy:.12f}  "
         f"mid bond {mid.reduced_dim} multiplets, {mid.dim} dense"
     )
     print("      mid bond:", " ".join(f"{a.dynkin}x{m}" for a, m in mid.sectors))
+    # E/N counts N sites but the open chain has only N-1 bonds, so E/N overshoots the
+    # infinite-chain value and E/(N-1) undershoots it: the two bracket Sutherland.
     print(f"      E/N = {long.energy / n_sites:.6f}  bulk bond <P> = {bulk:.6f}")
     print(f"      Sutherland (infinite chain) = {SUTHERLAND:.6f}")
     return short, long, exact

@@ -32,6 +32,9 @@ def pair_terms(pairs):
     op_sz, op_sp, op_sm = (spin_half().ops[name] for name in ("Sz", "S+", "S-"))
     terms = []
     for i, j in pairs:
+        # S.S on an arbitrary pair (i, j), not only nearest neighbours: the longer the
+        # pair, the more channels the MPO bond has to carry the term across, which is
+        # exactly the D_w the benchmark is varying.
         terms += [
             (1.0, [(op_sz, i), (op_sz, j)]),
             (0.5, [(op_sp, i), (op_sm, j)]),
@@ -41,16 +44,25 @@ def pair_terms(pairs):
 
 
 def cylinder_pairs(n, ly):
+    # Nearest-neighbour bonds of a width-``ly`` cylinder, snaked onto one chain.
     pairs = []
+    # Site i = x*ly + y: the chain visits a whole rung before moving one column right.
     for x in range(-(-n // ly)):
         for y in range(ly):
             i = x * ly + y
+            # Around the rung, periodic in y -- this is what makes it a cylinder rather
+            # than a strip, and these bonds are short in chain distance.
             pairs.append((i, x * ly + (y + 1) % ly))
+            # To the next column: distance ly along the chain, so ly of these bonds are
+            # open at once at the widest cut, giving D_w = 3*ly + 2.
             pairs.append((i, i + ly))
+    # Deduplicate and drop what the last, possibly partial, column runs off the end of.
     return sorted({(min(i, j), max(i, j)) for i, j in pairs if i != j and max(i, j) < n})
 
 
 def models(n, ly):
+    # cutoff=None keeps the compressing SVD from dropping small channels: the benchmark
+    # is timing a matvec at a stated D_w, so the operator must not be silently narrowed.
     heis = MPO.from_terms(n, pair_terms([(i, i + 1) for i in range(n - 1)]), cutoff=None)
     yield "u1-heisenberg", heis, example.PHYS, example.bond_spaces(n)
 
@@ -74,6 +86,8 @@ def dispatch_count(fn):
     orig = autoray.do
 
     def counting(*args, **kwargs):
+        # Only depth 0 counts: autoray.do calls itself, and what is being measured is
+        # how many array operations the matvec issues, not the recursion inside them.
         state["count"] += state["depth"] == 0
         state["depth"] += 1
         try:
@@ -99,23 +113,35 @@ def wall(fn, reps):
 
 def bench(name, h, phys, bonds, *, backend, compile_, reps, sync=None):
     n = len(h)
+    # The middle bond: widest MPO bond, widest state bond, so the worst-case matvec.
     mid = n // 2
+    # Canonical form is what a sweep would hand heff2, so the timed call sees the same
+    # numbers -- an uncanonical seed can have wildly different magnitudes and denormals.
     psi = MPS.random(phys, bonds, seed=1).canonize_()
     if backend != "numpy":
         # The state moves; the MPO and its block table stay NumPy and are promoted by the
         # backend's own coercion inside each contraction, as in ``MPS.save``'s restore note.
         psi = MPS.from_tensors(t.to_backend(backend) for t in psi)
     envs = {}
+    # Two environments over the identical state: the same operator with its edge
+    # description kept, and the same operator stripped to bare site tensors. The
+    # difference between the two rows is what the prepared path is worth.
     for label, ham in (("prepared", h), ("dense", MPO(h.sites))):
         env = Env(psi, ham, compile=compile_ if label == "prepared" else None)
         env.setup_()
+        # Walk the left environment up to the middle bond, so the cached block at ``mid``
+        # is the real one a sweep would arrive with rather than a boundary stub.
         for m in range(mid):
             env.update_(m, to="last")
         envs[label] = env
+    # The two-site block heff2 acts on: a = left bond, p and q the two physical legs,
+    # r = right bond, with the shared bond x between the two site tensors summed away.
     aa = tenet.einsum("apx,xqr->apqr", psi[mid], psi[mid + 1])
     d_w = h[mid].legs[0].space.dim
     chi = psi[mid].legs[0].space.dim
     envs["prepared"].heff2(mid, aa)  # build + (maybe) compile, off the clock
+    # Which of the ten term-family fields this Hamiltonian actually populates -- the
+    # printed count is why the three models are here rather than one.
     fields = envs["prepared"]._prepared[mid][3]
     row = {}
     for label, env in envs.items():
