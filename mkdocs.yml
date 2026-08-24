@@ -44,21 +44,21 @@ nav:
       - VMC: tutorials/vmc.md
   - Examples:
       - examples/index.md
-      - Examples:
+      - Calling the library:
           - Heisenberg, U(1): examples/heisenberg.md
           - Heisenberg, U(1) walkthrough: examples/heisenberg-walkthrough.md
           - Heisenberg, SU(2): examples/su2-heisenberg.md
           - 2D Ising CTMRG: examples/ising2d.md
-      - Toy codes:
-          - Toy MPS: examples/toy-mps.md
-          - Toy model: examples/toy-model.md
-          - Toy TEBD: examples/toy-tebd.md
-          - Toy DMRG: examples/toy-dmrg.md
-          - Toy Lanczos: examples/toy-lanczos.md
-          - Toy exact: examples/toy-exact.md
-          - Toy Ising: examples/toy-ising.md
-          - Toy CTMRG: examples/toy-ctmrg.md
-          - Toy VMC on an MPS: examples/toy-vmc-mps.md
+      - Written on the tensor layer:
+          - MPS: examples/toy-mps.md
+          - Model: examples/toy-model.md
+          - TEBD: examples/toy-tebd.md
+          - DMRG: examples/toy-dmrg.md
+          - Lanczos: examples/toy-lanczos.md
+          - Exact diagonalization: examples/toy-exact.md
+          - Ising: examples/toy-ising.md
+          - CTMRG: examples/toy-ctmrg.md
+          - VMC on an MPS: examples/toy-vmc-mps.md
   - API:
       - tenet: api/tenet.md
       - tenet.linalg: api/linalg.md
