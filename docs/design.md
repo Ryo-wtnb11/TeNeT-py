@@ -6909,6 +6909,104 @@ with M61 Stage D above, and PEPS containers with M79/#277.
   projectors' singular basis instead of the product basis, and an environment is defined
   only up to a gauge on its bonds.
 
+- **M79c** — shipped: the C4v environment as a specialization of `EnvCTM`, in the same
+  module. `EnvCTMc4v` holds one corner and one edge (`EnvLocalC4v`, read under all eight
+  names), runs the single move `'d'`, and reuses `corner2x2` and the absorption unchanged.
+  `network/ctmrg.py` keeps its public names and its behaviour; what changed is which lane
+  the package documents as its C4v environment.
+
+  **The flip, and the primitive tenet does not have.** A C4v ansatz's four virtual legs
+  must be one leg — the 90-degree rotation cycles them — and four identical legs do not
+  tile the plane with themselves, so the plane is a checkerboard of `A` and `B`. `B` is
+  YASTN's `A.flip_signature()`: every signature reversed, every block kept. tenet has no
+  single primitive for it. `tenet.flip_dual` is *not* it — it toggles `dual` and relabels
+  the space through `provider.dual` while keeping the same morphism, so its result
+  contracts with what the original contracted with, which is the wrong end of the wire.
+  The operation wanted is the one YASTN's own docstring names, "adjoint times complex
+  conjugation", and in tenet that composition already exists:
+  `flip(t) = tenet.conj(tenet.adjoint(t))` — one line over two public primitives, every
+  leg keeping its space, `dual`, name and position and reversing its `side`. It is
+  exported as `tenet.network.flip` rather than added to the tensor layer, because the
+  checkerboard is the only thing that has ever wanted it.
+
+  **The leg conventions are the point group's.** All four corners of a site's ring are one
+  tensor and all four edges are one, which needs the corner `(X OUT, X OUT)` and the edge
+  `(X IN, ., X IN)`: both of a corner's legs on one side and both of an edge's environment
+  legs on the other. The eight-tensor ring still closes because corners and edges alternate
+  around it. Two corners meeting *without* an edge between them — the four-corner object in
+  Baxter's telescoping — cross a sublattice boundary, so one of the pair enters flipped;
+  that is the whole content of `log_kappa`'s flip pattern in
+  `tests/network/test_envctmc4v.py`.
+
+  **Onsager, through one corner and one edge**, at `chi = 16` and `corner_tol = 1e-12`:
+
+  | | `beta = 0.3` | `beta = 0.4` | `beta = 0.5` |
+  |---|---|---|---|
+  | Z2-graded | 8.9e-16 (57 sweeps) | 4.7e-15 (81) | 5.6e-14 (119) |
+  | ungraded (`Trivial`) | 1.1e-16 (59) | | 6.7e-16 (77) |
+
+  absolute deviation in `beta f`. The `'dl'` seed lands on the same number. `jax.grad`
+  through four `update_(bond=B)` moves — the bond decided outside, the projection inside —
+  reproduces Onsager's internal energy to `7.4e-10` relative against the closed form's
+  central difference, so the new lane carries the trace boundary `ctmrg_unrolled` carries.
+
+  **The existing iPEPS fixtures cannot come through this lane, and that is the finding.**
+  `examples/toy_codes/ctmrg.py`'s U(1) ansatz lives on the virtual space
+  `{q = 0: 1, q = +1: 1}`, whose conjugate is `{q = 0: 1, q = -1: 1}`. A rotation
+  identifies a virtual space with its dual, so a rotation-covariant tensor exists only over
+  a **self-conjugate** space — the fixture's is not one, its four virtual legs are
+  `(OUT, OUT, IN, IN)` rather than one leg, and `EnvCTMc4v` refuses it by that test. The
+  ansatz it carries is the diagonal mirror alone, which is one element of C4v and not the
+  group; `ENERGY_BASELINE` is a number about *that* ansatz, and there is no re-baselining
+  to do because there is no second measurement of the same object. The lane's own iPEPS
+  fixtures are point-group averages over self-conjugate spaces — SU(2) `{0, 1}` and U(1)
+  `{-1, 0, +1}` — and both converge; the toy fixture stays on `EnvCTM`, which has no point
+  group to require.
+
+  **#243, both directions.** With a genuinely C4v ansatz the enlarged corner is Hermitian
+  to `2.4e-16`–`2.6e-15` at every sweep, for the Ising bulk and for the averaged iPEPS
+  alike: Hermiticity is a property of the *ansatz*, which is M63's finding stated forwards.
+  Drop the average and keep the signature — four identical legs, no rotation — and the
+  corner sits `0.92`–`1.06` from Hermitian at every sweep while the environment converges
+  anyway (`benchmarks/bench_ctm_corner_signs.py`, Part 3). Nothing here reads either number: the projector is `U` from an SVD of the
+  enlarged corner and the renormalized corner is `V† U S`, so the correction between the
+  two index groups is kept rather than assumed to be one. `network/ctmrg.py`'s `move` keeps
+  only `U` and takes the corner to be `S`, which is that assumption, and its precondition
+  paragraph now says so in those words.
+
+  **chi-scaling, one move, `ar.do` calls counted at the top level (numpy backend, warm
+  environment, best of three for the wall).** Matched fixtures: the Z2 Ising bulk at
+  `D = 2`, and a U(1) iPEPS at `D = 3` over `{-1, 0, +1}` — the same spaces and seed on
+  both lanes, mirror-symmetrized for `ctmrg.py` and point-group-averaged for `EnvCTMc4v`.
+
+  | fixture | `chi` | `ctmrg.py` `ar.do` | ms | `EnvCTMc4v` `ar.do` | ms |
+  |---|---|---|---|---|---|
+  | Ising Z2 | 16 | 412 | 5.4 | 258 | 0.7 |
+  | Ising Z2 | 32 | 412 | 5.9 | 258 | 0.9 |
+  | Ising Z2 | 64 | 412 | 6.4 | 258 | 1.4 |
+  | iPEPS U(1) | 16 | 10 460 | 13.2 | 11 967 | 17.8 |
+  | iPEPS U(1) | 32 | 16 096 | 20.4 | 14 173 | 21.9 |
+  | iPEPS U(1) | 64 | 16 096 | 24.3 | 17 779 | 30.7 |
+
+  Three readings. (i) On the single layer the new lane issues 0.63x the `ar.do` calls and
+  runs 4–5x faster at every `chi`, and the gap is *not* the algorithm: `ctmrg.py`'s
+  absorber is a four-operand `tenet.einsum` whose `opt_einsum` path is searched on every
+  call, while every step here is a two-operand `einsum_chain`. (ii) On the double layer the
+  two are within 25 % of each other in wall and cross over in `ar.do` between `chi = 16`
+  and `chi = 32`. (iii) Neither lane's `ar.do` count is a function of `chi` through block
+  *sizes* — it is a function of how many coupled sectors the environment bond carries, and
+  `ctmrg.py`'s saturates at `chi = 32` on this fixture while `EnvCTMc4v`'s keeps growing,
+  which is the truncation keeping more sectors alive rather than more weight in fewer.
+
+  **What is not transcribed**: YASTN's `'1x2'` C4v projector — a QR of `C @ T`, whose `Q`
+  has exactly as many columns as the environment bond already had, so it cannot grow one
+  and is a fixed-bond variant of the move above — `leg_charge_conv_check`, and the
+  partial-SVD spectrum prediction. `network/ctmrg.py` is not deleted: `Absorb` is a model
+  supplied as two closures over its own bulk tensor, with no lattice and no state object,
+  and every caller of `move`/`ctmrg`/`ctmrg_unrolled` is written to that shape. The
+  capability parity is there — `EnvCTMc4v.update_(bond=B)` is differentiable and measured
+  against Onsager above — so the deletion is a caller migration and not a design question.
+
 Not planned: TDVP, iDMRG, excited states and fermionic swap gates. PEPS containers left
 that list with M79/#277 and now have their own lane above.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic

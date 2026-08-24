@@ -111,6 +111,10 @@ NO_PARAMS: dict[str, str] = {
         "a mutable record of eight optional tensors a move fills in; its fields are "
         "documented in the class docstring's Attributes section"
     ),
+    "tenet.network.EnvLocalC4v": (
+        "a mutable record of one corner and one edge a move fills in; its fields are "
+        "documented in the class docstring's Attributes section"
+    ),
     "tenet.network.EnvProjectors": (
         "a mutable record of eight optional projectors a move fills in; its fields are "
         "documented in the class docstring's Attributes section"

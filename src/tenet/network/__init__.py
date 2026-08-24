@@ -30,7 +30,11 @@ Two families, independent of each other:
   [corner2x2][tenet.network.corner2x2] and
   [proj_corners][tenet.network.proj_corners], and ``update_``/``iterate_`` reporting a
   [CTM_out][tenet.network.CTM_out]. Its projectors assume nothing about the corner's
-  Hermiticity, which is what M63/#243 measured the C4v route could not have.
+  Hermiticity, which is what M63/#243 measured a C4v route cannot have.
+  [EnvCTMc4v][tenet.network.EnvCTMc4v] is its C4v specialization: one corner and one edge
+  ([EnvLocalC4v][tenet.network.EnvLocalC4v]) for a point-group-symmetric ansatz, whose
+  four identical virtual legs tile the plane as a checkerboard of ``A`` and ``flip(A)``
+  through [flip][tenet.network.flip] and [PepsFlip][tenet.network.PepsFlip].
 
 [spectrum][tenet.network.spectrum] and [ones][tenet.network.ones] are shared by both;
 [spectrum_sectors][tenet.network.spectrum_sectors] and [entropy][tenet.network.entropy]
@@ -42,9 +46,10 @@ sit beside them and are what [MPS.schmidt_values][tenet.network.MPS.schmidt_valu
 makes no differentiability claim: ``svd_truncated`` re-decides a bond
 [GradedSpace][tenet.GradedSpace] at every bond of every sweep. Two exceptions state
 themselves on their own functions — [Env.heff2][tenet.network.Env.heff2]'s prepared matvec
-is fixed-structure and traceable through an injected ``compile=``, and in ``ctmrg.py``
-[ctmrg_unrolled][tenet.network.ctmrg_unrolled] and ``move(bond=B)`` are shape-static and
-differentiable while ``ctmrg`` is not.
+is fixed-structure and traceable through an injected ``compile=``, and the fixed-bond
+CTM moves — ``ctmrg.py``'s [ctmrg_unrolled][tenet.network.ctmrg_unrolled] and
+``move(bond=B)``, and ``EnvCTMc4v.update_(bond=B)`` — are shape-static and differentiable
+while the bond-deciding forms are not.
 
 **The composition rule** every two-operand ``tenet.einsum`` here obeys: operand 1
 supplies the ``IN`` end of every shared wire. Meeting ``IN`` against ``OUT`` is not
@@ -76,9 +81,13 @@ from tenet.network.env import Env, correlation_function, measure_mpo
 from tenet.network.envctm import (
     CTM_out,
     EnvCTM,
+    EnvCTMc4v,
     EnvLocal,
+    EnvLocalC4v,
     EnvProjectors,
+    PepsFlip,
     corner2x2,
+    flip,
     proj_corners,
 )
 from tenet.network.lattice import (
@@ -127,8 +136,11 @@ __all__ = [
     "DoubleLayer",
     "Env",
     "EnvCTM",
+    "EnvCTMc4v",
     "EnvLocal",
+    "EnvLocalC4v",
     "EnvProjectors",
+    "PepsFlip",
     "Lattice",
     "MPO",
     "MPS",
@@ -158,6 +170,7 @@ __all__ = [
     "edge_r",
     "edge_t",
     "entropy",
+    "flip",
     "expectation_1site",
     "expectation_2site",
     "expectation_profile",

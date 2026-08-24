@@ -36,21 +36,26 @@ is metadata: frozen, hashable, array-free, a legitimate jit *cache key* and neve
   which is why [move][tenet.network.move] partitions at ``ndim // 2`` rather than branching on the
   model: rank 4 for a single layer, rank 6 for a double one.
 
-**One C4v move, not four directional ones**, and no multi-site unit cell: one corner and
-one edge describe the whole environment only for a bulk invariant under the **full C4v
-point group** -- all four rotations and all four reflections -- on a 1x1 cell. The
-diagonal mirror alone is not enough, and the difference is measurable rather than
-rhetorical: with the diagonal mirror only, the enlarged corner is Hermitian at move 0 and
-at no move after it, while under the full group it stays Hermitian to ``5e-16`` at every
-move (``benchmarks/bench_ctm_corner_signs.py``, Part 2). The Ising Boltzmann tensor is
+**This module is the closure-shaped C4v lane, and it carries a precondition the
+environment layer does not.** One corner and one edge describe the whole environment only
+for a bulk invariant under the **full C4v point group** -- all four rotations and all four
+reflections -- on a 1x1 cell, and the projector here additionally reuses a single isometry
+on both index groups, which is exact only for a *positive* enlarged corner. The diagonal
+mirror alone gives neither: the enlarged corner is Hermitian at move 0 and at no move
+after it, while under the full group it stays Hermitian to ``5e-16`` at every move
+(``benchmarks/bench_ctm_corner_signs.py``, Part 2). The Ising Boltzmann tensor is
 symmetric under every permutation of ``(l, u, r, d)`` by construction, which is why the
-single-layer route reproduces Onsager exactly. That restriction is a documented
-*precondition* on the caller's tensor (see
-[double_layer_ctm][tenet.network.double_layer_ctm]), never a symmetrization this module performs.
-The upgrade path
-is named and not started: YASTN's ``EnvCTM`` (a ``Peps`` subclass with eight tensors per
-site and four ``update_`` moves), and froSTspin's four ``contract_*`` wrappers over one
-``contract_enlarged_corner``.
+single-layer route reproduces Onsager exactly. That restriction is a *precondition* on the
+caller's tensor (see [double_layer_ctm][tenet.network.double_layer_ctm]), never a
+symmetrization this module performs.
+
+[EnvCTMc4v][tenet.network.EnvCTMc4v] is the package's C4v environment and needs neither:
+its projector is an SVD of the enlarged corner whose two factors stay two factors, so the
+correction between the index groups is kept rather than assumed to be one. It carries the
+same trace boundary -- ``update_()`` decides a bond outside, ``update_(bond=B)`` reuses one
+inside -- and [EnvCTM][tenet.network.EnvCTM] is the directional environment for everything
+without a point group. What lives here and not there is the ``Absorb`` shape: a model
+supplied as two closures over its own bulk tensor, with no lattice and no state object.
 
 The gradient here is a **truncated backprop through K unrolled moves**, not the implicit
 fixed point, and the projector comes from ``svd`` rather than ``eigh``.
