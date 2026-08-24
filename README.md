@@ -84,8 +84,8 @@ assert g.legs == t.legs
   `repartition`, `trace`, and `tenet.linalg`'s `svd`, `qr`, `lq`, `eigh`, `eig`,
   `polar`, `expm`, `left_null`, plus the truncating `svd_truncated` / `eigh_truncated`.
 - **Algorithms.** Finite two-site DMRG (`dmrg_`, schedules, noise, excited states) with
-  MPS/MPO containers, environment caches and measurement; C4v CTMRG (`ctmrg`,
-  `ctmrg_unrolled`) with a differentiable unrolled form.
+  MPS/MPO containers, environment caches and measurement; CTMRG on the directional
+  `EnvCTM` and its C4v specialization `EnvCTMc4v`, with a differentiable fixed-bond move.
 - **Backends.** NumPy, JAX and PyTorch blocks through `autoray`. `tenet.enable_jax()`
   registers `SymmetricTensor` as a JAX pytree, so `jit`, `grad` and `vmap` reach the
   blocks while the structure stays static metadata.
