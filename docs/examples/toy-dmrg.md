@@ -1,15 +1,18 @@
 # Toy DMRG
 
 Two-site DMRG written on the tensor layer: the directed-bond environment cache and its
-invalidation, a Lanczos step over the two-site tensor, and the sweep whose truncation
+invalidation, the two-site effective Hamiltonian, and the sweep whose truncation
 re-decides each bond space, using `tenet.einsum` and `tenet.linalg` only. Nothing from
-`tenet.network` is imported. The state it sweeps is [Toy MPS](toy-mps.md) and the
-Hamiltonian is [Toy MPO](toy-mpo.md).
+`tenet.network` is imported. The state comes from [Toy MPS](toy-mps.md), the Hamiltonian
+from [Toy model](toy-model.md) as an MPO, and the eigensolver from
+[Toy Lanczos](toy-lanczos.md).
 
 - N=12 matches exact diagonalization to twelve digits.
 - N=32 at `chi=64` sits above the Bethe-ansatz energy by the printed discarded weight.
 
-The same algorithm through the library: [Heisenberg, U(1)](heisenberg.md).
+[Toy TEBD](toy-tebd.md) reaches the same ground state from the same model's two-site
+gates, and [Toy exact](toy-exact.md) is the number both are judged against. The same
+algorithm through the library: [Heisenberg, U(1)](heisenberg.md).
 
 ## Source
 

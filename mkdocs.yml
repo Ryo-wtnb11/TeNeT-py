@@ -51,8 +51,11 @@ nav:
           - 2D Ising CTMRG: examples/ising2d.md
       - Toy codes:
           - Toy MPS: examples/toy-mps.md
-          - Toy MPO: examples/toy-mpo.md
+          - Toy model: examples/toy-model.md
+          - Toy TEBD: examples/toy-tebd.md
           - Toy DMRG: examples/toy-dmrg.md
+          - Toy Lanczos: examples/toy-lanczos.md
+          - Toy exact: examples/toy-exact.md
           - Toy Ising: examples/toy-ising.md
           - Toy CTMRG: examples/toy-ctmrg.md
           - Toy VMC on an MPS: examples/toy-vmc-mps.md

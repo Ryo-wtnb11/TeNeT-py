@@ -7,13 +7,16 @@ watching it be called. That is the whole rule, and `tests/test_examples.py` asse
 file by file. A toy code may use the symmetric-tensor layer because that is the library's
 subject matter, not the algorithm being taught; the split follows `tenpy_toycodes`.
 
-One module holds one concept and imports its neighbours:
+One module holds one concept and imports its neighbours, in reading order:
 
 | file | holds |
 | --- | --- |
-| `mps.py` | the MPS list, its bond spaces, canonical form, Schmidt values |
-| `mpo.py` | the Heisenberg MPO, block by block |
-| `dmrg.py` | environments, Lanczos, the two-site sweep — runs `main()` |
+| `mps.py` | the MPS list, product/random seeds, canonical form, Schmidt values, entropy, expectation values |
+| `model.py` | the U(1) Heisenberg chain as two-site gates *and* as an MPO — one physics, two representations |
+| `tebd.py` | imaginary-time TEBD from the gates — runs `main()` |
+| `dmrg.py` | environments and the two-site sweep, from the MPO — runs `main()` |
+| `lanczos.py` | the Krylov ground-eigenpair step, on any space with an inner product |
+| `exact.py` | dense ED of the same chain, the reference the other two print against — runs `main()` |
 | `ising.py` | the classical Ising bulk tensor and Onsager's free energy |
 | `ctmrg.py` | corner, edge, projector, the move, the iPEPS gradient — runs `main()` |
 | `vmc_mps.py` | the Rayleigh quotient, `jax.grad` and an SGD step — runs `main()` |

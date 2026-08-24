@@ -10,7 +10,8 @@ Two kinds of example:
   algorithm is in the file, built from `SymmetricTensor`, `tenet.einsum` and
   `tenet.linalg`, with nothing imported from `tenet.network`. Read them to see how each
   algorithm is assembled from the tensor operations. One module holds one concept and
-  imports its neighbours, so each has a page of its own.
+  imports its neighbours, so each has a page of its own; the table below is in reading
+  order — the state, then the model, then the algorithms that consume it.
 
 ## Calling the library
 
@@ -25,9 +26,12 @@ Two kinds of example:
 
 | page | file | holds | checked against |
 | --- | --- | --- | --- |
-| [Toy MPS](toy-mps.md) | `examples/toy_codes/mps.py` | the state, canonical form, Schmidt values | through `dmrg.py` |
-| [Toy MPO](toy-mpo.md) | `examples/toy_codes/mpo.py` | the Heisenberg MPO, block by block | the dense operator, in `tests/integration/test_dmrg.py` |
-| [Toy DMRG](toy-dmrg.md) | `examples/toy_codes/dmrg.py` | environments, Lanczos, the sweep | exact diagonalization |
+| [Toy MPS](toy-mps.md) | `examples/toy_codes/mps.py` | the state, canonical form, entropy, expectation values | through `tebd.py` and `dmrg.py` |
+| [Toy model](toy-model.md) | `examples/toy_codes/model.py` | the Heisenberg chain as gates *and* as an MPO | the dense operator, in `tests/integration/test_dmrg.py` |
+| [Toy TEBD](toy-tebd.md) | `examples/toy_codes/tebd.py` | imaginary-time evolution from the gates | `exact.py`, approached from above |
+| [Toy DMRG](toy-dmrg.md) | `examples/toy_codes/dmrg.py` | environments and the two-site sweep | exact diagonalization |
+| [Toy Lanczos](toy-lanczos.md) | `examples/toy_codes/lanczos.py` | the Krylov ground-eigenpair step | `numpy.linalg.eigvalsh`, in `tests/integration/test_dmrg.py` |
+| [Toy exact](toy-exact.md) | `examples/toy_codes/exact.py` | dense ED of the same chain | the recorded open-chain energies |
 | [Toy Ising](toy-ising.md) | `examples/toy_codes/ising.py` (needs `jax`) | the Boltzmann bulk tensor and Onsager | through `ctmrg.py` |
 | [Toy CTMRG](toy-ctmrg.md) | `examples/toy_codes/ctmrg.py` (needs `jax`) | the moves, the sweep, the iPEPS gradient | Onsager's free energy |
 | [Toy VMC on an MPS](toy-vmc-mps.md) | `examples/toy_codes/vmc_mps.py` (needs `jax`) | the Rayleigh quotient and an SGD step | the energy decreases every step |
