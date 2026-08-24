@@ -431,7 +431,9 @@ def test_the_reported_truncation_error_is_the_one_the_dense_state_shows():
     ve = to_dense_state(exact).reshape(-1)
     vt = to_dense_state(cut).reshape(-1)
     overlap = abs(ve @ vt) / np.linalg.norm(ve) / np.linalg.norm(vt)
-    assert out.truncation_error == pytest.approx((1 - overlap**2) ** 0.5, rel=1e-3)
+    # rel=1e-2: the two sides run different least-squares stopping points per platform's
+    # BLAS rounding, so the last permille of a ~5e-7 error is machine-dependent.
+    assert out.truncation_error == pytest.approx((1 - overlap**2) ** 0.5, rel=1e-2)
 
 
 def heisenberg(phys: GradedSpace) -> SymmetricTensor:
