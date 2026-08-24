@@ -7099,6 +7099,146 @@ with M61 Stage D above, and PEPS containers with M79/#277.
   move 0 under the mirror alone, then `0.70`, `1.12`, `0.40`, against `≤1.1e-15` at every
   move under the group. Part 3 stays because its question — what the sweep does when the
   corner is *not* Hermitian — is about the lane that still exists.
+- **M79d** — shipped: the evolution over the 2D layer, and the fermionic gap it found.
+  `network/evolution.py` is `_evolution.py` plus `gates.py` plus `_gates_auxiliary.py`
+  plus `envs/_env_ntu.py`: `gate_nn` exponentiates a bond term and splits it, `gates_nn`
+  distributes one over a lattice, `apply_gate` puts the two halves on their sites,
+  `truncate_` reduces the bond they enlarged in the environment's metric and reports
+  `Evolution_out`, `evolution_step_` runs a gate list and
+  `accumulated_truncation_error` adds the per-bond errors up. `EnvCTM` gains
+  `bond_metric` and nothing else; `EnvNTU` is the `'NN'` cluster behind the same
+  five-argument interface. `network/common.py` gains the public `composed`/`supplies_in`
+  that `envctm.py` had privately, because a second module now needs them.
+
+  **The gate needs no swap gate, and that is a statement about the geometry.** YASTN's
+  `gate_fix_swap_gate` repairs a gate built for the fermionic order `0 -> 1` when the
+  lattice hands the pair the other way; `bonds()` already emits every bond in that order
+  (M79a), so on `infinite` and `obc` the repair is the identity and the cylinder's
+  wrap-around is the only case it would have anything to do. Each site's application is
+  then **one two-operand composition and no bend**: the gate half supplies `IN` on the
+  physical wire and the site supplies `OUT`, on both sites and in both directions. Where
+  the auxiliary leg lands in the enlarged rank-6 tensor is *free* — all twenty-five
+  placements across the two sites give the same closed state to `1e-12`, measured rather
+  than argued — because a leg permutation is an isomorphism the next contraction undoes.
+
+  **The auxiliary leg is never fused into a virtual leg.** YASTN fuses it so the state
+  stays rank 5 between the two halves of a step and unfuses it one line later inside
+  `truncate_`'s `qr`. `tenet.fuse` wants its group to be a prefix of one side and the
+  PEPS partition does not put `r` there, so the fuse would be a repartition on both sides
+  of a round trip that buys nothing. The enlargement is the same enlargement — the `qr`
+  splits off `(r, aux)` together — and no caller sees a rank-6 site.
+
+  **The bond metric is checked by what it is for.** `g` is the Gram form of the map
+  `M -> |psi(M)>` a bond matrix induces, so the test builds that map's columns one dense
+  basis element at a time, out of the `obc` dense closer, and compares entry by entry.
+  That oracle shares no contraction with the module. Relative disagreement, and the
+  metric's own non-Hermiticity (a Gram form has none):
+
+  | cluster | `Trivial` | U(1) | fZ2 |
+  |---|---|---|---|
+  | 1x3 row, `lr` bond | 1.7e-16 | 2.8e-17 | 7.6e-17 |
+  | 3x1 column, `tb` bond | 4.4e-16 | 5.6e-17 | 1.1e-16 |
+  | 2x2 patch, `lr` bond | 2.2e-16 | 8.3e-17 | **1.85** |
+  | 2x2 patch, `tb` bond | 2.2e-16 | 3.3e-16 | **0.795** |
+  | non-Hermitian part, 2x2 `lr` | 8.0e-17 | 1.5e-16 | **1.43** |
+
+  **The fermionic gap, stated as precisely as it was measured.** A 1D cluster — any row,
+  any column — has no loop, and there the fZ2 metric is exact. A 2x2 patch closes a loop
+  around the bond, and there it is not. Four things were measured before the entry was
+  written, and each of them narrows what the cause can be:
+
+  * No permutation of the legs repairs it. All 24x24x24 spellings of the two-corner join
+    (both operand orders, every leg order on each operand, every output order) were
+    enumerated against the exact two-site Gram; **none** reproduces it.
+  * It is not one primitive. Replacing every piece of the cluster by its own exact Gram —
+    `compose(X, adjoint(X))` over the closed legs — leaves the disagreement at 0.34
+    where the assembled version has 0.40.
+  * It is not the interleaving. Grouping the pairs as (ket block, bra block) instead of
+    (ket, bra) per bond gives the same number.
+  * It shows in the gate too. On the same 2x2 fZ2 patch an *exact* gate (no truncation,
+    no metric at all) reproduces `exp(-step H)` on the Jordan-Wigner oracle to `1e-12`
+    for three of the four bonds — including both horizontal ones, whose two sites are
+    **not** adjacent in the fermionic order so the string runs through a third site — and
+    lands at fidelity `0.2538` on the fourth, the vertical bond in the first column. A
+    gate opens one more edge between two already-adjacent sites, which is one more loop.
+
+  So the finding is about **joining double-layer objects around a loop**, and it sits
+  below this stage: `Gram(A) . Gram(B) != Gram(A . B)` in the graded category with the
+  bookkeeping M79a chose, because `(A B)^dagger = B^dagger A^dagger` reverses an order
+  that the pairwise contraction does not reverse. M79a said what it had and had not
+  proved — "what none of this proves is that the bends reproduce YASTN's `swap_gate`
+  placement *physically*" — and M79b settled that for `append_vec_*` through the closed
+  2x2 patch. **`cor_*` and `edge_*` were never contracted into a physical number until
+  now**: `reset_` seeds from `ones` and an identity, and no other caller in `envctm.py`
+  touches them. This stage is where they first were, and where they first failed. Fixing
+  it is a change to the twelve primitives (the swap-gate placement M79a deferred), not to
+  the evolution, and it is filed here rather than worked around: `EnvCTM.bond_metric`
+  inherits the same disease, and `truncate_` *reports* it — `nonhermitian_part` on a fZ2
+  loop comes back at 1.4, which is not numerical noise and is not silently absorbed.
+  `tests/network/test_evolution.py::test_the_fermionic_gaps_this_stage_measured` commits
+  both numbers.
+
+  **Where the layer is exact, it is exact.** Two oracles, both against dense arithmetic:
+
+  * **Imaginary time against exact diagonalization.** 2x2 `obc` Heisenberg, the `'NN'`
+    cluster (which on that lattice *is* the exact environment), the energy read off the
+    dense state and never through the library's own measurement:
+
+    | `D` | `E` | `E - E_exact` | accumulated truncation error |
+    |---|---|---|---|
+    | 2 | -1.847414307722 | +1.53e-01 | 1.53 |
+    | 3 | -1.999999991469 | +8.53e-09 | 7.1e-07 |
+    | 4 | -1.999999991365 | +8.64e-09 | 2.2e-07 |
+
+    against `E_exact = -2`. `D = 2` cannot hold the state, is variational from above, and
+    says so in the accumulated error; `D = 3` already can, and the residual `8.5e-9` is
+    the schedule's remaining Trotter error and not the truncation's.
+  * **NTU against CTM, the same bond and the same reduced tensors.** On the 2x2 patch
+    both environments are exact, so they must agree, and they do: `7.8e-16` relative for
+    `Trivial` and `3.7e-14` for U(1), at `chi = 4`, `8` and `16` alike — the CTM
+    environment of a four-site open patch saturates below the smallest cap.
+
+  Also pinned: the reported `truncation_error` **is** the distance the closed state moved
+  (agreeing with the dense fidelity to 1e-3 at an error of 4.5e-7); the least-squares
+  sweep never raises the error the SVD initialization gave it; and `fix_metric=None`
+  reports no eigenvalues while `fix_metric=0` reports all three of
+  `nonhermitian_part`, `min_eigenvalue` and `wrong_eigenvalues`.
+
+  **Pass accounting for one gate plus one truncation** — `D = 3` truncated to `2`, one
+  `lr` bond of a 2x2 `obc` U(1) patch, `ar.do` calls counted at the top level (numpy):
+
+  | environment | truncation | `ar.do` | least-squares sweeps | error |
+  |---|---|---|---|---|
+  | `EnvNTU('NN')` | SVD only | 774 | 0 | 3.81e-03 |
+  | `EnvNTU('NN')` | SVD + least squares | 1 358 | 1 | 4.72e-09 |
+  | `EnvCTM` (`'dl'`) | SVD only | 680 | 0 | 3.81e-03 |
+  | `EnvCTM` (`'dl'`) | SVD + least squares | 1 264 | 1 | 2.02e-09 |
+
+  Three readings. (i) The metric is most of the cost of a truncation: the SVD-only rows
+  are almost entirely `bond_metric`, and the `'NN'` cluster costs 14 % more than reading
+  six converged environment tensors. (ii) One least-squares sweep is 0.8x the metric
+  again — two `eigh`s, two normal-equation builds and two five-cutoff pseudo-inverse
+  ladders — and it buys six orders of magnitude here, which is why `max_iter = 0` is not
+  the default. (iii) A `CTM` environment is **stale the moment a bond changes**: nothing
+  in `truncate_` re-converges it, and the caller decides when to sweep, which is the same
+  choice YASTN's patch mechanism makes for it and one this layer has no policy about.
+
+  **Simplifications, each with its upgrade path.** YASTN's EAT initialization (a rank-1
+  SVD of the metric, then two `eigh`-with-truncation and a pseudo-inverse ladder) and all
+  six ZMT variants are not transcribed: they are *initializations* whose value is reaching
+  the least-squares basin faster on an ill-conditioned metric, and the SVD initialization
+  plus the sweep reaches every number above. `truncate_bipartite_` and the
+  `BipartiteBondMetric` it serves are out with `EnvApproximate`, which has no environment
+  here to produce one. `EnvNTU`'s larger clusters — `'NN+'`, `'NN++'`, `'NNN'`, `'NNN+'`,
+  `'NNN++'` and the ladder mode — are not here; `'NN'` is what the comparison against CTM
+  needs and each of the others is a different contraction of the same primitives. Gates
+  are nearest-neighbour and two-site only: no MPO gate form, no `split_gate_2site`, no
+  `fill_eye_in_gate`, and no local one-site gate (which needs no truncation and is one
+  composition a caller can write). The pseudo-inverse ladder is five cutoffs rather than
+  YASTN's nine and skips YASTN's "only re-try when the kept count changed" shortcut,
+  which is an optimization and not a different answer. `psi.move_to_patch` /
+  `apply_patch` and `pre_truncation_` / `post_truncation_` are not transcribed, which is
+  the same statement as (iii) above.
 
 Not planned: TDVP, iDMRG, excited states and fermionic swap gates. PEPS containers left
 that list with M79/#277 and now have their own lane above.
