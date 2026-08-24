@@ -81,6 +81,7 @@ from tenet.network.envctm import (
     corner2x2,
     proj_corners,
 )
+from tenet.network.envctmc4v import EnvCTMc4v, EnvLocalC4v, PepsFlip, flip
 from tenet.network.lattice import (
     Bond,
     CheckerboardLattice,
@@ -127,8 +128,11 @@ __all__ = [
     "DoubleLayer",
     "Env",
     "EnvCTM",
+    "EnvCTMc4v",
     "EnvLocal",
+    "EnvLocalC4v",
     "EnvProjectors",
+    "PepsFlip",
     "Lattice",
     "MPO",
     "MPS",
@@ -158,6 +162,7 @@ __all__ = [
     "edge_r",
     "edge_t",
     "entropy",
+    "flip",
     "expectation_1site",
     "expectation_2site",
     "expectation_profile",
