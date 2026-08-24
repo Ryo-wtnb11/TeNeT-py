@@ -48,6 +48,7 @@ nav:
           - Heisenberg, U(1): examples/heisenberg.md
           - Heisenberg, U(1) walkthrough: examples/heisenberg-walkthrough.md
           - Heisenberg, SU(2): examples/su2-heisenberg.md
+          - Heisenberg, SU(3): examples/su3-heisenberg.md
           - 2D Ising CTMRG: examples/ising2d.md
       - Written on the tensor layer:
           - MPS: examples/toy-mps.md
