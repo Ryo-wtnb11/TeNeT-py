@@ -33,13 +33,12 @@ ends of the *same* new bond leaves exactly one assignment::
 Two corners carry two legs of the same side; that is not an anomaly but the ring's
 book-keeping -- a cycle of eight alternating wires needs its two turning points.
 
-**No Hermiticity assumption, anywhere.** A projector pair is built from the QR of each
-half of the 4x4 patch and an SVD of ``r0 @ r1^T`` --
-[proj_corners][tenet.network.proj_corners] -- never from an eigendecomposition of an
-enlarged corner and never from a single isometry used on both index groups. The
-corner's Hermiticity is a property of the *ansatz* (the full C4v point group), so an
-algorithm that needs it is an algorithm with a precondition it cannot check. This one has
-none.
+**No Hermiticity assumption, anywhere.** A projector pair is built from the QR of each half of
+the 4x4 patch and an SVD of ``r0 @ r1^T`` -- [proj_corners][tenet.network.proj_corners] --
+never from an eigendecomposition of an enlarged corner and never from a single isometry used on
+both index groups. The corner's Hermiticity is a property of the *ansatz* (the full C4v point
+group), so an algorithm that needs it is an algorithm with a precondition it cannot check. This
+one has none.
 
 **The C4v specialization.** [EnvCTMc4v][tenet.network.EnvCTMc4v] is the same machinery
 with the eight tensors of a site collapsed onto the two a point-group-symmetric ansatz
@@ -247,10 +246,10 @@ def corner2x2(env: "EnvCTM", which: str, site: Any, a: Any = None) -> SymmetricT
     Notes
     -----
     YASTN's ``corner2x2`` (``_env_contractions.py``:429) is ``t1 @ c @ t2`` followed by a
-    ``tensordot`` onto the site, and for a double layer that ``tensordot`` *is* the
-    matching ``append_vec_*``. The grouping falls out for free:
-    ``append_vec_tl`` already returns ``(x, b, y, r)``, which is those two groups in
-    that order, so nothing is fused and nothing is transposed here.
+    ``tensordot`` onto the site, and for a double layer that ``tensordot`` *is* the matching
+    ``append_vec_*``. The grouping falls out for free: ``append_vec_tl`` already returns ``(x,
+    b, y, r)``, which is those two groups in that order, so nothing is fused and nothing is
+    transposed here.
     """
     e1, corner, e2, d1, d2, absorb = _C2X2[which]
     p1, p2 = env.wire(d1), env.wire(d2)
@@ -302,13 +301,12 @@ def proj_corners(
 
     Notes
     -----
-    ``rr = r0 @ r1^T = u s v``, ``rs = s^(-1/2)``, ``p0 = r1 (rs v)^dagger`` and
-    ``p1 = r0 (u rs)^dagger``, so ``p1^T p0`` inserts ``rs s rs = 1`` on the cut. **No
-    step assumes the cut is Hermitian**: the two sides enter as two different tensors and
-    leave as two different projectors, and there is no eigendecomposition and no single
-    isometry reused on both index groups. The property a C4v single-move projector
-    needs and the ansatz does not supply is a property this construction never asks
-    for.
+    ``rr = r0 @ r1^T = u s v``, ``rs = s^(-1/2)``, ``p0 = r1 (rs v)^dagger`` and ``p1 = r0 (u
+    rs)^dagger``, so ``p1^T p0`` inserts ``rs s rs = 1`` on the cut. **No step assumes the cut
+    is Hermitian**: the two sides enter as two different tensors and leave as two different
+    projectors, and there is no eigendecomposition and no single isometry reused on both index
+    groups. The property a C4v single-move projector needs and the ansatz does not supply is a
+    property this construction never asks for.
 
     The two new bond legs come out on opposite sides, ``IN`` for ``p0`` and ``OUT`` for
     ``p1``, which is what makes the moved edge's two ends meet the moved corners'.
