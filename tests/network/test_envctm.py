@@ -20,6 +20,10 @@ found **not** Hermitian, and the sweep converges to Onsager anyway, because
 ``proj_corners`` never asks.
 """
 
+import ast
+import pathlib
+import traceback
+
 import numpy as np
 import pytest
 from helpers import dense_step
@@ -485,10 +489,14 @@ def test_every_two_operand_step_is_a_composition(monkeypatch):
     ``_composed`` call site in the module: a classical sweep with both move families and
     both boundaries, and a double-layer sweep.
     """
-    seen: set[str] = set()
+    seen: set[int] = set()
+    module = pathlib.Path(envctm.__file__)
     real = tenet.einsum_chain
 
     def spy(steps):
+        for frame in traceback.extract_stack():
+            if pathlib.Path(frame.filename) == module and frame.name != "_composed":
+                seen.add(frame.lineno)
         steps = list(steps)
         for equation, a, b, bend in steps:
             lhs = equation.split("->")[0]
@@ -516,7 +524,13 @@ def test_every_two_operand_step_is_a_composition(monkeypatch):
     finite.update_(max_bond=6, moves="hv")
     double = EnvCTM(Peps(SquareLattice(dims=(1, 1)), near_product("fz2")), init="eye")
     double.update_(max_bond=6, moves="hv")
-    assert len(seen) > 30, sorted(seen)
+    wanted = {
+        node.lineno
+        for node in ast.walk(ast.parse(module.read_text()))
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_composed"
+    }
+    assert len(wanted) > 25, wanted  # the enumeration itself found the call sites
+    assert not wanted - seen, f"the smoke never reached these lines: {sorted(wanted - seen)}"
 
 
 def test_corner_spectra_are_scaled_and_the_record_is_the_loop_exit():
