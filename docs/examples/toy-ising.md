@@ -1,7 +1,7 @@
 # Toy Ising
 
 The physics the toy CTMRG contracts: the classical 2D Ising partition-function tensor,
-Z2-graded, and Onsager's closed form for `beta * f` by direct quadrature.
+Z2-graded, and Onsager's closed form for $\beta f$ by direct quadrature.
 
 - The Z2 legs are the statement, not a check applied afterwards: the eight structurally
   zero entries of the bulk tensor have no block to live in and are never built.

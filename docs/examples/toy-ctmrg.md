@@ -7,8 +7,9 @@ against are [Toy Ising](toy-ising.md).
 
 - `move` is one CTMRG step: enlarge the corner, build the projector, absorb an edge.
   `svd_truncated` chooses the bond outside the trace; `svd(bond=)` reuses it inside.
-- `rel` is the free energy against Onsager's exact result; `d(beta f)/dbeta` is the
-  gradient through the unrolled sweeps, checked against the same result.
+- `rel` is the free energy against Onsager's exact result;
+  $\mathrm{d}(\beta f)/\mathrm{d}\beta$ is the gradient through the unrolled sweeps, checked
+  against the same result.
 - The two iPEPS traces (U(1) and SU(2)) descend through the same code.
 
 The same algorithm through the library: [2D Ising CTMRG](ising2d.md).

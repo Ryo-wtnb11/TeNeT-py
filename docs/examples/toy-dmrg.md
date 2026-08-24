@@ -7,8 +7,8 @@ re-decides each bond space, using `tenet.einsum` and `tenet.linalg` only. Nothin
 from [Toy model](toy-model.md) as an MPO, and the eigensolver from
 [Toy Lanczos](toy-lanczos.md).
 
-- N=12 matches exact diagonalization to twelve digits.
-- N=32 at `chi=64` sits above the Bethe-ansatz energy by the printed discarded weight.
+- $N = 12$ matches exact diagonalization to twelve digits.
+- $N = 32$ at `chi=64` sits above the Bethe-ansatz energy by the printed discarded weight.
 
 [Toy TEBD](toy-tebd.md) reaches the same ground state from the same model's two-site
 gates, and [Toy exact](toy-exact.md) is the number both are judged against. The same

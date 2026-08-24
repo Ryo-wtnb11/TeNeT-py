@@ -9,7 +9,7 @@ against nothing but `tenet.add`, `tenet.subtract`, scalar multiply and divide,
   [Toy DMRG](toy-dmrg.md).
 - `matvec` is a callable, so the same function serves the two-site effective Hamiltonian,
   a plain matrix on a rank-2 tensor, or anything else carrying those five operations.
-- The happy breakdown (`beta < tol`) drops the row and keeps the space rather than
+- The happy breakdown ($\beta < \texttt{tol}$) drops the row and keeps the space rather than
   dividing by it.
 
 ## Source

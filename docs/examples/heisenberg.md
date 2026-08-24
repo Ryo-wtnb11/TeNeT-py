@@ -4,7 +4,8 @@ A 20-site spin-1/2 Heisenberg chain to its ground state: `tenet.models.spin_half
 `MPO.from_terms`, `MPS.product`, `dmrg_`, then bond energies with `expectation_2site`.
 
 - The bond energies sum to `out.energy`.
-- `<S^z_n>` is zero on every site: the Néel seed fixes `S^z_tot = 0` and the sweep keeps it.
+- $\langle S^z_n\rangle$ is zero on every site: the Néel seed fixes
+  $S^z_{\mathrm{tot}} = 0$ and the sweep keeps it.
 
 Explained step by step in the [DMRG tutorial](../tutorials/dmrg.md).
 
