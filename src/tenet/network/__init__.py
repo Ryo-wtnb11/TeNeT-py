@@ -15,7 +15,7 @@ Two families, independent of each other:
   pattern subclasses carry the geometry, [Lattice][tenet.network.Lattice] the one
   object per unique site, [Peps][tenet.network.Peps] the rank-5 state and
   [Peps2Layers][tenet.network.Peps2Layers] the *view* whose items are lazy
-  [DoubleLayer][tenet.network.DoubleLayer] pairs -- the bra-ket product is never formed.
+  [DoublePepsTensor][tenet.network.DoublePepsTensor] pairs -- the bra-ket product is never formed.
   ``cor_*``, ``edge_*`` and ``append_vec_*`` are the twelve contractions every 2D
   environment is built from, and [EnvCTM][tenet.network.EnvCTM] is the directional
   corner-transfer environment over them: four corners and four edges per site
@@ -23,7 +23,7 @@ Two families, independent of each other:
   ([EnvProjectors][tenet.network.EnvProjectors]) built by
   [corner2x2][tenet.network.corner2x2] and
   [proj_corners][tenet.network.proj_corners], and ``update_``/``iterate_`` reporting a
-  [CTM_out][tenet.network.CTM_out]. Its projectors assume nothing about the corner's
+  [CTMRG_out][tenet.network.CTMRG_out]. Its projectors assume nothing about the corner's
   Hermiticity, which is what M63/#243 measured a C4v route cannot have.
   [EnvCTMc4v][tenet.network.EnvCTMc4v] is its C4v specialization: one corner and one edge
   ([EnvLocalC4v][tenet.network.EnvLocalC4v]) for a point-group-symmetric ansatz, whose
@@ -76,7 +76,7 @@ from tenet.network.common import (
 from tenet.network.dmrg import DMRG_out, Sweep, dmrg_, lanczos, sweep_
 from tenet.network.env import Env, correlation_function, measure_mpo
 from tenet.network.envctm import (
-    CTM_out,
+    CTMRG_out,
     EnvCTM,
     EnvCTMc4v,
     EnvLocal,
@@ -116,7 +116,7 @@ from tenet.network.mps import (
     overlap,
 )
 from tenet.network.peps import (
-    DoubleLayer,
+    DoublePepsTensor,
     Peps,
     Peps2Layers,
     append_vec_bl,
@@ -135,10 +135,10 @@ from tenet.network.peps import (
 
 __all__ = [
     "Bond",
-    "CTM_out",
+    "CTMRG_out",
     "CheckerboardLattice",
     "DMRG_out",
-    "DoubleLayer",
+    "DoublePepsTensor",
     "Env",
     "EnvCTM",
     "EnvCTMc4v",

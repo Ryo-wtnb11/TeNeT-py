@@ -76,7 +76,7 @@ from tenet import IN, OUT, SymmetricTensor
 from tenet.network.common import composed, ones
 from tenet.network.lattice import Bond, Site
 from tenet.network.peps import (
-    DoubleLayer,
+    DoublePepsTensor,
     Peps,
     cor_bl,
     cor_br,
@@ -879,7 +879,7 @@ class EnvNTU:
     def __repr__(self) -> str:
         return f"EnvNTU(geometry={self.geometry!r}, which={self.which!r})"
 
-    def _at(self, site: Any, d: tuple[int, int], facing: str) -> DoubleLayer:
+    def _at(self, site: Any, d: tuple[int, int], facing: str) -> DoublePepsTensor:
         """The neighbour at the shift ``d``, or the one-dimensional stand-in for an edge.
 
         On an open boundary the missing neighbour is replaced by YASTN's
@@ -890,7 +890,7 @@ class EnvNTU:
         neighbour = self.geometry.nn_site(site, d)
         if neighbour is not None:
             ket = self.psi[neighbour]
-            return DoubleLayer(ket, tenet.adjoint(ket))
+            return DoublePepsTensor(ket, tenet.adjoint(ket))
         axis = _AXIS[facing]
         # the site the stand-in faces: one step past the missing position
         step = _SHIFT[facing]
@@ -899,16 +899,16 @@ class EnvNTU:
         legs = [tenet.Leg(_unit(met), s) for s in (IN, OUT, OUT, IN, OUT)]
         legs[axis] = tenet.Leg(met.space, IN if met.side is OUT else OUT, dual=met.dual)
         ket = ones(tuple(legs))
-        return DoubleLayer(ket, tenet.adjoint(ket))
+        return DoublePepsTensor(ket, tenet.adjoint(ket))
 
-    def _haired(self, a: DoubleLayer, d: str, neighbour: DoubleLayer) -> DoubleLayer:
+    def _haired(self, a: DoublePepsTensor, d: str, neighbour: DoublePepsTensor) -> DoublePepsTensor:
         """``a`` with the neighbour's hair contracted into the ket's ``d`` leg."""
         equation, ket_first = _HAIR[_OPPOSITE[d]]
         first, second = (
             (neighbour.ket, neighbour.bra) if ket_first else (neighbour.bra, neighbour.ket)
         )
         hair = composed(equation, first, second)
-        return DoubleLayer(composed(_HAIR_ONTO[d], hair, a.ket), a.bra)
+        return DoublePepsTensor(composed(_HAIR_ONTO[d], hair, a.ket), a.bra)
 
     def bond_metric(
         self, q0: SymmetricTensor, q1: SymmetricTensor, s0: Any, s1: Any, dirn: str
@@ -942,8 +942,8 @@ class EnvNTU:
         >>> g.ndim
         4
         """
-        a0 = DoubleLayer(q0, tenet.adjoint(q0))
-        a1 = DoubleLayer(q1, tenet.adjoint(q1))
+        a0 = DoublePepsTensor(q0, tenet.adjoint(q0))
+        a1 = DoublePepsTensor(q1, tenet.adjoint(q1))
         if dirn == "lr":
             left = edge_l(self._haired(a0, "l", self._at(s0, (0, -1), "r")))
             right = edge_r(self._haired(a1, "r", self._at(s0, (0, 2), "l")))
