@@ -7240,13 +7240,67 @@ with M61 Stage D above, and PEPS containers with M79/#277.
   `apply_patch` and `pre_truncation_` / `post_truncation_` are not transcribed, which is
   the same statement as (iii) above.
 
+- **M82** — `tenet.braid(t, axes, levels)`, the crossing a planar embedding forces.
+  `transpose` can only cross the lines its permutation moves, one crossing per inverted
+  pair. A planar network needs the other half too: two lines that cross in the diagram
+  while the tensor's leg order does not change. `braid` is the primitive that spells both.
+
+  **`levels` are the incoming order, `axes` the outgoing one, and a pair crosses when the
+  two disagree.** `levels[i]` is where axis `i`'s line sits in the diagram's *incoming*
+  planar order; `axes` says where it leaves. Written out, the pair `(i, j)` crosses iff
+  `inverted_by(axes)` XOR `inverted_by(levels)` — the current leg positions cancel, which
+  is why the rule reads off the diagram and not off the tensor. Two corollaries fix the
+  API at both ends: **monotone `levels`** make the incoming order the leg order, so the
+  crossings are exactly the inversions of `axes` and `braid` *is* `transpose` — the same
+  plan object, block for block; and **`axes` the identity with two levels inverted** is a
+  crossing with no net permutation, the swap gate.
+
+  **The coefficient is `transpose`'s times a grading sign, and that factorization is the
+  whole implementation.** A pair the permutation inverts *and* the levels cross is not
+  crossed at all, and for a symmetric braiding `R` times the grading sign is 1 there, so
+  multiplying the transpose plan's coefficients by `(-1)^(sum p_i p_j)` over the
+  level-crossed pairs lands on the right braid word in every case. The parity `p` is read
+  from the ribbon twist, which is `(-1)^parity` on a fermionic provider and `1` on every
+  bosonic one: the twist *is* the Z2 grading datum. So the crossing is the identity
+  morphism for U(1), Z2, SU(2) and SU(N) — a bosonic symmetric category has no
+  discrepancy between its braiding and the underlying swap of the two spaces — and for
+  fermion parity it is exactly the number YASTN's `swap_gate` negates a block by,
+  `(-1)^{p_a p_b}` per crossed pair, verified against a dense oracle over every level
+  order. Grouped legs need no separate rule: the parity of a sum is the sum of parities,
+  so YASTN's group-against-group swap is the product over the pairs it crosses.
+
+  **This is TensorKit's `braid(t, p, levels)` widened by one step, deliberately.** There
+  `levels` choose each crossing's *sense* only — the crossings are always the inversions
+  of `p`, and under a symmetric braiding `R = R**-1` makes the sense irrelevant, so
+  `permute` is `braid` at trivial levels and an identity permutation braids to the
+  identity whatever the levels say. That interface cannot express a crossing without a
+  permutation, which is the object #285 measured as missing. Here `levels` decide *which*
+  pairs cross as well; sense stays irrelevant, as it must for a symmetric braiding, and
+  `permute = braid at monotone levels` still holds exactly.
+
+  **Chirality is refused, and now the message names an API that exists.** A provider whose
+  `R` is not its own inverse has a crossing that is not its own inverse either, so the
+  pairwise coefficient above does not apply and neither `axes` nor `levels` resolve the
+  braid; anyonic braiding stays out of scope and `transpose`'s refusal text stops promising
+  a `braid` that did not exist. A crossing on a provider with no `TwistData` is refused
+  the same way rather than silently paid as 1.
+
+  **The reachable crossing sets are the inversion sets, and that is enough.** A level
+  tuple is a total preorder, so one call crosses an inversion set — a single non-adjacent
+  pair is not one, and needs two calls, whose signs multiply because the grading sign is
+  diagonal. Composition reaches every subset.
+
+  **Differentiability and tracing are `transpose`'s, unchanged**: the plan is frozen,
+  array-free metadata and each block moves through one `transpose` and one real scalar,
+  so `braid` is shape-static and traces under `jit`/`grad`. No custom VJP, none needed.
+
 Not planned: TDVP, iDMRG, excited states and fermionic swap gates. PEPS containers left
 that list with M79/#277 and now have their own lane above.
-Fermionic swap gates stay not planned for a stronger reason than before: fermionic
-DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
-and the gap M13's refusal guarded against was the cap-direction convention M23/#160
-fixed with the composition rule stated in the Milestone 11 section above, not a missing
-gate.
+Fermionic swap gates left that list with M82 above, and for the reason 1D never needed
+them: fermionic DMRG shipped without one (M21/#147) because on a line the fZ2 braiding
+*is* the Jordan-Wigner string and the composition rule fixes every crossing. It is the
+plane that has crossings a permutation cannot spell, and `tenet.braid` is where they
+are now spelled.
 
 ---
 

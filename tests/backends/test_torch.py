@@ -245,6 +245,21 @@ def test_transpose(name):
 
 
 @pytest.mark.parametrize("name", PROVIDERS)
+def test_braid(name):
+    """The crossing a planar embedding forces: a swap gate on torch blocks.
+
+    Identity permutation, two levels inverted — the legs do not move, and every
+    block whose two crossed lines are both odd changes sign (nothing changes on a
+    bosonic provider). ``numpy`` is the oracle, as everywhere in this file.
+    """
+    t = tt(LEGS[name], seed=7)
+    got = tenet.braid(t, (0, 1, 2, 3), (1, 0, 2, 3))
+    assert is_torch(got)
+    assert got.legs == t.legs
+    same(got, tenet.braid(t.to_backend("numpy"), (0, 1, 2, 3), (1, 0, 2, 3)))
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
 def test_flip(name):
     """#142's duality flip on torch blocks — the a1 hole of #146.
 

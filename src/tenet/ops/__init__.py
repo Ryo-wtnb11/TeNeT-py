@@ -28,7 +28,7 @@ from tenet.ops.map import (
     map_diagonal,
     random_isometry,
 )
-from tenet.ops.permutation import transpose
+from tenet.ops.permutation import braid, transpose
 from tenet.ops.repartition import bend, flip_dual, repartition
 
 __all__ = [
@@ -40,6 +40,7 @@ __all__ = [
     "bend",
     "block_power",
     "block_sqrt",
+    "braid",
     "compose",
     "conj",
     "direct_sum",
