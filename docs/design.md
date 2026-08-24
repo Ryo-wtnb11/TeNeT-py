@@ -6788,6 +6788,127 @@ with M61 Stage D above, and PEPS containers with M79/#277.
   These are counts argued from the plan composition, not a measurement; the measurement
   arrives with M79b, when there is a sweep to time.
 
+- **M79b** — shipped: the directional CTM environment, and the physical proof M79a
+  deferred. `network/envctm.py` is `envs/_env_ctm.py` plus `_env_dataclasses.py`:
+  `EnvLocal` (four corners, four edges) and `EnvProjectors` (eight) as `Lattice`-held
+  plain records, `reset_` over `'eye'`/`'dl'`, `update_` over the simultaneous `'h'`/`'v'`
+  and the causal `'l'/'r'/'t'/'b'`, `corner2x2`, `proj_corners`, `corner_spectra` and an
+  `iterate_` returning `CTM_out(sweeps, max_dsv, converged)`. `network/ctmrg.py` is
+  untouched; its retirement is M79c.
+
+  **The leg sides are derived, not chosen.** Three requirements — the eight-tensor ring
+  closes, horizontally adjacent `T_t`s (and vertically adjacent `T_l`s) meet, which the
+  2x2 enlarged corners need, and the two projectors of one cut carry the two ends of one
+  new bond — leave exactly one assignment: `T_l (IN, ., OUT)`, `T_r (OUT, ., IN)`,
+  `T_t (OUT, ., IN)`, `T_b (IN, ., OUT)`, `C_tl (IN, IN)`, `C_tr (OUT, IN)`,
+  `C_br (OUT, OUT)`, `C_bl (IN, OUT)`. Two corners carry two legs of the same side; a
+  cycle of eight alternating wires needs its two turning points.
+
+  **The 2x2 enlarged corner is M79a's `append_vec_*` with nothing added.** YASTN's
+  `corner2x2` is `t1 @ c @ t2` and then a `tensordot` onto the site, which for a double
+  layer *is* the matching `append_vec_*` — and M79a's return order `(x, b, y, r)` is
+  already the two leg groups the halves want, so tenet fuses nothing and transposes
+  nothing here. A rank-4 classical network has no bra to reach through and takes one
+  plain composition instead; that is the only place the module branches on the layer
+  count, and everywhere else the difference is one `einsum` letter against two.
+
+  **Operand order and bends are derived rather than transcribed.** `_composed` is
+  `env.py`'s helper with its bend set computed: it takes whichever operand order turns
+  the fewer wires — M79a's minimality criterion, applied — and hands the turned wires to
+  `einsum_chain`'s `bend` field. Two things that came out of building it:
+
+  * The predicate is `(side is IN) != dual`, not `side`. A `qr` repartitions its input
+    across the map's two sides, so a projector comes back carrying the same wire with
+    `side` and `dual` both flipped, and a side-only reading calls that wire turned when
+    it is not.
+  * `append_vec_*`'s transcribed bend string survives that regauging **measured, not
+    assumed**: over every vector one fermionic sweep hands the primitive, the fixed
+    string and the derived one give bit-identical tensors, because bending both ends of
+    a wire and bending neither differ by a cap-cup pair whose coefficients cancel
+    (`test_a_regauged_vector_does_not_move_the_primitive`).
+
+  **Onsager, on both sides of the transition.** The classical 2D Ising partition
+  function is a rank-4 network, so the whole environment runs on it with no bra. Free
+  energy per site against the closed form at `chi = 16`, relative deviation:
+
+  | | `beta = 0.3` | `beta = 0.4` | `beta = 0.5` |
+  |---|---|---|---|
+  | Z2-graded, `'hv'` | 1.9e-8 (19 sweeps) | 3.9e-8 (63) | passes at `rel = 1e-6` |
+  | ungraded (`Trivial`) | | 3.9e-8 (81) | |
+  | `'lrtb'`, 2x2 cell, checkerboard, `init='dl'` | | 3.9e-8 | |
+
+  The causal moves, a 2x2 unit cell, the checkerboard pattern and the `'dl'` seed all
+  land on the *same* number to 1e-9 relative, which is the statement that the move
+  bookkeeping is a bookkeeping and not a physics choice.
+
+  **The fermionic oracle is a closed loop, which is what M79a could not reach.** A 2x2
+  open patch at the `'eye'` seed is the four sites with their boundary bonds closed
+  ket-against-bra; joining them into halves and then to each other closes the loop —
+  the first fermionic *loop* this package contracts, and where a misplaced Jordan-Wigner
+  string shows. Two independent facts:
+
+  * Cutting the loop top/bottom and cutting it left/right agree to 2e-16 relative, for
+    `Trivial`, U(1) and fZ2 alike.
+  * The scalar equals a dense graded replay of the whole computation in which every
+    step's sign is recomputed from parity vectors alone (`helpers.dense_step`), to
+    1e-12: **105.30412830284789 against 105.30412830284783** for fZ2. The teeth: the
+    same chain contracted with a plain sign-free `np.einsum` gives **4821.97**, a factor
+    of 45.8 out, while for `Trivial` and U(1) the two agree exactly. So the signs are
+    doing work and they are the ones the parity vectors say.
+
+  A near-product fZ2 iPEPS — the perturbed product state an evolution actually hands an
+  environment — converges in 12 sweeps at `chi = 16`; a *purely random* site tensor does
+  not converge for any provider, which is the transfer spectrum being degenerate at the
+  top and not a property of this code.
+
+  **#243's instrument, re-run, and it reports both halves of M63's finding.** On a
+  U(1) double layer with no spatial symmetry the enlarged corner is not even a square
+  map while the environment is still growing, and is 0.23–0.69 away from Hermitian once
+  it is; the sweep converges anyway. On the Ising bulk — symmetric under *every*
+  permutation of its four legs, i.e. the full C4v point group — the same corner comes
+  back Hermitian to under 6e-3 and falling, which is M63's third row and the reason the
+  C4v route could get away with an eigendecomposition on that one model. `proj_corners`
+  reads neither number: QR of each half, SVD of `r0 @ r1^T`, `rsqrt` of the singular
+  values, two projectors. There is no eigendecomposition to need a Hermitian input and
+  no single isometry reused on both index groups.
+
+  **Measured pass accounting, against M79a's claims.** One move on a warm environment,
+  `ar.do` calls counted at the top level (`benchmarks`-style spy, numpy backend):
+
+  | fixture | `chi` | moves | `ar.do` | per move | chain steps | `fuse` | `qr` | wall |
+  |---|---|---|---|---|---|---|---|---|
+  | Ising Z2, D=2, 1x1 | 16 | `hv` | 2 752 | 1 376 | 104 | 0 | 8 | 7.9 ms |
+  | Ising Z2, D=2, 1x1 | 16 | `lrtb` | 2 752 | 688 | 104 | 0 | 8 | 8.0 ms |
+  | Ising Z2, D=2, 1x1 | 32 | `hv` | 2 752 | 1 376 | 104 | 0 | 8 | 7.9 ms |
+  | double layer U(1), D=2, 1x1 | 16 | `hv` | 11 572 | 5 786 | 124 | 0 | 8 | 23.5 ms |
+  | double layer fZ2, D=2, 1x1 | 16 | `hv` | 11 824 | 5 912 | 124 | 0 | 8 | 21.3 ms |
+  | double layer fZ2, D=2, 2x2 | 16 | `hv` | 47 296 | 23 648 | 496 | 0 | 32 | 84.2 ms |
+
+  Three readings. (i) M79a's deferral is confirmed: **`fuse` is called zero times**
+  anywhere in a move. The rank-2 shape a QR and an SVD need is produced by `qr` and
+  `svd_truncated`'s own lowering from grouped `axes`, so the fuse M79a skipped per
+  primitive is paid once per factorization — eight per `'hv'` move on a 1x1 cell — and
+  never per site per primitive. (ii) `'hv'` and `'lrtb'` issue the *same* total, because
+  `'h'` is `'l'` and `'r'` in one pass over the sites; the per-letter halving is
+  bookkeeping. (iii) `chi = 32` costs exactly what `chi = 16` costs on this fixture,
+  because a `D = 2` classical network's environment bond saturates well below either cap
+  — so this table bounds the *structure* of a move and says nothing yet about how it
+  scales in `chi`, which is the measurement M79c's comparison against `ctmrg.py` will
+  need. The fZ2 arm costs 2.2 % more `ar.do` than the U(1) arm at the same shapes, which
+  is the braiding, and the 2x2 cell costs 4.0x the 1x1 for 4x the unique sites.
+
+  **Simplifications, each with its upgrade path.** The `'1x2'` projector method and
+  YASTN's 5x4 extended corners for a one-dimensional PEPS bond (a hexagonal lattice
+  embedded on a square one) are not transcribed; `bond_metric` and the evolution it
+  serves are M79d; `boundary_mps`, checkpointing, serialization and the patch mechanism
+  have no consumer. Every updated tensor is normalized by the **Frobenius** norm where
+  YASTN takes the infinity norm — tenet has one public norm, the two differ by at most
+  `sqrt(dim)`, and what the division is for is keeping the corner from tracking the
+  partition function itself. `init='dl'` is one un-truncated `'hv'` sweep on top of
+  `'eye'` rather than YASTN's `expand_outward_`: it reaches the same environment in the
+  projectors' singular basis instead of the product basis, and an environment is defined
+  only up to a gauge on its bonds.
+
 Not planned: TDVP, iDMRG, excited states and fermionic swap gates. PEPS containers left
 that list with M79/#277 and now have their own lane above.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic

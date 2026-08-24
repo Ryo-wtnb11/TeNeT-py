@@ -103,6 +103,18 @@ NO_PARAMS: dict[str, str] = {
         "a NamedTuple holding a bra and a ket; its fields are documented in the "
         "class docstring's Attributes section"
     ),
+    "tenet.network.CTM_out": (
+        "a result record built by EnvCTM.iterate_, never by users; its fields are "
+        "documented in the class docstring's Attributes section"
+    ),
+    "tenet.network.EnvLocal": (
+        "a mutable record of eight optional tensors a move fills in; its fields are "
+        "documented in the class docstring's Attributes section"
+    ),
+    "tenet.network.EnvProjectors": (
+        "a mutable record of eight optional projectors a move fills in; its fields are "
+        "documented in the class docstring's Attributes section"
+    ),
     "tenet.network.CTMEnv": (
         "a result record built by move/ctmrg, never by users; its fields are "
         "documented in the class docstring's Attributes section"

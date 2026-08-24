@@ -23,7 +23,14 @@ Two families, independent of each other:
   [Peps2Layers][tenet.network.Peps2Layers] the *view* whose items are lazy
   [DoubleLayer][tenet.network.DoubleLayer] pairs -- the bra-ket product is never formed.
   ``cor_*``, ``edge_*`` and ``append_vec_*`` are the twelve contractions every 2D
-  environment is built from.
+  environment is built from, and [EnvCTM][tenet.network.EnvCTM] is the directional
+  corner-transfer environment over them: four corners and four edges per site
+  ([EnvLocal][tenet.network.EnvLocal]), eight projectors
+  ([EnvProjectors][tenet.network.EnvProjectors]) built by
+  [corner2x2][tenet.network.corner2x2] and
+  [proj_corners][tenet.network.proj_corners], and ``update_``/``iterate_`` reporting a
+  [CTM_out][tenet.network.CTM_out]. Its projectors assume nothing about the corner's
+  Hermiticity, which is what M63/#243 measured the C4v route could not have.
 
 [spectrum][tenet.network.spectrum] and [ones][tenet.network.ones] are shared by both;
 [spectrum_sectors][tenet.network.spectrum_sectors] and [entropy][tenet.network.entropy]
@@ -66,6 +73,14 @@ from tenet.network.ctmrg import (
 )
 from tenet.network.dmrg import DMRG_out, Sweep, dmrg_, lanczos, sweep_
 from tenet.network.env import Env, correlation_function, measure_mpo
+from tenet.network.envctm import (
+    CTM_out,
+    EnvCTM,
+    EnvLocal,
+    EnvProjectors,
+    corner2x2,
+    proj_corners,
+)
 from tenet.network.lattice import (
     Bond,
     CheckerboardLattice,
@@ -105,11 +120,15 @@ __all__ = [
     "Absorb",
     "Bond",
     "CTMEnv",
+    "CTM_out",
     "CTMRG_out",
     "CheckerboardLattice",
     "DMRG_out",
     "DoubleLayer",
     "Env",
+    "EnvCTM",
+    "EnvLocal",
+    "EnvProjectors",
     "Lattice",
     "MPO",
     "MPS",
@@ -127,6 +146,7 @@ __all__ = [
     "cor_br",
     "cor_tl",
     "cor_tr",
+    "corner2x2",
     "correlation_function",
     "ctmrg",
     "ctmrg_unrolled",
@@ -150,6 +170,7 @@ __all__ = [
     "normalized",
     "ones",
     "overlap",
+    "proj_corners",
     "ring",
     "single_layer",
     "single_layer_ctm",
