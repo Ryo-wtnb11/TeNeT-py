@@ -23,7 +23,7 @@ import tenet
 from tenet import Leg, SymmetricTensor
 from tenet.symmetry import Sector
 
-__all__ = ["entropy", "ones", "spectrum", "spectrum_sectors"]
+__all__ = ["composed", "entropy", "ones", "spectrum", "spectrum_sectors", "supplies_in"]
 
 #: How many bytes of cached tensor payload each of the sweep's per-bond caches may hold.
 #: **This is the whole cache policy and it is one number in one place**:
@@ -330,3 +330,86 @@ def ones(legs: Sequence[Leg]) -> SymmetricTensor:
     """
     t = SymmetricTensor.zeros(legs)
     return t.apply_blocks(lambda b: ar.do("ones_like", b))
+
+
+def supplies_in(leg: Leg) -> bool:
+    """Whether ``leg`` is the ``IN`` end of its wire.
+
+    Parameters
+    ----------
+    leg : Leg
+        The leg to read.
+
+    Returns
+    -------
+    bool
+        ``True`` when the leg supplies the ``IN`` end of the wire it sits on.
+
+    Examples
+    --------
+    >>> from tenet import IN, GradedSpace, Leg
+    >>> from tenet.network import supplies_in
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1})
+    >>> supplies_in(Leg(V, IN)), supplies_in(Leg(V, IN, dual=True))
+    (True, False)
+
+    Notes
+    -----
+    ``side`` alone answers it for a leg nobody has moved. A leg that came back from a
+    [qr][tenet.ops.linalg.qr] was repartitioned across the map's two sides, which flips
+    ``side`` and ``dual`` together and leaves the same wire in the opposite spelling --
+    so the predicate is the pair, not ``side``.
+    """
+    return (leg.side is tenet.IN) != leg.dual
+
+
+def composed(equation: str, a: Any, b: Any) -> SymmetricTensor:
+    """One ``tenet.einsum_chain`` step whose operand order and bends are **derived**.
+
+    Parameters
+    ----------
+    equation : str
+        A two-operand ``einsum`` equation. The output order is the caller's and is not
+        touched; only which operand ``einsum`` sees first can change.
+    a, b : SymmetricTensor
+        The operands. Typed ``Any`` because most callers read them off a record whose
+        fields are optional until a move has filled them -- an unfilled one is a caller
+        error, not a case to branch on.
+
+    Returns
+    -------
+    SymmetricTensor
+        The contraction, taken in whichever operand order bends the fewer wires, as a
+        one-step ``tenet.einsum_chain`` whose ``bend`` field names those wires -- so what
+        the chain composes is a composition.
+
+    Examples
+    --------
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.network import composed
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> b = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=1)
+    >>> composed("ij,jk->ik", a, b).ndim
+    2
+
+    Notes
+    -----
+    ``network/env.py``'s ``_composed`` is handed its bend set; here both the order and
+    the set are computed. **Bend-minimality is the criterion** (``docs/design.md``,
+    M79a): a bend is a real categorical operation, so a spelling that turns two wires
+    where one suffices lands on a different tensor, and the minimal one is the planar
+    diagram's. Every wire has exactly one ``IN`` end, so the two orders' bend counts sum
+    to the number of shared wires and the minimum is well defined; a tie keeps the stated
+    order, which is YASTN's throughout the callers.
+    """
+    lhs, out = equation.split("->")
+    ta, tb = lhs.split(",")
+    shared = [c for c in ta if c in tb]
+    bend = "".join(c for c in shared if not supplies_in(a.legs[ta.index(c)]))
+    if len(bend) > len(shared) - len(bend):  # the other order turns fewer wires
+        a, b, ta, tb = b, a, tb, ta
+        bend = "".join(c for c in shared if not supplies_in(a.legs[ta.index(c)]))
+    return tenet.einsum_chain([(f"{ta},{tb}->{out}", a, b, bend)])

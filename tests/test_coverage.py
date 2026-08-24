@@ -107,6 +107,14 @@ NO_PARAMS: dict[str, str] = {
         "a result record built by EnvCTM.iterate_, never by users; its fields are "
         "documented in the class docstring's Attributes section"
     ),
+    "tenet.network.Evolution_out": (
+        "a result record built by truncate_, never by users; its fields are "
+        "documented in the class docstring's Attributes section"
+    ),
+    "tenet.network.Gate": (
+        "a NamedTuple holding a split two-site gate and its bond; gate_nn builds it and "
+        "its fields are documented in the class docstring's Attributes section"
+    ),
     "tenet.network.EnvLocal": (
         "a mutable record of eight optional tensors a move fills in; its fields are "
         "documented in the class docstring's Attributes section"

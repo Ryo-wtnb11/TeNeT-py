@@ -46,10 +46,17 @@ with the eight tensors of a site collapsed onto the two a point-group-symmetric 
 leaves distinct -- its class docstring carries the leg conventions, which are the point
 group's and not the ones above.
 
+**The bond metric.** [bond_metric][tenet.network.EnvCTM.bond_metric] is the one thing
+M79d added here: the six environment tensors around a bond, closed around the two
+``qr``-reduced site tensors [truncate_][tenet.network.truncate_] hands it. It is the
+full-update metric and nothing about it is symmetrized or checked -- that is the
+caller's, and ``truncate_`` says what it found.
+
 **What is deliberately not transcribed** (M79b scope): the ``'1x2'`` projector method,
 the 5x4 extended corners YASTN grows when a PEPS bond is one-dimensional (a hexagonal
-lattice embedded on a square one), ``bond_metric`` and the evolution it serves (M79d),
-``boundary_mps``, checkpointing, serialization and the ``patch`` mechanism.
+lattice embedded on a square one), ``boundary_mps``, checkpointing, serialization and the
+``patch`` mechanism -- and with the last of those, any re-convergence after a truncation:
+an environment is stale the moment a bond changes, and the caller decides when to sweep.
 """
 
 from collections.abc import Iterator, Sequence
@@ -60,7 +67,7 @@ import autoray as ar
 
 import tenet
 from tenet import IN, OUT, Leg, SymmetricTensor
-from tenet.network.common import ones, spectrum
+from tenet.network.common import composed, ones, spectrum, supplies_in
 from tenet.network.lattice import Lattice, Site
 from tenet.network.peps import (
     DoubleLayer,
@@ -164,59 +171,13 @@ class CTM_out(NamedTuple):
 
 
 # -- the composition rule, once ------------------------------------------------------
+#
+# ``common.composed`` is the one spelling; M79d moved it there when ``evolution.py``
+# became its second caller, and the two private aliases keep this module's call sites
+# and its ``ast``-driven coverage test reading exactly as they did.
 
-
-def _supplies_in(leg: Leg) -> bool:
-    """Whether ``leg`` is the ``IN`` end of its wire.
-
-    ``side`` alone answers it for a leg nobody has moved, and every leg in
-    ``network/env.py`` is one. Here a leg can arrive from a
-    [qr][tenet.ops.linalg.qr] that repartitioned it across the map's two sides, which
-    flips ``side`` and ``dual`` together and leaves the same wire in the opposite
-    spelling -- so the predicate is the pair, not ``side``.
-    """
-    return (leg.side is IN) != leg.dual
-
-
-def _composed(equation: str, a: Any, b: Any) -> SymmetricTensor:
-    """One ``tenet.einsum_chain`` step whose operand order and bends are **derived**.
-
-    Parameters
-    ----------
-    equation : str
-        A two-operand ``einsum`` equation. The output order is the caller's and is not
-        touched; only which operand ``einsum`` sees first can change.
-    a, b : SymmetricTensor
-        The operands. Typed ``Any`` because most of them are read off an
-        [EnvLocal][tenet.network.EnvLocal], whose fields are optional until a move has
-        filled them -- an unfilled one is a caller error, not a case to branch on.
-
-    Returns
-    -------
-    SymmetricTensor
-        The contraction, taken in whichever operand order bends the fewer wires, as a
-        one-step ``tenet.einsum_chain`` whose ``bend`` field names those wires -- so
-        what the chain composes is a composition.
-
-    Notes
-    -----
-    ``network/env.py``'s ``_composed`` is handed its bend set; here both the order and
-    the set are computed, because M79a settled what the answer would be anyway.
-    **Bend-minimality is the criterion** (``docs/design.md``, M79a): a bend is a real
-    categorical operation, so a spelling that turns two wires where one suffices lands
-    on a different tensor, and the minimal one is the planar diagram's. Every wire has
-    exactly one ``IN`` end here, so the two orders' bend counts sum to the number of
-    shared wires and the minimum is well defined; a tie keeps the stated order, which is
-    YASTN's throughout this module.
-    """
-    lhs, out = equation.split("->")
-    ta, tb = lhs.split(",")
-    shared = [c for c in ta if c in tb]
-    bend = "".join(c for c in shared if not _supplies_in(a.legs[ta.index(c)]))
-    if len(bend) > len(shared) - len(bend):  # the other order turns fewer wires
-        a, b, ta, tb = b, a, tb, ta
-        bend = "".join(c for c in shared if not _supplies_in(a.legs[ta.index(c)]))
-    return tenet.einsum_chain([(f"{ta},{tb}->{out}", a, b, bend)])
+_supplies_in = supplies_in
+_composed = composed
 
 
 def _normalized(t: SymmetricTensor) -> SymmetricTensor:
@@ -256,7 +217,7 @@ _FLAT = {
 }
 
 
-def corner2x2(env: "EnvCTM", which: str, site: Any) -> SymmetricTensor:
+def corner2x2(env: "EnvCTM", which: str, site: Any, a: Any = None) -> SymmetricTensor:
     """One 2x2 enlarged corner: two edges, the corner between them, and the site.
 
     Parameters
@@ -267,6 +228,11 @@ def corner2x2(env: "EnvCTM", which: str, site: Any) -> SymmetricTensor:
         ``'tl'``, ``'tr'``, ``'bl'`` or ``'br'``.
     site : Site or tuple[int, int]
         The site whose ring supplies the three environment tensors.
+    a : DoubleLayer or SymmetricTensor or None, optional
+        The tensor to absorb, in place of the one the state has at ``site``. Default
+        ``None``, i.e. the state's. [bond_metric][tenet.network.EnvCTM.bond_metric]
+        passes the ``qr``-reduced site here, which is the only reason the parameter
+        exists: the environment ring is the site's, the tensor inside it is not.
 
     Returns
     -------
@@ -294,7 +260,8 @@ def corner2x2(env: "EnvCTM", which: str, site: Any) -> SymmetricTensor:
     # which is one wire either way, so the edge-first reading of ``t1 @ c @ t2`` stands.
     vec = _composed(f"x{p1}c,cd->x{p1}d", getattr(local, e1), getattr(local, corner))
     vec = _composed(f"x{p1}d,d{p2}y->x{p1}{p2}y", vec, getattr(local, e2))
-    a = env.psi[site]
+    if a is None:
+        a = env.psi[site]
     if env.double:
         return absorb(a, vec)
     return _composed(_FLAT[which], vec, a)
@@ -831,6 +798,85 @@ class EnvCTM:
             if max_dsv < corner_tol:
                 break
         return CTM_out(sweeps, max_dsv, max_dsv < (corner_tol or 0.0))
+
+    def bond_metric(
+        self, q0: SymmetricTensor, q1: SymmetricTensor, s0: Any, s1: Any, dirn: str
+    ) -> SymmetricTensor:
+        """The full-update bond metric: the six environment tensors closed round a bond.
+
+        Parameters
+        ----------
+        q0, q1 : SymmetricTensor
+            The two reduced site tensors, rank 5, whose bond legs the metric is on --
+            [truncate_][tenet.network.truncate_]'s ``qr`` isometries, not the state's
+            own tensors.
+        s0, s1 : Site or tuple[int, int]
+            Their sites, in the fermionic order.
+        dirn : str
+            ``'lr'`` for a horizontal bond, ``'tb'`` for a vertical one.
+
+        Returns
+        -------
+        SymmetricTensor
+            Rank 4, ``(bra0, bra1, ket0, ket1)``: a map from the pair of ket bond legs
+            to the pair of bra ones, **not** symmetrized and **not** checked for
+            positivity. ``truncate_`` measures both and says what it found.
+
+        Raises
+        ------
+        ValueError
+            If the state is a single layer, which has no bond to truncate, or if the two
+            sites are not adjacent in the direction ``dirn`` names.
+
+        Examples
+        --------
+        >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+        >>> from tenet.network import EnvCTM, Peps, SquareLattice
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+        >>> legs = (Leg(V, IN), Leg(V, OUT), Leg(V, OUT), Leg(V, IN), Leg(V, OUT))
+        >>> psi = Peps(SquareLattice(dims=(2, 2)), SymmetricTensor.random(legs, seed=0))
+        >>> env = EnvCTM(psi, init="dl")
+        >>> env.bond_metric(psi[0, 0], psi[0, 1], (0, 0), (0, 1), "lr").ndim
+        4
+
+        Notes
+        -----
+        YASTN's ``bond_metric``:770. The picture, for ``dirn == 'lr'``::
+
+            tl -- t ------- t -- tr
+             |    |         |    |
+             l -- Q0 --   -- Q1 -- r
+             |    |         |    |
+            bl -- b ------- b -- br
+
+        The two 2x2 enlarged corners are [corner2x2][tenet.network.corner2x2] with the
+        reduced tensor passed in place of the site's -- the environment ring is the
+        site's, the tensor inside it is not -- so this adds no contraction primitive to
+        the ones M79a wrote. The remaining four tensors close the top and bottom (or
+        left and right) of the picture, two compositions each.
+        """
+        if not self.double:
+            raise ValueError("EnvCTM.bond_metric: a single-layer network has no bond to truncate")
+        step = (0, 1) if dirn == "lr" else (1, 0)
+        if self.nn_site(s0, step) != tuple(s1):
+            raise ValueError(
+                f"EnvCTM.bond_metric: {Site(*s0)} and {Site(*s1)} are not a {dirn} bond"
+            )
+        e0, e1 = self[s0], self[s1]
+        vec0 = corner2x2(self, "tl", s0, DoubleLayer(q0, tenet.adjoint(q0)))
+        vec1 = corner2x2(self, "br", s1, DoubleLayer(q1, tenet.adjoint(q1)))
+        if dirn == "lr":
+            bottom = _composed("xbBc,cd->xbBd", e0.b, e0.bl)
+            vec0 = _composed("xbBd,dbByrR->xyrR", bottom, vec0)
+            top = _composed("xtTc,cd->xtTd", e1.t, e1.tr)
+            vec1 = _composed("xtTd,dtTylL->xylL", top, vec1)
+            return _composed("pqrR,qplL->RLrl", vec0, vec1)
+        right = _composed("cd,dxXe->cxXe", e0.tr, e0.r)
+        vec0 = _composed("abByrR,yrRd->abBd", vec0, right)
+        left = _composed("cd,dxXe->cxXe", e1.bl, e1.l)
+        vec1 = _composed("atTylL,ylLd->atTd", vec1, left)
+        return _composed("abBd,dtTa->BTbt", vec0, vec1)
 
     def items(self) -> Iterator[tuple[Site, EnvLocal]]:
         """``(site, environment)`` for every unique site."""

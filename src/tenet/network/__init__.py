@@ -29,6 +29,18 @@ Two families, independent of each other:
   ([EnvLocalC4v][tenet.network.EnvLocalC4v]) for a point-group-symmetric ansatz, whose
   four identical virtual legs tile the plane as a checkerboard of ``A`` and ``flip(A)``
   through [flip][tenet.network.flip] and [PepsFlip][tenet.network.PepsFlip].
+* **Time evolution on that layer.** [gate_nn][tenet.network.gate_nn] exponentiates a bond
+  Hamiltonian and splits it across the bond, [gates_nn][tenet.network.gates_nn]
+  distributes one over a lattice, [apply_gate][tenet.network.apply_gate] puts a
+  [Gate][tenet.network.Gate] on its two sites and
+  [truncate_][tenet.network.truncate_] reduces the bond it enlarged, in the metric
+  ``bond_metric`` supplies -- [EnvCTM.bond_metric][tenet.network.EnvCTM.bond_metric] from
+  the six surrounding environment tensors, or [EnvNTU][tenet.network.EnvNTU] from the
+  local ``'NN'`` cluster. [evolution_step_][tenet.network.evolution_step_] runs a list of
+  gates and reports one [Evolution_out][tenet.network.Evolution_out] per bond -- the
+  truncation error and *what the metric was found to be*, which
+  [accumulated_truncation_error][tenet.network.accumulated_truncation_error] adds up over
+  a trajectory.
 
 [spectrum][tenet.network.spectrum] and [ones][tenet.network.ones] are shared by both;
 [spectrum_sectors][tenet.network.spectrum_sectors] and [entropy][tenet.network.entropy]
@@ -52,7 +64,7 @@ around is bent explicitly with [tenet.repartition][] before the contraction. Thi
 uses the public ``tenet`` API only, enforced by ``tests/network/test_hygiene.py``.
 """
 
-from tenet.network.common import entropy, ones, spectrum, spectrum_sectors
+from tenet.network.common import composed, entropy, ones, spectrum, spectrum_sectors, supplies_in
 from tenet.network.dmrg import DMRG_out, Sweep, dmrg_, lanczos, sweep_
 from tenet.network.env import Env, correlation_function, measure_mpo
 from tenet.network.envctm import (
@@ -66,6 +78,17 @@ from tenet.network.envctm import (
     corner2x2,
     flip,
     proj_corners,
+)
+from tenet.network.evolution import (
+    EnvNTU,
+    Evolution_out,
+    Gate,
+    accumulated_truncation_error,
+    apply_gate,
+    evolution_step_,
+    gate_nn,
+    gates_nn,
+    truncate_,
 )
 from tenet.network.lattice import (
     Bond,
@@ -113,6 +136,9 @@ __all__ = [
     "EnvCTMc4v",
     "EnvLocal",
     "EnvLocalC4v",
+    "EnvNTU",
+    "Evolution_out",
+    "Gate",
     "EnvProjectors",
     "PepsFlip",
     "Lattice",
@@ -124,7 +150,9 @@ __all__ = [
     "Site",
     "SquareLattice",
     "Sweep",
+    "accumulated_truncation_error",
     "append_vec_bl",
+    "apply_gate",
     "append_vec_br",
     "append_vec_tl",
     "append_vec_tr",
@@ -132,6 +160,7 @@ __all__ = [
     "cor_br",
     "cor_tl",
     "cor_tr",
+    "composed",
     "corner2x2",
     "correlation_function",
     "dmrg_",
@@ -140,7 +169,10 @@ __all__ = [
     "edge_r",
     "edge_t",
     "entropy",
+    "evolution_step_",
     "flip",
+    "gate_nn",
+    "gates_nn",
     "expectation_1site",
     "expectation_2site",
     "expectation_profile",
@@ -152,5 +184,7 @@ __all__ = [
     "proj_corners",
     "spectrum",
     "spectrum_sectors",
+    "supplies_in",
     "sweep_",
+    "truncate_",
 ]
