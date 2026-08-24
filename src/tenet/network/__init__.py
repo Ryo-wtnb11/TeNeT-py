@@ -11,12 +11,6 @@ Two families, independent of each other:
   [MPS.product][tenet.network.MPS.product], [MPS.compress_][tenet.network.MPS.compress_],
   [MPS.save][tenet.network.MPS.save] / [MPS.load][tenet.network.MPS.load] and the two
   [expectation][tenet.network.expectation_1site] values surround it.
-* **Corner transfer matrices.** [CTMEnv][tenet.network.CTMEnv],
-  [init_env][tenet.network.init_env], [move][tenet.network.move], ``ctmrg`` and
-  [ctmrg_unrolled][tenet.network.ctmrg_unrolled] renormalize a C4v environment;
-  [single_layer][tenet.network.single_layer], [double_layer][tenet.network.double_layer]
-  and [layers][tenet.network.layers] build its absorbers from a bulk tensor or an iPEPS
-  ket.
 * **Two-dimensional states.** [SquareLattice][tenet.network.SquareLattice] and its two
   pattern subclasses carry the geometry, [Lattice][tenet.network.Lattice] the one
   object per unique site, [Peps][tenet.network.Peps] the rank-5 state and
@@ -47,9 +41,8 @@ makes no differentiability claim: ``svd_truncated`` re-decides a bond
 [GradedSpace][tenet.GradedSpace] at every bond of every sweep. Two exceptions state
 themselves on their own functions — [Env.heff2][tenet.network.Env.heff2]'s prepared matvec
 is fixed-structure and traceable through an injected ``compile=``, and the fixed-bond
-CTM moves — ``ctmrg.py``'s [ctmrg_unrolled][tenet.network.ctmrg_unrolled] and
-``move(bond=B)``, and ``EnvCTMc4v.update_(bond=B)`` — are shape-static and differentiable
-while the bond-deciding forms are not.
+CTM move ``EnvCTMc4v.update_(bond=B)`` is shape-static and differentiable while the
+bond-deciding form is not.
 
 **The composition rule** every two-operand ``tenet.einsum`` here obeys: operand 1
 supplies the ``IN`` end of every shared wire. Meeting ``IN`` against ``OUT`` is not
@@ -60,22 +53,6 @@ uses the public ``tenet`` API only, enforced by ``tests/network/test_hygiene.py`
 """
 
 from tenet.network.common import entropy, ones, spectrum, spectrum_sectors
-from tenet.network.ctmrg import (
-    Absorb,
-    CTMEnv,
-    CTMRG_out,
-    ctmrg,
-    ctmrg_unrolled,
-    double_layer,
-    double_layer_ctm,
-    init_env,
-    layers,
-    move,
-    normalized,
-    ring,
-    single_layer,
-    single_layer_ctm,
-)
 from tenet.network.dmrg import DMRG_out, Sweep, dmrg_, lanczos, sweep_
 from tenet.network.env import Env, correlation_function, measure_mpo
 from tenet.network.envctm import (
@@ -126,11 +103,8 @@ from tenet.network.peps import (
 )
 
 __all__ = [
-    "Absorb",
     "Bond",
-    "CTMEnv",
     "CTM_out",
-    "CTMRG_out",
     "CheckerboardLattice",
     "DMRG_out",
     "DoubleLayer",
@@ -160,11 +134,7 @@ __all__ = [
     "cor_tr",
     "corner2x2",
     "correlation_function",
-    "ctmrg",
-    "ctmrg_unrolled",
     "dmrg_",
-    "double_layer",
-    "double_layer_ctm",
     "edge_b",
     "edge_l",
     "edge_r",
@@ -174,19 +144,12 @@ __all__ = [
     "expectation_1site",
     "expectation_2site",
     "expectation_profile",
-    "init_env",
     "lanczos",
-    "layers",
     "local_op",
     "measure_mpo",
-    "move",
-    "normalized",
     "ones",
     "overlap",
     "proj_corners",
-    "ring",
-    "single_layer",
-    "single_layer_ctm",
     "spectrum",
     "spectrum_sectors",
     "sweep_",
