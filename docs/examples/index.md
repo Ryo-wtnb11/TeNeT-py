@@ -5,7 +5,7 @@ committed and checked by CI, so every page reflects the current code.
 
 Two kinds of example:
 
-- `examples/` — scripts that **call the library**: `tenet.models`, `MPO`, `dmrg_`, `ctmrg`.
+- `examples/` — scripts that **call the library**: `tenet.models`, `MPO`, `dmrg_`, `EnvCTMc4v`.
 - `examples/toy_codes/` — TEBD, DMRG, CTMRG and VMC **written on the tensor layer**: the
   algorithm is in the file, built from `SymmetricTensor`, `tenet.einsum` and
   `tenet.linalg`, with nothing imported from `tenet.network`. Read them to see how each

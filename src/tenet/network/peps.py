@@ -13,15 +13,12 @@ is carried by [Peps][tenet.network.Peps] but not by the double layer.
 [Peps2Layers][tenet.network.Peps2Layers] is a *view*: indexing it returns a
 [DoubleLayer][tenet.network.DoubleLayer], which holds a bra and a ket and knows it has
 four legs, each a ket/bra pair. Every contraction below reaches through it into the two
-rank-5 tensors, so nothing of size ``d^2 D^8`` is ever written -- the same refusal
-``ctmrg.py``'s [double_layer][tenet.network.double_layer] makes, and the reason #107
-removed the rank-10 double layer in the first place.
+rank-5 tensors, so nothing of size ``d^2 D^8`` is ever written.
 
 **Pairs stay unfused.** YASTN fuses each ``[x x']`` pair into one leg and reads the
 fused leg back out with ``unfuse_legs``. Here a corner comes back with the ket leg and
-the bra leg *adjacent and separate*, which is what ``ctmrg.py``'s rank-6 corner and rank-4
-edge already do (``ctm_environment.py``:16-33 in froSTspin, quoted there): fusing buys a
-matrix shape this layer never needs, and a fuse plus a later unfuse is two passes over
+the bra leg *adjacent and separate* (froSTspin ``ctm_environment.py``:16-33): fusing buys
+a matrix shape this layer never needs, and a fuse plus a later unfuse is two passes over
 the whole tensor.
 
 **The composition rule, and how the operand order is derived.** Every step below is a

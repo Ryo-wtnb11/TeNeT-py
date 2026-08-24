@@ -289,6 +289,40 @@ def test_the_full_point_group_is_what_a_hermitian_corner_needs():
             assert _hermiticity(corner2x2(env, "tl", (0, 0))) < 1e-12
 
 
+def _corner_defects(bulk: SymmetricTensor, moves: int = 4) -> list[float]:
+    """``||B - B^H|| / ||B||`` on the enlarged corner, one entry per move."""
+    env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), bulk))
+    out = []
+    for _ in range(moves):
+        out.append(_hermiticity(corner2x2(env, "tl", (0, 0))))
+        env.update_(max_bond=6)
+    return out
+
+
+def test_the_corner_is_hermitian_only_under_the_full_c4v_group():
+    """M63/#243's finding as a regression, on the grading-free row.
+
+    The diagonal mirror alone buys move 0 -- where the environment leg is still
+    one-dimensional and there is nothing for the missing rotations to act on -- and nothing
+    after it: measured ``8.9e-17`` then ``0.70``, ``1.12``, ``0.40``. Under the whole group
+    every move is Hermitian, to ``1.1e-15``. One random array, symmetrized two ways, the
+    same sweep, and the grading is ``Trivial`` so that the symmetry under test is the
+    *spatial* one and nothing else.
+    """
+    space = GradedSpace.new(Trivial, {TrivialSector(): 3})
+    legs = (Leg(space, OUT),) * 4
+    raw = np.random.default_rng(0).normal(size=(3, 3, 3, 3))
+    mirror = SymmetricTensor.from_dense((raw + np.transpose(raw, (1, 0, 3, 2))) / 2, legs)
+    full, turned = np.zeros_like(raw), raw
+    for _ in range(4):  # the eight elements: four rotations times the diagonal mirror
+        full = full + turned + np.transpose(turned, (1, 0, 3, 2))
+        turned = np.transpose(turned, (1, 2, 3, 0))
+
+    assert _corner_defects(mirror)[0] < 1e-12  # move 0 is Hermitian either way
+    assert min(_corner_defects(mirror)[1:]) > 1e-2  # and no later move is
+    assert max(_corner_defects(SymmetricTensor.from_dense(full / 8, legs))) < 1e-12
+
+
 def test_a_broken_rotation_leaves_the_corner_non_hermitian_and_the_sweep_converges():
     """And stated backwards, which is the projector's half of #243.
 

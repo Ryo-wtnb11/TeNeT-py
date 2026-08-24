@@ -1,105 +1,50 @@
-"""Issues #102/#104 — differentiable CTMRG: the first end-to-end algorithm, against an oracle.
+"""Differentiable CTMRG end to end, against an oracle rather than against itself.
 
-This is the first test in the repository that judges a *physics* result against a closed
-form rather than against a self-consistency check: ``examples/toy_codes/ctmrg.py`` converges a CTMRG
-environment for the classical 2D Ising model and its free energy per site is compared with
-Onsager's, which is itself pinned here by two independent closed forms before it is used to
-judge anything. It then differentiates ``k`` unrolled fixed-structure sweeps and checks the
-gradient against the *internal energy* of the same oracle.
+This is the test in the repository that judges a *physics* result against a closed form:
+a CTM environment for the classical 2D Ising model is converged on
+[EnvCTMc4v][tenet.network.EnvCTMc4v], its free energy per site is compared with Onsager's
+-- which is itself pinned here by two independent closed forms before it is used to judge
+anything -- and ``k`` fixed-bond moves are then differentiated and checked against the
+*internal energy* of the same oracle.
 
-**The Ising half is Z2-graded since #104**, and that is what lets it enter the ordered
-phase at all: ``beta in {0.5, 0.6}`` are oracle points here, where #102 had to stop at
-``beta < beta_c``. Three things the grading buys and one it does not, each asserted below —
-Onsager on both sides of ``beta_c``; ``<s> = 0`` proved by a ``from_dense`` *refusal*
-rather than by a small float; exactly two-fold *cross-sector* degeneracy of the ordered
-corner spectrum, which even ``chi`` provably never splits; and **not** #102's ``NaN``
-criterion, which :func:`test_the_retired_nan_criterion` retires with its reasoning rather
-than deferring it a third time.
+**The Ising half is Z2-graded**, and that is what lets it enter the ordered phase at all:
+``beta in {0.5, 0.6}`` are oracle points here. Three things the grading buys and one it
+does not, each asserted below -- Onsager on both sides of ``beta_c``; ``<s> = 0`` proved by
+a ``from_dense`` *refusal* rather than by a small float; exactly two-fold *cross-sector*
+degeneracy of the ordered corner spectrum, which even ``chi`` provably never splits; and
+**not** a ``NaN`` criterion, which :func:`test_the_retired_nan_criterion` retires with its
+reasoning.
 
-Like ``tests/integration/test_vmc.py`` (#69) it adds nothing to ``src/tenet`` and nothing to
-the example: it imports ``examples/toy_codes/ctmrg.py`` and runs it, so the example cannot rot. The
-only code of its own is the second Onsager form and the tolerances.
+The Boltzmann tensor sits on four *identical* legs -- the C4v ansatz's signature -- and is
+symmetric under every permutation of them, so it carries the whole point group and one
+corner and one edge describe its environment exactly.
 
-**Since #114 the environment machinery is ``tenet.network``** -- ``Absorb``, both absorbers
-(under their model-free names ``single_layer``/``double_layer``), ``move``, ``ctmrg``
-and ``ctmrg_unrolled`` -- so this module resolves those names there and the example's own names
-are the physics: the bulk tensor, the C4v ansatz constraint and the observables. Nothing
-else changed: every number below is bit-identical to the pre-promotion run.
+The iPEPS half is a point-group average over a **self-conjugate** virtual space, the only
+kind a rotation acts on at all: SU(2) ``{0, 1}`` and U(1) ``{-1, 0, +1}``. That is what
+puts a C4v ansatz on this lane, and its two-site energy is :data:`ENERGY_BASELINE`.
 
-x64 is enabled process-globally in ``tests/conftest.py``; every tolerance here depends on it.
+Like ``tests/integration/test_vmc.py`` it adds nothing to ``src/tenet``; the only code of
+its own is the second Onsager form, the observables -- Baxter's telescoping and the 2x1
+patch, which are geometry-specific and therefore not the library's -- and the tolerances.
 
-**Runtime: the budget is 100 s, and #102's 30 s is withdrawn with arithmetic** (#105, #107).
-#102 asked for 30 s for this module against
-``test_vmc.py``'s 2.92 s. The Ising half -- every test with an oracle behind it -- was 5.7 s
-ungraded and is **11.0 s** graded, of which about 1.5 s is #104's new tests and the rest is
-the grading making the *existing* gradient tests slower. #104 asked for ``chi`` to come down
-before the budget went up; measured, ``chi`` is not the lever. The cost is the **first**
+x64 is enabled process-globally in ``tests/conftest.py``; every tolerance here depends on
+it.
+
+**Runtime: the budget is 220 s** (199.5 s measured, plus load headroom), and the
+arithmetic is one fixture. The cost is neither ``chi`` nor the sweeps: it is the **first**
 gradient through each distinct bond structure -- the fusion-tree enumeration and per-block
-plan build -- and it is 3.28 s at ``chi=8`` against 2.64 s at ``chi=16``, while every
-subsequent gradient through an already-planned structure is 0.37 s at either. So the saving
-came from *reusing* structures instead of shrinking them: the retired-``NaN`` test moved
-from ``chi=8`` to ``chi=16`` (13.5 s -> 11.0 s), which costs nothing -- the near-critical
-within-sector gap is ``6.6e-3`` there against ``5.1e-2`` at ``chi=8``, the same statement.
-What would actually move this number is the graded plan cache, which is M9's work, not a
-tolerance here.
-
-The iPEPS half is the rest, and since #107 the old diagnosis in this paragraph is
-**retired rather than restated**, on four points:
-
-1. **The rank-10 double layer no longer exists.** ``ipeps_bulk``, ``ipeps_bulk_open`` and
-   their four fused ``(D_ket, D_bra)`` bonds are deleted; the environment edge carries the
-   ket bond and its conjugate as two rank-4 legs and the site enters as a ket and then a
-   bra (froSTspin ``ctm_contract.py``:42,53, YASTN ``_env_contractions.py``:221-224). So
-   the 841-block intermediate that every earlier version of this paragraph was about is
-   not slow any more, it is *absent*, and #105's 4 808 ``repartition_plan`` terms with it.
-   **#105's 841:1 same-shape bucket multiplicity goes with them** (#123): it was measured
-   on that intermediate, and on the shipped formulation the multiplicity is 10:1 mean /
-   30:1 max. Every projection built on 841:1 is about a code path that no longer exists.
-2. **The peak is now rank 6 / 51 blocks** at SU(2) chi=6, against rank 10 / 841 --
-   froSTspin's ``2*a*d*chi**2*D**4`` instead of ``d**2 D**8``. Per enlarged corner: 4 852 ->
-   1 839 ``ar.do`` calls and 95 -> 52 distinct program keys at SU(2); for the open corner
-   the physics energy needs, 18 546 -> 2 315 calls. The edge, measured on its own rather
-   than assumed to follow the corner, goes the other way on calls and the right way on
-   keys: 906 -> 1 836 ``ar.do`` calls but 133 -> 52 program keys at SU(2) (599 -> 1 026
-   and 78 -> 50 at U(1)), because it no longer absorbs a pre-built double layer. The
-   forward ``energy`` is 0.48 s -> 0.36 s at SU(2). The *warm* gradient is not faster --
-   4.84 s -> 5.42 s at SU(2), 1.22 s -> 2.01 s at U(1) -- because unfusing trades a few
-   large blocks for many small ones and eager per-block dispatch is charged per block.
-   That is the same mechanism as (3) seen from the other end, and it is the honest half
-   of the trade.
-3. **What remains is one-off XLA compiles**, and that is where the redesign pays: the
-   *cold* SU(2) ``value_and_grad(energy)`` is 37.5 s -> 23.8 s and
-   ``test_ipeps_energy_is_real[su2]`` 36.8 s -> 27.0 s, because the number of distinct
-   ``(primitive, aval, params)`` programs falls with the number of distinct block shapes.
-   The U(1) cold case does not move at all (22.8 s -> 22.8 s): U(1) has no multiplets, so
-   there was no fusion blow-up to remove, and its warm regression is not bought back.
-   **The floor is 2 002 one-off compiles at ~9.7 ms, ~19.4 s** (#123, re-measured on the
-   shipped formulation), not #105's ~2 640 / ~24.7 s, and it is a function of how many
-   distinct block *shapes* the workload has. **Block bucketing is not its fix and #74's
-   option 1 is refused, measured** (#123): stacking a shape bucket costs ``N+1`` XLA
-   primitives and the unstack ``N``, so it can never beat the ``N`` transposes it
-   replaces, and stacking *invents* one aval per ``(shape, bucket size)`` -- so it raises
-   the compile count it was meant to lower, 2 002 -> 3 800, with eager warm SU(2)
-   5.43 -> 7.49 s and jit steady 0.73 -> 5.78 ms. What is left for this floor is
-   ``jax.jit`` (13.99 s once, 0.55 ms steady at SU(2)) or nothing. What #123 *did* take
-   out of the executor is duplicated work, not compiles: one ``transpose`` per distinct
-   source block instead of one per plan term, worth 22 991 -> 14 651 ``ar.do`` calls and
-   5.43 s -> 4.18 s warm at SU(2) (2.87 terms per source), and nothing at U(1) (1.00).
-4. **#102's 30 s is still not reached, and since #123 nothing in an executor loop
-   reaches it** -- #74's remaining answer is option 4 (amortization, i.e. ``jax.jit``),
-   not option 1. A
-   contraction order changes how many primitives run and how many distinct *shapes* they
-   see; it cannot make a distinct shape stop implying a distinct program. **The budget is
-   100 s** (95.8-98.1 s measured over two runs, plus load headroom), from 110 s: the whole
-   module is where it was -- 97.8 s for 48 tests before #107, 95.8-98.1 s for 52 after,
-   the four new ones being the ~4.2 s migration criteria -- because the ~10 s the SU(2)
-   compile path gives back is spent again on warm dispatch. #107's win is a *structural*
-   one (no rank-10, a peak that scales as ``chi**2 D**4``) plus a cold-path one; it was
-   never going to be a wall-clock one on a module whose floor is compilation. Deleting the
-   SU(2) parametrization -- the only alternative -- would delete the reason the iPEPS half
-   exists, and ``jax.jit`` stays rejected (#105: compiling the SU(2) gradient costs more
-   than running the three eager ones this module needs, and it would hide the point that
-   ``ctmrg`` sits outside the trace and ``ctmrg_unrolled`` inside it).
+plan build -- plus one-off XLA compiles. Measured at ``CHI_IPEPS = 6``: the two cold
+gradients are 62 s (U(1)) and 11 s (SU(2)) against 8.9 s and 2.6 s warm, the teaching
+lane's own ``main()`` is 52 s, and everything else in the module is under 20 s. The U(1)
+number is what the budget is: a rotation identifies a virtual space with its dual, so a
+C4v ansatz needs a **self-conjugate** virtual space, and the smallest genuine U(1) one is
+``{-1, 0, +1}`` at ``D = 3``. Neither ``k`` nor ``chi`` moves it -- ``K_IPEPS`` 1 and 2
+cost the same 62 s, and ``chi`` 6 and 8 differ by 6 % -- because it is a count of distinct
+block shapes and not of arithmetic. Every environment and every gradient here is therefore
+built once per module and shared. ``jax.jit`` around the traced region stays rejected:
+compiling the gradient costs more than running the few eager ones this module needs, and
+it would hide the point that ``iterate_`` sits outside the trace and ``update_(bond=B)``
+inside it.
 """
 
 import contextlib
@@ -115,7 +60,10 @@ import pytest
 from helpers import check_example_page
 
 import tenet
-from tenet import SymmetricTensor
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet.network import EnvCTMc4v, Peps, SquareLattice, flip
+from tenet.structure import TensorStructure
+from tenet.symmetry import SU2, U1, Z2, SU2Sector, U1Sector, Z2Sector
 
 jax = pytest.importorskip("jax")
 jnp = pytest.importorskip("jax.numpy")
@@ -124,72 +72,128 @@ import tenet.ad  # noqa: E402
 import tenet.pytree  # noqa: E402, F401  # registration is the import's side effect
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples" / "toy_codes"))
-import ctmrg  # noqa: E402
+import ctmrg  # noqa: E402  # the teaching lane, which writes its own CTMRG out
+from ising import onsager  # noqa: E402  # the closed form, borrowed rather than copied
+
+# ``opt_einsum``'s greedy path, for the patch contractions only. Simplification: greedy,
+# not "auto" -- at seven operands "auto"'s dynamic-programming *search* costs an order of
+# magnitude more than the contraction it plans, and it is re-run on every call.
+PATH = "greedy"
 
 CHI, K = 16, 4
+CHI_IPEPS, K_IPEPS = 6, 2
 PROVIDERS = ["u1", "su2"]
 
-K_IPEPS = 2
+BETA_C = 0.4406867935097714  # ln(1 + sqrt(2)) / 2
 
 # The ordered phase asks a sharper question than the disordered one -- whether two singular
 # values in *different* parity blocks are equal to the last bits -- so its environments are
-# swept to the float64 floor rather than to the default 1e-10. Measured: 134 sweeps at
-# beta=0.5 and 66 at beta=0.6, each well under a tenth of a second at chi=16.
-TOL_ORDERED, SWEEPS_ORDERED = 1e-14, 200
+# swept to the float64 floor rather than to the default 1e-10.
+TOL_ORDERED, SWEEPS_ORDERED = 1e-14, 300
 
-# Converging an environment is the expensive part and nothing here mutates one, so each is
-# built once per module. Simplification: a plain dict, not a fixture per beta -- the key is a
-# tuple of floats and ints and the values are immutable.
+# Converging an environment is the expensive part, so each is built once per module.
+# Simplification: a plain dict, not a fixture per beta -- the key is a tuple of floats and
+# ints, and nothing below mutates a stored environment (every traced run seeds a fresh one).
 _ENVS: dict = {}
 
 
+# --- the classical model, its observable and its two closed forms -------------------
+
+
+def ising(beta: float) -> SymmetricTensor:
+    """The Boltzmann tensor on four identical Z2 legs, ``a[t,l,b,r] = sum_s prod W[s,.]``.
+
+    ``W = [[sqrt cosh b, sqrt sinh b], [sqrt cosh b, -sqrt sinh b]]`` *is* the parity
+    basis, so summing over ``s`` annihilates every entry with an odd number of odd legs:
+    the grading is the statement, not a claim checked afterwards.
+    """
+    c, s = math.sqrt(math.cosh(beta)), math.sqrt(math.sinh(beta))
+    w = np.array([[c, s], [c, -s]])
+    block = np.einsum("st,sl,sb,sr->tlbr", w, w, w, w)
+    space = GradedSpace.new(Z2, {Z2Sector(0): 1, Z2Sector(1): 1})
+    return SymmetricTensor.from_dense(block, (Leg(space, OUT),) * 4)
+
+
+def traced_ising(beta):
+    """:func:`ising` with a *traced* ``beta``: blocks through ``jax.numpy``, no
+    ``from_dense``, because a symmetry check is a concrete-value question."""
+    c, s = jnp.sqrt(jnp.cosh(beta)), jnp.sqrt(jnp.sinh(beta))
+    space = GradedSpace.new(Z2, {Z2Sector(0): 1, Z2Sector(1): 1})
+    legs = (Leg(space, OUT),) * 4
+    blocks = {}
+    for key in TensorStructure(legs).block_order:
+        w = [c if sector.parity == 0 else s for sector in key.output_tree.uncoupled]
+        w += [c if sector.parity == 0 else s for sector in key.input_tree.uncoupled]
+        blocks[key] = jnp.full((1, 1, 1, 1), 2.0 * (w[0] * w[1] * w[2] * w[3]))
+    return SymmetricTensor.from_blocks(legs, blocks)
+
+
+def onsager_elliptic(beta: float, points: int = 200_001) -> float:
+    """``beta f`` from the elliptic form: ``-beta f = ln(2 cosh 2b) + (1/2pi) int_0^pi dphi
+    ln[(1 + sqrt(1 - kappa^2 sin^2 phi))/2]``, ``kappa = 2 sinh(2b)/cosh^2(2b)``.
+
+    Algebraically the same number as ``examples/toy_codes/ising.py``'s ``onsager`` and
+    numerically an independent route to it: different integrand, different singularity
+    structure, same grid rule.
+    """
+    kappa = 2.0 * np.sinh(2.0 * beta) / np.cosh(2.0 * beta) ** 2
+    phi = np.linspace(0.0, np.pi, points)
+    integrand = np.log((1.0 + np.sqrt(1.0 - (kappa * np.sin(phi)) ** 2)) / 2.0)
+    return -(np.log(2.0 * np.cosh(2.0 * beta)) + np.trapezoid(integrand, phi) / (2.0 * np.pi))
+
+
+def log_kappa(env, site=(0, 0)):
+    """``ln`` of the partition function per site, Baxter's corner-transfer telescoping.
+
+    ``kappa = z_a z_c / z_h**2``: four corners cover an ``L x L`` patch, four corners with
+    four edges and the bulk tensor cover ``(L + 1) x (L + 1)``, and four corners with two
+    edges cover ``L x (L + 1)``. The four-corner and four-corner-two-edge objects put two
+    corners next to each other, which crosses a sublattice boundary, so one of each pair
+    enters flipped; the eight-tensor ring around a site does not, because corners and edges
+    already alternate around it.
+    """
+    e, a = env[site], env.psi[site]
+    c, cf, t, tf = e.tl, flip(e.tl), e.t, flip(e.t)
+    z_c = tenet.full_trace(tenet.einsum("ab,ac,dc,eb->de", c, cf, c, cf))
+    z_h = tenet.full_trace(tenet.einsum("ab,ac,dfc,ed,eg,gfh->hb", c, cf, tf, cf, c, t))
+    z_a = tenet.full_trace(
+        tenet.einsum("ab,apc,cd,eqd,fe,grf,gh,hsk,spqr->kb", c, t, c, t, c, t, c, t, a)
+    )
+    return ar.do("log", z_a * z_c / z_h**2)
+
+
+def beta_free_energy(env, site=(0, 0)):
+    """``beta f = -ln kappa``. Differentiating it in ``beta`` gives the internal energy per
+    site, which Onsager has in closed form."""
+    return -log_kappa(env, site)
+
+
 def converged(beta: float, chi: int = CHI, tol: float = 1e-10, max_sweeps: int = 100):
-    """The :class:`CTMRG_out`, memoized on the full set of knobs that decides it."""
+    """``(env, CTM_out)``, memoized on the full set of knobs that decides it."""
     key = (beta, chi, tol, max_sweeps)
     if key not in _ENVS:
-        bulk = ctmrg.ising_bulk(beta)
-        _ENVS[key] = tenet.network.ctmrg(
-            *tenet.network.single_layer_ctm(bulk), chi=chi, tol=tol, max_sweeps=max_sweeps
-        )
+        env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), ising(beta)))
+        _ENVS[key] = (env, env.iterate_(max_bond=chi, max_sweeps=max_sweeps, corner_tol=tol))
     return _ENVS[key]
 
 
-def env(beta: float, chi: int = CHI, tol: float = 1e-10, max_sweeps: int = 100):
-    return converged(beta, chi, tol, max_sweeps).env
-
-
-def ordered_env(beta: float, chi: int = CHI):
+def ordered(beta: float, chi: int = CHI):
     return converged(beta, chi, TOL_ORDERED, SWEEPS_ORDERED)
 
 
-def spectrum_by_sector(c: SymmetricTensor) -> dict[int, list[float]]:
+def spectrum_by_sector(corner: SymmetricTensor) -> dict[int, list[float]]:
     """The corner spectrum split by Z2 charge, each half descending.
 
-    ``tenet.network.spectrum`` deliberately throws the sector labels away; every ordered-phase
-    criterion below is *about* those labels, so they are recovered here rather than in the
-    example. The corner is diagonal by construction, so this reads block diagonals.
+    [spectrum][tenet.network.spectrum] deliberately throws the sector labels away and every
+    ordered-phase criterion below is *about* those labels, so they are recovered here. The
+    renormalized corner is ``V^dagger U S`` rather than a diagonal, so the spectrum is an
+    SVD of it and not a block diagonal.
     """
+    s = tenet.linalg.svd(corner, ((0,), (1,)))[1]
     return {
         sector.parity: sorted((float(v) for v in ar.do("diag", m)), reverse=True)
-        for sector, m in tenet.to_matrices(c).items()
+        for sector, m in tenet.to_matrices(s).items()
     }
-
-
-def ising_block(beta: float) -> np.ndarray:
-    """The dense ``(2,2,2,2)`` Ising bulk, written here independently of the example so
-    "the regrade changed no numbers" is a claim against a second source."""
-    c, s = math.sqrt(math.cosh(beta)), math.sqrt(math.sinh(beta))
-    w = np.array([[c, s], [c, -s]])
-    return np.einsum("sl,su,sr,sd->lurd", w, w, w, w)
-
-
-def ipeps_env(provider: str):
-    if provider not in _ENVS:
-        a, h = ctmrg.build_ipeps(provider), ctmrg.build_h(provider)
-        chi = ctmrg.CHI_IPEPS[provider]
-        env = tenet.network.ctmrg(*tenet.network.double_layer_ctm(ctmrg.c4v(a)), chi=chi)
-        _ENVS[provider] = (a, h, env.env)
-    return _ENVS[provider]
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -208,22 +212,9 @@ def broadened_svd():
 # --- 1. the oracle, pinned before it is used --------------------------------------
 
 
-def onsager_elliptic(beta: float, points: int = 200_001) -> float:
-    """``beta f`` from the elliptic form: ``-beta f = ln(2 cosh 2b) + (1/2pi) int_0^pi dphi
-    ln[(1 + sqrt(1 - kappa^2 sin^2 phi))/2]``, ``kappa = 2 sinh(2b)/cosh^2(2b)``.
-
-    Algebraically the same number as ``ctmrg.onsager``'s form and numerically an independent
-    route to it: different integrand, different singularity structure, same grid rule.
-    """
-    kappa = 2.0 * np.sinh(2.0 * beta) / np.cosh(2.0 * beta) ** 2
-    phi = np.linspace(0.0, np.pi, points)
-    integrand = np.log((1.0 + np.sqrt(1.0 - (kappa * np.sin(phi)) ** 2)) / 2.0)
-    return -(np.log(2.0 * np.cosh(2.0 * beta)) + np.trapezoid(integrand, phi) / (2.0 * np.pi))
-
-
 @pytest.mark.parametrize("beta", [0.2, 0.3, 0.4, 0.5])
 def test_the_two_onsager_closed_forms_agree(beta):
-    assert ctmrg.onsager(beta) == pytest.approx(onsager_elliptic(beta), abs=1e-12)
+    assert onsager(beta) == pytest.approx(onsager_elliptic(beta), abs=1e-12)
 
 
 # --- 2. CTMRG against the oracle ---------------------------------------------------
@@ -231,223 +222,252 @@ def test_the_two_onsager_closed_forms_agree(beta):
 
 @pytest.mark.parametrize("beta", [0.3, 0.4, 0.5])
 def test_free_energy_matches_onsager(beta):
-    got = float(ctmrg.beta_free_energy(beta, env(beta), k=K))
-    assert got == pytest.approx(ctmrg.onsager(beta), rel=1e-6)
+    env, _ = converged(beta)
+    assert float(beta_free_energy(env)) == pytest.approx(onsager(beta), rel=1e-6)
 
 
 @pytest.mark.parametrize("beta", [0.5, 0.6])
 def test_free_energy_matches_onsager_in_the_ordered_phase(beta):
-    """New with #104's grading, and the reason it exists.
-
-    Onsager's closed form is valid on both sides of ``beta_c``, but an *ungraded*
+    """Onsager's closed form is valid on both sides of ``beta_c``, but an *ungraded*
     finite-chi environment may break the Z2 symmetry spuriously in the ordered phase --
-    YASTN passes ``sym='Z2'`` to its CTMRG Ising example precisely to stop that -- so #102
-    fenced this file into ``beta < beta_c`` and had no oracle here. Measured relative
-    deviations: ``5.5e-14`` at ``beta=0.5`` and ``5.6e-16`` at ``beta=0.6``.
-    """
-    assert beta > ctmrg.BETA_C
-    got = float(ctmrg.beta_free_energy(beta, ordered_env(beta).env, k=K))
-    assert got == pytest.approx(ctmrg.onsager(beta), rel=1e-6)
+    YASTN passes ``sym='Z2'`` to its CTMRG Ising example precisely to stop that -- so the
+    grading is what puts an oracle here at all."""
+    assert beta > BETA_C
+    env, _ = ordered(beta)
+    assert float(beta_free_energy(env)) == pytest.approx(onsager(beta), rel=1e-6)
 
 
 def test_convergence_is_monotone_and_terminating():
-    """Asserted, not assumed: the corner-spectrum change reaches ``tol`` inside
-    ``max_sweeps``, decreases over the run, and takes a pinned number of sweeps."""
-    out = converged(0.4)
-    history = out.history
-    assert out.converged  # the field, not a re-derivation: terminated on the tolerance
-    assert out.sweeps < 100
-    assert 40 <= out.sweeps <= 120  # 72 as measured under the Z2 grading; the range is the pin
+    """Asserted, not assumed: the corner-spectrum change reaches ``corner_tol`` inside the
+    sweep budget, and it decreases over the run.
+
+    [CTM_out][tenet.network.CTM_out] reports the exit and not the history, so the second
+    half is re-derived here from [corner_spectra][tenet.network.EnvCTM.corner_spectra] on
+    a sweep of its own -- the same quantity ``iterate_`` stops on.
+    """
+    _, out = converged(0.4)
+    assert out.converged  # the field, not a re-derivation: it stopped on the tolerance
+    assert 40 <= out.sweeps <= 120
+
+    env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), ising(0.4)))
+    previous, history = env.corner_spectra(), []
+    for _ in range(40):
+        env.update_(max_bond=CHI)
+        current = env.corner_spectra()
+        history.append(max(_gap(previous[k], current[k]) for k in current))
+        previous = current
     tail = history[len(history) // 2 :]
     assert all(b < a for a, b in zip(tail, tail[1:], strict=False)), tail
+
+
+def _gap(old: list[float], new: list[float]) -> float:
+    n = max(len(old), len(new))
+    old, new = old + [0.0] * (n - len(old)), new + [0.0] * (n - len(new))
+    return max(abs(a - b) for a, b in zip(old, new, strict=True))
 
 
 # --- 3. the gradient against the oracle's derivative -------------------------------
 
 
+def unrolled_beta_f(beta, seed, bond, k=K):
+    """``beta f`` after exactly ``k`` fixed-bond moves from ``seed``.
+
+    ``seed`` is the converged ``(corner, edge)``: the truncated backprop's *initial
+    condition*, which carries no gradient, while the ``k`` moves inside do.
+    """
+    env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), traced_ising(beta)), init=None)
+    env.env[0, 0].tl, env.env[0, 0].t = seed
+    for _ in range(k):
+        env.update_(bond=bond)
+    return beta_free_energy(env)
+
+
+def warm(beta: float, chi: int = CHI, tol: float = 1e-10, max_sweeps: int = 100):
+    """``(seed, bond)`` for :func:`unrolled_beta_f`, from a converged environment built on
+    the *traced* bulk builder so that the blocks are already JAX arrays."""
+    key = ("warm", beta, chi, tol, max_sweeps)
+    if key not in _ENVS:
+        env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), traced_ising(beta)))
+        env.iterate_(max_bond=chi, max_sweeps=max_sweeps, corner_tol=tol)
+        local = env[0, 0]
+        _ENVS[key] = ((local.tl, local.t), local.tl.legs[0].space)
+    return _ENVS[key]
+
+
 def test_grad_matches_the_onsager_internal_energy_and_central_differences():
     beta, delta = 0.4, 1e-5
-    got = float(jax.grad(ctmrg.beta_free_energy)(beta, env(beta), K))
-    oracle = (ctmrg.onsager(beta + delta) - ctmrg.onsager(beta - delta)) / (2 * delta)
+    seed, bond = warm(beta)
+    got = float(jax.grad(unrolled_beta_f)(beta, seed, bond, K))
+    oracle = (onsager(beta + delta) - onsager(beta - delta)) / (2 * delta)
     assert got == pytest.approx(oracle, rel=1e-4)
 
     fd = (
-        float(ctmrg.beta_free_energy(beta + delta, env(beta), k=K))
-        - float(ctmrg.beta_free_energy(beta - delta, env(beta), k=K))
+        float(unrolled_beta_f(beta + delta, seed, bond, K))
+        - float(unrolled_beta_f(beta - delta, seed, bond, K))
     ) / (2 * delta)
     assert got == pytest.approx(fd, rel=1e-6)
 
 
 def test_grad_matches_the_onsager_internal_energy_in_the_ordered_phase():
-    """``beta = 0.6``, the same oracle on the other side of ``beta_c``. Measured relative
-    deviation ``8.6e-11``; the corner spectrum there is exactly doubled across the parity
-    sectors, and the gradient is finite anyway -- see :func:`test_the_retired_nan_criterion`."""
+    """``beta = 0.6``, the same oracle on the other side of ``beta_c``. The corner spectrum
+    there is exactly doubled across the parity sectors, and the gradient is finite anyway
+    -- see :func:`test_the_retired_nan_criterion`."""
     beta, delta = 0.6, 1e-5
-    got = float(jax.grad(ctmrg.beta_free_energy)(beta, ordered_env(beta).env, K))
-    oracle = (ctmrg.onsager(beta + delta) - ctmrg.onsager(beta - delta)) / (2 * delta)
+    seed, bond = warm(beta, CHI, TOL_ORDERED, SWEEPS_ORDERED)
+    got = float(jax.grad(unrolled_beta_f)(beta, seed, bond, K))
+    oracle = (onsager(beta + delta) - onsager(beta - delta)) / (2 * delta)
     assert got == pytest.approx(oracle, rel=1e-4)
 
 
 def test_k_dependence_is_measured_not_assumed():
     """Two statements, because a converged environment makes the interesting one invisible.
 
-    At the default ``tol=1e-10`` the four gradients agree to float64 noise: the environment
-    is *at* its fixed point when the traced region starts, so the truncation is irrelevant
-    and no ratio computed from those differences means anything. Deliberately stopping the
-    sweep early (``tol=1e-6``) puts the K-dependence above the noise floor, and there the
-    truncated backprop is visibly converging.
+    At the default ``corner_tol=1e-10`` the four gradients agree to float64 noise: the
+    environment is *at* its fixed point when the traced region starts, so the truncation is
+    irrelevant and no ratio computed from those differences means anything. Deliberately
+    stopping the sweep early (``corner_tol=1e-6``) puts the K-dependence above the noise
+    floor, and there the truncated backprop is visibly converging.
     """
-    converged = {k: float(jax.grad(ctmrg.beta_free_energy)(0.4, env(0.4), k)) for k in (1, 2, 4, 8)}
-    assert max(abs(g / converged[8] - 1) for g in converged.values()) < 1e-11
+    seed, bond = warm(0.4)
+    tight = {k: float(jax.grad(unrolled_beta_f)(0.4, seed, bond, k)) for k in (1, 2, 4, 8)}
+    assert max(abs(g / tight[8] - 1) for g in tight.values()) < 1e-11
 
     beta = 0.25
-    loose = tenet.network.ctmrg(
-        *tenet.network.single_layer_ctm(ctmrg.ising_bulk(beta)), chi=CHI, tol=1e-6
-    ).env
-    gradients = {k: float(jax.grad(ctmrg.beta_free_energy)(beta, loose, k)) for k in (1, 2, 4, 8)}
-    first = abs(gradients[1] - gradients[2])
-    last = abs(gradients[4] - gradients[8])
-    assert last < first / 10, gradients
+    loose_seed, loose_bond = warm(beta, CHI, 1e-6)
+    loose = {
+        k: float(jax.grad(unrolled_beta_f)(beta, loose_seed, loose_bond, k)) for k in (1, 2, 4, 8)
+    }
+    assert abs(loose[4] - loose[8]) < abs(loose[1] - loose[2]) / 10, loose
 
 
 # --- 4. the outside-decide / inside-differentiate boundary -------------------------
 
 
-def test_unrolled_traces_once_and_the_frozen_bond_is_static():
+def test_the_traced_region_traces_once_and_the_frozen_bond_is_static():
     beta = 0.4
-    c, e, bond = env(beta)
+    seed, bond = warm(beta)
     count = 0
 
-    @partial(jax.jit, static_argnums=(3, 4))
-    def objective(c, e, bulk, bond, k):
+    @partial(jax.jit, static_argnums=(2, 3))
+    def objective(seed, beta, bond, k):
         nonlocal count
         count += 1  # a Python side effect: trace time only
-        # the absorber is built inside, from the traced bulk: it is two closures, so the
-        # gradient w.r.t. `bulk` still flows -- the closure is captured under the trace
-        new_c, _ = tenet.network.ctmrg_unrolled(c, e, tenet.network.single_layer(bulk), bond, k=k)
-        dagger = tenet.adjoint(new_c)
-        # the four-corner ring of `log_kappa`; `norm(new_c)` would be the constant 1,
-        # since every move renormalizes, and a constant has nothing to differentiate
-        return tenet.full_trace(tenet.einsum("ab,ac,dc,eb->de", new_c, dagger, new_c, dagger))
+        env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), traced_ising(beta)), init=None)
+        env.env[0, 0].tl, env.env[0, 0].t = seed
+        for _ in range(k):
+            env.update_(bond=bond)
+        corner = env[0, 0].tl
+        dagger = tenet.adjoint(corner)
+        # `norm(corner)` would be the constant 1, since every move renormalizes, and a
+        # constant has nothing to differentiate
+        return tenet.full_trace(tenet.einsum("ab,ac,dc,eb->de", corner, dagger, corner, dagger))
 
-    grad = jax.grad(objective, argnums=2)
-    a = grad(c, e, ctmrg.ising_bulk(beta), bond, K)
-    b = grad(c, e, ctmrg.ising_bulk(beta + 0.01), bond, K)
+    grad = jax.grad(objective, argnums=1)
+    a = grad(seed, beta, bond, K)
+    b = grad(seed, beta + 0.01, bond, K)
     assert count == 1  # different block values, same structure, one trace
-    assert any(
-        not np.allclose(np.asarray(x), np.asarray(y))
-        for x, y in zip(a.blocks, b.blocks, strict=True)
-    )
+    assert not np.isclose(float(a), float(b))
 
-    smaller_env = tenet.network.ctmrg(
-        *tenet.network.single_layer_ctm(ctmrg.ising_bulk(beta)), chi=8
-    ).env
-    smaller = smaller_env.bond
-    assert smaller != bond
-    grad(c, e, ctmrg.ising_bulk(beta), bond, K)
+    smaller, _ = converged(beta, 8)
+    smaller_bond = smaller[0, 0].tl.legs[0].space
+    assert smaller_bond != bond
+    grad(seed, beta, bond, K)
     assert count == 1  # the same frozen bond does not retrace ...
-    grad(c, e, ctmrg.ising_bulk(beta), smaller, K)
+    grad(seed, beta, smaller_bond, K)
     assert count == 2  # ... a different one does: the GradedSpace is part of the key
 
 
-def test_svd_truncated_is_refused_under_jit():
-    """The boundary in this example is structural, not a convention.
+def test_deciding_a_bond_is_refused_under_jit():
+    """The boundary is structural, not a convention, and it has two independent halves.
 
-    Two refusals, one per reason. ``move(chi=...)`` decides a bond space from the singular
-    *values*, which is ``tenet.StructureChangingError`` by construction (#64). ``ctmrg``
-    additionally *reads* the corner spectrum to decide when to stop, so it cannot be traced
-    even before it gets there -- a data-dependent loop exit is not a tracing edge case, it
-    is the thing the outside/inside split exists to keep outside.
+    ``update_(max_bond=...)`` decides a bond space from the singular *values*, which is
+    ``tenet.StructureChangingError`` by construction, and ``iterate_`` runs that same
+    sweep, so it raises there first. Its *loop exit* is a second, separate obstacle:
+    ``corner_spectra`` reads a spectrum to decide when to stop, and a data-dependent loop
+    exit is not a tracing edge case -- it is the thing the outside/inside split exists to
+    keep outside. It is shown on a traceable ``update_(bond=B)`` move, where the
+    truncation is no longer in the way.
     """
-    absorb, c, e = tenet.network.single_layer_ctm(ctmrg.ising_bulk(0.4))
+    seed, bond = warm(0.4)
+
+    def decide(beta):
+        env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), traced_ising(beta)))
+        env.update_(max_bond=4)
+        return log_kappa(env)
+
     with pytest.raises(tenet.StructureChangingError, match="tenet.linalg.svd"):
-        jax.jit(partial(tenet.network.move, chi=4), static_argnums=(2,))(c, e, absorb)
+        jax.jit(decide)(0.4)
+
+    def exit_criterion(beta):
+        env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), traced_ising(beta)), init=None)
+        env.env[0, 0].tl, env.env[0, 0].t = seed
+        env.update_(bond=bond)
+        return env.corner_spectra()
+
     with pytest.raises(jax.errors.ConcretizationTypeError):
-        jax.jit(partial(tenet.network.ctmrg, chi=4, max_sweeps=1), static_argnums=(0,))(
-            absorb, c, e
-        )
+        jax.jit(exit_criterion)(0.4)
 
 
 @pytest.mark.parametrize(("beta", "chi"), [(0.44, CHI), (0.6, CHI)])
 def test_the_retired_nan_criterion(beta, chi):
-    """#102's ``NaN``-without-``tenet.ad`` criterion, **retired** — with the reason.
+    """A ``NaN``-without-``tenet.ad`` criterion, **retired** -- with the reason.
 
     The criterion expected ``NaN`` from JAX's stock SVD VJP near ``beta_c`` and a finite
-    gradient from ``tenet.ad``. #103 found it unreproducible on the *ungraded* corner,
-    whose spectrum has no exactly degenerate singular values, and deferred it to the
-    bosonic Z2 grading. The grading is here, it *does* produce exact degeneracies — the
-    smallest cross-sector splitting at ``beta=0.6, chi=16`` is ``3.4e-20`` relative — and
-    the ``NaN`` still does not appear. That is not a near miss; it is structural, and it
-    is why the criterion is retired rather than deferred a third time:
+    gradient from ``tenet.ad``. The Z2 grading *does* produce exact degeneracies in the
+    ordered-phase corner, and the ``NaN`` still does not appear. That is not a near miss;
+    it is structural:
 
     **every exact degeneracy in the Z2 Ising corner is *across* parity sectors**, because
     the two partners differ by the global spin flip, which *is* the Z2 charge; and a graded
     factorization runs one SVD **per coupled sector**, exactly as ``tenet.ad`` broadens per
-    coupled sector (#76). So the blocks separate the partners before any VJP sees them, and
-    every within-sector gap stays healthy — measured ``6.6e-3`` at ``beta=0.44, chi=16``
-    (``5.1e-2`` at ``chi=8``) and ``3.6e-10`` at ``beta=0.6, chi=16``, pinned by
+    coupled sector. So the blocks separate the partners before any VJP sees them, and every
+    within-sector gap stays healthy -- pinned by
     :func:`test_no_exact_within_sector_degeneracy_anywhere`. **Grading is what removes the
     ``NaN``, not what creates it.**
 
-    Where the ``NaN`` actually lives is the *ungraded* ordered-phase run, whose single SVD
-    sees the cross-sector doublet as one degenerate pair: measured min relative gap
-    ``2.8e-17`` at ``beta=0.6, chi=16``. That configuration is precisely the one #102
-    forbade for YASTN's spurious-symmetry-breaking reason, so it is measured and reported
-    in the PR body, never asserted on.
+    Where the ``NaN`` would live is the *ungraded* ordered-phase run, whose single SVD sees
+    the cross-sector doublet as one degenerate pair. That configuration is precisely the one
+    a finite-chi ordered run is fenced away from for YASTN's spurious-symmetry-breaking
+    reason, so it is measured and reported in the PR body, never asserted on.
 
     What is pinned here: the gradient is finite **with and without** ``tenet.ad.install()``
-    on both sides of ``beta_c``, and the two agree to ``1e-9`` (measured: to the last bit,
-    ``2.2e-16``), so the broadening does not perturb an answer whose per-sector gaps are
-    healthy.
+    on both sides of ``beta_c``, and the two agree to ``1e-9``, so the broadening does not
+    perturb an answer whose per-sector gaps are healthy.
     """
-    if beta > ctmrg.BETA_C:
-        c, e, bond = ordered_env(beta, chi).env
-    else:
-        c, e, bond = converged(beta, chi, 1e-10, 60).env
+    tol, sweeps = (TOL_ORDERED, SWEEPS_ORDERED) if beta > BETA_C else (1e-10, 60)
+    seed, bond = warm(beta, chi, tol, sweeps)
 
-    broadened = float(jax.grad(ctmrg.beta_free_energy)(beta, (c, e, bond), K))
+    broadened = float(jax.grad(unrolled_beta_f)(beta, seed, bond, K))
     assert np.isfinite(broadened)
     tenet.ad.uninstall()
     try:
-        stock = float(jax.grad(ctmrg.beta_free_energy)(beta, (c, e, bond), K))
+        stock = float(jax.grad(unrolled_beta_f)(beta, seed, bond, K))
     finally:
         tenet.ad.install()
     assert np.isfinite(stock)
     assert stock == pytest.approx(broadened, rel=1e-9)
 
 
-# --- 4b. what the Z2 grading buys (#104) -------------------------------------------
+# --- 4b. what the Z2 grading buys --------------------------------------------------
 
 
 @pytest.mark.parametrize("beta", [0.3, 0.44, 0.6])
 def test_the_graded_bulk_is_the_same_numbers(beta):
-    """The Z2-block weight is the dense ``sum_s W W W W`` tensor.
+    """The Z2-block weight is the dense ``sum_s W W W W`` tensor, and the traced builder
+    -- which cannot run ``from_dense``, because a symmetry check is a concrete-value
+    question -- is the same tensor again.
 
-    ``W = [[sqrt cosh b, sqrt sinh b], [sqrt cosh b, -sqrt sinh b]]`` is the parity
-    change of basis, so summing over ``s`` annihilates every entry with an odd number of
-    odd legs: eight of sixteen are exactly zero. The blocks are written as the product
-    ``2 w_l w_u w_r w_d`` while the dense reference sums two terms, so the two agree to
-    rounding, not bit for bit.
+    Summing over ``s`` annihilates every entry with an odd number of odd legs: eight of
+    sixteen are exactly zero and have no block to live in.
     """
-    dense = ising_block(beta)
-    np.testing.assert_allclose(
-        np.asarray(ctmrg.ising_bulk(beta).to_dense()), dense, rtol=0, atol=1e-15
-    )
+    c, s = math.sqrt(math.cosh(beta)), math.sqrt(math.sinh(beta))
+    w = np.array([[c, s], [c, -s]])
+    dense = np.einsum("st,sl,sb,sr->tlbr", w, w, w, w)
+    np.testing.assert_allclose(np.asarray(ising(beta).to_dense()), dense, rtol=0, atol=1e-15)
+    np.testing.assert_allclose(np.asarray(traced_ising(beta).to_dense()), dense, atol=1e-14)
     odd = [idx for idx in np.ndindex(dense.shape) if sum(idx) % 2]
     assert len(odd) == 8
     assert all(dense[idx] == 0.0 for idx in odd)
-
-
-@pytest.mark.parametrize("beta", [0.3, 0.44, 0.6])
-def test_the_bulk_is_z2_symmetric_by_from_dense_accepting_it(beta):
-    """The example builds with ``atol=math.inf`` because ``beta`` is a traced scalar and
-    the symmetry check is a concrete-value question (#82). The check is not lost, it is
-    moved here: untraced, at the **default** relative ``atol``, ``from_dense`` accepts the
-    array — which is the library certifying the grading rather than a comment claiming it.
-    """
-    dense = ising_block(beta)
-    t = SymmetricTensor.from_dense(dense, ctmrg.ising_bulk(beta).legs)
-    np.testing.assert_allclose(np.asarray(t.to_dense()), dense, atol=1e-14)
 
 
 @pytest.mark.parametrize("beta", [0.3, 0.44, 0.6])
@@ -455,20 +475,20 @@ def test_zero_magnetization_is_structural_not_numerical(beta):
     """``<s> = 0`` proved by a refusal, YASTN's "zero magnetization by symmetry".
 
     The spin-insertion impurity ``sum_s s * prod_i W[s,i]`` is nonzero exactly when the
-    number of *odd* legs is odd — it is a Z2-**odd** tensor, and no invariant
+    number of *odd* legs is odd -- it is a Z2-**odd** tensor, and no invariant
     ``SymmetricTensor`` can hold one. ``from_dense`` therefore refuses it with a residual
     naming an offending sector tuple, and *that refusal is the statement*: exact and
-    structural, where the ungraded run could only offer a small float.
+    structural, where an ungraded run could only offer a small float.
 
-    Simplification: measuring a genuine ``<s>`` (rather than proving it zero) wants a dummy leg
-    in the odd sector; nothing here needs one.
+    Simplification: measuring a genuine ``<s>`` (rather than proving it zero) wants a dummy
+    leg in the odd sector; nothing here needs one.
     """
     c, s = math.sqrt(math.cosh(beta)), math.sqrt(math.sinh(beta))
     w = np.array([[c, s], [c, -s]])
-    impurity = np.einsum("s,sl,su,sr,sd->lurd", np.array([1.0, -1.0]), w, w, w, w)
+    impurity = np.einsum("s,st,sl,sb,sr->tlbr", np.array([1.0, -1.0]), w, w, w, w)
     assert np.abs(impurity).max() > 0.1  # the impurity is not the zero array
     with pytest.raises(ValueError) as excinfo:
-        SymmetricTensor.from_dense(impurity, ctmrg.ising_bulk(beta).legs)
+        SymmetricTensor.from_dense(impurity, ising(beta).legs)
     message = str(excinfo.value)
     assert "not symmetric" in message
     assert "Z2Sector(parity=1)" in message  # the odd sector is named
@@ -479,15 +499,12 @@ def test_ordered_phase_spectrum_is_an_exact_cross_sector_doublet(beta):
     """Spontaneous-symmetry-breaking doubling, and it is cross-sector by construction: the
     two partners differ by the global spin flip, which is the Z2 charge.
 
-    Measured maximum relative deviation over the pairing: ``1.0e-13`` at ``beta=0.5`` and
-    ``1.9e-15`` at ``beta=0.6``, both at ``chi=16``. (The issue's standalone probe — a
-    different CTMRG, ``eigh`` rather than ``svd`` — reached ``1.7e-17`` and ``2.0e-20``;
-    its last digits are not predictions of this one's, so the assertion is at ``1e-12``,
-    four orders below anything the disordered phase produces and thirteen below the
-    ``2.5e-3`` a phase-blind test would accept.)
+    The assertion is at ``1e-12``, four orders below anything the disordered phase produces
+    and eleven below the ``2.5e-3`` a phase-blind test would accept.
     """
-    assert beta > ctmrg.BETA_C
-    halves = spectrum_by_sector(ordered_env(beta).env.c)
+    assert beta > BETA_C
+    env, _ = ordered(beta)
+    halves = spectrum_by_sector(env[0, 0].tl)
     assert len(halves[0]) == len(halves[1])
     top = halves[0][0]
     deviations = [abs(x - y) / top for x, y in zip(halves[0], halves[1], strict=True)]
@@ -497,12 +514,11 @@ def test_ordered_phase_spectrum_is_an_exact_cross_sector_doublet(beta):
 @pytest.mark.parametrize(("beta", "chi"), [(0.3, 8), (0.44, 8), (0.44, CHI)])
 def test_disordered_phase_has_no_such_pairing(beta, chi):
     """The other half of the criterion: it distinguishes the phases rather than merely
-    passing. Below ``beta_c`` the two sectors' spectra are unrelated — the *closest*
-    cross-sector approach is ``2.6e-4`` at ``beta=0.3, chi=8``, fourteen orders above the
-    ordered phase — and the full spectrum has no degeneracy at all.
-    """
-    assert beta < ctmrg.BETA_C
-    halves = spectrum_by_sector(converged(beta, chi, 1e-10, 200).env.c)
+    passing. Below ``beta_c`` the two sectors' spectra are unrelated, and the full spectrum
+    has no degeneracy at all."""
+    assert beta < BETA_C
+    env, _ = converged(beta, chi, 1e-10, 200)
+    halves = spectrum_by_sector(env[0, 0].tl)
     top = max(halves[0][0], halves[1][0])
     n = min(len(halves[0]), len(halves[1]))
     closest = min(abs(halves[0][i] - halves[1][i]) / top for i in range(n))
@@ -512,28 +528,14 @@ def test_disordered_phase_has_no_such_pairing(beta, chi):
 
 
 @pytest.mark.parametrize(
-    ("beta", "chi", "tol"),
-    [(0.3, 8, 1e-10), (0.44, 8, 1e-10), (0.44, CHI, 1e-10), (0.4, CHI, 1e-10)],
+    ("beta", "chi"), [(0.3, 8), (0.44, 8), (0.44, CHI), (0.4, CHI), (0.5, CHI), (0.6, CHI)]
 )
-def test_no_exact_within_sector_degeneracy_anywhere(beta, chi, tol):
+def test_no_exact_within_sector_degeneracy_anywhere(beta, chi):
     """The fact that decides the ``NaN`` question, since ``tenet.ad`` broadens per coupled
-    sector: nothing is ever exactly degenerate *within* a sector. Measured smallest
-    within-sector relative gaps — ``1.1e-3`` (0.3/8), ``5.1e-2`` (0.44/8), ``6.6e-3``
-    (0.44/16), ``1.6e-7`` (0.4/16), and in the ordered phase ``5.1e-7`` (0.5/16) and
-    ``3.6e-10`` (0.6/16), the closest approach anywhere measured."""
-    halves = spectrum_by_sector(converged(beta, chi, tol, 200).env.c)
-    top = max(halves[0][0], halves[1][0])
-    gaps = [
-        abs(x - y) / top
-        for values in halves.values()
-        for x, y in zip(values, values[1:], strict=False)
-    ]
-    assert min(gaps) > 1e-12, min(gaps)
-
-
-@pytest.mark.parametrize("beta", [0.5, 0.6])
-def test_no_exact_within_sector_degeneracy_in_the_ordered_phase(beta):
-    halves = spectrum_by_sector(ordered_env(beta).env.c)
+    sector: nothing is ever exactly degenerate *within* a sector, on either side of
+    ``beta_c``."""
+    env, _ = ordered(beta, chi) if beta > BETA_C else converged(beta, chi, 1e-10, 200)
+    halves = spectrum_by_sector(env[0, 0].tl)
     top = max(halves[0][0], halves[1][0])
     gaps = [
         abs(x - y) / top
@@ -546,14 +548,15 @@ def test_no_exact_within_sector_degeneracy_in_the_ordered_phase(beta):
 @pytest.mark.parametrize("chi", [8, 16])
 def test_even_chi_never_splits_a_doublet(chi):
     """``svd_truncated(max_bond=chi)`` ranks singular values *globally* across sectors, and
-    the doublet partners are exactly equal and therefore adjacent in that ranking — so any
+    the doublet partners are exactly equal and therefore adjacent in that ranking -- so any
     even ``chi`` keeps both. This is the bosonic analogue of the SU(2) multiplet-splitting
-    hazard ``ctmrg.CHI_IPEPS`` already documents (Francuz, Schuch, Vanhecke, PRR 7, 013237
-    (2025), Appendix C: *"be careful not to split multiplets when converging the original
-    CTM"*) — cheaper here, because the multiplet size is 2 and known. Asserted, not assumed.
+    hazard (Francuz, Schuch, Vanhecke, PRR 7, 013237 (2025), Appendix C: *"be careful not
+    to split multiplets when converging the original CTM"*) -- cheaper here, because the
+    multiplet size is 2 and known. Asserted, not assumed.
     """
     assert chi % 2 == 0
-    halves = spectrum_by_sector(ordered_env(0.6, chi).env.c)
+    env, _ = ordered(0.6, chi)
+    halves = spectrum_by_sector(env[0, 0].tl)
     assert len(halves[0]) == len(halves[1]) == chi // 2  # equal degeneracy in both sectors
     top = halves[0][0]
     assert max(abs(x - y) / top for x, y in zip(halves[0], halves[1], strict=True)) < 1e-12
@@ -561,20 +564,147 @@ def test_even_chi_never_splits_a_doublet(chi):
 
 # --- 5. the U(1) / SU(2) iPEPS half ------------------------------------------------
 
+#: Virtual and physical space per provider. Both virtual spaces are **self-conjugate**: a
+#: rotation identifies a virtual space with its dual, so no other kind carries a point
+#: group at all.
+SPACES = {
+    "su2": (
+        GradedSpace.new(SU2, {SU2Sector(0): 1, SU2Sector(1): 1}),
+        GradedSpace.new(SU2, {SU2Sector(1): 1}),
+    ),
+    "u1": (
+        GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(0): 1, U1Sector(1): 1}),
+        GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1}),
+    ),
+}
+
+#: The eight elements of C4v as permutations of ``(t, l, b, r)``, physical leg last.
+_ROT, _MIRROR = (1, 2, 3, 0, 4), (1, 0, 3, 2, 4)
+
+
+def _group() -> list[tuple[int, ...]]:
+    compose = lambda p, q: tuple(p[i] for i in q)  # noqa: E731
+    elements, current = [], (0, 1, 2, 3, 4)
+    for _ in range(4):
+        elements.append(current)
+        elements.append(compose(current, _MIRROR))
+        current = compose(current, _ROT)
+    return elements
+
+
+def build_ipeps(provider: str, seed: int = 1) -> SymmetricTensor:
+    """A random single-site iPEPS averaged over the point group: four identical virtual
+    legs, so the 90-degree rotation is the cyclic transpose of the first four axes and the
+    average over the eight elements is invariant under it."""
+    virtual, physical = SPACES[provider]
+    legs = (Leg(virtual, OUT),) * 4 + (Leg(physical, OUT),)
+    a = SymmetricTensor.random(legs, seed=seed)
+    out = None
+    for permutation in _group():
+        turned = tenet.transpose(a, permutation)
+        out = turned if out is None else out + turned
+    return (out / 8).to_backend("jax")
+
+
+def build_h(provider: str, seed: int = 100) -> SymmetricTensor:
+    """A random self-adjoint two-site term on the checkerboard's *alternating* signature.
+
+    The odd sublattice's tensor is ``flip(a)`` -- every leg's ``side`` reversed, the
+    physical one included -- so an operator that meets both sites has legs
+    ``(bra_even OUT, bra_odd IN, ket_even IN, ket_odd OUT)``. ``transpose(adjoint(g),
+    (2, 3, 0, 1))`` lands back on that same signature, which is what makes the symmetrized
+    combination well-formed and ``<h>`` real.
+
+    A plumbing operator, exactly as ``examples/toy_codes/vmc_mps.py``'s is: this half
+    exercises graded truncation, ``svd(bond=)`` across sectors and multiplet degeneracies,
+    and makes no benchmark-energy claim.
+    """
+    physical = SPACES[provider][1]
+    legs = (Leg(physical, OUT), Leg(physical, IN), Leg(physical, IN), Leg(physical, OUT))
+    g = SymmetricTensor.random(legs, seed=seed)
+    return ((g + tenet.transpose(tenet.adjoint(g), (2, 3, 0, 1))) / 2).to_backend("jax")
+
+
+#: The 2x1 patch, split down the middle. ``left`` is the top-left corner, the bottom-left
+#: corner, the left edge and the first site's own top and bottom edges, with the site
+#: absorbed; ``right`` is its mirror image. Each half is built environment-first, then ket,
+#: then bra, so no double layer is ever formed. ``True`` leaves the physical legs open --
+#: the numerator, which ``h`` closes -- and ``False`` closes them against each other.
+_LEFT = {
+    True: "pu,utTX,qlLp,sq,YbBs,tlbRw,TLBSW->XRSYwW",
+    False: "pu,utTX,qlLp,sq,YbBs,tlbRw,TLBSw->XRSY",
+}
+_RIGHT = {
+    True: "AtTv,vm,mcCn,no,obBE,tRbcx,TSBCz->ARSExz",
+    False: "AtTv,vm,mcCn,no,obBE,tRbcx,TSBCx->ARSE",
+}
+
+
+def halves(env, open_phys: bool, s0=(0, 0), s1=(0, 1)):
+    """The two halves of the 2x1 patch on ``(s0, s1)``, for either environment lane.
+
+    The ring is ``C_tl, T_t(0), T_t(1), C_tr, T_r, C_br, T_b(1), T_b(0), C_bl, T_l``, and
+    each tensor is read off the environment of the site it belongs to -- which is what
+    makes one helper serve [EnvCTM][tenet.network.EnvCTM], where those are ten different
+    tensors, and [EnvCTMc4v][tenet.network.EnvCTMc4v], where they are one corner and one
+    edge and their flips.
+    """
+    le, re = env[s0], env[s1]
+    a0, a1 = env.psi[s0], env.psi[s1]
+    left = tenet.einsum(
+        _LEFT[open_phys], le.tl, le.t, le.l, le.bl, le.b, a0.ket, a0.bra, optimize=PATH
+    )
+    right = tenet.einsum(
+        _RIGHT[open_phys], re.t, re.tr, re.r, re.br, re.b, a1.ket, a1.bra, optimize=PATH
+    )
+    return left, right
+
+
+def energy(env, h, s0=(0, 0), s1=(0, 1)):
+    """``<h> / <1>`` on a 2x1 patch. With :func:`halves` this is a reduced-density-matrix
+    API at one geometry, which is why the library's environment module stops short of it."""
+    left, right = halves(env, False, s0, s1)
+    denominator = tenet.full_trace(tenet.einsum("XRSY,ARSY->AX", left, right))
+    left, right = halves(env, True, s0, s1)
+    numerator = tenet.full_trace(tenet.einsum("XRSYwW,ARSYxz,Wzwx->AX", left, right, h))
+    return numerator / denominator
+
+
+def ipeps(provider: str):
+    """``(a, h, seed, bond)``: the ansatz, the term, and the converged C4v environment as
+    the traced region's initial condition."""
+    key = f"ipeps-{provider}"
+    if key not in _ENVS:
+        a, h = build_ipeps(provider), build_h(provider)
+        env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), a))
+        assert env.iterate_(max_bond=CHI_IPEPS, max_sweeps=200, corner_tol=1e-10).converged
+        local = env[0, 0]
+        _ENVS[key] = (a, h, (local.tl, local.t), local.tl.legs[0].space)
+    return _ENVS[key]
+
+
+def ipeps_energy(a, h, seed, bond, k=K_IPEPS):
+    """``<h>`` after ``k`` fixed-bond moves at the current ``a`` -- the function
+    differentiated."""
+    env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), a), init=None)
+    env.env[0, 0].tl, env.env[0, 0].t = seed
+    for _ in range(k):
+        env.update_(bond=bond)
+    return energy(env, h)
+
+
+def ipeps_grad(provider: str):
+    """One gradient per provider, reused. The backward pass through a double-layer
+    environment is the most expensive thing in this module; three tests want the same one."""
+    key = f"grad-{provider}"
+    if key not in _ENVS:
+        _ENVS[key] = jax.value_and_grad(ipeps_energy)(*ipeps(provider))
+    return _ENVS[key]
+
 
 @pytest.fixture(params=PROVIDERS)
 def provider(request):
     return request.param
-
-
-def ipeps_grad(provider):
-    """One gradient per provider, reused. The backward pass through a double-layer bulk is
-    the single most expensive thing in this module; three tests want the same one."""
-    key = f"grad-{provider}"
-    if key not in _ENVS:
-        a, h, e = ipeps_env(provider)
-        _ENVS[key] = jax.value_and_grad(ctmrg.energy)(a, h, e, K_IPEPS)
-    return _ENVS[key]
 
 
 def test_ipeps_energy_is_real(provider):
@@ -582,92 +712,37 @@ def test_ipeps_energy_is_real(provider):
     assert abs(complex(value).imag) < 1e-12
 
 
-# The energies the *fused double-layer* formulation reported, before #107 replaced it with
-# the env->ket->bra absorption order. Ten significant figures, which is what the two
-# formulations being the same bilinear form entitles us to; measured agreement is 5.3e-15
-# (su2) and 8.9e-16 (u1) relative, i.e. the last bits.
-ENERGY_BASELINE = {"su2": -0.038475159359, "u1": -0.310993394006}
+#: ``<h>`` on the point-group-averaged ansatz of :func:`build_ipeps`, at ``CHI_IPEPS`` and
+#: ``K_IPEPS`` moves. Twelve significant figures, which is what the directional lane
+#: measuring the same state to ``5.3e-11`` relative entitles us to -- that cross-check is a
+#: 200 s sweep and is recorded in the M80 design entry rather than run here.
+ENERGY_BASELINE = {"su2": 0.288093877946, "u1": 0.151081276175}
 
 
-def test_ipeps_energy_matches_the_pre_redesign_baseline(provider):
-    """#107's migration criterion, second half: same environment, same energy.
-
-    The environment is now converged by the *new* code and the energy computed through the
-    open-corner route; the numbers are the ones the deleted ``ipeps_bulk``/
-    ``ipeps_bulk_open`` produced. If a truncation tie ever broke differently the two would
-    separate at the truncation level rather than at 1e-15 -- that has not happened at
-    either provider, at ``CHI_IPEPS`` 4 and 6.
-    """
+def test_ipeps_energy_matches_the_baseline(provider):
     value, _ = ipeps_grad(provider)
     assert float(value) == pytest.approx(ENERGY_BASELINE[provider], rel=1e-10)
 
 
-def _fuse_pair(t, i, j):
-    """``ctmrg._fuse_pair``, deleted by #107 and kept here for the migration test alone."""
-    order = (i, j, *(k for k in range(t.ndim) if k not in (i, j)))
-    return tenet.fuse(tenet.transpose(t, order), (0, 1))
-
-
-def legacy_double_layer(a):
-    """``ctmrg.ipeps_bulk``, deleted by #107: the fused rank-4 double layer, built through
-    the rank-10 intermediate (841 blocks at SU(2) chi=6) this redesign removed."""
-    ket, bra = tenet.network.layers(ctmrg.c4v(a))
-    dl = tenet.einsum("LUsRD,slurd->lLuUrRdD", bra, ket)
-    dl = tenet.repartition(dl, (0, 1, 2, 3), (4, 5, 6, 7))
-    for i in range(4):
-        dl = _fuse_pair(dl, i, i + 1)
-    return tenet.transpose(dl, (3, 2, 1, 0))
-
-
-def test_the_unfused_corner_gives_the_old_projector(provider):
-    """#107's migration criterion, first half — and the thing that licenses the redesign.
-
-    The enlarged corner is *for* the projector and for nothing else, so the two
-    formulations agree iff their truncated spectra do. On one converged environment, the
-    rank-6 corner (env -> ket -> bra, two ``D`` bonds per edge) is compared against the
-    rank-4 one (one fused ``(D_ket, D_bra)`` bond, one double layer) by fusing the very
-    same edge back down: same tensor, seen through a unitary refusal-to-fuse.
-
-    Measured maximum absolute deviation over the spectrum: ``1.7e-16`` at SU(2) chi=6 and
-    ``5.6e-17`` at U(1) chi=4, with ``tenet.norm`` equal to 1.3e-15.
-
-    Fusing the converged edge is also where the old convention's hidden M4 dependency
-    shows: ``tenet.fuse`` wants its pair to lead the side, and ``tenet.unfuse`` -- the
-    direction the old code would have needed to get here -- refuses a non-leading leg
-    outright ("splitting a non-leading leg needs an F-move, which is not implemented"). The
-    redesigned example never fuses, so it never asks.
-    """
-    a, _, (c, e, _) = ipeps_env(provider)
-    chi = ctmrg.CHI_IPEPS[provider]
-
-    fused = tenet.transpose(_fuse_pair(e, 2, 3), (1, 2, 0))  # (X IN, X OUT, V IN)
-    old = tenet.einsum("ab,ace,fbg,gehi->chfi", c, fused, fused, legacy_double_layer(a))
-    new = tenet.network.double_layer(*tenet.network.layers(ctmrg.c4v(a))).corner(c, e)
-    assert (old.ndim, new.ndim) == (4, 6)
-
-    old_s = tenet.network.spectrum(
-        tenet.linalg.svd_truncated(old, ((0, 1), (2, 3)), max_bond=chi)[1]
-    )
-    new_s = tenet.network.spectrum(
-        tenet.linalg.svd_truncated(new, ((0, 1, 2), (3, 4, 5)), max_bond=chi)[1]
-    )
-    np.testing.assert_allclose(new_s, old_s, atol=1e-14)
-    # 1e-14 rather than the 1e-15 (bit equality, in practice) this held before #180: the
-    # two routes contract the same tensor through different orders of the same
-    # coefficients, and racah's F-symbols carry float noise where the deleted closed forms
-    # were exact rationals. Measured 1.3e-15 apart on a norm of 0.178.
-    assert float(tenet.norm(new)) == pytest.approx(float(tenet.norm(old)), abs=1e-14)
+def test_the_normalization_is_the_same_contraction(provider):
+    """``<1> = 1`` with the physical legs held open and closed by an identity, which is the
+    open-leg route checked against the closed one it must agree with."""
+    a, _, seed, bond = ipeps(provider)
+    physical = SPACES[provider][1]
+    even = tenet.identity((Leg(physical, OUT),))
+    unit = tenet.einsum("ab,cd->acbd", even, flip(even))
+    assert float(ipeps_energy(a, unit, seed, bond)) == pytest.approx(1.0, abs=1e-12)
 
 
 def test_ipeps_grad_matches_central_differences_on_one_block(provider):
-    a, h, e = ipeps_env(provider)
+    a, h, seed, bond = ipeps(provider)
     grads = ipeps_grad(provider)[1]
     blk, delta = 0, 1e-5
 
     def shifted(idx, d):
         blocks = list(a.blocks)
         blocks[blk] = blocks[blk].at[idx].add(d)
-        return float(ctmrg.energy(SymmetricTensor(a.structure, tuple(blocks)), h, e, K_IPEPS))
+        return float(ipeps_energy(SymmetricTensor(a.structure, tuple(blocks)), h, seed, bond))
 
     block = a.blocks[blk]
     want = np.zeros(block.shape)
@@ -678,38 +753,42 @@ def test_ipeps_grad_matches_central_differences_on_one_block(provider):
 
 def test_ipeps_sgd_decreases_the_energy(provider):
     """Three plain SGD steps, ``vmc_mps``-style: the first one reuses the cached gradient."""
-    a, h, e = ipeps_env(provider)
+    a, h, seed, bond = ipeps(provider)
     value, grad = ipeps_grad(provider)
     trace = [float(value)]
     a = jax.tree.map(lambda p, g: p - 0.05 * g, a, grad)
     for _ in range(2):
-        a, value = ctmrg.step(a, h, e, lr=0.05, k=K_IPEPS)
+        value, grad = jax.value_and_grad(ipeps_energy)(a, h, seed, bond)
+        a = jax.tree.map(lambda p, g: p - 0.05 * g, a, grad)
         trace.append(float(value))
     assert all(b < x for x, b in zip(trace, trace[1:], strict=False)), trace
 
 
 def test_structures_survive_the_traced_region(provider):
-    """#69's trust boundary, re-run: nothing in the differentiated region rewrites a
+    """The trust boundary, re-run: nothing in the differentiated region rewrites a
     ``TensorStructure``, so the originals are still ``is``-identical afterwards."""
-    a, h, e = ipeps_env(provider)
-    c, edge, bond = e
-    before = (a.structure, c.structure, edge.structure)
+    a, h, seed, bond = ipeps(provider)
+    corner, edge = seed
+    before = (a.structure, corner.structure, edge.structure)
     ipeps_grad(provider)  # the traced region has run by now
-    absorb = tenet.network.double_layer(*tenet.network.layers(ctmrg.c4v(a)))
-    out_c, out_e = tenet.network.ctmrg_unrolled(c, edge, absorb, bond, k=K_IPEPS)
+
+    env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), a), init=None)
+    env.env[0, 0].tl, env.env[0, 0].t = seed
+    env.update_(bond=bond)
     assert all(
-        x is y for x, y in zip((a.structure, c.structure, edge.structure), before, strict=True)
+        x is y for x, y in zip((a.structure, corner.structure, edge.structure), before, strict=True)
     )
-    # the traced region is structure-preserving: the moves come back on the frozen bond
-    assert out_c.structure == c.structure and out_e.structure == edge.structure
-    for t in (a, c, edge, out_c, out_e):
+    # the traced region is structure-preserving: the move comes back on the frozen bond
+    assert env[0, 0].tl.structure == corner.structure
+    assert env[0, 0].t.structure == edge.structure
+    for t in (a, h, corner, edge, env[0, 0].tl, env[0, 0].t):
         SymmetricTensor(t.structure, t.blocks)  # the trust boundary, re-run
 
 
 def test_main_runs_both_halves():
-    """The standalone entry point, at the module's own chi and k so that every plan it
-    needs is already cached. ``steps=1`` stays: raising to ``main()``'s default 3 costs
-    a measured 17.4 s warm (#164), against this module's 100 s budget."""
+    """The teaching lane's standalone entry point, which writes its own CTMRG out and
+    imports nothing from ``tenet.network``. ``steps=1`` stays: raising to ``main()``'s
+    default 3 costs a measured 17.4 s warm, against this module's 100 s budget."""
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         ctmrg.main(chi_ising=CHI, k=K, steps=1)

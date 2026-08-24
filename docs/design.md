@@ -7007,6 +7007,99 @@ with M61 Stage D above, and PEPS containers with M79/#277.
   capability parity is there — `EnvCTMc4v.update_(bond=B)` is differentiable and measured
   against Onsager above — so the deletion is a caller migration and not a design question.
 
+- **M80** — shipped: `network/ctmrg.py` deleted, its callers migrated onto `EnvCTM` and
+  `EnvCTMc4v`, and no shim left behind (#283). M79c had capability parity and kept the
+  module anyway, because its API — `Absorb`, `move`, `ctmrg`, `ctmrg_unrolled` — is
+  closures over a bulk tensor with no state object, so retiring it is a caller migration
+  rather than a reimplementation. This is that migration.
+
+  **The Ising example**, now `EnvCTMc4v` on a bulk with four *identical* legs. The
+  Boltzmann tensor is symmetric under every permutation of `(t, l, b, r)`, so it carries
+  the whole point group and the C4v lane is exact for it. Its committed page moves in
+  three places and stays put in the fourth, all at the page's own `chi = 24`:
+
+  | | closure lane | `EnvCTMc4v` |
+  |---|---|---|
+  | `beta = 0.3` | `-0.7905590710`, rel `3.3e-16`, 23 sweeps | `-0.7905590710`, rel `6.7e-16`, 23 sweeps |
+  | `beta = beta_c` | `-0.9296935333`, rel `2.0e-06`, 100 sweeps | `-0.9296933831`, rel `2.2e-06`, 100 sweeps |
+  | `beta = 0.5` | `-1.0257928127`, rel `1.3e-15`, 93 sweeps | `-1.0257928127`, rel `8.9e-16`, 98 sweeps |
+  | ordered corner spectrum | `0.6905 0.6905 0.1486 0.1486 0.0320 0.0320` | identical |
+
+  Two reasons, both structural rather than numerical. (i) **The projector basis.** The
+  closure lane keeps only `U` from the SVD of the enlarged corner and takes the
+  renormalized corner to be `S`; `EnvCTMc4v` keeps `V` as well and renormalizes to
+  `V† U S`. The environments are therefore the same fixed point in different gauges, and
+  everything gauge-invariant — the free energy, the corner *spectrum* — agrees, while the
+  last digits of a quadrature-limited comparison do not. At `beta_c` the free energy itself
+  moves in the seventh digit, which is the finite-`chi` truncation and not the gauge: the
+  correlation length outruns any environment there and neither number is converged. (ii)
+  **The convergence test.** The closure lane stopped on the max entrywise change of the
+  corner spectrum; `iterate_` stops on its Euclidean distance, which is the stricter of the
+  two and is why `beta = 0.5` takes 98 sweeps instead of 93. The corner spectrum is read
+  with an SVD rather than off a diagonal, because `V† U S` is not diagonal, and it prints
+  the same six numbers.
+
+  **`ENERGY_BASELINE`'s object went with the lane, and that is a decision and not a
+  regression.** The retired numbers — `-0.038475159359` (SU(2)) and `-0.310993394006`
+  (U(1)) — measure a *mirror-only* iPEPS on a virtual space that is not self-conjugate,
+  contracted through the closure lane's single-isometry projector. M79c's entry above
+  records why that object cannot come through the C4v lane at all: a rotation identifies a
+  virtual space with its dual, so `EnvCTMc4v` refuses `(OUT, OUT, IN, IN)` legs outright,
+  and there is no second measurement of the same object to re-baseline against. The
+  numbers stay recorded in the M63 and M79c entries; nothing measures them any more. What
+  replaces them is M79c's own fixtures — a random iPEPS averaged over the eight elements
+  of C4v, over the self-conjugate spaces SU(2) `{0, 1}` and U(1) `{-1, 0, +1}` — with a
+  random self-adjoint two-site term, at `chi = 6` and two fixed-bond moves:
+
+  | | `EnvCTMc4v` | `EnvCTM`, checkerboard of `a` and `flip(a)` | relative |
+  |---|---|---|---|
+  | SU(2) | `0.288093877946` | `0.288093877942` | `1.4e-11` |
+  | U(1) | `0.151081276175` | `0.151081276167` | `5.3e-11` |
+
+  The right-hand column is the cross-check that makes the baseline a property of the
+  *state*: `EnvCTM` keeps all eight environment tensors per site, takes four directional
+  moves, and builds its projectors from the QR of each half of the 4x4 patch rather than
+  from an SVD of the 2x2 corner. It is **measured here and not asserted in CI**: those
+  sweeps are 199 s (U(1)) and 99 s (SU(2)) against the whole module's 200 s budget, and
+  the two-site energy is the same contraction on either lane — one helper reads
+  `env[site]`, which is eight tensors under `EnvCTM` and one corner, one edge and their
+  flips under `EnvCTMc4v`.
+
+  **The two-site term's signature is the checkerboard's.** The odd sublattice's tensor is
+  `flip(a)` — every leg's `side` reversed, the physical one included — so an operator
+  meeting both sites of a horizontal bond has legs
+  `(bra_even OUT, bra_odd IN, ket_even IN, ket_odd OUT)`, and `transpose(adjoint(g),
+  (2, 3, 0, 1))` lands back on that same signature, which is what makes the symmetrized
+  combination well-formed and `⟨h⟩` real. `⟨1⟩ = 1` to `1e-12` is the assertion that the
+  open-physical-leg route agrees with the closed one.
+
+  **The runtime budget goes 100 s → 220 s** (199.5 s measured), **and the arithmetic is
+  one fixture.** The cost
+  is neither `chi` nor the sweeps: it is the first gradient through each distinct bond
+  structure plus one-off XLA compiles, i.e. a count of distinct block *shapes*. Measured
+  at `chi = 6`, the cold gradients are 62 s (U(1)) and 11 s (SU(2)) against 8.9 s and
+  2.6 s warm, the teaching lane's own `main()` is 52 s, and everything else in the module
+  is under 20 s. Neither `k` nor `chi` moves
+  the 62 s — `K_IPEPS` 1 and 2 cost the same, `chi` 6 and 8 differ by 6 %. The increase is
+  entirely the U(1) fixture's `D = 3`: the retired one was `D = 2`, and `D = 2` is not
+  available here, because the smallest genuine self-conjugate U(1) space is `{-1, 0, +1}`.
+
+  **The instrument keeps its third part only.** Parts 1 and 2 of
+  `benchmarks/bench_ctm_corner_signs.py` measured `move`'s single-isometry projector — the
+  negative eigenvalues it keeps, and `max|u − v|`, "the diagonal of signs" made into a
+  number — and Part 2 varied the bulk's point-group content on `move`'s own `einsum`
+  strings. Both targets are gone. Their finding is the one already tabulated in the M63
+  entry above and is not repeated here: the enlarged corner is Hermitian at every move
+  exactly when the bulk carries the full C4v point group, at move 0 only under the diagonal
+  mirror, and never without one; it is the *ansatz* and not the projector, which the
+  gauge-invariant refutation and the untruncated signed run in that entry settle. The claim
+  survives as a test rather than as an instrument:
+  `tests/network/test_envctmc4v.py::test_the_corner_is_hermitian_only_under_the_full_c4v_group`
+  runs the same `Trivial`-graded random array through `EnvCTMc4v` and reads `8.9e-17` at
+  move 0 under the mirror alone, then `0.70`, `1.12`, `0.40`, against `≤1.1e-15` at every
+  move under the group. Part 3 stays because its question — what the sweep does when the
+  corner is *not* Hermitian — is about the lane that still exists.
+
 Not planned: TDVP, iDMRG, excited states and fermionic swap gates. PEPS containers left
 that list with M79/#277 and now have their own lane above.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic

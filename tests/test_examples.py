@@ -9,8 +9,7 @@ N=20 ED energy, the U(1) run ``su2_heisenberg`` computes in the same process, an
 
 The **lane rule itself** is asserted here too (#183): a file in ``examples/toy_codes/``
 writes its algorithm on ``tenet``'s tensor layer and imports nothing from
-``tenet.network``. There is no exemption -- #187 rewrote ``ctmrg.py``, the last file that
-had one.
+``tenet.network``. There is no exemption.
 """
 
 import ast
@@ -252,30 +251,38 @@ def test_toy_exact_page_output_is_current(toy_chain):
 
 
 def test_toy_ctmrg_reproduces_the_library_environment():
-    """#187's acceptance: the rewritten toy code is the library's CTMRG, not a lookalike.
+    """The teaching lane is the library's CTMRG, not a lookalike (#183/#187).
 
-    ``examples/toy_codes/ctmrg.py`` now writes the corner, the edge, the two absorbers, the
-    projector and the sweep out on the tensor layer, so the thing that has to be checked is
-    that it still lands where ``tenet.network.ctmrg`` lands. Two statements at ``beta=0.4``,
-    ``chi=8``: the converged environments carry the same graded bond and the same corner
-    spectrum, and the toy's own free energy reads the same number off either environment.
-    The contractions are the same arithmetic in the same order, so the tolerance is
-    ``1e-12`` -- float64 round-off, not an algorithmic allowance.
+    ``examples/toy_codes/ctmrg.py`` writes the corner, the edge, the two absorbers, the
+    projector and the sweep out on the tensor layer, so what has to be checked is that it
+    lands where ``EnvCTMc4v`` lands. Two statements at ``beta=0.4``, ``chi=8``, on the same
+    physical Boltzmann tensor written in the two lanes' own leg conventions: the converged
+    corner *spectra* agree, and so does the free energy.
+
+    Both are gauge-invariant, and that is why the tolerance is ``1e-10`` rather than
+    float64 round-off: the teaching lane keeps only ``U`` from the projector SVD and takes
+    the renormalized corner to be ``S``, while ``EnvCTMc4v`` keeps ``V`` as well and
+    renormalizes to ``V^dagger U S``. The two environments are the same fixed point in
+    different gauges, so a quantity that depends on the gauge would not be comparable at
+    all.
     """
-    import tenet.network as net
+    from tenet.network import EnvCTMc4v, Peps, SquareLattice
 
     sys.path.insert(0, str(EXAMPLES / "toy_codes"))
     import ctmrg as toy
 
     beta, chi = 0.4, 8
-    bulk = toy.ising_bulk(beta)
-    toy_env = toy.converge(*toy.single_layer_ctm(bulk), chi=chi, tol=1e-12)
-    lib = net.ctmrg(*net.single_layer_ctm(bulk), chi=chi, tol=1e-12).env
+    toy_env = toy.converge(*toy.single_layer_ctm(toy.ising_bulk(beta)), chi=chi, tol=1e-12)
 
-    assert toy_env[2] == lib.bond
-    assert toy.spectrum(toy_env[0]) == pytest.approx(net.spectrum(lib.c), abs=1e-12)
+    env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), ising2d.ising_bulk(beta)))
+    assert env.iterate_(max_bond=chi, max_sweeps=300, corner_tol=1e-12).converged
+
+    # the usage lane carries its own Onsager quadrature, so that it runs on a core
+    # install; the teaching lane's is the second source it is judged against
+    assert ising2d.onsager(beta) == pytest.approx(toy.onsager(beta), abs=1e-12)
+    assert toy.spectrum(toy_env[0]) == pytest.approx(ising2d.corner_spectrum(env), abs=1e-10)
     assert float(toy.beta_free_energy(beta, toy_env)) == pytest.approx(
-        float(toy.beta_free_energy(beta, lib)), abs=1e-12
+        -float(ising2d.log_kappa(env)), abs=1e-10
     )
 
 

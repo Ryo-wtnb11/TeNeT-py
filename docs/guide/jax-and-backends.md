@@ -116,7 +116,7 @@ factorizations — is shape-static and traces.
 `tenet.network`'s DMRG runs outside `jit`/`grad` and makes no differentiability claim:
 its sweep re-decides a bond space at every bond. Its two traceable pieces say so on
 themselves — [`Env.heff2`][tenet.network.Env.heff2]'s prepared matvec through an injected
-`compile=`, and [`ctmrg_unrolled`][tenet.network.ctmrg_unrolled] plus `move(bond=B)` in
+`compile=`, and [`EnvCTMc4v.update_`][tenet.network.EnvCTMc4v.update_] with `bond=B` in
 CTMRG.
 
 ## Gradients at a degenerate spectrum

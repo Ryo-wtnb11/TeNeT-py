@@ -123,8 +123,8 @@ def test_the_svd_route_cannot_reconstruct_an_indefinite_operator(name):
     """The failing-on-the-other-route test. Same kept dimension, same operator.
 
     ``V @ W @ adjoint(V)`` reconstructs the truncated operator with its signs; the SVD's
-    ``U @ S @ adjoint(U)`` — the single-isometry projection ``network/ctmrg.py`` runs —
-    replaces every negative eigenvalue with ``+|w|`` and is wrong by twice their sum.
+    ``U @ S @ adjoint(U)`` — a single isometry used on both index groups — replaces every
+    negative eigenvalue with ``+|w|`` and is wrong by twice their sum.
     """
     h = hermitian(name)
     m = tenet.repartition(h, *AXES)

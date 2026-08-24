@@ -119,24 +119,11 @@ NO_PARAMS: dict[str, str] = {
         "a mutable record of eight optional projectors a move fills in; its fields are "
         "documented in the class docstring's Attributes section"
     ),
-    "tenet.network.CTMEnv": (
-        "a result record built by move/ctmrg, never by users; its fields are "
-        "documented in the class docstring's Attributes section"
-    ),
     "tenet.network.DMRG_out": (
         "a result record built by dmrg_, never by users; its fields are "
         "documented in the class docstring's Attributes section"
     ),
-    "tenet.network.CTMRG_out": (
-        "a result record built by ctmrg, never by users; its fields are "
-        "documented in the class docstring's Attributes section"
-    ),
     "tenet.network.Sweep": (
-        "a NamedTuple; its fields are documented in the class docstring's "
-        "Attributes section, which griffe accepts where a Parameters section "
-        "on a synthesized signature is a --strict failure"
-    ),
-    "tenet.network.Absorb": (
         "a NamedTuple; its fields are documented in the class docstring's "
         "Attributes section, which griffe accepts where a Parameters section "
         "on a synthesized signature is a --strict failure"

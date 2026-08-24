@@ -1,6 +1,6 @@
 """What every driver in this package needs: a bond spectrum and a ones seed.
 
-Why a module rather than a second copy or a cross-driver import. ``network/ctmrg.py``
+Why a module rather than a second copy or a cross-driver import. ``network/envctm.py``
 needs the same diagonal read as ``network/mps.py``; importing it *from* ``mps.py`` would
 assert a dependency between two drivers that share no concept, and ``env._ones`` cannot
 be imported at all -- the hygiene test
@@ -138,7 +138,7 @@ def spectrum(s: SymmetricTensor) -> list[float]:
     [svd_truncated][tenet.ops.linalg.svd_truncated] returned, and of nothing
     else. Both callers hand it exactly that, and read it for two different
     things -- ``network/dmrg.py`` for the Schmidt values of a bond,
-    ``network/ctmrg.py`` for the corner spectrum whose convergence ends a sweep
+    ``network/envctm.py`` for the corner spectrum whose convergence ends a sweep
     -- which is why the name stays the general one rather than either caller's.
 
     Parameters
@@ -184,7 +184,7 @@ def spectrum_sectors(s: SymmetricTensor) -> dict[Sector, list[float]]:
 
     The same values, unflattened: on a [GradedSpace][tenet.GradedSpace] bond the singular
     values arrive already labelled, and [spectrum][tenet.network.spectrum] sorts that label
-    away because its two callers -- ``network/dmrg.py`` and ``network/ctmrg.py`` -- both
+    away because its two callers -- ``network/dmrg.py`` and ``network/envctm.py`` -- both
     want one flat convergence diagnostic. A user asking *which
     symmetry sector carries the entanglement* wants the label back, and TenPy spells that
     ``entanglement_spectrum(by_charge=True)``.

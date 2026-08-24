@@ -12,8 +12,7 @@ lane's copy: it is the one that hands the hand-graded ``W`` to ``MPO.from_w`` an
 returns the ``MPO`` these tests feed to ``Env``/``dmrg_``. ``examples/toy_codes/dmrg.py``
 now writes its own MPO out as a plain list of ``SymmetricTensor`` and imports nothing from
 ``tenet.network``, which is the teaching lane's rule and the reason it is no longer the
-right import here. ``test_ctmrg.py`` still reaches into the toy lane for
-``ising_bulk``/``c4v``, so both directories go on the path.
+right import here. Both directories go on the path.
 """
 
 import pathlib

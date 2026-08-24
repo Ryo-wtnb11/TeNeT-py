@@ -18,7 +18,7 @@ a test below:
 **The one named exception**, spelled out because it is a line and not a loophole:
 reading ``t.provider`` and the provider's ``qdim``, ``unit``, ``fusion``, ``dual`` and
 ``permute_tree`` is allowed, and each read has an owner: ``common.spectrum`` needs
-``sqrt(qdim)`` for its Schmidt weights, ``ctmrg.py`` needs ``provider.unit`` for the
+``sqrt(qdim)`` for its Schmidt weights, ``envctm.py`` needs ``provider.unit`` for the
 trivial sector, ``mps.py`` accumulates charges with ``fusion`` (#133), derives
 ``MPS.product``'s bonds backwards with ``fusion`` and ``dual`` (M14), and probes the
 braiding with ``permute_tree`` for spectator classification and the fermionic
@@ -68,7 +68,6 @@ def test_the_package_has_the_modules_it_claims():
         "mps.py",
         "env.py",
         "dmrg.py",
-        "ctmrg.py",
         "envctm.py",
         "lattice.py",
         "peps.py",
@@ -228,7 +227,7 @@ def test_every_two_operand_einsum_is_a_composition(monkeypatch):
     The coverage claim is asserted, not assumed: every ``tenet.einsum`` call site the
     AST finds in ``mps.py``, ``env.py`` and ``dmrg.py`` must be reached by the smoke
     (``_composed`` call sites route through the one einsum inside the helper, which is
-    itself on the list). ``ctmrg.py`` is deliberately outside: a 2D network has loops,
+    itself on the list). The 2D modules are deliberately outside: a 2D network has loops,
     where operand order is necessary but not sufficient (``ops/contraction.py``
     :575-587), and no fermionic PEPS caller exists.
     """
