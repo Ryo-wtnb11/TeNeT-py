@@ -277,6 +277,9 @@ def test_toy_ctmrg_reproduces_the_library_environment():
     env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), ising2d.ising_bulk(beta)))
     assert env.iterate_(max_bond=chi, max_sweeps=300, corner_tol=1e-12).converged
 
+    # the usage lane carries its own Onsager quadrature, so that it runs on a core
+    # install; the teaching lane's is the second source it is judged against
+    assert ising2d.onsager(beta) == pytest.approx(toy.onsager(beta), abs=1e-12)
     assert toy.spectrum(toy_env[0]) == pytest.approx(ising2d.corner_spectrum(env), abs=1e-10)
     assert float(toy.beta_free_energy(beta, toy_env)) == pytest.approx(
         -float(ising2d.log_kappa(env)), abs=1e-10

@@ -73,6 +73,7 @@ import tenet.pytree  # noqa: E402, F401  # registration is the import's side eff
 
 sys.path.insert(0, str(pathlib.Path(__file__).parents[2] / "examples" / "toy_codes"))
 import ctmrg  # noqa: E402  # the teaching lane, which writes its own CTMRG out
+from ising import onsager  # noqa: E402  # the closed form, borrowed rather than copied
 
 # ``opt_einsum``'s greedy path, for the patch contractions only. Simplification: greedy,
 # not "auto" -- at seven operands "auto"'s dynamic-programming *search* costs an order of
@@ -127,24 +128,13 @@ def traced_ising(beta):
     return SymmetricTensor.from_blocks(legs, blocks)
 
 
-def onsager(beta: float, points: int = 200_001) -> float:
-    """``beta f`` from Onsager's closed form, by direct quadrature: ``-beta f = ln2/2 +
-    (1/2pi) int_0^pi dtheta ln[cosh^2(2b) + (1/k) sqrt(1 + k^2 - 2k cos 2theta)]``,
-    ``k = 1/sinh^2(2b)``."""
-    kk = 1.0 / np.sinh(2.0 * beta) ** 2
-    theta = np.linspace(0.0, np.pi, points)
-    integrand = np.log(
-        np.cosh(2.0 * beta) ** 2 + np.sqrt(1.0 + kk**2 - 2.0 * kk * np.cos(2.0 * theta)) / kk
-    )
-    return -(np.log(2.0) / 2.0 + np.trapezoid(integrand, theta) / (2.0 * np.pi))
-
-
 def onsager_elliptic(beta: float, points: int = 200_001) -> float:
     """``beta f`` from the elliptic form: ``-beta f = ln(2 cosh 2b) + (1/2pi) int_0^pi dphi
     ln[(1 + sqrt(1 - kappa^2 sin^2 phi))/2]``, ``kappa = 2 sinh(2b)/cosh^2(2b)``.
 
-    Algebraically the same number as :func:`onsager` and numerically an independent route
-    to it: different integrand, different singularity structure, same grid rule.
+    Algebraically the same number as ``examples/toy_codes/ising.py``'s ``onsager`` and
+    numerically an independent route to it: different integrand, different singularity
+    structure, same grid rule.
     """
     kappa = 2.0 * np.sinh(2.0 * beta) / np.cosh(2.0 * beta) ** 2
     phi = np.linspace(0.0, np.pi, points)
