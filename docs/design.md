@@ -7175,8 +7175,8 @@ with M61 Stage D above, and PEPS containers with M79/#277.
   the evolution, and it is filed here rather than worked around: `EnvCTM.bond_metric`
   inherits the same disease, and `truncate_` *reports* it — `nonhermitian_part` on a fZ2
   loop comes back at 1.4, which is not numerical noise and is not silently absorbed.
-  `tests/network/test_evolution.py::test_the_fermionic_gaps_this_stage_measured` commits
-  both numbers.
+  `tests/network/test_evolution.py::test_the_fermionic_metric_on_a_loop_reaches_its_gram_form`
+  is where those numbers were committed, and where M82 phase 3 and M84 closed them.
 
   **Where the layer is exact, it is exact.** Two oracles, both against dense arithmetic:
 
@@ -7423,8 +7423,9 @@ with M61 Stage D above, and PEPS containers with M79/#277.
   pairs, which are the same twist by parity conservation. So each of those two assemblies
   closes one cycle per layer that its steps do not account for. Which step that is has not
   been found; a uniform extra twist cannot be it, since the set that repairs one direction
-  breaks the other. `test_the_fermionic_gaps_this_stage_measured` carries the two numbers
-  and that diagnosis, as M79d carried the four they came from.
+  breaks the other. `test_the_fermionic_gaps_this_stage_measured` carried the two numbers
+  and that diagnosis, as M79d carried the four they came from; M84 below is what closed
+  them, and it found the shared shape to be two different mechanisms.
 
 - **M84** -- shipped: the two mirror numbers, and they were two different objects.
   The residual phase 3 measured -- `theta` on one open bra leg and one open ket leg,
