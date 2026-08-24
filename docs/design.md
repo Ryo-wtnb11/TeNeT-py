@@ -7078,7 +7078,8 @@ with M61 Stage D above, and PEPS containers with M79/#277.
   is neither `chi` nor the sweeps: it is the first gradient through each distinct bond
   structure plus one-off XLA compiles, i.e. a count of distinct block *shapes*. Measured
   at `chi = 6`, the cold gradients are 62 s (U(1)) and 11 s (SU(2)) against 8.9 s and
-  2.6 s warm, and everything else in the module is under 20 s. Neither `k` nor `chi` moves
+  2.6 s warm, the teaching lane's own `main()` is 52 s, and everything else in the module
+  is under 20 s. Neither `k` nor `chi` moves
   the 62 s — `K_IPEPS` 1 and 2 cost the same, `chi` 6 and 8 differ by 6 %. The increase is
   entirely the U(1) fixture's `D = 3`: the retired one was `D = 2`, and `D = 2` is not
   available here, because the smallest genuine self-conjugate U(1) space is `{-1, 0, +1}`.

@@ -31,11 +31,11 @@ x64 is enabled process-globally in ``tests/conftest.py``; every tolerance here d
 it.
 
 **Runtime: the budget is 220 s** (199.5 s measured, plus load headroom), and the
-arithmetic is one fixture. The cost is neither
-``chi`` nor the sweeps: it is the **first** gradient through each distinct bond structure
--- the fusion-tree enumeration and per-block plan build -- plus one-off XLA compiles.
-Measured at ``CHI_IPEPS = 6``: the two cold gradients are 62 s (U(1)) and 11 s (SU(2)),
-against 8.9 s and 2.6 s warm, and everything else in the module is under 20 s. The U(1)
+arithmetic is one fixture. The cost is neither ``chi`` nor the sweeps: it is the **first**
+gradient through each distinct bond structure -- the fusion-tree enumeration and per-block
+plan build -- plus one-off XLA compiles. Measured at ``CHI_IPEPS = 6``: the two cold
+gradients are 62 s (U(1)) and 11 s (SU(2)) against 8.9 s and 2.6 s warm, the teaching
+lane's own ``main()`` is 52 s, and everything else in the module is under 20 s. The U(1)
 number is what the budget is: a rotation identifies a virtual space with its dual, so a
 C4v ansatz needs a **self-conjugate** virtual space, and the smallest genuine U(1) one is
 ``{-1, 0, +1}`` at ``D = 3``. Neither ``k`` nor ``chi`` moves it -- ``K_IPEPS`` 1 and 2
