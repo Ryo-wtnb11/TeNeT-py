@@ -15,15 +15,17 @@ one dense basis element at a time and compares the Gram matrix entry by entry. T
 independent of every contraction in ``network/evolution.py`` and of the twelve primitives
 underneath it.
 
-**The fermionic gap this stage found, and did not paper over.**
-``test_the_fermionic_metric_on_a_loop_is_a_recorded_gap`` measures a disagreement between
-the ``fZ2`` bond metric and that same oracle whenever the environment cluster contains a
-*loop*. It is committed as a measurement rather than an ``xfail``, because the number is
-the finding: on every cluster without a loop -- a row, a column, any 1D chain -- the
-fermionic metric is exact to machine precision, and the gate path (which needs no metric
-at all) is exact in 2D as well. ``docs/design.md``'s M79d entry says where the gap sits.
+**The fermionic gap this stage found, narrowed by M82 phase 3, and still not papered
+over.** A cluster with a *loop* closes a cycle, and a step that closes one pays the
+ribbon twist (``docs/design.md``, M82 phase 3). With that paid the dense closer itself
+stops depending on the order its sites are absorbed in, the exact gate reproduces the
+Jordan-Wigner oracle on all four bonds of the 2x2 patch, and the metric is a Hermitian
+form that reaches its Gram oracle on ``EnvNTU``'s ``lr`` bond and ``EnvCTM``'s ``tb`` one.
+``test_the_fermionic_gaps_this_stage_measured`` carries what is left -- the two
+mirror-image directions, and the exact residual that separates them from the oracle.
 """
 
+import itertools
 import string
 
 import numpy as np
@@ -66,14 +68,18 @@ LETTERS = string.ascii_lowercase + string.ascii_uppercase
 # --- the dense closer -----------------------------------------------------------------
 
 
-def to_dense_state(psi: Peps) -> np.ndarray:
-    """An ``obc`` [Peps][tenet.network.Peps] as ``(d,) * N``, sites in fermionic order.
+def to_dense_state(psi: Peps, order: tuple | None = None) -> np.ndarray:
+    """An ``obc`` [Peps][tenet.network.Peps] as ``(d,) * N``, axes in fermionic order.
 
-    Every boundary leg must be one-dimensional. The sites are absorbed in the geometry's
-    own order -- column-major, which is what
+    Every boundary leg must be one-dimensional. The axes come back in the geometry's own
+    order -- column-major, which is what
     [f_ordered][tenet.network.SquareLattice.f_ordered] calls the fermionic order -- and
     each absorption is one [composed][tenet.network.composed], so the operand order and
     the bends are the layer's own and not this file's.
+
+    ``order`` is the order the sites are *absorbed* in, the geometry's own by default. It
+    does not move the result and there is a test that says so; it exists because that is
+    the statement, and a closer whose value depended on it would be no oracle.
     """
     geometry = psi.geometry
     pool = iter(LETTERS)
@@ -84,11 +90,10 @@ def to_dense_state(psi: Peps) -> np.ndarray:
             seen[key] = next(pool)
         return seen[key]
 
-    acc, labels, phys = None, [], []
-    for site in geometry.sites():
+    acc, labels = None, []
+    for site in order or geometry.sites():
         x, y = site
         s = letter(("s", x, y))
-        phys.append(s)
         here = [
             letter(("v", x - 1, y)),
             letter(("h", x, y - 1)),
@@ -103,9 +108,12 @@ def to_dense_state(psi: Peps) -> np.ndarray:
         out = [c for c in labels if c not in shared] + [c for c in here if c not in shared]
         acc = composed(f"{''.join(labels)},{''.join(here)}->{''.join(out)}", acc, psi[site])
         labels = out
-    dense = np.asarray(acc.to_dense())
-    order = [labels.index(c) for c in phys] + [i for i, c in enumerate(labels) if c not in phys]
-    dense = np.transpose(dense, order)
+    phys = [letter(("s", x, y)) for x, y in geometry.sites()]
+    axes = [labels.index(c) for c in phys] + [i for i, c in enumerate(labels) if c not in phys]
+    # ``tenet.transpose`` and not ``np.transpose``: a graded tensor's dense array carries
+    # the Koszul signs of *its own* leg order, so permuting the array is not a permutation
+    # of legs and would compare two different tensors.
+    dense = np.asarray(tenet.transpose(acc, axes).to_dense())
     return dense.reshape(dense.shape[: len(phys)])
 
 
@@ -217,7 +225,9 @@ def evolved_against_jordan_wigner(bond, step=0.31):
     return abs(got @ expected) / np.linalg.norm(got) / np.linalg.norm(expected)
 
 
-@pytest.mark.parametrize("bond", [((0, 0), (0, 1)), ((1, 0), (1, 1)), ((0, 1), (1, 1))])
+@pytest.mark.parametrize(
+    "bond", [((0, 0), (0, 1)), ((1, 0), (1, 1)), ((0, 1), (1, 1)), ((0, 0), (1, 0))]
+)
 def test_the_gate_carries_the_jordan_wigner_string_the_lattice_implies(bond):
     """fZ2, 2x2: an exact hopping gate against ``exp(-step H)`` on four modes.
 
@@ -229,8 +239,10 @@ def test_the_gate_carries_the_jordan_wigner_string_the_lattice_implies(bond):
     rule already pays. No truncation is involved -- ``max_bond=None, cutoff=None`` is the
     exact split -- so this measures the gate and the ``qr`` and nothing else.
 
-    The bond this list leaves out is the fourth one, and it is the subject of
-    ``test_the_fermionic_gaps_this_stage_measured``.
+    All four bonds, since M82 phase 3: the gate opens an auxiliary wire beside the bond
+    it acts on, which is one more parallel edge and so one more loop, and the step that
+    closes it now pays the ribbon twist (``docs/design.md``, M82 phase 3). The vertical
+    bond of the first column used to read 0.2538 here.
     """
     assert evolved_against_jordan_wigner(bond) == pytest.approx(1.0, abs=1e-12)
 
@@ -317,40 +329,88 @@ def test_the_ntu_metric_on_a_2x2_patch_is_exact_where_the_grading_does_not_braid
     assert relative(oracle, mine) < 1e-12
 
 
-@pytest.mark.parametrize("bond,dirn", [(((0, 0), (0, 1)), "lr"), (((0, 0), (1, 0)), "tb")])
-def test_the_fermionic_gaps_this_stage_measured(bond, dirn):
-    """The measurements M79d records rather than hides: ``fZ2`` plus a loop is wrong.
+def test_the_dense_closer_does_not_depend_on_the_order_the_sites_are_absorbed_in():
+    """The oracle is only an oracle if it has one value, and on a loop it did not.
 
-    A 2x2 ``obc`` cluster closes a loop around the bond, and there the double layer's
-    per-site pieces stop composing: for ``fZ2`` the metric disagrees with the Gram form
-    the dense closer builds, while ``Trivial`` and U(1) agree to machine precision on the
-    *same* contraction. The disagreement is not a phase -- no permutation of the legs
-    involved reproduces the oracle -- and it survives replacing every piece by its own
-    exact Gram, so it is a property of joining double-layer objects over a doubled wire
-    and not of any one primitive.
+    A 2x2 lattice closes a loop, so the last absorption contracts two wires at once and
+    the closure has to pay the ribbon twist. Before it did, the sixteen connected orders
+    the four sites can be absorbed in spread by 11.7 -- the closer was not a function of
+    the state. Every measurement in this file rests on that, which is why it is pinned
+    here rather than inferred from the numbers it feeds.
+    """
 
-    Two consequences are asserted here so that neither can be forgotten: the number is
-    large (this is not numerical noise), and the same metric fails the Hermiticity that a
-    Gram form cannot fail. ``truncate_`` reports both, which is why the evolution does not
-    silently produce a wrong state without saying so.
+    def connected(order):
+        seen: set = set()
+        for site in order:
+            if seen and not any(abs(site[0] - t[0]) + abs(site[1] - t[1]) == 1 for t in seen):
+                return False
+            seen.add(site)
+        return True
+
+    psi = peps("fz2", dims=(2, 2))
+    orders = [o for o in itertools.permutations(psi.geometry.sites()) if connected(o)]
+    assert len(orders) == 16
+    values = [to_dense_state(psi, order) for order in orders]
+    scale = np.abs(values[0]).max()
+    assert scale > 1e-8, "a test whose oracle is all zeros proves nothing"
+    for v in values[1:]:
+        np.testing.assert_allclose(v, values[0], atol=1e-12 * scale)
+
+
+@pytest.mark.parametrize(
+    "which,bond,dirn",
+    [("ntu", ((0, 0), (0, 1)), "lr"), ("ctm", ((0, 0), (1, 0)), "tb")],
+)
+def test_the_fermionic_metric_on_a_loop_reaches_its_gram_form(which, bond, dirn):
+    """``fZ2`` plus a loop, exact: what M79d recorded as a gap and M82 phase 3 closed.
+
+    A 2x2 ``obc`` cluster closes a loop around the bond, and the steps that close it now
+    pay the ribbon twist, so the metric is the Gram form the dense closer builds -- to
+    machine precision, on the same contraction where it used to be wrong by 1.85.
     """
     psi = peps("fz2", dims=(2, 2))
     gate = gate_nn(hamiltonian("fz2"), 0.4, bond)
-    env = EnvNTU(psi)
+    env = EnvNTU(psi) if which == "ntu" else EnvCTM(psi, init="eye")
+    if which == "ctm":
+        env.update_(max_bond=16, moves="hv")
     _, oracle, mine = metric_from_the_norm(env, psi, bond, dirn, gate)
+    assert relative(oracle, mine) < 1e-12
+
+
+@pytest.mark.parametrize(
+    "which,bond,dirn",
+    [("ntu", ((0, 0), (1, 0)), "tb"), ("ctm", ((0, 0), (0, 1)), "lr")],
+)
+def test_the_fermionic_gaps_this_stage_measured(which, bond, dirn):
+    """The two numbers M82 phase 3 left open, with the residual measured, not fitted.
+
+    The mirror-image direction of the two the phase closed: ``EnvNTU`` on a ``tb`` bond
+    and ``EnvCTM`` on an ``lr`` one still miss their Gram oracle. The residual is exact
+    and it is the whole finding -- the metric differs from the oracle by ``theta`` on
+    **one open bra leg and one open ket leg**, so each of those two assemblies closes one
+    cycle per layer that its steps do not account for. Which step that is has not been
+    found, and a uniform extra twist cannot be it: the set that repairs these two is the
+    empty set for the two directions that already agree.
+
+    Both halves are asserted so neither can be forgotten: the disagreement is large (not
+    numerical noise), and one twist per layer removes it exactly. The metric is now a
+    Hermitian form either way -- a Gram form cannot fail that, and it used to.
+    """
+    psi = peps("fz2", dims=(2, 2))
+    gate = gate_nn(hamiltonian("fz2"), 0.4, bond)
+    env = EnvNTU(psi) if which == "ntu" else EnvCTM(psi, init="eye")
+    if which == "ctm":
+        env.update_(max_bond=16, moves="hv")
+    keys, oracle, mine = metric_from_the_norm(env, psi, bond, dirn, gate)
     assert relative(oracle, mine) > 0.1
     a0, a1 = apply_gate(psi[bond[0]], psi[bond[1]], gate)
     q0, _ = _split(a0, dirn, 0)
     q1, _ = _split(a1, dirn, 1)
     g = env.bond_metric(q0, q1, bond[0], bond[1], dirn)
-    assert float(tenet.norm(g - _dagger(g)) / tenet.norm(g)) > 0.1
-    # The second gap, and the reason it is filed next to the first: the one bond of the
-    # 2x2 patch whose exact gate does *not* reproduce the Jordan-Wigner oracle is the
-    # vertical one in the first column, and the three others do. A gate involves no
-    # environment at all, so this is the same fermionic bookkeeping seen from the other
-    # side -- the extra wire the gate opens between the two sites is one more parallel
-    # edge, which is one more loop.
-    assert evolved_against_jordan_wigner(((0, 0), (1, 0))) == pytest.approx(0.2538, abs=1e-3)
+    assert float(tenet.norm(g - _dagger(g)) / tenet.norm(g)) < 1e-12
+    dense = np.asarray(tenet.twist(g, (0, 2)).to_dense())
+    repaired = np.array([[dense[i[0], i[1], j[0], j[1]] for j in keys] for i in keys])
+    assert relative(oracle, repaired) < 1e-12
 
 
 @pytest.mark.parametrize("provider", ["trivial", "u1"])

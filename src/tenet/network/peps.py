@@ -39,6 +39,12 @@ bend either way; both are recorded as taking the bra first, and the tie is settl
 physics rather than by counting when M79b contracts a whole network against its Onsager
 oracle.
 
+Every chain here runs through [closed][tenet.network.closed] rather than
+[tenet.einsum_chain][] (M82 phase 3): each of these primitives contracts more than one
+wire between ket and bra, so each closes a cycle, and a step that closes one pays the
+ribbon twist on the wires it bends. That is what makes the bra-first and ket-first
+spellings of the tied primitives the same tensor under fermion parity as well.
+
 The Jordan-Wigner strings YASTN writes as explicit ``swap_gate`` calls are paid here by
 the braiding the lowering already performs. The bends are **not** in one-to-one
 correspondence with YASTN's ``swap_gate`` lines -- those also compensate for YASTN's own
@@ -55,6 +61,7 @@ from typing import Any, NamedTuple
 
 import tenet
 from tenet import SymmetricTensor
+from tenet.network.common import closed
 from tenet.network.lattice import Lattice
 
 __all__ = [
@@ -262,7 +269,7 @@ def cor_tl(a: DoubleLayer) -> SymmetricTensor:
     **bra is operand 1** and ``t`` is bent. YASTN's counterpart is
     ``ctl.swap_gate(axes=((0, 2), 3))``, the ``b b' x r'`` string it writes before fusing.
     """
-    return tenet.einsum_chain([("tlBRs,tlbrs->bBrR", a.bra, a.ket, "t")])
+    return closed([("tlBRs,tlbrs->bBrR", a.bra, a.ket, "t")])
 
 
 def cor_bl(a: DoubleLayer) -> SymmetricTensor:
@@ -284,7 +291,7 @@ def cor_bl(a: DoubleLayer) -> SymmetricTensor:
     and nothing bends**. YASTN's ``cor_bl`` is likewise its one corner with no
     ``swap_gate`` at all -- the two conventions agree on which corner is the free one.
     """
-    return tenet.einsum_chain([("TlbRs,tlbrs->rRtT", a.bra, a.ket, "")])
+    return closed([("TlbRs,tlbrs->rRtT", a.bra, a.ket, "")])
 
 
 def cor_br(a: DoubleLayer) -> SymmetricTensor:
@@ -306,7 +313,7 @@ def cor_br(a: DoubleLayer) -> SymmetricTensor:
     ``r`` is bent -- against YASTN's ``cbr.swap_gate(axes=((1, 3), 2))``, the ``l l' x t'``
     string.
     """
-    return tenet.einsum_chain([("TLbrs,tlbrs->tTlL", a.bra, a.ket, "r")])
+    return closed([("TLbrs,tlbrs->tTlL", a.bra, a.ket, "r")])
 
 
 def cor_tr(a: DoubleLayer) -> SymmetricTensor:
@@ -330,7 +337,7 @@ def cor_tr(a: DoubleLayer) -> SymmetricTensor:
     (``A.swap_gate(axes=(0, 1, 2, 3))``, ``t x l`` and ``b x r``) and then needs no
     post-contraction gate.
     """
-    return tenet.einsum_chain([("tlbrs,tLBrs->lLbB", a.ket, a.bra, "s")])
+    return closed([("tlbrs,tLBrs->lLbB", a.ket, a.bra, "s")])
 
 
 # -- edges: one site closed on one virtual leg and the physical one -------------------
@@ -356,7 +363,7 @@ def edge_t(a: DoubleLayer) -> SymmetricTensor:
     bends. One bend either way; taking the same operand order as ``cor_tl``/``cor_bl``/
     ``cor_br`` is what keeps the family readable.
     """
-    return tenet.einsum_chain([("tLBRs,tlbrs->lLbBrR", a.bra, a.ket, "t")])
+    return closed([("tLBRs,tlbrs->lLbBrR", a.bra, a.ket, "t")])
 
 
 def edge_l(a: DoubleLayer) -> SymmetricTensor:
@@ -377,7 +384,7 @@ def edge_l(a: DoubleLayer) -> SymmetricTensor:
     Wires ``l`` and ``s``, both supplied ``IN`` by the bra: **bra is operand 1, nothing
     bends**.
     """
-    return tenet.einsum_chain([("TlBRs,tlbrs->bBrRtT", a.bra, a.ket, "")])
+    return closed([("TlBRs,tlbrs->bBrRtT", a.bra, a.ket, "")])
 
 
 def edge_b(a: DoubleLayer) -> SymmetricTensor:
@@ -398,7 +405,7 @@ def edge_b(a: DoubleLayer) -> SymmetricTensor:
     Wires ``b`` and ``s``, both supplied ``IN`` by the bra: **bra is operand 1, nothing
     bends**.
     """
-    return tenet.einsum_chain([("TLbRs,tlbrs->rRtTlL", a.bra, a.ket, "")])
+    return closed([("TLbRs,tlbrs->rRtTlL", a.bra, a.ket, "")])
 
 
 def edge_r(a: DoubleLayer) -> SymmetricTensor:
@@ -419,7 +426,7 @@ def edge_r(a: DoubleLayer) -> SymmetricTensor:
     Wires ``r`` (ket) and ``s`` (bra); tie broken toward the bra as in ``edge_t``, so
     **bra is operand 1** and ``r`` bends.
     """
-    return tenet.einsum_chain([("TLBrs,tlbrs->tTlLbB", a.bra, a.ket, "r")])
+    return closed([("TLBrs,tlbrs->tTlLbB", a.bra, a.ket, "r")])
 
 
 # -- append_vec: a rank-6 environment vector absorbing one double-layer site ----------
@@ -459,7 +466,7 @@ def append_vec_tl(a: DoubleLayer, vec: SymmetricTensor) -> SymmetricTensor:
     **the running result is operand 1** and ``t_ket`` bends. YASTN's two gates here are
     ``t' x l l'`` before the bra and ``b b' x r'`` after the ket.
     """
-    return tenet.einsum_chain(
+    return closed(
         [
             ("xcCaAy,ACBRS->xcaySBR", vec, a.bra, "C"),
             ("xcaySBR,acbrS->xbByrR", None, a.ket, "a"),
@@ -490,7 +497,7 @@ def append_vec_br(a: DoubleLayer, vec: SymmetricTensor) -> SymmetricTensor:
     ``phys``, the ket on ``r_ket``, so **the running result is operand 1** and ``r_ket``
     bends. YASTN's gates: ``b b' x r'`` before the bra, ``l l' x t'`` after the ket.
     """
-    return tenet.einsum_chain(
+    return closed(
         [
             ("xdDeEy,TLEDS->xdeySTL", vec, a.bra, "E"),
             ("xdeySTL,tledS->xtTylL", None, a.ket, "d"),
@@ -521,7 +528,7 @@ def append_vec_tr(a: DoubleLayer, vec: SymmetricTensor) -> SymmetricTensor:
     the running result's one wire (``phys``), so **the ket is operand 1** and the
     physical wire bends -- the same asymmetry ``cor_tr`` shows, for the same reason.
     """
-    return tenet.einsum_chain(
+    return closed(
         [
             ("xaAdDy,ALBDS->xadySLB", vec, a.bra, ""),
             ("albdS,xadySLB->xlLybB", a.ket, None, "S"),
@@ -551,7 +558,7 @@ def append_vec_bl(a: DoubleLayer, vec: SymmetricTensor) -> SymmetricTensor:
     supplies ``IN`` on ``b_ket``, ``l_ket`` and ``phys`` alike, so **it is operand 1**.
     Three wires, three agreements, nothing bends.
     """
-    return tenet.einsum_chain(
+    return closed(
         [
             ("TCERS,xeEcCy->xecySTR", a.bra, vec, ""),
             ("xecySTR,tcerS->xrRytT", None, a.ket, ""),

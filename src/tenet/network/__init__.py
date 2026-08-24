@@ -64,7 +64,15 @@ around is bent explicitly with [tenet.repartition][] before the contraction. Thi
 uses the public ``tenet`` API only, enforced by ``tests/network/test_hygiene.py``.
 """
 
-from tenet.network.common import composed, entropy, ones, spectrum, spectrum_sectors, supplies_in
+from tenet.network.common import (
+    closed,
+    composed,
+    entropy,
+    ones,
+    spectrum,
+    spectrum_sectors,
+    supplies_in,
+)
 from tenet.network.dmrg import DMRG_out, Sweep, dmrg_, lanczos, sweep_
 from tenet.network.env import Env, correlation_function, measure_mpo
 from tenet.network.envctm import (
@@ -160,6 +168,7 @@ __all__ = [
     "cor_br",
     "cor_tl",
     "cor_tr",
+    "closed",
     "composed",
     "corner2x2",
     "correlation_function",

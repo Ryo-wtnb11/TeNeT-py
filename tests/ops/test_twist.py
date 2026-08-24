@@ -130,25 +130,21 @@ def test_the_traced_loop_does_not_depend_on_which_wire_was_cut(sides):
         np.testing.assert_allclose(v, values[0], atol=1e-12 * scale)
 
 
-def test_a_loop_closed_by_a_composition_is_the_placement_left_open():
-    """The gap M82 phase 2 measured and did not fit, pinned so that closing it is loud.
+@pytest.mark.parametrize("sides", WIRINGS)
+def test_a_loop_closed_by_a_composition_is_the_closure_trace_takes(sides):
+    """The placement M82 phase 2 left open, closed in phase 3 by the step itself.
 
-    A loop can also close inside one ``composed`` step that contracts two wires at once,
-    and there the twist has no home yet: ``composed``'s bend set is the right *set* on
-    this network but is not a cycle criterion in general -- a double-layer step bends the
-    same way on a loop-free 1D cluster, where paying the twist is measurably wrong
-    (``docs/design.md``, M82 phase 2). So some contraction orders of the same 4-cycle
-    still land off ``trace``'s closure. Some, not all: the value is reachable, which is
-    what says the missing object is a placement and not a different number.
+    A loop also closes inside one ``composed`` step that contracts two wires at once, and
+    the step knows: two disjoint blobs joined over ``k`` wires close ``k - 1`` cycles, so
+    a step that contracts more than one wire closes something and pays ``theta`` on the
+    wires it bends. Every connected order of the 4-cycle then lands on ``trace``'s
+    closure, which is what says the two closures are one object.
     """
-    tensors = build(FZ2_V, dict(zip(LOOP, ("A", "B", "D", "C"), strict=True)))
+    tensors = build(FZ2_V, dict(zip(LOOP, sides, strict=True)))
     ref = closed_with_trace(tensors, "u", ("A", "B", "D", "C"))
     scale = np.abs(ref).max()
     assert scale > 1e-8, "a test whose oracle is all zeros proves nothing"
-    hits = [
-        np.abs(dense_in(*contract(tensors, LEGS, order)[:2], "abcd") - ref).max() < 1e-12 * scale
-        for order in itertools.permutations("ABCD")
-        if connected(LEGS, order)
-    ]
-    assert any(hits), "trace's closure must be reachable by a composition"
-    assert not all(hits), "the open placement: delete this line when the twist finds a home"
+    for order in itertools.permutations("ABCD"):
+        if connected(LEGS, order):
+            got = dense_in(*contract(tensors, LEGS, order)[:2], "abcd")
+            np.testing.assert_allclose(got, ref, atol=1e-12 * scale)
