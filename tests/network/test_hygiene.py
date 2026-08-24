@@ -70,7 +70,6 @@ def test_the_package_has_the_modules_it_claims():
         "dmrg.py",
         "ctmrg.py",
         "envctm.py",
-        "envctmc4v.py",
         "lattice.py",
         "peps.py",
     }

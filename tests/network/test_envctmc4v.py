@@ -360,7 +360,6 @@ def test_grad_through_unrolled_fixed_bond_moves_matches_onsager():
 def test_deciding_a_bond_is_refused_under_jit():
     """The other half of the boundary: ``update_()`` without a bond reads singular values
     to decide which sectors survive, which no trace allows."""
-    env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), traced_ising(0.4)))
     with pytest.raises(tenet.StructureChangingError):
         jax.jit(lambda b: log_kappa(_swept(b)))(0.4)
 

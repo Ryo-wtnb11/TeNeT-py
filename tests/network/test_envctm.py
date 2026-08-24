@@ -34,6 +34,7 @@ from tenet.network import (
     CheckerboardLattice,
     DoubleLayer,
     EnvCTM,
+    EnvCTMc4v,
     Peps,
     SquareLattice,
     corner2x2,
@@ -524,6 +525,12 @@ def test_every_two_operand_step_is_a_composition(monkeypatch):
     finite.update_(max_bond=6, moves="hv")
     double = EnvCTM(Peps(SquareLattice(dims=(1, 1)), near_product("fz2")), init="eye")
     double.update_(max_bond=6, moves="hv")
+    # the C4v specialization lives in the same module, so its move is on the same list
+    bulk = ising(0.4)
+    c4v = SymmetricTensor.from_dense(
+        np.asarray(bulk.to_dense()), (Leg(bulk.legs[0].space, OUT),) * 4
+    )
+    EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), c4v)).update_(max_bond=6)
     wanted = {
         node.lineno
         for node in ast.walk(ast.parse(module.read_text()))
