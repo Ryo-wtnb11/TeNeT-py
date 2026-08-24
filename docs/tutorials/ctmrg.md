@@ -119,6 +119,36 @@ $S^x S^x - S^y S^y$ into $(S^+ S^+ + S^- S^-)/2$ — an operator that changes
 $S^z_{\mathrm{tot}}$ by $\pm 2$ and so destroys the U(1) the ansatz is graded by. The file says
 so in its own docstring.
 
+## The environment layer
+
+[`EnvCTMc4v`][tenet.network.EnvCTMc4v] is the package's C4v environment, and it takes a
+state rather than closures:
+
+```python
+from tenet.network import EnvCTMc4v, Peps, SquareLattice
+
+env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), a))
+out = env.iterate_(max_bond=24, corner_tol=1e-10)   # sweeps, max_dsv, converged
+env[0, 0].tl, env[0, 0].t                           # one corner, one edge
+```
+
+`a` must be a C4v ansatz: four *identical* virtual legs, because the 90-degree rotation
+cycles them and acts only if they are one leg. Four identical legs do not tile the plane
+with themselves, so the plane is a checkerboard of `a` and [`flip`][tenet.network.flip]`(a)`
+— every leg's `side` reversed, every block kept — and the odd sublattice's corner and edge
+are the flips of the one pair stored.
+[`PepsFlip`][tenet.network.PepsFlip] is the view that hands them back.
+
+The projector is the `U` of an SVD of the 2x2 enlarged corner and the renormalized corner
+is `V† U S`: the two index groups leave as two different factors and the correction between
+them is kept, so nothing assumes the corner is Hermitian. Under
+[`EnvCTM`][tenet.network.EnvCTM] — the directional environment, four corners and four edges
+per site — there is no point group to assume anything about.
+
+The same trace boundary applies: `update_()` reads singular values to decide a bond and
+raises under a trace, `update_(bond=B)` reuses one decided outside and is shape-static and
+differentiable.
+
 ## What the library owns
 
 `tenet.network` owns the environment: `Absorb`, the seeds, `move`, the sweep, the
@@ -131,4 +161,5 @@ state — and what to measure, which is a geometry-specific reduced density matr
 - [JAX and backends](../guide/jax-and-backends.md) — `enable_jax(ad=True)` and what the
   broadened VJP assumes.
 - [Truncation](../guide/truncation.md) — the pairing this page leans on.
-- [`tenet.network`](../api/network.md) — `ctmrg`, `ctmrg_unrolled`, `move`, `Absorb`.
+- [`tenet.network`](../api/network.md) — `EnvCTMc4v`, `EnvCTM`, `ctmrg`, `ctmrg_unrolled`,
+  `move`, `Absorb`.

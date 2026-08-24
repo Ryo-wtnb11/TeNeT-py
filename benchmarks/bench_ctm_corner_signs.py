@@ -46,6 +46,15 @@ a row that reads zero cannot be an artifact of the grading. Its answer: the corn
 Hermitian at every move under the full group and at move 0 only under the diagonal mirror,
 which is the single element `examples/toy_codes/ctmrg.py`'s `c4v` imposes.
 
+## Part 3, #243: the same corner under `EnvCTMc4v`
+
+Parts 1 and 2 are about `network/ctmrg.py`'s `move`, which keeps only `u` from the SVD and
+takes the renormalized corner to be `s`. Part 3 runs the same measurement on
+`EnvCTMc4v`, which keeps `v` as well and renormalizes to `v† u s`. Its rows are two
+ansaetze that lane accepts -- four identical virtual legs -- with and without the rotation
+averaged in, and the reading is that the corner's Hermiticity and the sweep's convergence
+have come apart: the row that is nowhere near Hermitian converges too.
+
 Fixtures: the c4v iPEPS of `tests/integration/test_ctmrg.py:190` (U(1) and SU(2), at the
 example's own `CHI_IPEPS`), the SU(2) ket of `tests/network/test_ctmrg.py:82`, and the
 single-layer Ising corner as the **control** -- documented positive, and the row that says
@@ -64,9 +73,18 @@ sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "examples" / "toy_cod
 import ctmrg as example  # noqa: E402
 
 import tenet  # noqa: E402
-from tenet import IN, OUT, Leg, SymmetricTensor  # noqa: E402
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor  # noqa: E402
 from tenet.map_view import to_matrices  # noqa: E402
-from tenet.network import double_layer_ctm, move, single_layer_ctm  # noqa: E402
+from tenet.network import (  # noqa: E402
+    EnvCTMc4v,
+    Peps,
+    SquareLattice,
+    corner2x2,
+    double_layer_ctm,
+    move,
+    single_layer_ctm,
+)
+from tenet.symmetry import U1, U1Sector  # noqa: E402
 
 
 def pairings(big_c):
@@ -290,6 +308,53 @@ def part_two():
     )
 
 
+def part_three():
+    """The same question on `EnvCTMc4v`, which is where the answer stops mattering.
+
+    `network/ctmrg.py`'s `move` keeps only `u` and takes the renormalized corner to be `s`,
+    which is exact for a positive corner and an assumption otherwise. `EnvCTMc4v` keeps
+    `v` as well and renormalizes to `v† u s`, so the two index groups leave the SVD as two
+    factors. The rows below vary the same one thing Part 2 varies -- how much of the point
+    group the ansatz carries -- on ansaetze this lane accepts at all: four *identical*
+    virtual legs, without which no rotation acts and the lane refuses the tensor.
+    """
+    virtual = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(0): 1, U1Sector(1): 1})
+    physical = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    legs = (Leg(virtual, OUT),) * 4 + (Leg(physical, OUT),)
+    raw = SymmetricTensor.random(legs, seed=5)
+    averaged = sum((tenet.transpose(raw, p) for p in _c4v_permutations()), start=raw * 0) / 8
+    print("\n# #243 Part 3 -- the same corner under `EnvCTMc4v`\n")
+    print("| ansatz | `||B - B^H|| / ||B||`, moves 0-5 | converges |")
+    print("|---|---|---|")
+    for name, a in (("no rotation", raw), ("full C4v (8 elements)", averaged)):
+        env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), a))
+        row = []
+        for _ in range(6):
+            env.update_(max_bond=8)
+            big = np.asarray(corner2x2(env, "tl", (0, 0)).to_dense())
+            side = int(np.prod(big.shape[: big.ndim // 2]))
+            m = big.reshape(side, side)
+            row.append(np.linalg.norm(m - m.conj().T) / np.linalg.norm(m))
+        converged = env.iterate_(max_bond=8, max_sweeps=300, corner_tol=1e-10).converged
+        print(f"| {name} | " + "  ".join(f"{x:.2e}" for x in row) + f" | {converged} |")
+    print(
+        "\nThe first row is the ansatz Part 2 has no column for -- this lane refuses the\n"
+        "`(OUT, OUT, IN, IN)` signature outright -- and it converges with the corner far\n"
+        "from Hermitian at every move, because the projector never asks."
+    )
+
+
+def _c4v_permutations():
+    """The eight elements of C4v as permutations of `(t, l, b, r)`, physical leg last."""
+    compose = lambda p, q: tuple(p[i] for i in q)  # noqa: E731
+    out, current = [], (0, 1, 2, 3, 4)
+    for _ in range(4):
+        out.append(current)
+        out.append(compose(current, (1, 0, 3, 2, 4)))
+        current = compose(current, (1, 2, 3, 0, 4))
+    return out
+
+
 def main():
     print("# #205 Part 1 — is the double-layer CTMRG corner indefinite?")
     total = 0
@@ -306,6 +371,7 @@ def main():
         "The gate fires at anything above zero on a double-layer fixture."
     )
     part_two()
+    part_three()
 
 
 if __name__ == "__main__":
