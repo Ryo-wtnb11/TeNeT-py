@@ -66,6 +66,14 @@ from tenet.network.ctmrg import (
 )
 from tenet.network.dmrg import DMRG_out, Sweep, dmrg_, lanczos, sweep_
 from tenet.network.env import Env, correlation_function, measure_mpo
+from tenet.network.envctm import (
+    CTM_out,
+    EnvCTM,
+    EnvLocal,
+    EnvProjectors,
+    corner2x2,
+    proj_corners,
+)
 from tenet.network.lattice import (
     Bond,
     CheckerboardLattice,
@@ -105,11 +113,15 @@ __all__ = [
     "Absorb",
     "Bond",
     "CTMEnv",
+    "CTM_out",
     "CTMRG_out",
     "CheckerboardLattice",
     "DMRG_out",
     "DoubleLayer",
     "Env",
+    "EnvCTM",
+    "EnvLocal",
+    "EnvProjectors",
     "Lattice",
     "MPO",
     "MPS",
@@ -127,6 +139,7 @@ __all__ = [
     "cor_br",
     "cor_tl",
     "cor_tr",
+    "corner2x2",
     "correlation_function",
     "ctmrg",
     "ctmrg_unrolled",
@@ -150,6 +163,7 @@ __all__ = [
     "normalized",
     "ones",
     "overlap",
+    "proj_corners",
     "ring",
     "single_layer",
     "single_layer_ctm",
