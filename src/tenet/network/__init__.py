@@ -17,6 +17,13 @@ Two families, independent of each other:
   [single_layer][tenet.network.single_layer], [double_layer][tenet.network.double_layer]
   and [layers][tenet.network.layers] build its absorbers from a bulk tensor or an iPEPS
   ket.
+* **Two-dimensional states.** [SquareLattice][tenet.network.SquareLattice] and its two
+  pattern subclasses carry the geometry, [Lattice][tenet.network.Lattice] the one
+  object per unique site, [Peps][tenet.network.Peps] the rank-5 state and
+  [Peps2Layers][tenet.network.Peps2Layers] the *view* whose items are lazy
+  [DoubleLayer][tenet.network.DoubleLayer] pairs -- the bra-ket product is never formed.
+  ``cor_*``, ``edge_*`` and ``append_vec_*`` are the twelve contractions every 2D
+  environment is built from.
 
 [spectrum][tenet.network.spectrum] and [ones][tenet.network.ones] are shared by both;
 [spectrum_sectors][tenet.network.spectrum_sectors] and [entropy][tenet.network.entropy]

@@ -373,8 +373,13 @@ class RectangularUnitcell(SquareLattice):
         if any(len(seen) > 1 for seen in neighbourhoods.values()):
             raise ValueError("RectangularUnitcell: each unique label must have the same neighbours")
         self._sites = tuple(sorted(min(group) for group in label_sites.values()))
-        self._bonds_h = tuple(Bond(s, self.nn_site(s, "r")) for s in self._sites)
-        self._bonds_v = tuple(Bond(s, self.nn_site(s, "b")) for s in self._sites)
+        # infinite by construction, so ``nn_site`` never declines -- the walrus says so
+        self._bonds_h = tuple(
+            Bond(s, r) for s in self._sites if (r := self.nn_site(s, "r")) is not None
+        )
+        self._bonds_v = tuple(
+            Bond(s, b) for s in self._sites if (b := self.nn_site(s, "b")) is not None
+        )
 
     def site2index(self, site: Any) -> Any:
         """The pattern's label at ``site``, folded into the unit cell."""
@@ -386,7 +391,7 @@ class RectangularUnitcell(SquareLattice):
         return f"RectangularUnitcell(pattern={self._pattern})"
 
 
-def _pattern_rows(pattern: Sequence[Sequence[Any]] | dict[tuple[int, int], Any]) -> list[list[Any]]:
+def _pattern_rows(pattern: Any) -> list[list[Any]]:
     """Normalize either accepted pattern spelling into a rectangle of rows."""
     if type(pattern) is dict:
         if not pattern:
