@@ -29,6 +29,7 @@ import heisenberg  # noqa: E402
 import heisenberg_walkthrough  # noqa: E402
 import ising2d  # noqa: E402
 import su2_heisenberg  # noqa: E402
+import su3_heisenberg  # noqa: E402
 
 # Each module fixture's stdout, for the docs example pages (#164).
 _STDOUT: dict[str, str] = {}
@@ -60,6 +61,11 @@ def walkthrough_run():
 @pytest.fixture(scope="module")
 def su2_run():
     return _capture("su2_heisenberg", su2_heisenberg.main)
+
+
+@pytest.fixture(scope="module")
+def su3_run():
+    return _capture("su3_heisenberg", su3_heisenberg.main)
 
 
 @pytest.fixture(scope="module")
@@ -120,6 +126,44 @@ def test_su2_mid_bond_is_multiplet_compressed(su2_run):
     assert mid.reduced_dim < mid.dim
 
 
+def test_su3_reproduces_its_own_dense_ed(su3_run):
+    """The SU(3) run's oracle is in the same file: numpy-only ED of the permutation chain.
+
+    ``from_blocks`` writing ``+1`` on the ``6`` and ``-1`` on the ``3bar`` is the whole
+    statement of the Hamiltonian, so what has to be checked is that the resulting operator
+    *is* ``sum_i P_{i,i+1}``: the N=6 DMRG energy against the dense diagonalisation of the
+    same chain built from ``numpy.kron`` alone.
+    """
+    short, _, exact = su3_run
+    assert abs(short.energy - exact) < 1e-10
+
+
+def test_su3_bond_is_multiplet_compressed_and_triality_zero(su3_run):
+    """An even cut of a fundamental chain can only carry zero-triality irreps.
+
+    Triality is ``(a_1 + 2 a_2) mod 3``, additive under fusion and ``1`` on the
+    fundamental, so twelve sites to the left of the mid bond leave ``0``. DMRG is never
+    told this -- the seed offers ``3``, ``3bar``, ``6`` and ``6bar`` too -- and the sweeps
+    drop them, which is the symmetry doing the bookkeeping rather than the caller.
+    """
+    _, long, _ = su3_run
+    mid = long.psi[12].legs[0].space
+    assert mid.reduced_dim < mid.dim
+    assert all((a.dynkin[0] + 2 * a.dynkin[1]) % 3 == 0 for a, _ in mid.sectors)
+
+
+def test_su3_energy_per_site_brackets_the_bethe_value(su3_run):
+    """The N=24 open chain against Sutherland's infinite-chain energy per site.
+
+    An open chain has ``N - 1`` bonds, so ``E/N`` sits above the infinite-chain value and
+    ``E/(N-1)`` below it; the two together are the statement that the finite run is
+    converging on the Bethe-ansatz number rather than merely near it.
+    """
+    _, long, _ = su3_run
+    assert long.energy / 24 > su3_heisenberg.SUTHERLAND
+    assert long.energy / 23 < su3_heisenberg.SUTHERLAND
+
+
 def test_ising2d_matches_onsager_off_criticality(ising_run):
     results, _ = ising_run
     for beta in (0.3, 0.5):
@@ -143,6 +187,10 @@ def test_heisenberg_walkthrough_page_output_is_current(walkthrough_run):
 
 def test_su2_heisenberg_page_output_is_current(su2_run):
     check_example_page("su2-heisenberg.md", _STDOUT["su2_heisenberg"])
+
+
+def test_su3_heisenberg_page_output_is_current(su3_run):
+    check_example_page("su3-heisenberg.md", _STDOUT["su3_heisenberg"])
 
 
 def test_ising2d_page_output_is_current(ising_run):

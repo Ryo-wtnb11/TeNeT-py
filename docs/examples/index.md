@@ -20,6 +20,7 @@ Two kinds of example:
 | [Heisenberg, U(1)](heisenberg.md) | `examples/heisenberg.py` | exact diagonalization, N=20 |
 | [Heisenberg, U(1) walkthrough](heisenberg-walkthrough.md) | `examples/heisenberg_walkthrough.py` | exact diagonalization, N=12 |
 | [Heisenberg, SU(2)](su2-heisenberg.md) | `examples/su2_heisenberg.py` | the U(1) run in the same script |
+| [Heisenberg, SU(3)](su3-heisenberg.md) | `examples/su3_heisenberg.py` | dense ED in the same script, N=6 |
 | [2D Ising CTMRG](ising2d.md) | `examples/ising2d.py` | Onsager's free energy |
 
 ## Written on the tensor layer
