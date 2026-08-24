@@ -15,7 +15,15 @@ import numpy as np
 
 from tenet.space import GradedSpace
 
-__all__ = ["check_example_page", "parity_vector", "sector_parity", "supersign"]
+__all__ = [
+    "check_example_page",
+    "dense_compose",
+    "dense_repartition",
+    "dense_step",
+    "parity_vector",
+    "sector_parity",
+    "supersign",
+]
 
 DOCS_EXAMPLES = pathlib.Path(__file__).parents[1] / "docs" / "examples"
 
@@ -91,3 +99,134 @@ def supersign(legs, p: tuple[int, ...], *, per_side: bool) -> np.ndarray:
             product = pars[j].reshape(shape_j) * pars[k].reshape(shape_k)
             sign = sign * (-1.0) ** product
     return sign
+
+
+# --- the graded dense oracle for a two-operand composition (M79a, #277) -------------
+#
+# ``supersign`` above is the sign of a *transpose*. A PEPS primitive is a composition
+# with an explicit bend, so the oracle needs two more things: what a ``repartition``
+# does to a dense array, and what a bent ``einsum_chain`` step does. Both fall out of
+# one observation, measured rather than assumed and pinned by
+# ``tests/network/test_peps.py::test_the_oracle_reproduces_repartition_and_einsum``:
+#
+#   a tensor's fermionic **line order** is its OUT axes in public order followed by its
+#   IN axes in *reversed* public order -- the domain is built by bending the last
+#   codomain line down, so the domain reads back to front --
+#
+# and the rule that moving between two (public order, line order) pairs costs the
+# Koszul sign of the permutation relating the two line sequences. Every provider shares
+# the code; for a non-fermionic one every parity is zero and the sign is 1.
+
+
+def _line_order(legs) -> tuple[int, ...]:
+    """OUT axes in public order, then IN axes reversed -- the fermionic line sequence."""
+    from tenet import IN, OUT
+
+    outs = tuple(i for i, leg in enumerate(legs) if leg.side is OUT)
+    ins = tuple(i for i, leg in enumerate(legs) if leg.side is IN)
+    return outs + ins[::-1]
+
+
+def _koszul_sign(pars, q) -> np.ndarray:
+    """``(-1)`` per inversion of ``q``, weighted by the parities at the two positions."""
+    n = len(q)
+    sign = np.ones(tuple(len(v) for v in pars))
+    for j in range(n):
+        for k in range(j + 1, n):
+            if q[j] <= q[k]:
+                continue
+            shape_j, shape_k = [1] * n, [1] * n
+            shape_j[j], shape_k[k] = len(pars[j]), len(pars[k])
+            sign = sign * (-1.0) ** (pars[j].reshape(shape_j) * pars[k].reshape(shape_k))
+    return sign
+
+
+def _parities(space, n: int) -> np.ndarray:
+    """``parity_vector`` padded to a dense axis length -- zeros where qdim > 1."""
+    v = parity_vector(space)
+    return v if len(v) == n else np.zeros(n, dtype=int)
+
+
+def _regauge(arr, spaces, pub_old, seq_old, pub_new, seq_new):
+    """Move a dense array between two (public order, line order) pairs."""
+    dims = {x: arr.shape[pub_old.index(x)] for x in pub_old}
+    arr = np.transpose(arr, [pub_old.index(x) for x in seq_old])
+    q = tuple(seq_old.index(x) for x in seq_new)
+    pars = [_parities(spaces[x], dims[x]) for x in seq_new]
+    arr = _koszul_sign(pars, q) * np.transpose(arr, q)
+    return np.transpose(arr, [seq_new.index(x) for x in pub_new])
+
+
+def dense_repartition(arr, legs, outs, ins):
+    """``tenet.repartition(t, outs, ins).to_dense()`` from ``t.to_dense()`` alone."""
+    import dataclasses
+
+    from tenet import IN, OUT
+
+    outs, ins = tuple(outs), tuple(ins)
+    spaces = [leg.space for leg in legs]
+    new_legs = tuple(dataclasses.replace(legs[i], side=OUT) for i in outs) + tuple(
+        dataclasses.replace(legs[i], side=IN) for i in ins
+    )
+    arr = _regauge(
+        arr, spaces, tuple(range(len(legs))), _line_order(legs), outs + ins, outs + ins[::-1]
+    )
+    return arr, new_legs
+
+
+def dense_compose(equation, arr_a, legs_a, arr_b, legs_b):
+    """``tenet.einsum(equation, a, b).to_dense()`` for a *composition*.
+
+    Refuses -- with an assertion naming the wire -- anything that is not one: operand 1
+    must supply the ``IN`` end of every shared wire. That refusal is half the point of
+    the oracle.
+    """
+    from tenet import IN, OUT
+
+    lhs, out = equation.split("->")
+    ta, tb = lhs.split(",")
+    shared = [c for c in ta if c in tb]
+    fa = [c for c in ta if c not in shared]
+    fb = [c for c in tb if c not in shared]
+    for c in shared:
+        assert legs_a[ta.index(c)].side is IN, f"wire {c!r}: operand 1 must supply IN"
+        assert legs_b[tb.index(c)].side is not IN, f"wire {c!r}: operand 2 must supply OUT"
+    a2, _ = dense_repartition(
+        arr_a, legs_a, [ta.index(c) for c in fa], [ta.index(c) for c in shared]
+    )
+    b2, _ = dense_repartition(
+        arr_b, legs_b, [tb.index(c) for c in shared], [tb.index(c) for c in fb]
+    )
+    k = len(shared)
+    prod = np.tensordot(a2, b2, axes=(list(range(len(fa), len(fa) + k)), list(range(k))))
+    labels = fa + fb
+    legs_res = tuple(legs_a[ta.index(c)] for c in fa) + tuple(legs_b[tb.index(c)] for c in fb)
+    n = len(labels)
+    seq_old = tuple(range(len(fa))) + tuple(range(len(fa), n))[::-1]
+    pub_new = tuple(labels.index(c) for c in out)
+    outs = tuple(i for i in pub_new if legs_res[i].side is OUT)
+    ins = tuple(i for i in pub_new if legs_res[i].side is IN)
+    arr = _regauge(
+        prod, [leg.space for leg in legs_res], tuple(range(n)), seq_old, pub_new, outs + ins[::-1]
+    )
+    return arr, tuple(legs_res[i] for i in pub_new)
+
+
+def dense_step(equation, arr_a, legs_a, arr_b, legs_b, bend=""):
+    """One ``tenet.einsum_chain`` step -- the bend, then the composition."""
+    from tenet import OUT
+
+    lhs, out = equation.split("->")
+    ta, tb = lhs.split(",")
+    if bend:
+        flip = set(bend)
+
+        def bent(arr, legs, term):
+            outs = tuple(i for i, c in enumerate(term) if (legs[i].side is OUT) != (c in flip))
+            ins = tuple(i for i in range(len(term)) if i not in outs)
+            arr, legs = dense_repartition(arr, legs, outs, ins)
+            return arr, legs, "".join(term[i] for i in (*outs, *ins))
+
+        arr_a, legs_a, ta = bent(arr_a, legs_a, ta)
+        arr_b, legs_b, tb = bent(arr_b, legs_b, tb)
+    return dense_compose(f"{ta},{tb}->{out}", arr_a, legs_a, arr_b, legs_b)
