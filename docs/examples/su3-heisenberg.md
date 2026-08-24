@@ -2,9 +2,9 @@
 
 $H = \sum_i P_{i,i+1}$ on a chain of fundamental $\mathbf{3}$s. The two-site exchange is
 $+1$ on the symmetric $\mathbf{6}$ of $\mathbf{3} \otimes \mathbf{3}$ and $-1$ on the
-antisymmetric $\bar{\mathbf{3}}$, so the rank-4 term tensor is
-two blocks named with `SymmetricTensor.from_blocks` — no Clebsch-Gordan array is written
-out — and `MPO.from_terms` takes it whole.
+antisymmetric $\bar{\mathbf{3}}$, so the rank-4 term tensor is two blocks named with
+`SymmetricTensor.from_blocks` — no Clebsch-Gordan array is written out — and
+`MPO.from_terms` takes it whole.
 
 - The dense form of the built term is the permutation matrix, to machine precision.
 - DMRG at $N = 6$ reproduces the script's own numpy-only dense ED.

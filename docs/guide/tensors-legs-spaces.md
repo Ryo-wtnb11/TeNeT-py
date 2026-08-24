@@ -8,9 +8,9 @@ tensor's static half: legs and everything derivable from them, no numbers.
 
 ## `GradedSpace` — sector to degeneracy
 
-A graded space is a mapping from sectors to positive degeneracies, $V = \bigoplus_a
-\mathbb{C}^{m_a} \otimes V_a$. Build one with [new][tenet.GradedSpace.new], which sorts the
-sectors canonically:
+A graded space is a mapping from sectors to positive degeneracies,
+$V = \bigoplus_a \mathbb{C}^{m_a} \otimes V_a$. Build one with [new][tenet.GradedSpace.new],
+which sorts the sectors canonically:
 
 ```python
 >>> from tenet import GradedSpace
@@ -143,9 +143,9 @@ zeros; the keys come from `TensorStructure(legs).block_order`, so nothing has to
 built first to find out what the layout is.
 
 This is the natural spelling away from Abelian symmetries, where the reduced block per fusion
-tree is the datum and the dense array is derived. The SU(2) evaluation cup $V_{1/2} \otimes
-V_{1/2}^{*} \to \mathbf{1}$ has exactly one fusion channel, and its whole content is that the
-channel carries coefficient 1:
+tree is the datum and the dense array is derived. The SU(2) evaluation cup
+$V_{1/2} \otimes V_{1/2}^{*} \to \mathbf{1}$ has exactly one fusion channel, and its whole
+content is that the channel carries coefficient 1:
 
 ```python
 >>> import numpy as np

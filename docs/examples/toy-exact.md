@@ -11,7 +11,8 @@ reference [Toy TEBD](toy-tebd.md) and [Toy DMRG](toy-dmrg.md) both print against
   dense two-site block is `model.PHYS`'s own sector order, so a bit pair indexes the block
   directly.
 - At $N = 12$ that is $924 \times 924$ and `eigvalsh` costs milliseconds. Above
-  $N \approx 16$ the upgrade path named in the file is `scipy.sparse.linalg.eigsh` on the same matrix.
+  $N \approx 16$ the upgrade path named in the file is `scipy.sparse.linalg.eigsh` on the
+  same matrix.
 
 ## Source
 

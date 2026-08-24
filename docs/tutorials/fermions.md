@@ -22,13 +22,13 @@ site.phys.sectors   # ((FZ2Sector(parity=0), 2), (FZ2Sector(parity=1), 2))
 sorted(site.ops)    # c+_dn, c+_up, c_dn, c_up, n, n_dn, n_up, 'n_up n_dn'
 ```
 
-The basis is $d = 4$, ordered $(\lvert0\rangle, \lvert{\uparrow\downarrow}\rangle,
-\lvert{\uparrow}\rangle, \lvert{\downarrow}\rangle)$ — the even sector first, because a dense
-array over a `GradedSpace` is laid out sector by sector. Get the ordering wrong and
-`from_dense` will refuse your matrix, which is how you find out.
+The basis is $d = 4$, ordered
+$(\lvert 0\rangle, \lvert ud\rangle, \lvert u\rangle, \lvert d\rangle)$ — the even sector
+first, because a dense array over a `GradedSpace` is laid out sector by sector. Get the
+ordering wrong and `from_dense` will refuse your matrix, which is how you find out.
 
-[`spinless_fermion`][tenet.models.spinless_fermion] is the $d = 2$ site, $\{\lvert0\rangle,
-\lvert1\rangle\}$, with `c`, `c+` and `n`.
+[`spinless_fermion`][tenet.models.spinless_fermion] is the $d = 2$ site,
+$\{\lvert0\rangle, \lvert1\rangle\}$, with `c`, `c+` and `n`.
 
 ## The Hamiltonian
 

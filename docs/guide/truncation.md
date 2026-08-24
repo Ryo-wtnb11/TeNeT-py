@@ -34,8 +34,9 @@ Passing neither `max_bond` nor `cutoff` is refused, naming [tenet.ops.linalg.svd
 | `sum1` | as `sum2` at power 1, weight $\operatorname{qdim}(c)\, \sigma$ |
 | `rsum1` | as `rsum2` at power 1 |
 
-`renorm=True` scales the kept singular values by $\sqrt{\lVert T\rVert^2 / \sum_{\mathrm{kept}}
-\operatorname{qdim}(c)\, \sigma^2}$, so that `norm(U @ S @ Vh) == norm(t)`. It is a bool.
+`renorm=True` scales the kept singular values by
+$\sqrt{\lVert T\rVert^2 / \sum_{\mathrm{kept}} \operatorname{qdim}(c)\, \sigma^2}$, so that
+`norm(U @ S @ Vh) == norm(t)`. It is a bool.
 
 `S` comes back as a tensor, so absorbing it into either factor is a one-line `compose`, and the
 truncation error is exactly $\lVert t\rVert^2 - \lVert USV^{\dagger}\rVert^2$ by Pythagoras.
@@ -90,9 +91,9 @@ Selection is over **one global spectrum**, in every mode:
 - the sort key is the **bare** $\sigma$, descending, ties broken by sector order then
   index — how large a singular value is has nothing to do with multiplicity;
 - the **cost** and the **weight** are $\operatorname{qdim}(c)$-weighted, because the reduced
-  index $i$ in sector $c$ stands for $\operatorname{qdim}(c)$ dense basis states. That is the same weight
-  [tenet.norm][] carries, which makes greedy-descending under a dense budget optimal:
-  the result is the best approximation of its achieved dense rank.
+  index $i$ in sector $c$ stands for $\operatorname{qdim}(c)$ dense basis states. That is
+  the same weight [tenet.norm][] carries, which makes greedy-descending under a dense
+  budget optimal: the result is the best approximation of its achieved dense rank.
 
 The walk **stops** at the first singular value that would overflow the budget, which
 keeps the kept set nested as `max_bond` grows. The consequence is that `max_bond` may be
@@ -170,8 +171,8 @@ Two places where it is not a literal mirror of the SVD:
 
 - **the kept set is not a prefix.** Singular values come back descending, so `svd`
   slices; eigenvalues come back ascending and signed, so the $k$ largest by
-  $\lvert w\rvert$ is an `argsort` and a gather. A gather is a value-dependent permutation, never a
-  value-dependent shape, so `eigh(..., bond=)` still traces.
+  $\lvert w\rvert$ is an `argsort` and a gather. A gather is a value-dependent
+  permutation, never a value-dependent shape, so `eigh(..., bond=)` still traces.
 - **the sign survives.** Only the ordering key is $\lvert w\rvert$; `W`'s retained entries
   are the signed eigenvalues.
 

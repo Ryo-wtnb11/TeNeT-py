@@ -114,9 +114,10 @@ through the same gradient path. It exercises graded truncation, `svd(bond=)` acr
 sectors and multiplet degeneracies.
 
 It makes **no benchmark-energy claim**, and a one-site unit cell cannot. A single-site AFM
-Heisenberg cell needs one sublattice rotated by $\pi$ about $y$, which turns $S^x S^x - S^y
-S^y$ into $(S^+ S^+ + S^- S^-)/2$ — an operator that changes $S^z_{\mathrm{tot}}$ by $\pm 2$
-and so destroys the U(1) the ansatz is graded by. The file says so in its own docstring.
+Heisenberg cell needs one sublattice rotated by $\pi$ about $y$, which turns
+$S^x S^x - S^y S^y$ into $(S^+ S^+ + S^- S^-)/2$ — an operator that changes
+$S^z_{\mathrm{tot}}$ by $\pm 2$ and so destroys the U(1) the ansatz is graded by. The file says
+so in its own docstring.
 
 ## What the library owns
 

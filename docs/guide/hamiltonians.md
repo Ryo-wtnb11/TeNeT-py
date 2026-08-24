@@ -201,11 +201,11 @@ h.materialize()
 
 ## Fermions
 
-The spinful site is the $d = 4$ basis $(\lvert0\rangle, \lvert{\uparrow\downarrow}\rangle,
-\lvert{\uparrow}\rangle, \lvert{\downarrow}\rangle)$, the even sector first, because a dense
-array over a `GradedSpace` is laid out sector by sector. There is **no Jordan-Wigner operator
-to place**: the string is the `fZ2` braiding an odd MPO bond pays when it crosses a physical
-line. A Hubbard chain is its terms:
+The spinful site is the $d = 4$ basis
+$(\lvert 0\rangle, \lvert ud\rangle, \lvert u\rangle, \lvert d\rangle)$, the even sector first,
+because a dense array over a `GradedSpace` is laid out sector by sector. There is **no
+Jordan-Wigner operator to place**: the string is the `fZ2` braiding an odd MPO bond pays when
+it crosses a physical line. A Hubbard chain is its terms:
 
 ```python
 >>> from tenet.models import spinful_fermion
@@ -274,11 +274,12 @@ and truncation is [`MPS.compress_`][tenet.network.MPS.compress_], by name. The c
 the exact product is the operator's bond dimension times the state's, so compress
 promptly on a wide operator.
 
-[`variance`][tenet.network.MPO.variance] is $\langle\psi\vert H^2
-\vert\psi\rangle/\langle\psi\vert\psi\rangle - E^2$, zero for an exact eigenstate — see
-[DMRG](dmrg.md) for what to do with it. [`MPO.identity`][tenet.network.MPO.identity] builds the
-`D=1` identity operator, and [`to_dense`][tenet.network.MPO.to_dense] expands the whole $d^N
-\times d^N$ operator for a small chain.
+[`variance`][tenet.network.MPO.variance] is
+$\langle\psi\vert H^2 \vert\psi\rangle/\langle\psi\vert\psi\rangle - E^2$, zero for an exact
+eigenstate — see [DMRG](dmrg.md) for what to do with it.
+[`MPO.identity`][tenet.network.MPO.identity] builds the `D=1` identity operator, and
+[`to_dense`][tenet.network.MPO.to_dense] expands the whole $d^N \times d^N$ operator for a
+small chain.
 
 ## Where next
 

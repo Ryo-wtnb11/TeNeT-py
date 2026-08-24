@@ -9,7 +9,7 @@ committed on the [Heisenberg, SU(2)](../examples/su2-heisenberg.md) page.
 uv run python examples/su2_heisenberg.py
 ```
 
-## Sectors are labelled by $2j$
+## Sectors are labelled by `2j`
 
 ```python
 from tenet.symmetry import SU2, SU2Sector
