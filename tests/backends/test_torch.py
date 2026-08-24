@@ -260,6 +260,22 @@ def test_braid(name):
 
 
 @pytest.mark.parametrize("name", PROVIDERS)
+def test_twist(name):
+    """The ribbon twist on torch blocks: one real scalar per block, no axis moves.
+
+    ``theta`` is ``1`` on a bosonic provider, where the tensor comes back untouched,
+    and ``(-1)^parity`` on a fermion-parity grading -- so the involution below is the
+    statement that carries content on both. ``numpy`` is the oracle, as everywhere here.
+    """
+    t = tt(LEGS[name], seed=7)
+    got = tenet.twist(t, (0, 2))
+    assert is_torch(got)
+    assert got.legs == t.legs
+    same(got, tenet.twist(t.to_backend("numpy"), (0, 2)))
+    same(tenet.twist(got, (0, 2)), t.to_backend("numpy"))
+
+
+@pytest.mark.parametrize("name", PROVIDERS)
 def test_flip(name):
     """#142's duality flip on torch blocks — the a1 hole of #146.
 

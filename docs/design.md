@@ -7294,6 +7294,75 @@ with M61 Stage D above, and PEPS containers with M79/#277.
   array-free metadata and each block moves through one `transpose` and one real scalar,
   so `braid` is shape-static and traces under `jit`/`grad`. No custom VJP, none needed.
 
+- **M82 phase 2** — shipped: `tenet.twist`, and `tenet.trace` as the supertrace.
+  Phase 1 gave the crossing; this is the *closure*, and it starts by discarding phase 1's
+  own reading. `sVect` is a **symmetric** ribbon category, so a closed diagram's value
+  depends on the graph alone and not on any planar embedding — "which crossing is a
+  function of the cycle's planar embedding" was the wrong object to look for. What a
+  closure does depend on is direction: the cap `V* ⊗ V → 1` is not the cap `V ⊗ V* → 1`,
+  and the two differ by the ribbon twist `theta` on the line. **A closure whose duality
+  pairing runs against the direction the composition takes differs from the categorical
+  one by `theta` on that wire.** On a fermionic provider `theta = (-1)^parity`; on every
+  bosonic one `theta = 1`, so nothing bosonic moves.
+
+  **Where the rule was read off.** PEPSKit carries no embedding either: it writes
+  `@tensor` and repairs the grading at stated points — `str` (`utility/util.jl`:99-109),
+  the fermionic supertrace, wherever a loop closes, and `twistdual(t, is)` /
+  `twistnondual(t, is)` (:68-97), the twist on the *dual* (resp. non-dual) legs among a
+  named index set, at the contraction points of `transfer.jl`, `localoperator.jl`,
+  `compress/local.jl` and the four corners of `reduced_densitymatrix1x1` (:404-413). In
+  tenet a leg carries `V*` when `outward_dual` says so — `side is IN`
+  xor `dual` — and the wire that runs against the composition is exactly the one the
+  composition rule has to **bend**. So `twistdual(operand 2, shared)` and
+  `twistnondual(operand 1, shared)` name the same set of wires, and that set is the bend.
+
+  **`tenet.twist(t, axes)`** is the primitive: `theta` on the sector each named leg
+  carries, per block, structure untouched — TensorKit's `twist!` with the `isdual` test
+  left to the caller, since the caller already knows which end of the wire it holds. It
+  reads the same `TwistData` capability `braid` reads its grading sign from, and returns
+  `t` **itself** when every factor is `1`, which is what keeps U(1), Z2, SU(2), SU(N) and
+  `Trivial` bit-identical rather than merely equal.
+
+  **`tenet.trace` is the supertrace.** Closing one chosen pair of legs is a two-wire
+  contraction against the identity, and exactly one of the two runs against the
+  composition, so `trace` twists it. Measured on the 4-cycle — four rank-3 fZ2 tensors, no
+  double layer, no PEPS, `tests/ops/test_twist.py` — over all sixteen wirings: cut any of
+  the four wires, contract the remaining tree in any connected order, close with `trace`,
+  and all **32** spellings are one tensor to **2.2e-16**. They spread by **2.0** before.
+  The open tree was already order-free at 1e-16 either way, which is what localizes the
+  whole discrepancy in the closure and nowhere else.
+
+  **`full_trace` is left alone, and that is a statement.** It closes the *map view* —
+  every codomain leg against its domain partner — which is what `norm`, `inner` and
+  `MPS.norm`'s `<psi|psi>` want: the pivotal trace `Σ_c qdim(c) tr(M_c)`, agreeing with
+  `np.trace(t.to_dense())` on a rank-2 map. The supertrace is `trace`'s wire closure, not
+  this one.
+
+  **The placement in a *composition* is left open, and the two things that rule it out are
+  measurements.** A loop also closes inside a `tenet.einsum`/`composed` step that contracts
+  two or more wires at once, and there the twist has no home yet. Both candidate homes
+  were implemented and measured against the suite:
+
+  * **Every bent wire of every `einsum_chain` step.** Breaks fermionic DMRG against exact
+    diagonalization, the Hubbard sweep and MPSKit (7 oracles). `network/env.py` spells
+    planar bends on the 1D lattice that turn a rail around without closing anything.
+  * **Every bent wire of `network/common.py::composed`,** whose bend-minimality was the
+    argument that a bend there implies a cycle. It closes real numbers — the fZ2 2x2
+    `lr` metric goes 1.85 → 5.0e-16, both `nonhermitian_part`s 1.43 / 0.795 → 1.6e-16, and
+    the exact gate reaches fidelity 1.0 on **all four** bonds of the patch where the
+    vertical one read 0.2538 — and it breaks two *loop-free* 1D clusters that were exact
+    (`1x3` row `lr`, `3x1` column `tb`). The argument fails on a **doubled** wire: a
+    double-layer step shares the ket wire and the bra wire, which looks like two shared
+    wires and one closed cycle while being one physical line per layer.
+
+  So a bend is a **necessary** condition for the twist and not a sufficient one, and no
+  criterion available to a two-operand call separates a cycle-closing bend from a
+  double-layer one. That is the object phase 3 needs — the caller's own statement of
+  which wires close, in the `twistdual` style PEPSKit spells at its call sites — and it is
+  why M79d's 2x2 fZ2 numbers are still on the books: `EnvCTM`/`EnvNTU.bond_metric` and the
+  vertical gate are unchanged here. Fitting a sign that repairs one number without being
+  read off a placement is what this entry refuses.
+
 Not planned: TDVP, iDMRG, excited states and fermionic swap gates. PEPS containers left
 that list with M79/#277 and now have their own lane above.
 Fermionic swap gates left that list with M82 above, and for the reason 1D never needed

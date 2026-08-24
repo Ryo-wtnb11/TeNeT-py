@@ -65,7 +65,7 @@ from tenet.symmetry.coherence import symmetric_braiding
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["PermutationPlan", "braid", "braid_plan", "permutation_plan", "transpose"]
+__all__ = ["PermutationPlan", "braid", "braid_plan", "permutation_plan", "transpose", "twist"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -399,6 +399,90 @@ def _pattern_braid_plan(
     if all(s == 1 for s in signs):
         return plan
     return replace(plan, terms=tuple((src, dst, c * signs[src]) for src, dst, c in plan.terms))
+
+
+@cache
+def _twist_signs(structure: TensorStructure, axes: tuple[int, ...]) -> tuple[complex, ...]:
+    """``theta`` on the named legs, per block; ``()`` when every factor is ``1``.
+
+    ``()`` is the whole bosonic story -- ``theta`` is ``1`` on every sector of a
+    symmetric bosonic category, so [twist][tenet.twist] hands the tensor straight back
+    and those paths stay bit-identical.
+    """
+    theta = structure.provider.twist  # ty: ignore[unresolved-attribute]  # requires() at the call
+    signs, trivial = [], True
+    for key in structure.block_order:
+        sectors = structure.axis_sectors(key)
+        factor: complex = 1.0
+        for i in axes:
+            factor *= theta(sectors[i])
+        trivial = trivial and factor == 1
+        signs.append(factor)
+    return () if trivial else tuple(signs)
+
+
+def twist(t: "SymmetricTensor", axes: Sequence[int] | int) -> "SymmetricTensor":
+    """The ribbon twist ``theta`` on each named leg -- TensorKit's ``twist!``.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor. Its legs, sides and structure are untouched: a twist is a scalar
+        per block, not a permutation and not a bend.
+    axes : sequence of int, or int
+        The public axes whose lines are twisted. Repeats are not deduplicated --
+        twisting a leg twice pays ``theta**2``, as the diagram says.
+
+    Returns
+    -------
+    SymmetricTensor
+        ``t`` with each block multiplied by the product of ``theta`` over the sectors
+        the named legs carry in that block. ``t`` itself when every factor is ``1``.
+
+    Raises
+    ------
+    CapabilityError
+        If the provider does not implement
+        [TwistData][tenet.symmetry.TwistData], which is where ``theta`` lives.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> tenet.twist(t, 0) is t  # theta = 1 here, so the tensor comes back untouched
+    True
+
+    Notes
+    -----
+    **The twist is what makes a closed line's value unique.** ``sVect`` is a symmetric
+    ribbon category, so a closed diagram evaluates to one number whatever order it is
+    contracted in -- but only once every closure is the categorical one. A closure whose
+    duality pairing runs *against* the direction the composition takes differs from it by
+    ``theta`` on that line, and paying that is this function. It is PEPSKit's
+    ``twistdual``/``twistnondual`` (``utility/util.jl``) with the ``isdual`` test left to
+    the caller, because tenet spells ``V`` versus ``V*`` as ``side`` xor ``dual``
+    (``outward_dual``) and the caller already knows which end it holds.
+
+    ``theta`` is ``(-1)^parity`` on a fermion-parity grading and ``1`` on every bosonic one,
+    the same grading datum [braid][tenet.braid] reads its crossing sign from.
+    """
+    axes = (axes,) if isinstance(axes, int) else tuple(axes)
+    if not axes:
+        return t
+    requires(t.provider, TwistData)
+    signs = _twist_signs(t.structure, axes)
+    if not signs:
+        return t
+    return type(t)(
+        t.structure,
+        tuple(
+            b if c == 1 else scaled(b, c.real if isinstance(c, complex) and c.imag == 0 else c)
+            for b, c in zip(t.blocks, signs, strict=True)
+        ),
+    )
 
 
 def braid(t: "SymmetricTensor", axes: Sequence[int], levels: Sequence[int]) -> "SymmetricTensor":

@@ -71,6 +71,7 @@ from tenet.ops import (
     to_symmetry,
     trace,
     transpose,
+    twist,
     unfuse,
     zip_blocks,
 )
@@ -234,6 +235,7 @@ __all__ = [
     "to_symmetry",
     "trace",
     "transpose",
+    "twist",
     "unfuse",
     "zip_blocks",
 ]

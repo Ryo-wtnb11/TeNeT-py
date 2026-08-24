@@ -74,7 +74,7 @@ from tenet.leg import IN, OUT, Leg
 from tenet.map_view import check_square, lower_plan, to_matrices
 from tenet.ops.basic import _check_same_structure
 from tenet.ops.map import compose_lowered, identity
-from tenet.ops.permutation import permutation_plan, transpose
+from tenet.ops.permutation import permutation_plan, transpose, twist
 from tenet.ops.repartition import _compose as compose_terms
 from tenet.ops.repartition import apply_plan, repartition, repartition_plan, sides_plan
 from tenet.structure import TensorStructure
@@ -723,7 +723,7 @@ def _lowered(
 
 
 def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
-    """Contract axis ``i`` of ``t`` against axis ``j`` of ``t``, through the identity.
+    """Close axis ``i`` of ``t`` onto axis ``j`` — the **supertrace** on a graded provider.
 
     Parameters
     ----------
@@ -747,7 +747,8 @@ def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
         pair, out-of-range axes, or a trace that would leave no free leg.
     CapabilityError
         If closing a same-side pair needs a bend and the provider does not
-        implement ``BendingCoefficients``.
+        implement ``BendingCoefficients``, or if the provider does not implement
+        [TwistData][tenet.symmetry.TwistData] (the closure's ``theta``).
 
     Examples
     --------
@@ -762,6 +763,17 @@ def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
 
     Notes
     -----
+    **The closed wire pays the ribbon twist, and that is what makes a loop's value
+    unique.** Of the two wires this closure runs — one to each leg of the identity —
+    exactly one has its duality pairing against the direction the composition takes, and
+    the categorical closure differs from the naive one by ``theta`` there. Without it the
+    same fermionic loop takes different values depending on which of its wires was chosen
+    to close, measured at a spread of 2.0 on a 4-cycle; with it the choice does not matter
+    to 1e-16 (``docs/design.md``, M82 phase 2, and ``tests/ops/test_twist.py``). It is
+    PEPSKit's ``str`` — ``tr`` for a bosonic braiding, where ``theta`` is 1 and
+    [tenet.twist][] hands the tensor straight back. The *map view*'s closure,
+    [full_trace][tenet.full_trace], is the pivotal trace and deliberately not this.
+
     The identity's OUT leg meets
     whichever of the two carries the dual object it needs, so a same-side pair
     (which needs a bend) and an OUT/IN pair are the same code path — TensorKit
@@ -776,6 +788,7 @@ def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
     i, j = axes
     p = 0 if t.legs[j].side is OUT else 1
     ref = t.blocks[0]
+    t = twist(t, i if t.legs[i].side is OUT else j)
     return tensordot(
         t,
         identity((t.legs[j],), dtype=ar.get_dtype_name(ref), like=ref),
