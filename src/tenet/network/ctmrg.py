@@ -37,8 +37,15 @@ is metadata: frozen, hashable, array-free, a legitimate jit *cache key* and neve
   model: rank 4 for a single layer, rank 6 for a double one.
 
 **One C4v move, not four directional ones**, and no multi-site unit cell: one corner and
-one edge describe the whole environment only for a mirror-symmetric bulk on a 1x1 cell.
-That restriction is a documented *precondition* on the caller's tensor (see
+one edge describe the whole environment only for a bulk invariant under the **full C4v
+point group** -- all four rotations and all four reflections -- on a 1x1 cell. The
+diagonal mirror alone is not enough, and the difference is measurable rather than
+rhetorical: with the diagonal mirror only, the enlarged corner is Hermitian at move 0 and
+at no move after it, while under the full group it stays Hermitian to ``5e-16`` at every
+move (``benchmarks/bench_ctm_corner_signs.py``, Part 2). The Ising Boltzmann tensor is
+symmetric under every permutation of ``(l, u, r, d)`` by construction, which is why the
+single-layer route reproduces Onsager exactly. That restriction is a documented
+*precondition* on the caller's tensor (see
 [double_layer_ctm][tenet.network.double_layer_ctm]), never a symmetrization this module performs.
 The upgrade path
 is named and not started: YASTN's ``EnvCTM`` (a ``Peps`` subclass with eight tensors per
@@ -426,12 +433,20 @@ def double_layer_ctm(ket: SymmetricTensor) -> tuple[Absorb, SymmetricTensor, Sym
 
     Notes
     -----
-    **Precondition, not policy:** ``ket`` must already be invariant under the diagonal
-    mirror ``tenet.transpose(ket, (0, 2, 1, 4, 3))``, or one corner and one edge do not
-    describe the environment. This module does not symmetrize it -- that would silently
-    edit the caller's state, and a caller whose ansatz is genuinely C4v-symmetric would
-    pay for a no-op. Symmetrizing an ansatz is an ansatz constraint and belongs to
-    whoever chose the ansatz.
+    **Precondition, not policy:** ``ket`` must already be invariant under the **full C4v
+    point group** on ``(l, u, r, d)`` -- the four rotations as well as the four
+    reflections -- or one corner and one edge do not describe the environment. Invariance
+    under the diagonal mirror ``tenet.transpose(ket, (0, 2, 1, 4, 3))`` alone buys the
+    first move and nothing after it: the enlarged corner is then Hermitian at move 0 and
+    not at any later move, measured in ``benchmarks/bench_ctm_corner_signs.py``. This
+    module does not symmetrize it -- that would silently edit the caller's state, and a
+    caller whose ansatz is genuinely C4v-symmetric would pay for a no-op. Symmetrizing an
+    ansatz is an ansatz constraint and belongs to whoever chose the ansatz.
+
+    A rotation identifies the virtual space with its dual, so the full group is available
+    only on a **self-conjugate** virtual space. Every SU(2) space is one; a U(1) space
+    such as ``{q = 0: 1, q = +1: 1}`` is not, and no ansatz on it can carry the rotation
+    at all.
 
     The edge is **rank 4**, legs ``(X IN, X OUT, V_ket IN, V_bra IN dual)``: the ket bond
     and its conjugate as two separate legs, never fused (froSTspin
@@ -505,14 +520,25 @@ def move(
     always its two halves: rank 4 for a single layer, rank 6 for a double one.
 
     **Precondition:** a single isometry ``u`` projects both index groups, which is exact
-    only for a *positive* enlarged corner. A single-layer Ising corner is positive, which is
-    why that model reproduces Onsager to float64; a double-layer corner with an indefinite
-    spectrum still gets a self-consistent contraction, but its corner and edge then differ
-    by a diagonal of signs.
+    only for a *positive* enlarged corner, and the enlarged corner is Hermitian at all --
+    so "positive" is even defined -- only when the bulk carries the full C4v point group
+    (see [double_layer_ctm][tenet.network.double_layer_ctm]). Both hold for the
+    single-layer Ising bulk, which is symmetric under every permutation of its legs and
+    whose corner is positive, and that is why that model reproduces Onsager to float64.
+    A bulk carrying only the diagonal mirror gives a Hermitian corner at move 0 and a
+    corner that is Hermitian in no basis afterwards; the environment it converges to is
+    still self-consistent, and the observables built on it are still Hermitian, because
+    [ring][tenet.network.ring] pairs every tensor with its own ``tenet.adjoint`` rather
+    than relying on the corner.
     """
     # Simplification: one isometry for a bilinear corner whose ``u`` and ``v`` coincide only
-    # when it is positive. Fixing the indefinite case wants ``eigh(t, bond=)`` -- #77's
-    # explicit non-goal -- or four directional moves.
+    # when it is positive. ``eigh_truncated`` exists now and is deliberately *not* used
+    # here: measured, the signed route leaves the corner exactly as non-Hermitian, even
+    # with nothing truncated (#242, #243), because the loss is the ansatz's missing
+    # rotations and not the projector's dropped signs. Nor is it a basis artifact -- no
+    # change of basis on the environment leg restores Hermiticity, which the similarity
+    # invariant a regauging would have to preserve rules out. The fix is a fully
+    # C4v-symmetric ansatz, which belongs to the caller.
     big_c = absorb.corner(c, e)
     n = big_c.ndim // 2  # (0..n-1 | n..2n-1): 2 for a single layer, 3 for a double one
     axes = (tuple(range(n)), tuple(range(n, 2 * n)))

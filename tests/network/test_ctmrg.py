@@ -17,10 +17,11 @@ each. Anything slower than that is an integration test in the wrong directory.
 """
 
 import ctmrg as example  # the example: the Boltzmann tensor and the C4v ansatz constraint
+import numpy as np
 import pytest
 
 import tenet
-from tenet import IN, OUT, Leg, SymmetricTensor
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.network import (
     Absorb,
     CTMEnv,
@@ -35,6 +36,7 @@ from tenet.network import (
     single_layer,
     single_layer_ctm,
 )
+from tenet.symmetry import Trivial, TrivialSector
 
 BETA = 0.4
 CHI = 4
@@ -136,6 +138,45 @@ def test_ring_is_the_four_adjoint_paired_tensors(provider):
     assert all(x.side != y.side for x, y in zip(ea.legs, ec.legs, strict=True))
     assert float(tenet.norm(ca)) == pytest.approx(float(tenet.norm(cc)))
     assert float(tenet.norm(ea)) == pytest.approx(float(tenet.norm(ec)))
+
+
+def _corner_defects(bulk: SymmetricTensor, moves: int = 4) -> list[float]:
+    """``max ||B - B^H|| / ||B||`` on the enlarged corner, one entry per move."""
+    absorb, c, e = single_layer_ctm(bulk)
+    out = []
+    for _ in range(moves):
+        big = np.asarray(absorb.corner(c, e).to_dense())
+        conj = np.transpose(big, (2, 3, 0, 1)).conj()
+        out.append(float(np.linalg.norm(big - conj) / np.linalg.norm(big)))
+        c, e, _ = move(c, e, absorb, chi=6)
+    return out
+
+
+def test_the_corner_is_hermitian_only_under_the_full_c4v_group():
+    """#243, and the precondition [double_layer_ctm][] states: one corner and one edge
+    describe the environment only for a bulk carrying the **whole** C4v point group.
+
+    The diagonal mirror alone buys move 0 -- where the environment leg is still
+    one-dimensional and there is nothing for the missing rotations to act on -- and
+    nothing after it. Two bulks, one random array, the same sweep; the grading is
+    ``Trivial`` so that the symmetry under test is the *spatial* one and nothing else.
+    ``benchmarks/bench_ctm_corner_signs.py`` Part 2 is the same measurement across more
+    rows, including the double layer.
+    """
+    space = GradedSpace.new(Trivial, {TrivialSector(): 3})
+    legs = (Leg(space, OUT), Leg(space, OUT), Leg(space, IN), Leg(space, IN))
+    a = np.random.default_rng(0).normal(size=(3, 3, 3, 3))
+
+    mirror = SymmetricTensor.from_dense((a + np.transpose(a, (1, 0, 3, 2))) / 2, legs)
+    full = np.zeros_like(a)
+    for _ in range(4):  # the eight elements: four rotations times the diagonal mirror
+        full = full + a + np.transpose(a, (1, 0, 3, 2))
+        a = np.transpose(a, (1, 2, 3, 0))
+    full = SymmetricTensor.from_dense(full / 8, legs)
+
+    assert _corner_defects(mirror)[0] < 1e-12  # move 0 is Hermitian either way
+    assert min(_corner_defects(mirror)[1:]) > 1e-2  # and no later move is
+    assert max(_corner_defects(full)) < 1e-12  # under the full group, every move is
 
 
 def test_converge_reaches_tol_and_freezes_the_projector_bond():

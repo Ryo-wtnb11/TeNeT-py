@@ -65,8 +65,9 @@ reason this half exists). So it follows ``examples/toy_codes/vmc_mps.py``: rando
 symmetric ``h``, no comparison against ``-0.669437(5)``, said out loud right here.
 
 Simplification: **one C4v move, not four directional ones**, and no multi-site unit cell.
-One corner and one edge describe the whole environment only for a mirror-symmetric bulk
-on a 1x1 cell, which is why :func:`c4v` symmetrizes the *ansatz*. The upgrade path is
+One corner and one edge describe the whole environment only for a bulk carrying the full
+C4v point group on a 1x1 cell, which is what :func:`c4v` approximates on the *ansatz* --
+with the diagonal mirror only, for the reason its docstring gives. The upgrade path is
 named and not started: YASTN's ``EnvCTM`` (eight tensors per site and four ``update_``
 moves), froSTspin's four ``contract_*`` wrappers over one ``contract_enlarged_corner``.
 
@@ -138,11 +139,19 @@ def c4v(a: SymmetricTensor) -> SymmetricTensor:
     """Symmetrize an iPEPS tensor under the C4v diagonal mirror ``l <-> u``, ``r <-> d``.
 
     An **ansatz constraint**, and :func:`double_layer_ctm` documents it as a precondition
-    rather than enforcing it: one corner and one edge describe the environment only if the
-    bulk is mirror-symmetric, a random ansatz is not, and symmetrizing the caller's state
-    is not the environment's business. Because ``l``/``u`` share a side and ``r``/``d``
-    share one, the mirror is the plain transpose ``(0, 2, 1, 4, 3)``: no bend, no bending
-    coefficient, and linear, so it differentiates for free.
+    rather than enforcing it: a random ansatz is not mirror-symmetric, and symmetrizing
+    the caller's state is not the environment's business. Because ``l``/``u`` share a side
+    and ``r``/``d`` share one, the mirror is the plain transpose ``(0, 2, 1, 4, 3)``: no
+    bend, no bending coefficient, and linear, so it differentiates for free.
+
+    **This is the diagonal mirror, which is one element of C4v and not the group.** One
+    corner and one edge describe the environment only under the *full* group, rotations
+    included, and the enlarged corner here is correspondingly Hermitian at move 0 and at
+    no move after it (``benchmarks/bench_ctm_corner_signs.py``). The rotation is missing
+    because it identifies the virtual space with its dual: it is a bend, not a transpose,
+    and on the U(1) space this file uses -- ``{q = 0: 1, q = +1: 1}``, whose conjugate is
+    ``{q = 0: 1, q = -1: 1}`` -- there is no rotation-invariant tensor to reach. The iPEPS
+    half of this file is plumbing, said out loud above, and this is the shape of that.
     """
     return (a + tenet.transpose(a, (0, 2, 1, 4, 3))) / 2
 

@@ -6636,6 +6636,82 @@ left that list with M61 Stage D above.
   needs, named rather than spelled inline so an `autoray` spy can count it — the operator
   form is invisible to `ar.do`, which is why #259's audit could not see it.
 
+- **M63** — shipped as a **finding and a corrected precondition**, no numerics changed:
+  the double-layer C4v corner stops being Hermitian after move 0 because the *ansatz*
+  carries one element of C4v and not the group (#243, the residue #242 filed).
+
+  **The question, and why the three candidates were separable.** #242's instrument reads
+  the enlarged corner's Hermiticity under both candidate basis pairings at every move:
+  Hermitian at move 0 (≤9.2e-16) on both c4v iPEPS fixtures, and 0.48–1.99 from move 1 on
+  under either. #243 asked whether that is (a) the single C4v move's ket/bra asymmetry,
+  which four directional moves would repair, (b) a gauge drift a per-move symmetrization
+  would repair, or (c) expected, leaving the projector on the SVD. Each was measured.
+
+  **It is none of the three as worded. The corner is Hermitian at every move exactly when
+  the bulk carries the full C4v point group** — four rotations and four reflections — and
+  the shipped ansatz carries only the diagonal mirror `transpose(a, (0, 2, 1, 4, 3))`.
+  One random array, symmetrized three ways, everything else identical
+  (`benchmarks/bench_ctm_corner_signs.py` Part 2, plain NumPy on `move`'s own `einsum`
+  strings so no grading can be blamed):
+
+  | bulk symmetry | single layer, `max‖B − Bᴴ‖/‖B‖`, moves 0–3 | iPEPS double layer, moves 0–3 |
+  |---|---|---|
+  | none | 1.04, 1.47, 1.35, 1.23 | 0.52, 0.85, 0.87, 0.89 |
+  | diagonal mirror only (what `c4v` imposes) | 4.4e-17, 1.24, 1.22, 0.53 | 6.1e-18, 1.07, 1.02, 0.79 |
+  | full C4v (8 elements) | 1.3e-16, 1.9e-16, 2.3e-16, 1.0e-16 | 1.1e-16, 2.6e-16, 2.2e-16, 2.1e-16 |
+
+  Move 0 is Hermitian under the mirror alone because the environment leg is still
+  one-dimensional and the missing rotations have nothing to act on. The Ising Boltzmann
+  tensor is symmetric under *every* permutation of `(l, u, r, d)`, which is why the
+  single-layer control reads zero at every move and Onsager stays exact.
+
+  **(b) is refuted by a gauge-invariant test, not by a failed attempt.** If a change of
+  basis `G` on the environment leg could restore Hermiticity, then for any two of the
+  corner's `X`-by-`X` blocks `B₁B₂⁻¹` and the corresponding Hermitian image would be
+  *similar*, so their spectra would agree. Measured on the dense c4v fixtures, they
+  disagree by 0.12 to 18.6 relative from move 1 on and by ≤4e-16 at move 0. No regauging
+  exists. A per-move symmetrization does force the corner Hermitian (≤6e-15 at every
+  move), but it is a projection rather than a repair: the component it deletes has
+  relative size 1.30–1.40 of a maximum √2 ≈ 1.414 at *every* move, even when the input
+  edge is already exactly symmetric.
+
+  **(a) is refuted by the same table.** Nothing about a directional move changes the
+  ansatz, and the defect tracks the ansatz alone. For a C4v bulk on a 1×1 cell the four
+  directional moves are the same move.
+
+  **The sign diagonal is confirmed not to be the cause, this time with nothing
+  truncated.** #242 withdrew the `eigh_truncated` consumer change on a converged
+  measurement; the dense reproduction runs the same sweep with the *signed* corner and
+  every singular value kept, and the corner's defect is 1.114 against the SVD route's
+  1.089. With the cut removed entirely, the defect stays. So it is not the projector's
+  dropped signs and not the truncation.
+
+  **Nothing physical was broken, which is why no number moves.** `ring` returns the far
+  side of the boundary as the `tenet.adjoint` of the near side, so `_halves` builds every
+  observable as a `⟨half|·|half⟩` form and the two-site reduced density matrix is
+  Hermitian by construction rather than by the corner's Hermiticity. Measured on the U(1)
+  fixture with a probe operator 16 % away from self-adjoint (`‖h − h†‖/‖h‖ = 0.16`),
+  `⟨h⟩` and `conj(⟨h†⟩)` agree to 1.8e-16 at `k = 1, 2, 3, 4`. The SU(2) fixture's `h` is
+  self-adjoint by symmetry (`‖h − h†‖ = 0`) and its row carries no information.
+
+  **The full group is not reachable on the U(1) fixture at all.** A rotation sends an OUT
+  leg to an IN leg, so it identifies the virtual space with its dual and exists only on a
+  self-conjugate space. Every SU(2) space is one; the example's U(1) virtual space
+  `{q = 0: 1, q = +1: 1}` has conjugate `{q = 0: 1, q = −1: 1}` and is not, so no
+  rotation-invariant ansatz on it exists to reach.
+
+  **What changed.** `network/ctmrg.py`'s three precondition statements — the module
+  docstring's "One C4v move", `double_layer_ctm`'s Notes and `move`'s Notes plus the
+  Simplification comment above its body — now say "the full C4v point group" where they
+  said "mirror-symmetric", and name the measurement. `examples/toy_codes/ctmrg.py::c4v`
+  says which single element it imposes and why the rotation is missing.
+  `bench_ctm_corner_signs.py` grows Part 2, the table above.
+  `tests/network/test_ctmrg.py::test_the_corner_is_hermitian_only_under_the_full_c4v_group`
+  pins it on a `Trivial` grading, where the only symmetry under test is the spatial one.
+  No source behaviour, no pinned energy and no committed output moved: `ENERGY_BASELINE`
+  and `toy-ctmrg.md` are untouched, and the projector stays on `svd_truncated`.
+
+
 Not planned: TDVP, iDMRG, excited states, fermionic swap gates and PEPS containers.
 Fermionic swap gates stay not planned for a stronger reason than before: fermionic
 DMRG shipped without them (M21/#147) — the fZ2 braiding is the Jordan-Wigner string,
