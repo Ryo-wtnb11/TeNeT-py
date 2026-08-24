@@ -7,6 +7,10 @@ watching it be called. That is the whole rule, and `tests/test_examples.py` asse
 file by file. A toy code may use the symmetric-tensor layer because that is the library's
 subject matter, not the algorithm being taught; the split follows `tenpy_toycodes`.
 
+`exact.py` is the one file that uses no `tenet` at all, on purpose: it is the oracle the
+other two print against, and an oracle that shared the machinery it judges would not be
+one.
+
 One module holds one concept and imports its neighbours, in reading order:
 
 | file | holds |
