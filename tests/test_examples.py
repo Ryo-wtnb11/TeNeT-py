@@ -149,6 +149,60 @@ def test_ising2d_page_output_is_current(ising_run):
     check_example_page("ising2d.md", _STDOUT["ising2d"])
 
 
+@pytest.fixture(scope="module")
+def toy_chain():
+    """``tebd.main()`` and ``exact.main()``, run once, with their stdout kept for the pages.
+
+    The two new teaching modules of #268 print a committed output each and neither has an
+    integration module of its own: ``exact.py`` is ~0.2 s of ``numpy.linalg.eigvalsh`` and
+    ``tebd.py`` is ~8 s of imaginary time at N=12, which is the usage lane's budget rather
+    than ``tests/integration/test_dmrg.py``'s. They share a fixture because ``tebd.main()``
+    calls ``exact.ground_energy`` itself, so the reference is computed here either way.
+    """
+    sys.path.insert(0, str(EXAMPLES / "toy_codes"))
+    import exact
+    import tebd
+
+    exact_out = _capture("exact", exact.main)
+    _, history, reference = _capture("tebd", lambda: tebd.main())
+    return exact_out, history, reference
+
+
+def test_toy_exact_reproduces_the_recorded_open_chain_energies(toy_chain):
+    """``exact.py`` is an oracle, so it is pinned before anything is judged against it.
+
+    ``-5.142090632840532`` is ``tests/integration/test_dmrg.py``'s independently computed
+    N=12 open-boundary value; that module builds its matrix from bit flips written out by
+    hand, this one builds it from ``model.h_bonds()`` read out dense, and the two agree.
+    """
+    energies, _, _ = toy_chain
+    assert energies[12] == pytest.approx(E_OBC_12, abs=1e-12)
+    assert all(e / n > -0.4431471805599453 for n, e in energies.items())
+
+
+def test_toy_tebd_reaches_the_exact_energy_from_above(toy_chain):
+    """#268's acceptance for the new algorithm: variational, and converged.
+
+    Imaginary time can only lower the energy and the truncation can only raise it, so a
+    stage that came out *below* ``exact.py`` would be a bug rather than a lucky run. The
+    last stage lands within 1e-9 of it -- the page's committed output shows 1.2e-11 -- and
+    that is the same ground state ``dmrg.py`` reaches from the MPO form of the same model.
+    """
+    _, history, reference = toy_chain
+    energies = [e for _, _, e, _ in history]
+    assert all(e >= reference for e in energies), "TEBD went below the exact energy"
+    assert energies == sorted(energies, reverse=True), "imaginary time raised the energy"
+    assert energies[-1] - reference < 1e-9
+
+
+def test_toy_tebd_page_output_is_current(toy_chain):
+    check_example_page("toy-tebd.md", _STDOUT["tebd"])
+
+
+def test_toy_exact_page_output_is_current(toy_chain):
+    check_example_page("toy-exact.md", _STDOUT["exact"])
+
+
 def test_toy_ctmrg_reproduces_the_library_environment():
     """#187's acceptance: the rewritten toy code is the library's CTMRG, not a lookalike.
 
