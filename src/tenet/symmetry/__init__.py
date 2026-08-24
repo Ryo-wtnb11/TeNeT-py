@@ -47,6 +47,7 @@ from tenet.symmetry.base import (
 from tenet.symmetry.fz2 import FZ2Provider, FZ2Sector, fZ2
 from tenet.symmetry.product import ProductProvider, ProductSector
 from tenet.symmetry.su2 import SU2, SU2Provider, SU2Sector
+from tenet.symmetry.sun import SUNProvider, SUNSector
 from tenet.symmetry.u1 import U1, U1Provider, U1Sector
 from tenet.symmetry.z2 import Z2, Z2Provider, Z2Sector
 
@@ -73,6 +74,8 @@ __all__ = [
     "QuantumDimensionData",
     "RMatrixData",
     "SU2",
+    "SUNProvider",
+    "SUNSector",
     "SU2Provider",
     "SU2Sector",
     "Sector",

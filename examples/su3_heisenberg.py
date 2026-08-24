@@ -20,7 +20,7 @@ import numpy as np
 
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
 from tenet.network import MPO, MPS, dmrg_, expectation_2site
-from tenet.symmetry.sun import SUNProvider, SUNSector
+from tenet.symmetry import SUNProvider, SUNSector
 
 SU3 = SUNProvider(3)
 ONE, THREE, THREEBAR, SIX = (SUNSector(d) for d in ((0, 0), (1, 0), (0, 1), (2, 0)))
