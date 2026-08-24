@@ -7363,6 +7363,69 @@ with M61 Stage D above, and PEPS containers with M79/#277.
   vertical gate are unchanged here. Fitting a sign that repairs one number without being
   read off a placement is what this entry refuses.
 
+- **M82 phase 3** — shipped: the placement, and it needs no caller to state it.
+  Phase 2 left the twist without a home inside a multi-wire composition and named the
+  caller's declaration as the missing object. It is not missing: **two disjoint blobs
+  joined over `k` wires close `k - 1` cycles**, so a step is a tree edge exactly when it
+  contracts one wire and closes something whenever it contracts more. That is a property
+  of the step, available where the step is written.
+
+  **The rule, and how it was read off rather than guessed.** Phase 2's closure —
+  compose one wire with `composed` and close the rest with `tenet.trace` — is *tree-edge
+  independent*: which wire is taken as the tree edge does not move the answer. That makes
+  it the canonical value, and the question becomes which twist set a **one-step** `k`-wire
+  composition needs to reach it. Enumerated over every subset, for `k = 2, 3, 4`, every
+  OUT/IN assignment and with the shared labels shuffled to arbitrary positions in both
+  operands, exactly one subset works in every case and it is always the same one: **the
+  wires the step bends**. So the twist has the home phase 2 was looking for, `bend` names
+  it, and the only thing phase 2 was missing is that a *one-wire* step bends without
+  closing anything and must not pay. `tests/ops/test_twist.py` is where the two closures
+  are pinned to one object, on the same 4-cycle phase 2 measured the spread on.
+
+  **[closed][tenet.network.closed] is the spelling, and it is `einsum_chain` plus that
+  one line.** `network/common.py`'s `composed` and the twelve `network/peps.py`
+  primitives route through it; `network/env.py`'s 1D `_composed` does not, and needs not
+  to — its planar bends turn a rail around on a line, where every step contracts one wire.
+  Bosonic gradings are untouched to the bit, `theta` being 1 and [tenet.twist][] handing
+  the tensor straight back.
+
+  **A caller-declared spelling was the brief and is rejected on the derivation.** Both
+  candidates — `tenet.twist(t, axes)` at the call site, PEPSKit-literal, and a `twist=`
+  argument on the `einsum_chain` step — ask the caller to name the wires the step already
+  knows, and the literal one additionally asks it to re-derive `composed`'s bend-minimal
+  operand order to know which end of which wire it holds. PEPSKit needs the declaration
+  because `@tensor` takes a whole network at once and has no per-pair bend to read; tenet
+  spells the pair, so the pair answers.
+
+  **The twist is also what makes `composed` well defined.** M79a had to break the
+  operand-order ties by dense oracle — two spellings of the same contraction landed on
+  different tensors under fermion parity, and only the measurement said which was the
+  planar one. With the twist paid, the one-step composition is the canonical closure in
+  *both* operand orders, so the tie is no longer a choice.
+
+  **What closed, measured against `to_dense_state` and against Jordan-Wigner.** The dense
+  closer is itself one of the callers, and its 2x2 fZ2 closure was wrong: over the 16
+  connected orders the sites can be absorbed in, it spread by **11.7** and now agrees to
+  **1.6e-15**. On that repaired oracle the exact gate reaches fidelity **1.0** on all four
+  bonds of the 2x2 patch (the fourth read 0.2538); `nonhermitian_part` on both directions
+  of the fZ2 `EnvNTU` metric goes 1.43 / 1.14 to **1.6e-16**, so the metric is a Hermitian
+  form again; the `EnvNTU` `lr` metric and the `EnvCTM` `tb` metric reach their Gram
+  oracle at **5.0e-16** and **1.7e-15** where both read 1.85; and every loop-free cluster
+  stays exact (six clusters, 0 to 2.2e-16), which is the regression phase 2 measured and
+  the reason the rule is stated on the step and not on the bend alone.
+
+  **Two numbers are still open, and the residual is measured rather than fitted.** The
+  `EnvNTU` `tb` metric (0.795) and the `EnvCTM` `lr` metric (1.56) do not reach their
+  oracle — the mirror-image direction of the two that do. The disagreement is **exactly
+  `theta` on one open bra leg and one open ket leg** of the returned rank-4 metric:
+  twisting any one of `(0, 2)`, `(0, 3)`, `(1, 2)`, `(1, 3)` lands on the oracle, while the
+  two directions that already agree are matched by the empty set and by the within-layer
+  pairs, which are the same twist by parity conservation. So each of those two assemblies
+  closes one cycle per layer that its steps do not account for. Which step that is has not
+  been found; a uniform extra twist cannot be it, since the set that repairs one direction
+  breaks the other. `test_the_fermionic_gaps_this_stage_measured` carries the two numbers
+  and that diagnosis, as M79d carried the four they came from.
+
 Not planned: TDVP, iDMRG, excited states and fermionic swap gates. PEPS containers left
 that list with M79/#277 and now have their own lane above.
 Fermionic swap gates left that list with M82 above, and for the reason 1D never needed

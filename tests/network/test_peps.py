@@ -365,13 +365,11 @@ def test_signs_against_the_graded_dense_oracle(name, provider, monkeypatch):
     np.testing.assert_allclose(np.asarray(got.to_dense()), arr, atol=1e-10)
 
 
-#: ``cor_tr`` is the one primitive whose fZ2 result *equals* the sign-free contraction,
-#: for every space tried and not by accident: it is the corner where the ket leads, and
-#: the single bend it pays lands on the physical wire, whose two ends bracket nothing.
-#: Listing it here is the honest form of the teeth assertion -- the alternative is a
-#: weaker "some primitive differs", which is what a suite says when it has stopped
-#: looking.
-SIGN_FREE = ("cor_tr",)
+#: Every primitive's fZ2 result differs from the sign-free contraction, and the list is
+#: kept (empty) because it used to hold ``cor_tr``: that corner's one bend lands on the
+#: physical wire, so before M82 phase 3 it paid nothing the plain einsum did not. Now the
+#: bend also carries the ribbon twist of the cycle the step closes, and it differs too.
+SIGN_FREE: tuple[str, ...] = ()
 
 
 @pytest.mark.parametrize("name", PRIMITIVES)

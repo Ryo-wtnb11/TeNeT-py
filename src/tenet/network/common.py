@@ -23,7 +23,7 @@ import tenet
 from tenet import Leg, SymmetricTensor
 from tenet.symmetry import Sector
 
-__all__ = ["composed", "entropy", "ones", "spectrum", "spectrum_sectors", "supplies_in"]
+__all__ = ["closed", "composed", "entropy", "ones", "spectrum", "spectrum_sectors", "supplies_in"]
 
 #: How many bytes of cached tensor payload each of the sweep's per-bond caches may hold.
 #: **This is the whole cache policy and it is one number in one place**:
@@ -364,6 +364,59 @@ def supplies_in(leg: Leg) -> bool:
     return (leg.side is tenet.IN) != leg.dual
 
 
+def closed(steps: Sequence[tuple[str, Any, Any, str]]) -> SymmetricTensor:
+    """``tenet.einsum_chain``, with the ribbon twist paid wherever a step closes a cycle.
+
+    Parameters
+    ----------
+    steps : sequence of (str, SymmetricTensor or None, SymmetricTensor, str)
+        The chain's steps, exactly as [tenet.einsum_chain][] takes them: the equation,
+        the two operands (operand 1 is ``None`` on a continued step) and the wires the
+        step bends.
+
+    Returns
+    -------
+    SymmetricTensor
+        The chain's result.
+
+    Examples
+    --------
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.network import closed
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> a = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> b = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=1)
+    >>> closed([("ij,jk->ik", a, b, "")]).ndim
+    2
+
+    Notes
+    -----
+    **Two disjoint blobs joined over ``k`` wires close ``k - 1`` cycles**, so a step is a
+    tree edge exactly when it contracts one wire and closes something whenever it
+    contracts more. A closure's value depends on the direction its duality pairing runs
+    (``docs/design.md``, M82 phase 2), and the wires running against the composition are
+    the ones the step has to **bend** -- so the step pays ``theta`` on its bent wires,
+    which is [tenet.twist][] and PEPSKit's ``twistdual`` discipline. A one-wire step
+    bends without closing anything and pays nothing, which is why the 1D drivers
+    (``network/env.py``) are untouched.
+
+    ``theta`` is ``1`` on every bosonic grading, where [tenet.twist][] hands the tensor
+    straight back, so nothing but a fermionic network moves. Either end of a wire carries
+    the same sector, so a continued step (operand 1 ``None``) pays on operand 2 instead.
+    """
+    out = []
+    for equation, a, b, bend in steps:
+        ta, tb = equation.split("->")[0].split(",")
+        if bend and sum(c in tb for c in ta) > 1:
+            if a is None:
+                b = tenet.twist(b, [tb.index(c) for c in bend])
+            else:
+                a = tenet.twist(a, [ta.index(c) for c in bend])
+        out.append((equation, a, b, bend))
+    return tenet.einsum_chain(out)
+
+
 def composed(equation: str, a: Any, b: Any) -> SymmetricTensor:
     """One ``tenet.einsum_chain`` step whose operand order and bends are **derived**.
 
@@ -404,6 +457,11 @@ def composed(equation: str, a: Any, b: Any) -> SymmetricTensor:
     diagram's. Every wire has exactly one ``IN`` end, so the two orders' bend counts sum
     to the number of shared wires and the minimum is well defined; a tie keeps the stated
     order, which is YASTN's throughout the callers.
+
+    The step goes through [closed][tenet.network.closed], so a call that contracts more
+    than one wire closes a cycle and pays the ribbon twist on the wires it bends (M82
+    phase 3). That is also what makes the tie above free: with the twist paid the two
+    operand orders are the same tensor under fermion parity as well.
     """
     lhs, out = equation.split("->")
     ta, tb = lhs.split(",")
@@ -412,4 +470,4 @@ def composed(equation: str, a: Any, b: Any) -> SymmetricTensor:
     if len(bend) > len(shared) - len(bend):  # the other order turns fewer wires
         a, b, ta, tb = b, a, tb, ta
         bend = "".join(c for c in shared if not supplies_in(a.legs[ta.index(c)]))
-    return tenet.einsum_chain([(f"{ta},{tb}->{out}", a, b, bend)])
+    return closed([(f"{ta},{tb}->{out}", a, b, bend)])
