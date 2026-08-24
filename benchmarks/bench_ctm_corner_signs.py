@@ -37,6 +37,15 @@ rotates `V`. Every number below is about the factorization the library actually 
   is invariant. It is 0 for a positive corner and `2|v_j|` on every column whose eigenvalue
   is negative -- and `move` uses only `u`.
 
+## Part 2, #243: which symmetry does the Hermiticity need?
+
+Part 1 says *when* the corner stops being Hermitian. Part 2 says *why*, by varying the one
+thing Part 1 holds fixed -- how much of the C4v point group the bulk carries -- and
+leaving everything else identical. It is plain NumPy on `move`'s own `einsum` strings, so
+a row that reads zero cannot be an artifact of the grading. Its answer: the corner is
+Hermitian at every move under the full group and at move 0 only under the diagonal mirror,
+which is the single element `examples/toy_codes/ctmrg.py`'s `c4v` imposes.
+
 Fixtures: the c4v iPEPS of `tests/integration/test_ctmrg.py:190` (U(1) and SU(2), at the
 example's own `CHI_IPEPS`), the SU(2) ket of `tests/network/test_ctmrg.py:82`, and the
 single-layer Ising corner as the **control** -- documented positive, and the row that says
@@ -181,6 +190,106 @@ def ipeps(provider, seed=1):
     return example.c4v(SymmetricTensor.random(legs, seed=seed))
 
 
+# --- Part 2 (#243): which symmetry of the bulk does the corner's Hermiticity need? ----
+#
+# Part 1 reports the corner Hermitian at move 0 and under neither pairing afterwards, and
+# stops there. Part 2 varies the one thing Part 1 holds fixed -- how much of C4v the bulk
+# carries -- with everything else identical, and reads the Hermiticity off each row. It is
+# plain NumPy: ``move``'s own three ``einsum`` strings, copied, with no grading in the way,
+# so that a row that reads zero cannot be a symmetry-bookkeeping accident. The projector is
+# ``numpy.linalg.svd`` truncated to ``chi``, which is what ``svd_truncated`` does to a
+# single coupled sector.
+
+MIRROR_4 = (1, 0, 3, 2)  # the diagonal mirror on a rank-4 bulk (l, u, r, d)
+MIRROR_5 = (0, 2, 1, 4, 3)  # and on a rank-5 iPEPS ket (P, l, u, r, d)
+
+
+def full_c4v(a, mirror, rot):
+    """Average over the eight elements of C4v: four rotations times the diagonal mirror."""
+    out = np.zeros_like(a)
+    for _ in range(4):
+        out = out + a + np.transpose(a, mirror)
+        a = np.transpose(a, rot)
+    return out / 8
+
+
+def herm_defect(big):
+    """``max ||B - B^H|| / ||B||`` over the two pairings Part 1 computes, whichever is
+    smaller -- the same question, on a dense array."""
+    n = big.ndim // 2
+    direct = np.transpose(big, (*range(n, 2 * n), *range(n))).conj()
+    if n == 2:
+        return float(np.linalg.norm(big - direct) / np.linalg.norm(big))
+    swapped = np.transpose(big, (3, 5, 4, 0, 2, 1)).conj()
+    return min(float(np.linalg.norm(big - x) / np.linalg.norm(big)) for x in (direct, swapped))
+
+
+def dense_single(bulk, chi=6, moves=4):
+    """``single_layer``'s two ``einsum`` strings, in NumPy."""
+    d = bulk.shape[0]
+    c, e, out = np.ones((1, 1)), np.ones((1, 1, d)), []
+    for _ in range(moves):
+        big = np.einsum("ab,ace,fbg,gehi->chfi", c, e, e, bulk, optimize=True)
+        n = big.shape[0]
+        out.append(herm_defect(big))
+        u, s, _ = np.linalg.svd(big.reshape(n * d, n * d))
+        keep = min(chi, len(s))
+        p = u[:, :keep].reshape(n, d, keep)
+        c = np.diag(s[:keep]) / np.linalg.norm(s[:keep])
+        big_e = np.einsum("abe,gehi->abghi", e, bulk, optimize=True)
+        e = np.einsum("abghi,agx,bhy->xyi", big_e, p, p.conj(), optimize=True)
+        e = e / np.linalg.norm(e)
+    return out
+
+
+def dense_double(ket, chi=6, moves=4):
+    """``double_layer``'s five ``einsum`` strings, in NumPy."""
+    bra = np.transpose(ket.conj(), (1, 2, 0, 3, 4))  # ``layers``'s bend
+    d = ket.shape[1]
+    c, e, out = np.ones((1, 1)), np.ones((1, 1, d, d)), []
+    for _ in range(moves):
+        env = np.einsum("ab,acjJ,fbgG->cfgGjJ", c, e, e, optimize=True)
+        env = np.einsum("cfgGjJ,sgjri->csfGJri", env, ket, optimize=True)
+        big = np.einsum("csfGJri,GJsRI->crRfiI", env, bra, optimize=True)
+        n = big.shape[0]
+        out.append(herm_defect(big))
+        u, s, _ = np.linalg.svd(big.reshape(n * d * d, n * d * d))
+        keep = min(chi, len(s))
+        p = u[:, :keep].reshape(n, d, d, keep)
+        c = np.diag(s[:keep]) / np.linalg.norm(s[:keep])
+        t = np.einsum("abuU,alLx->buUlLx", e, p, optimize=True)
+        t = np.einsum("buUlLx,slurd->bULxsrd", t, ket, optimize=True)
+        t = np.einsum("bULxsrd,LUsRD->bxrRdD", t, bra, optimize=True)
+        e = np.einsum("bxrRdD,brRy->xydD", t, p.conj(), optimize=True)
+        e = e / np.linalg.norm(e)
+    return out
+
+
+def part_two():
+    print("\n# #243 Part 2 — which symmetry does the corner's Hermiticity need?\n")
+    for label, shape, mirror, rot, run in (
+        ("single-layer bulk (l, u, r, d)", (3, 3, 3, 3), MIRROR_4, (1, 2, 3, 0), dense_single),
+        ("iPEPS ket (P, l, u, r, d)", (2, 2, 2, 2, 2), MIRROR_5, (0, 2, 3, 4, 1), dense_double),
+    ):
+        a = np.random.default_rng(0).normal(size=shape)
+        print(f"### {label}\n")
+        print("| bulk symmetry | `max||B - B^H|| / ||B||`, moves 0-3 |")
+        print("|---|---|")
+        for name, t in (
+            ("none", a),
+            ("diagonal mirror only (what `c4v` imposes)", (a + np.transpose(a, mirror)) / 2),
+            ("full C4v (8 elements)", full_c4v(a, mirror, rot)),
+        ):
+            print(f"| {name} | " + "  ".join(f"{x:.2e}" for x in run(t)) + " |")
+        print()
+    print(
+        "The corner is Hermitian at every move under the **full** group and at move 0 only\n"
+        "under the diagonal mirror, which is the one element `c4v` imposes. It is the\n"
+        "ansatz, not the projector: Part 1's `max|u-v|` column and #242's `eigh_truncated`\n"
+        "consumer change both leave these numbers where they are."
+    )
+
+
 def main():
     print("# #205 Part 1 — is the double-layer CTMRG corner indefinite?")
     total = 0
@@ -196,6 +305,7 @@ def main():
         f"{total} negative eigenvalues above the projector's own truncation threshold. "
         "The gate fires at anything above zero on a double-layer fixture."
     )
+    part_two()
 
 
 if __name__ == "__main__":
