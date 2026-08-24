@@ -574,7 +574,11 @@ def truncate_(
     Returns
     -------
     Evolution_out
-        The bond, the truncation error and what the metric was found to be.
+        The bond, the truncation error and what the metric was found to be. The error is
+        ``nan`` in the one case where the metric measured nothing: ``fix_metric``
+        replaced *every* eigenvalue, which happens when the metric's own error scale
+        reaches its largest eigenvalue. The plain SVD stands, and a ``nan`` is reported
+        rather than a zero that would read as "lossless".
 
     Raises
     ------
