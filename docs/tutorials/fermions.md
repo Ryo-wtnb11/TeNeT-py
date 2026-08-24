@@ -1,7 +1,11 @@
 # Fermions — a Hubbard chain
 
 The Hubbard model on `fZ2` sites:
-`H = -t Σ_{i,σ} (c†_{i,σ} c_{i+1,σ} + h.c.) + U Σ_i n_{i↑} n_{i↓}`.
+
+$$
+H = -t \sum_{i,\sigma} \left( c^{\dagger}_{i\sigma} c_{i+1,\sigma} + \text{h.c.} \right)
+  + U \sum_i n_{i\uparrow} n_{i\downarrow}
+$$
 
 The thing to notice is what you do **not** write: there is no Jordan-Wigner operator
 anywhere. The string is the `fZ2` braiding that an odd MPO bond pays when it crosses a
@@ -18,12 +22,13 @@ site.phys.sectors   # ((FZ2Sector(parity=0), 2), (FZ2Sector(parity=1), 2))
 sorted(site.ops)    # c+_dn, c+_up, c_dn, c_up, n, n_dn, n_up, 'n_up n_dn'
 ```
 
-The basis is `d = 4`, ordered `(|0>, |ud>, |u>, |d>)` — the even sector first, because a
-dense array over a `GradedSpace` is laid out sector by sector. Get the ordering wrong and
+The basis is $d = 4$, ordered $(\lvert0\rangle, \lvert{\uparrow\downarrow}\rangle,
+\lvert{\uparrow}\rangle, \lvert{\downarrow}\rangle)$ — the even sector first, because a dense
+array over a `GradedSpace` is laid out sector by sector. Get the ordering wrong and
 `from_dense` will refuse your matrix, which is how you find out.
 
-[`spinless_fermion`][tenet.models.spinless_fermion] is the `d = 2` site, `{|0>, |1>}`,
-with `c`, `c+` and `n`.
+[`spinless_fermion`][tenet.models.spinless_fermion] is the $d = 2$ site, $\{\lvert0\rangle,
+\lvert1\rangle\}$, with `c`, `c+` and `n`.
 
 ## The Hamiltonian
 
@@ -99,7 +104,7 @@ that sector from the bond, and a sector that is zero stays zero. Wavefunction no
 every allowed sector of the two-site map, which is exactly the local minimum to escape.
 The schedule cools to zero noise, because convergence is never declared on a noisy sweep.
 
-At `n = 4`, `t = 1`, `U = 4` this lands on `-2.624942271511`, the exact ground energy of
+At $n = 4$, $t = 1$, $U = 4$ this lands on `-2.624942271511`, the exact ground energy of
 the same operator, and `h.variance(out.psi)` is zero to machine precision.
 
 ## Reading it back
@@ -121,10 +126,10 @@ operators, which is the form a fermionic `c` has, and returns `{(i, j): value}` 
 `i < j`. The Jordan-Wigner string across the sites between `i` and `j` is the same `fZ2`
 braiding the term builder inserts, so a fermionic correlator at a distance is correct
 rather than refused. It costs one MPO build and one pass per pair, so ask for the row or
-the distance you want rather than all `N²`.
+the distance you want rather than all $N^2$.
 
 ## Where next
 
 - [Building a Hamiltonian](../guide/hamiltonians.md) — the four builders and `symbolic=`.
-- [Quantum chemistry](quantum-chemistry.md) — the same `fZ2` sites, `O(K^4)` terms.
+- [Quantum chemistry](quantum-chemistry.md) — the same `fZ2` sites, $O(K^4)$ terms.
 - [DMRG](../guide/dmrg.md) — noise, schedules and measurement in full.

@@ -1,9 +1,10 @@
 # DMRG end to end — a Heisenberg chain
 
-A spin-1/2 Heisenberg chain, `H = Σ_i S_i · S_{i+1}`, open boundaries, U(1)-graded by
-`2 S^z`. This is [`examples/heisenberg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/heisenberg.py)
-walked through; the file runs standalone and its output is committed on the
-[Heisenberg, U(1)](../examples/heisenberg.md) page.
+A spin-1/2 Heisenberg chain, $H = \sum_i \mathbf{S}_i \cdot \mathbf{S}_{i+1}$, open boundaries,
+U(1)-graded by $2S^z$. This is
+[`examples/heisenberg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/heisenberg.py)
+walked through; the file runs standalone and its output is committed on the [Heisenberg,
+U(1)](../examples/heisenberg.md) page.
 
 ```sh
 uv run python examples/heisenberg.py
@@ -61,11 +62,12 @@ psi = MPS.product(PHYS, [U1Sector(1 if n % 2 else -1) for n in range(n_sites)])
 
 A Néel product state: one physical sector per site, and the bonds derived backwards from
 those charges. Both boundary legs then carry the unit sector with degeneracy 1, and
-invariance of every site tensor forces `Σ_i 2 S^z_i = 0` — the sector an even chain's
+invariance of every site tensor forces $\sum_i 2S^z_i = 0$ — the sector an even chain's
 ground state lives in. The sector is held structurally, by the seed's charges and the
 tensors' invariance, for the whole run.
 
-The general recipe: a `D=1` boundary leg carrying `U1Sector(q)` targets `S^z_tot = q/2`.
+The general recipe: a `D=1` boundary leg carrying `U1Sector(q)` targets
+$S^z_{\mathrm{tot}} = q/2$.
 
 ## Sweeping
 
@@ -78,11 +80,11 @@ out = dmrg_(psi, heisenberg_mpo(n_sites), schedule=schedule)
 
 A ramp with noise that cools to a clean `chi=64` tail. On this chain a flat
 `dmrg_(psi, h, chi=64)` reaches the same energy: a degeneracy-1 U(1) seed already grows by
-a factor of `d` per sweep. The ramp is here because writing one is what you do on a
+a factor of $d$ per sweep. The ramp is here because writing one is what you do on a
 problem where the seed cannot ramp itself — see [DMRG](../guide/dmrg.md) for when noise
 pays.
 
-At `N=20` this converges in nine sweeps to `E = -8.682473334398`, which is the recorded
+At $N = 20$ this converges in nine sweeps to `E = -8.682473334398`, which is the recorded
 exact-diagonalization energy of the same finite chain to twelve digits.
 
 Inside a sweep: `svd_truncated` decides the bond `GradedSpace` at every bond, reporting
@@ -107,12 +109,12 @@ op_sz = local_op(SITE.matrices["Sz"], phys=PHYS)
 max_sz = max(abs(expectation_1site(out.psi, op_sz, n)) for n in range(n_sites))
 ```
 
-`max_n |<S^z_n>|` comes out at float noise, `~5e-13`, because the sector is enforced by
-the seed's own charges.
+$\max_n \lvert\langle S^z_n\rangle\rvert$ comes out at float noise, `~5e-13`, because the
+sector is enforced by the seed's own charges.
 
 For a whole profile in one pass, use
 [`expectation_profile`][tenet.network.expectation_profile] instead of the comprehension:
-same numbers, `O(N)` rather than `O(N²)`. [DMRG](../guide/dmrg.md) has the full
+same numbers, $O(N)$ rather than $O(N^2)$. [DMRG](../guide/dmrg.md) has the full
 measurement set, the entanglement readers and the variance check.
 
 ## Why there is no `jit` and no `grad` here

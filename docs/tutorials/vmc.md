@@ -24,9 +24,10 @@ The parameters of the ansatz are the tensors' blocks, and the treedef is each te
 `TensorStructure` — frozen, hashable and array-free. So an MPS is a pytree the moment
 `enable_jax()` has run, and an SGD step is one line of `jax.tree.map`.
 
-The objective is the Rayleigh quotient `<ψ|h|ψ> / <ψ|ψ>`, built from a left-to-right chain
-of **pairwise** `tenet.einsum` calls. Three or more operands would bring in a contraction
-path, which is a separate concern from the gradient.
+The objective is the Rayleigh quotient $\langle\psi\vert h
+\vert\psi\rangle/\langle\psi\vert\psi\rangle$, built from a left-to-right chain of **pairwise**
+`tenet.einsum` calls. Three or more operands would bring in a contraction path, which is a
+separate concern from the gradient.
 
 `jax.grad` runs straight through that objective. Both a U(1) and an SU(2) ansatz descend
 through the identical code path, and both energies fall monotonically across all 20 SGD

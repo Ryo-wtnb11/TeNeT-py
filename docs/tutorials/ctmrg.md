@@ -46,14 +46,14 @@ decided. `CTMEnv` unpacks positionally: `c, e, bond = move(...)`.
 `reduced_dim` say what was actually kept.
 
 At `chi=24` this reproduces Onsager's free energy to float precision off criticality —
-relative error `3e-16` at `beta=0.3` and `1e-15` at `beta=0.5` — and to `2e-6` at
-`beta_c`, where the correlation length outruns any finite environment.
+relative error `3e-16` at $\beta = 0.3$ and `1e-15` at $\beta = 0.5$ — and to `2e-6` at
+$\beta_c$, where the correlation length outruns any finite environment.
 
 ## Grading the Ising half by Z2
 
 The Boltzmann bulk tensor is Z2-graded. That stops a finite-`chi` environment from
 breaking the symmetry spuriously in the ordered phase, which is what lets the run go above
-`beta_c` against Onsager at all. Two further things the grading gives:
+$\beta_c$ against Onsager at all. Two further things the grading gives:
 
 - **Zero magnetization is structural.** A spin insertion is a Z2-odd tensor, which no
   invariant `SymmetricTensor` can hold, so `from_dense` refuses it. The refusal is the
@@ -104,8 +104,8 @@ what keeps it out of the flattened leaves.
 [`double_layer`][tenet.network.double_layer] are the pieces inside the traced region, and
 each says on itself which side of the trace it belongs to.
 
-The oracle for that gradient is `d(βf)/dβ` from Onsager's closed form, which
-`tests/integration/test_ctmrg.py` checks the unrolled sweeps against.
+The oracle for that gradient is $\mathrm{d}(\beta f)/\mathrm{d}\beta$ from Onsager's closed
+form, which `tests/integration/test_ctmrg.py` checks the unrolled sweeps against.
 
 ## The iPEPS half
 
@@ -114,9 +114,9 @@ through the same gradient path. It exercises graded truncation, `svd(bond=)` acr
 sectors and multiplet degeneracies.
 
 It makes **no benchmark-energy claim**, and a one-site unit cell cannot. A single-site AFM
-Heisenberg cell needs one sublattice rotated by π about y, which turns `SˣSˣ - SʸSʸ` into
-`(S⁺S⁺ + S⁻S⁻)/2` — an operator that changes `Sᶻ_tot` by ±2 and so destroys the U(1) the
-ansatz is graded by. The file says so in its own docstring.
+Heisenberg cell needs one sublattice rotated by $\pi$ about $y$, which turns $S^x S^x - S^y
+S^y$ into $(S^+ S^+ + S^- S^-)/2$ — an operator that changes $S^z_{\mathrm{tot}}$ by $\pm 2$
+and so destroys the U(1) the ansatz is graded by. The file says so in its own docstring.
 
 ## What the library owns
 
