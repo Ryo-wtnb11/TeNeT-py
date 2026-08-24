@@ -108,7 +108,7 @@ def test_full_trace_is_the_qdim_weighted_spherical_trace():
 
 def test_transpose_refuses_the_chiral_braid_naming_braid():
     bent = tenet.repartition(tau_tau(), (0, 1), ())
-    with pytest.raises(CapabilityError, match=r"braid\(t, i, over=") as err:
+    with pytest.raises(CapabilityError, match=r"\[tenet\.braid\]\[\] carries leg levels") as err:
         bent.transpose((1, 0))
     assert "chiral" in str(err.value)
 

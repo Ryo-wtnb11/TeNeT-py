@@ -29,6 +29,13 @@ conjugate on the domain (input-tree) side.
 codomain is a bend ([tenet.repartition][]). What it does change is
 ``out_axes``/``in_axes``, which are *positions*.
 
+[braid][tenet.braid] generalizes all of it. ``transpose`` crosses exactly the pairs
+its permutation inverts; a planar network also needs the crossings the leg order does
+*not* spell, so ``braid`` takes the lines' incoming order as ``levels`` and crosses a
+pair when the incoming and outgoing orders disagree about it. Monotone levels are
+``transpose``, plan object included; the extra crossings ride on the same plan as one
+grading sign per block.
+
 No NumPy and no ``to_dense`` here (invariants 8/9): the plan is array-free
 metadata and blocks move only through ``ar.do("transpose", ...)``.
 """
@@ -37,6 +44,7 @@ import operator
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from functools import cache
+from itertools import combinations
 from typing import TYPE_CHECKING, Any
 
 import autoray as ar
@@ -47,6 +55,8 @@ from tenet.symmetry.base import (
     BraidingData,
     CapabilityError,
     PermutationCoefficients,
+    Sector,
+    TwistData,
     requires,
     supports,
 )
@@ -55,7 +65,7 @@ from tenet.symmetry.coherence import symmetric_braiding
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
 
-__all__ = ["PermutationPlan", "permutation_plan", "transpose"]
+__all__ = ["PermutationPlan", "braid", "braid_plan", "permutation_plan", "transpose"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,9 +127,10 @@ def _refuse(provider: Any, axes: tuple[int, ...], offenders: str, sectors: tuple
         raise CapabilityError(
             f"transpose: axes {axes} reorders legs within a side ({offenders}), which is a "
             f"braid, and provider {provider.name}'s braiding is chiral (R is not its own "
-            "inverse), so axes alone cannot say which line crosses over which. This needs "
-            "an explicit braid(t, i, over=...) API with leg levels, which tenet does not "
-            "provide. Permutations that only change the OUT/IN interleaving, leaving each "
+            "inverse), so axes alone cannot say which line crosses over which. "
+            "[tenet.braid][] carries leg levels but resolves them through the same "
+            "symmetric-braiding coefficients, so it refuses this provider too. "
+            "Permutations that only change the OUT/IN interleaving, leaving each "
             "side's internal order intact, work today for every provider."
         )
     try:
@@ -242,10 +253,16 @@ def transpose(t: "SymmetricTensor", axes: Sequence[int] | None = None) -> "Symme
     >>> tenet.transpose(t, (2, 0, 1)).legs == (t.legs[2], t.legs[0], t.legs[1])
     True
     """
-    from tenet.tensor import SymmetricTensor
-
     axes = tuple(reversed(range(t.ndim))) if axes is None else _validated_axes(t.ndim, tuple(axes))
-    plan = permutation_plan(t.structure, axes)
+    return _apply(t, permutation_plan(t.structure, axes), "transpose")
+
+
+def _apply(t: "SymmetricTensor", plan: PermutationPlan, what: str) -> "SymmetricTensor":
+    """Move ``t``'s blocks through ``plan``. Shared by ``transpose`` and ``braid``.
+
+    ``what`` names the caller in the one error message this can raise.
+    """
+    from tenet.tensor import SymmetricTensor
 
     # one transpose per *distinct source*, not per term (#123): ``plan.axes`` is per-plan
     # and only the coefficient is per-term, so every term sharing a source used to
@@ -267,7 +284,196 @@ def transpose(t: "SymmetricTensor", axes: Sequence[int] | None = None) -> "Symme
     n = plan.new_structure.num_blocks
     if len(blocks) != n:
         raise ValueError(
-            f"transpose: the plan fills {len(blocks)} of {n} target blocks — "
+            f"{what}: the plan fills {len(blocks)} of {n} target blocks — "
             f"{t.provider.name}.permute_tree dropped terms"
         )
     return SymmetricTensor(plan.new_structure, tuple(blocks[i] for i in range(n)))
+
+
+# ---------------------------------------------------------------------------
+# braid: transpose plus the crossings the leg order does not spell
+# ---------------------------------------------------------------------------
+
+
+def _validated_levels(ndim: int, levels: Sequence[int]) -> tuple[int, ...]:
+    """One integer height per public axis, or ``ValueError`` naming the culprit."""
+    try:
+        levels = tuple(operator.index(v) for v in levels)
+    except TypeError as exc:
+        raise ValueError(f"braid: levels {tuple(levels)} must all be integers") from exc
+    if len(levels) != ndim:
+        raise ValueError(f"braid: levels {levels} has length {len(levels)}, expected {ndim}")
+    return levels
+
+
+def _level_crossings(levels: tuple[int, ...]) -> tuple[tuple[int, int], ...]:
+    """The axis pairs whose incoming order disagrees with their current order.
+
+    ``levels`` is the *incoming* planar order of the lines; ``i < j`` with
+    ``levels[i] > levels[j]`` means line ``i`` arrives to the right of line ``j``
+    and has to cross it to sit where it sits. Monotone (non-decreasing) levels
+    give the empty tuple — the incoming order is already the leg order.
+    """
+    return tuple((i, j) for i, j in combinations(range(len(levels)), 2) if levels[i] > levels[j])
+
+
+def _parity(provider: Any, sector: Sector) -> int:
+    """The Z2 grading of ``sector``: ``1`` for an odd (fermionic) sector, else ``0``.
+
+    Read off the ribbon twist, which is ``(-1)^parity`` exactly on a fermionic
+    provider and ``1`` on every bosonic one — the twist *is* the grading datum
+    (invariant: a symmetric provider's twist is ``+-1``).
+    """
+    return int(provider.twist(sector) == -1)
+
+
+@cache
+def _crossing_signs(
+    structure: TensorStructure, crossed: tuple[tuple[int, int], ...]
+) -> tuple[int, ...]:
+    """``+-1`` per block: the grading sign of the lines crossed at ``crossed``.
+
+    ``(-1)^(sum over crossed pairs of p_i p_j)`` on the block's own sectors — the
+    same number YASTN's ``swap_gate`` negates a block by, and ``1`` for every
+    bosonic provider, where the crossing is the identity morphism.
+    """
+    provider = structure.provider
+    signs = []
+    for key in structure.block_order:
+        sectors = structure.axis_sectors(key)
+        odd = sum(_parity(provider, sectors[i]) * _parity(provider, sectors[j]) for i, j in crossed)
+        signs.append(-1 if odd % 2 else 1)
+    return tuple(signs)
+
+
+def _refuse_crossing(
+    provider: Any, crossed: tuple[tuple[int, int], ...], sectors: tuple[Any, ...]
+) -> None:
+    """Refuse a crossing whose coefficient the provider cannot state."""
+    if supports(provider, BraidingData) and not symmetric_braiding(provider, sectors):
+        raise CapabilityError(
+            f"braid: levels cross the axis pairs {crossed}, which is a braid, and provider "
+            f"{provider.name}'s braiding is chiral (R is not its own inverse), so a crossing "
+            "is not its own inverse either and the pairwise symmetric-braiding coefficient "
+            "does not apply. Anyonic braiding is out of scope; monotone levels (a plain "
+            "transpose) work today for every provider."
+        )
+    requires(provider, TwistData)
+
+
+@cache
+def braid_plan(
+    structure: TensorStructure, axes: tuple[int, ...], levels: tuple[int, ...]
+) -> PermutationPlan:
+    """Plan ``braid(axes, levels)`` on ``structure``. Cached, like ``permutation_plan``.
+
+    Monotone ``levels`` return [permutation_plan][tenet.permutation_plan]'s object itself,
+    so a braid that is a transpose *is* the transpose, plan for plan.
+    """
+    plan = _pattern_braid_plan(_pattern(structure), axes, levels)
+    legs = tuple(structure.legs[i] for i in axes)
+    if legs == plan.new_structure.legs:
+        return plan
+    return replace(plan, new_structure=TensorStructure(legs))
+
+
+@cache
+def _pattern_braid_plan(
+    structure: TensorStructure, axes: tuple[int, ...], levels: tuple[int, ...]
+) -> PermutationPlan:
+    """[braid_plan][tenet.braid_plan]'s body, on a degeneracy-free structure.
+
+    The extra crossings factorize off the transpose: a pair the permutation already
+    inverts *and* the levels cross is not crossed at all, and ``R`` times the grading
+    sign is ``1`` there, so multiplying the transpose plan's coefficients by the
+    grading sign of the level-crossed pairs lands on the right braid word either way.
+    """
+    plan = _pattern_plan(structure, axes)
+    crossed = _level_crossings(levels)
+    if not crossed:
+        return plan
+    provider = structure.provider
+    sectors = tuple(sorted({a for leg in structure.legs for a, _ in leg.space.sectors}))
+    _refuse_crossing(provider, crossed, sectors)
+    signs = _crossing_signs(structure, crossed)
+    if all(s == 1 for s in signs):
+        return plan
+    return replace(plan, terms=tuple((src, dst, c * signs[src]) for src, dst, c in plan.terms))
+
+
+def braid(t: "SymmetricTensor", axes: Sequence[int], levels: Sequence[int]) -> "SymmetricTensor":
+    """The same abstract tensor after a braid: ``axes`` reordered, ``levels`` crossed.
+
+    ``levels[i]`` is the position of axis ``i``'s line in the diagram's *incoming*
+    planar order; ``axes`` is the outgoing order, as in [tenet.transpose][]. Two
+    lines cross exactly when those two orders disagree about them, which makes
+    ``braid`` the two operations a planar embedding needs and ``transpose`` alone
+    cannot spell:
+
+    * **monotone ``levels``** — the incoming order is the leg order, so the crossings
+      are the inversions of ``axes`` and the result is
+      [tenet.transpose][]``(t, axes)``, through the very same plan object.
+    * **``axes`` the identity, two levels inverted** — the lines cross and come back
+      to the leg order they started in: a crossing with no net permutation, the
+      *swap gate*. Its coefficient is the grading sign ``(-1)^(p_i p_j)``, which is
+      ``1`` for every bosonic provider (the crossing is then the identity morphism)
+      and YASTN's ``swap_gate`` for fermion parity.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor whose lines are braided.
+    axes : sequence of int
+        ``axes[i]`` is the OLD axis that becomes new axis ``i``; a permutation of
+        ``range(t.ndim)``, negative indices refused.
+    levels : sequence of int
+        One height per OLD axis. Ties never cross; only the order matters, so
+        ``(0, 1, 2)`` and ``(3, 7, 9)`` are the same braid.
+
+    Returns
+    -------
+    SymmetricTensor
+        The braided tensor; ``side``, ``dual`` and ``name`` travel with each leg
+        and no leg ever changes side.
+
+    Raises
+    ------
+    ValueError
+        If ``axes`` is not a permutation of ``range(t.ndim)``, or ``levels`` is not
+        ``t.ndim`` integers.
+    CapabilityError
+        If the braid needs coefficients the provider does not state — a within-side
+        reorder without
+        [PermutationCoefficients][tenet.symmetry.PermutationCoefficients], a level
+        crossing without [TwistData][tenet.symmetry.TwistData], or either on a
+        provider whose braiding is chiral (``R != R**-1``), which is out of scope.
+
+    Notes
+    -----
+    Differentiability and tracing: exactly [tenet.transpose][]'s status — the plan is
+    frozen, array-free metadata and the blocks move through one ``transpose`` and one
+    real scalar each, so ``braid`` is shape-static and traces under ``jax.jit``/
+    ``jax.grad``. No custom VJP is registered for either, and none is needed.
+
+    This is TensorKit's ``braid(t, p, levels)`` widened by one step. There ``levels``
+    only choose each crossing's *sense*, so under a symmetric braiding they drop out
+    and ``braid == permute``; the crossings are always the inversions of ``p``. Here
+    they also decide *which* pairs cross, which is what a planar embedding needs and
+    what a permutation cannot say. Sense stays irrelevant, as it must be for a
+    symmetric braiding.
+
+    Examples
+    --------
+    >>> import tenet
+    >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+    >>> from tenet.symmetry import U1, U1Sector
+    >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
+    >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
+    >>> tenet.braid(t, (1, 0), (0, 1)) == tenet.transpose(t, (1, 0))  # monotone: a transpose
+    True
+    >>> tenet.braid(t, (0, 1), (1, 0)).legs == t.legs  # a crossing moves no leg
+    True
+    """
+    axes = _validated_axes(t.ndim, tuple(axes))
+    levels = _validated_levels(t.ndim, tuple(levels))
+    return _apply(t, braid_plan(t.structure, axes, levels), "braid")
