@@ -1,329 +1,49 @@
-"""#205 Part 1, the measurement gate: is the shipped double-layer CTMRG corner indefinite?
+"""#243 Part 3: the enlarged corner's Hermiticity under `EnvCTMc4v`, and whether it matters.
 
-`network/ctmrg.py`'s `move` projects the enlarged corner with a **single** isometry `u`
-taken from `svd_truncated`, which is exact only when that corner is *positive*. Its
-docstring says an indefinite corner still gets a self-consistent contraction "but its
-corner and edge then differ by a diagonal of signs". #205 refuses to build
-`eigh_truncated` before that sentence has a number behind it. This is the instrument that
-produces the number.
+`EnvCTMc4v`'s projector is the `U` of an SVD of the 2x2 enlarged corner, and the
+renormalized corner is `V† U S`: the two index groups leave the factorization as two
+factors and the correction between them is kept rather than assumed to be one. So the
+question this instrument asks is a *conditional* one -- what happens to the sweep when the
+corner is nowhere near Hermitian -- and the answer is that the two have come apart: the row
+that is far from Hermitian converges too.
 
-## The basis pairing, and why it is measured rather than asserted
-
-"Eigenvalue" is a statement about an *endomorphism*, and which row of a coupled-sector
-matrix pairs with which column is a basis question the axis order settles. `check_square`
-refuses every CTM corner in this file -- the C4v mirror identifies a space with its *dual*,
-which is a `flip_dual` and not an equality -- so the pairing is not asserted here. Two
-candidates are computed and both are printed: `direct`, `move`'s own `ndim // 2` order, and
-`swapped`, which exchanges the domain's last two axes (the ket/bra pair of a double-layer
-corner). Eigenvalues are read off whichever one is Hermitian; a within-side transpose is a
-*unitary* on the domain, so it leaves `U` and `Sigma` exactly as `move` sees them and only
-rotates `V`. Every number below is about the factorization the library actually runs.
-
-## The columns
-
-* `herm direct` / `herm swapped` -- `max_c ||B - B†|| / ||B||` under each pairing. The
-  corner is only *meant* to be Hermitian; these say whether it still is, and under which
-  identification.
-* `neg` / `|w_neg|/w_max` -- eigenvalues of the Hermitian part `(B + B†)/2`, per coupled
-  sector, summed: how many are negative and how far above zero the largest of them sits.
-* `sigma_cut/sigma_max` -- the SVD's own truncation threshold at this `chi`. A negative
-  eigenvalue *below* the smallest kept singular value is discarded by the projector and
-  cannot reach the answer; this is the bar the gate compares against.
-* `kept neg` -- negatives with `|w| >= sigma_cut`, i.e. the ones the projector keeps. **This
-  is the gate's number.**
-* `max|u-v|` -- the deviation between the two isometries `svd_truncated` would produce,
-  over the kept columns. This is "the diagonal of signs" made into a number, and it needs
-  no gauge fixing: the SVD's freedom is a *joint* phase on `(u_j, v_j)`, so `|u_j - v_j|`
-  is invariant. It is 0 for a positive corner and `2|v_j|` on every column whose eigenvalue
-  is negative -- and `move` uses only `u`.
-
-## Part 2, #243: which symmetry does the Hermiticity need?
-
-Part 1 says *when* the corner stops being Hermitian. Part 2 says *why*, by varying the one
-thing Part 1 holds fixed -- how much of the C4v point group the bulk carries -- and
-leaving everything else identical. It is plain NumPy on `move`'s own `einsum` strings, so
-a row that reads zero cannot be an artifact of the grading. Its answer: the corner is
-Hermitian at every move under the full group and at move 0 only under the diagonal mirror,
-which is the single element `examples/toy_codes/ctmrg.py`'s `c4v` imposes.
-
-## Part 3, #243: the same corner under `EnvCTMc4v`
-
-Parts 1 and 2 are about `network/ctmrg.py`'s `move`, which keeps only `u` from the SVD and
-takes the renormalized corner to be `s`. Part 3 runs the same measurement on
-`EnvCTMc4v`, which keeps `v` as well and renormalizes to `v† u s`. Its rows are two
-ansaetze that lane accepts -- four identical virtual legs -- with and without the rotation
-averaged in, and the reading is that the corner's Hermiticity and the sweep's convergence
-have come apart: the row that is nowhere near Hermitian converges too.
-
-Fixtures: the c4v iPEPS of `tests/integration/test_ctmrg.py:190` (U(1) and SU(2), at the
-example's own `CHI_IPEPS`), the SU(2) ket of `tests/network/test_ctmrg.py:82`, and the
-single-layer Ising corner as the **control** -- documented positive, and the row that says
-the instrument reads zero when there is nothing to read.
+The rows vary the one thing worth varying, how much of the point group the ansatz carries,
+over ansaetze this lane accepts at all: four **identical** virtual legs, without which no
+rotation acts and the lane refuses the tensor. Hermiticity is a property of that ansatz --
+it holds at every move exactly when the state carries the whole C4v point group, the four
+rotations as well as the four reflections. `tests/network/test_envctmc4v.py` pins both
+directions of that statement as assertions; this file prints the numbers behind them.
 
 Run: `uv run python benchmarks/bench_ctm_corner_signs.py`. On no CI path.
 """
 
-import pathlib
-import sys
-
 import numpy as np
 
-sys.path.insert(0, str(pathlib.Path(__file__).parents[1] / "examples" / "toy_codes"))
-
-import ctmrg as example  # noqa: E402
-
-import tenet  # noqa: E402
-from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor  # noqa: E402
-from tenet.map_view import to_matrices  # noqa: E402
-from tenet.network import (  # noqa: E402
-    EnvCTMc4v,
-    Peps,
-    SquareLattice,
-    corner2x2,
-    double_layer_ctm,
-    move,
-    single_layer_ctm,
-)
-from tenet.symmetry import U1, U1Sector  # noqa: E402
+import tenet
+from tenet import OUT, GradedSpace, Leg, SymmetricTensor
+from tenet.network import EnvCTMc4v, Peps, SquareLattice, corner2x2
+from tenet.symmetry import U1, U1Sector
 
 
-def pairings(big_c):
-    """`{label: matrices}` for the enlarged corner under each candidate basis pairing.
-
-    "Eigenvalue" is a statement about an endomorphism, and which column of the
-    coupled-sector matrix pairs with which row is a *basis* question the axis order
-    settles. `check_square` refuses every corner here -- the mirror identifies a space
-    with its dual, which is a `flip_dual`, not an equality -- so the pairing is chosen by
-    measurement instead of asserted: both candidates are reported, and the eigenvalues are
-    read off whichever one is actually Hermitian. `direct` is `move`'s own axis order;
-    `swapped` exchanges the domain's last two axes, which is the ket/bra pair of a
-    double-layer corner.
-    """
-    n = big_c.ndim // 2
-    axes = (tuple(range(n)), tuple(range(n, 2 * n)))
-    out = {}
-    for label, perm in (("direct", None), ("swapped", (*range(2 * n - 2), 2 * n - 1, 2 * n - 2))):
-        t = big_c if perm is None else tenet.transpose(big_c, perm)
-        mats = to_matrices(tenet.repartition(t, *axes))
-        if all(np.asarray(b).shape[0] == np.asarray(b).shape[1] for b in mats.values()):
-            out[label] = mats
-    return out, axes
-
-
-def defect(mats):
-    """`max_c ||B - B†|| / ||B||`."""
-    return max(
-        float(
-            np.linalg.norm(np.asarray(b) - np.asarray(b).conj().T) / np.linalg.norm(np.asarray(b))
-        )
-        for b in mats.values()
-    )
-
-
-def eigen_report(mats, sigma_cut):
-    """`(negatives, |w_neg|/w_max, negatives the projector keeps)`."""
-    negatives, kept, w_neg, w_max = 0, 0, 0.0, 0.0
-    for b in mats.values():
-        a = np.asarray(b)
-        w = np.linalg.eigvalsh((a + a.conj().T) / 2)
-        negatives += int(np.sum(w < 0))
-        kept += int(np.sum((w < 0) & (np.abs(w) >= sigma_cut)))
-        if np.any(w < 0):
-            w_neg = max(w_neg, float(np.max(np.abs(w[w < 0]))))
-        w_max = max(w_max, float(np.max(np.abs(w))))
-    return negatives, (w_neg / w_max if w_max else 0.0), kept
-
-
-def isometry_gap(mats, keep):
-    """`max_j |u_j - v_j|` over the kept columns, on the square form.
-
-    Gauge-free without any alignment: the SVD's freedom is a *joint* phase, `u_j -> e^{it}
-    u_j` forcing `v_j -> e^{it} v_j`, so `|u_j - v_j|` is invariant while the relative sign
-    between them is not free at all. For a positive corner it is 0; for a Hermitian corner
-    with a negative eigenvalue `w_j`, `u_j = -v_j` on that column and the entry is `2 |v_j|`.
-    NumPy's own SVD, so the number does not depend on `tenet`'s factorization; only *which*
-    columns are kept comes from `select_bond`.
-    """
-    gap = 0.0
-    for c, k in keep.items():
-        u, _, vh = np.linalg.svd(np.asarray(mats[c]), full_matrices=False)
-        v = vh.conj().T
-        for j in range(min(k, u.shape[1])):
-            gap = max(gap, float(np.max(np.abs(u[:, j] - v[:, j]))))
-    return gap
-
-
-HEAD = (
-    "| move | dim | herm direct | herm swapped | neg | `|w_neg|/w_max` | "
-    "`sigma_cut/sigma_max` | kept neg | `max|u-v|` |"
-)
-HERMITIAN = 1e-10  # the corner is Hermitian or it is not; there is no middle at float64
-
-
-def sweep(name, absorb, c, e, chi, moves=6):
-    print(f"\n### {name} (chi={chi})\n")
-    print(HEAD)
-    print("|---|---|---|---|---|---|---|---|---|")
-    verdict, indefinite = 0, 0
-    for k in range(moves):
-        big_c = absorb.corner(c, e)
-        candidates, axes = pairings(big_c)
-        defects = {label: defect(mats) for label, mats in candidates.items()}
-        best = min(defects, key=defects.get)
-
-        selection = tenet.linalg.select_bond(big_c, axes, max_bond=chi)
-        values = [x for x, _, _ in selection.kept]
-        sigma_cut, sigma_max = min(values), max(values)
-
-        if defects[best] < HERMITIAN:
-            negatives, ratio, kept_neg = eigen_report(candidates[best], sigma_cut)
-            gap = isometry_gap(candidates[best], dict(selection.bond.sectors))
-            cells = (
-                f"{negatives} | {ratio:.3e} | {sigma_cut / sigma_max:.3e} | {kept_neg} | {gap:.3e}"
-            )
-            verdict += kept_neg
-            indefinite += negatives > 0
-        else:
-            # not Hermitian under either pairing: an eigenvalue is not defined, and the
-            # non-Hermiticity is itself the damage -- move 0 is exact, later moves are not
-            kept_neg = 0
-            cells = f"n/a | n/a | {sigma_cut / sigma_max:.3e} | n/a | n/a"
-
-        dim = sum(np.asarray(b).shape[0] for b in candidates[best].values())
-        print(
-            f"| {k} | {dim} | {defects.get('direct', float('nan')):.2e} | "
-            f"{defects.get('swapped', float('nan')):.2e} | {cells} |"
-        )
-        c, e, _ = move(c, e, absorb, chi=chi)
-    print(
-        f"\n**{name}: {indefinite} of {moves} moves had a Hermitian corner with a negative "
-        f"eigenvalue; {verdict} of those negatives sit above the projector's own cut.**"
-    )
-    return verdict
-
-
-def ipeps(provider, seed=1):
-    phys, virt = example.SPACES[provider]
-    legs = (Leg(phys, OUT), Leg(virt, OUT), Leg(virt, OUT), Leg(virt, IN), Leg(virt, IN))
-    return example.c4v(SymmetricTensor.random(legs, seed=seed))
-
-
-# --- Part 2 (#243): which symmetry of the bulk does the corner's Hermiticity need? ----
-#
-# Part 1 reports the corner Hermitian at move 0 and under neither pairing afterwards, and
-# stops there. Part 2 varies the one thing Part 1 holds fixed -- how much of C4v the bulk
-# carries -- with everything else identical, and reads the Hermiticity off each row. It is
-# plain NumPy: ``move``'s own three ``einsum`` strings, copied, with no grading in the way,
-# so that a row that reads zero cannot be a symmetry-bookkeeping accident. The projector is
-# ``numpy.linalg.svd`` truncated to ``chi``, which is what ``svd_truncated`` does to a
-# single coupled sector.
-
-MIRROR_4 = (1, 0, 3, 2)  # the diagonal mirror on a rank-4 bulk (l, u, r, d)
-MIRROR_5 = (0, 2, 1, 4, 3)  # and on a rank-5 iPEPS ket (P, l, u, r, d)
-
-
-def full_c4v(a, mirror, rot):
-    """Average over the eight elements of C4v: four rotations times the diagonal mirror."""
-    out = np.zeros_like(a)
+def _c4v_permutations():
+    """The eight elements of C4v as permutations of `(t, l, b, r)`, physical leg last."""
+    compose = lambda p, q: tuple(p[i] for i in q)  # noqa: E731
+    out, current = [], (0, 1, 2, 3, 4)
     for _ in range(4):
-        out = out + a + np.transpose(a, mirror)
-        a = np.transpose(a, rot)
-    return out / 8
-
-
-def herm_defect(big):
-    """``max ||B - B^H|| / ||B||`` over the two pairings Part 1 computes, whichever is
-    smaller -- the same question, on a dense array."""
-    n = big.ndim // 2
-    direct = np.transpose(big, (*range(n, 2 * n), *range(n))).conj()
-    if n == 2:
-        return float(np.linalg.norm(big - direct) / np.linalg.norm(big))
-    swapped = np.transpose(big, (3, 5, 4, 0, 2, 1)).conj()
-    return min(float(np.linalg.norm(big - x) / np.linalg.norm(big)) for x in (direct, swapped))
-
-
-def dense_single(bulk, chi=6, moves=4):
-    """``single_layer``'s two ``einsum`` strings, in NumPy."""
-    d = bulk.shape[0]
-    c, e, out = np.ones((1, 1)), np.ones((1, 1, d)), []
-    for _ in range(moves):
-        big = np.einsum("ab,ace,fbg,gehi->chfi", c, e, e, bulk, optimize=True)
-        n = big.shape[0]
-        out.append(herm_defect(big))
-        u, s, _ = np.linalg.svd(big.reshape(n * d, n * d))
-        keep = min(chi, len(s))
-        p = u[:, :keep].reshape(n, d, keep)
-        c = np.diag(s[:keep]) / np.linalg.norm(s[:keep])
-        big_e = np.einsum("abe,gehi->abghi", e, bulk, optimize=True)
-        e = np.einsum("abghi,agx,bhy->xyi", big_e, p, p.conj(), optimize=True)
-        e = e / np.linalg.norm(e)
+        out.append(current)
+        out.append(compose(current, (1, 0, 3, 2, 4)))
+        current = compose(current, (1, 2, 3, 0, 4))
     return out
-
-
-def dense_double(ket, chi=6, moves=4):
-    """``double_layer``'s five ``einsum`` strings, in NumPy."""
-    bra = np.transpose(ket.conj(), (1, 2, 0, 3, 4))  # ``layers``'s bend
-    d = ket.shape[1]
-    c, e, out = np.ones((1, 1)), np.ones((1, 1, d, d)), []
-    for _ in range(moves):
-        env = np.einsum("ab,acjJ,fbgG->cfgGjJ", c, e, e, optimize=True)
-        env = np.einsum("cfgGjJ,sgjri->csfGJri", env, ket, optimize=True)
-        big = np.einsum("csfGJri,GJsRI->crRfiI", env, bra, optimize=True)
-        n = big.shape[0]
-        out.append(herm_defect(big))
-        u, s, _ = np.linalg.svd(big.reshape(n * d * d, n * d * d))
-        keep = min(chi, len(s))
-        p = u[:, :keep].reshape(n, d, d, keep)
-        c = np.diag(s[:keep]) / np.linalg.norm(s[:keep])
-        t = np.einsum("abuU,alLx->buUlLx", e, p, optimize=True)
-        t = np.einsum("buUlLx,slurd->bULxsrd", t, ket, optimize=True)
-        t = np.einsum("bULxsrd,LUsRD->bxrRdD", t, bra, optimize=True)
-        e = np.einsum("bxrRdD,brRy->xydD", t, p.conj(), optimize=True)
-        e = e / np.linalg.norm(e)
-    return out
-
-
-def part_two():
-    print("\n# #243 Part 2 — which symmetry does the corner's Hermiticity need?\n")
-    for label, shape, mirror, rot, run in (
-        ("single-layer bulk (l, u, r, d)", (3, 3, 3, 3), MIRROR_4, (1, 2, 3, 0), dense_single),
-        ("iPEPS ket (P, l, u, r, d)", (2, 2, 2, 2, 2), MIRROR_5, (0, 2, 3, 4, 1), dense_double),
-    ):
-        a = np.random.default_rng(0).normal(size=shape)
-        print(f"### {label}\n")
-        print("| bulk symmetry | `max||B - B^H|| / ||B||`, moves 0-3 |")
-        print("|---|---|")
-        for name, t in (
-            ("none", a),
-            ("diagonal mirror only (what `c4v` imposes)", (a + np.transpose(a, mirror)) / 2),
-            ("full C4v (8 elements)", full_c4v(a, mirror, rot)),
-        ):
-            print(f"| {name} | " + "  ".join(f"{x:.2e}" for x in run(t)) + " |")
-        print()
-    print(
-        "The corner is Hermitian at every move under the **full** group and at move 0 only\n"
-        "under the diagonal mirror, which is the one element `c4v` imposes. It is the\n"
-        "ansatz, not the projector: Part 1's `max|u-v|` column and #242's `eigh_truncated`\n"
-        "consumer change both leave these numbers where they are."
-    )
 
 
 def part_three():
-    """The same question on `EnvCTMc4v`, which is where the answer stops mattering.
-
-    `network/ctmrg.py`'s `move` keeps only `u` and takes the renormalized corner to be `s`,
-    which is exact for a positive corner and an assumption otherwise. `EnvCTMc4v` keeps
-    `v` as well and renormalizes to `v† u s`, so the two index groups leave the SVD as two
-    factors. The rows below vary the same one thing Part 2 varies -- how much of the point
-    group the ansatz carries -- on ansaetze this lane accepts at all: four *identical*
-    virtual legs, without which no rotation acts and the lane refuses the tensor.
-    """
+    """`||B - B^H|| / ||B||` per move, and the sweep's verdict, for two ansaetze."""
     virtual = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(0): 1, U1Sector(1): 1})
     physical = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
     legs = (Leg(virtual, OUT),) * 4 + (Leg(physical, OUT),)
     raw = SymmetricTensor.random(legs, seed=5)
     averaged = sum((tenet.transpose(raw, p) for p in _c4v_permutations()), start=raw * 0) / 8
-    print("\n# #243 Part 3 -- the same corner under `EnvCTMc4v`\n")
+    print("\n# #243 Part 3 -- the enlarged corner under `EnvCTMc4v`\n")
     print("| ansatz | `||B - B^H|| / ||B||`, moves 0-5 | converges |")
     print("|---|---|---|")
     for name, a in (("no rotation", raw), ("full C4v (8 elements)", averaged)):
@@ -338,41 +58,11 @@ def part_three():
         converged = env.iterate_(max_bond=8, max_sweeps=300, corner_tol=1e-10).converged
         print(f"| {name} | " + "  ".join(f"{x:.2e}" for x in row) + f" | {converged} |")
     print(
-        "\nThe first row is the ansatz Part 2 has no column for -- this lane refuses the\n"
-        "`(OUT, OUT, IN, IN)` signature outright -- and it converges with the corner far\n"
-        "from Hermitian at every move, because the projector never asks."
+        "\nThe first row carries the signature and not the group -- four identical legs, no\n"
+        "rotation -- and it converges with the corner far from Hermitian at every move,\n"
+        "because the projector never asks."
     )
-
-
-def _c4v_permutations():
-    """The eight elements of C4v as permutations of `(t, l, b, r)`, physical leg last."""
-    compose = lambda p, q: tuple(p[i] for i in q)  # noqa: E731
-    out, current = [], (0, 1, 2, 3, 4)
-    for _ in range(4):
-        out.append(current)
-        out.append(compose(current, (1, 0, 3, 2, 4)))
-        current = compose(current, (1, 2, 3, 0, 4))
-    return out
-
-
-def main():
-    print("# #205 Part 1 — is the double-layer CTMRG corner indefinite?")
-    total = 0
-    total += sweep(
-        "single-layer Ising, beta=0.4 (control)", *single_layer_ctm(example.ising_bulk(0.4)), chi=4
-    )
-    for provider in ("u1", "su2"):
-        chi = example.CHI_IPEPS[provider]
-        total += sweep(f"c4v iPEPS, {provider}", *double_layer_ctm(ipeps(provider)), chi=chi)
-    total += sweep("c4v iPEPS, su2 (seed 3)", *double_layer_ctm(ipeps("su2", seed=3)), chi=6)
-    print(
-        "\n## Verdict\n\n"
-        f"{total} negative eigenvalues above the projector's own truncation threshold. "
-        "The gate fires at anything above zero on a double-layer fixture."
-    )
-    part_two()
-    part_three()
 
 
 if __name__ == "__main__":
-    main()
+    part_three()
