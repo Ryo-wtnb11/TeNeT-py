@@ -5,7 +5,7 @@ two ways to seed it, right-canonical form from `tenet.linalg.lq`, and the measur
 that read numbers back off it.
 
 - Site `A_n` is `(left bond OUT, physical OUT, right bond IN)`; both end bonds are the
-  unit sector, which makes `S^z_tot = 0` structural rather than imposed.
+  unit sector, which makes $S^z_{\mathrm{tot}} = 0$ structural rather than imposed.
 - `product_mps` is the Néel state with every bond `D=1` — each site has exactly one
   structurally allowed entry, so filling the blocks that exist *is* the basis state, with
   no dense basis written anywhere. It is [Toy TEBD](toy-tebd.md)'s starting point.

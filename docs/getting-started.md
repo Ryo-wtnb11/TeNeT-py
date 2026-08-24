@@ -32,8 +32,8 @@ A spin-1/2 Heisenberg chain to its ground state. Start with the site:
 ```
 
 A [Site][tenet.models.Site] is a physical [GradedSpace][tenet.GradedSpace] plus a table
-of local operators. `spin_half()` grades the doublet by U(1), with the charge `2 S^z`,
-so the two basis states carry charges `-1` and `+1`:
+of local operators. `spin_half()` grades the doublet by U(1), with the charge $2S^z$,
+so the two basis states carry charges $-1$ and $+1$:
 
 ```python
 >>> site.phys.sectors
@@ -43,7 +43,7 @@ so the two basis states carry charges `-1` and `+1`:
 
 Each entry of `site.ops` is a rank-3 tensor: the two physical legs plus a `D=1` leg
 carrying the charge the operator emits. That third leg is what makes `S+` expressible —
-it changes `2 S^z` by `-2`, and the leg carries the change.
+it changes $2S^z$ by $-2$, and the leg carries the change.
 
 Now the Hamiltonian. `MPO.from_terms` takes `(coefficient, [(operator, site), ...])`
 tuples, with the identity implied on every site a term does not name:
@@ -77,9 +77,9 @@ The starting state is a Néel product state, one physical sector per site:
 
 ```
 
-Bond 0 is a `D=1` leg carrying charge 0, which is `S^z_tot = 0`. Every site tensor is
-invariant, so nothing in the sweep can move the state out of that sector: the target
-sector is structural, not a constraint added on top.
+Bond 0 is a `D=1` leg carrying charge 0, which is $S^z_{\mathrm{tot}} = 0$. Every site tensor
+is invariant, so nothing in the sweep can move the state out of that sector: the target sector
+is structural, not a constraint added on top.
 
 Then sweep:
 
@@ -121,8 +121,8 @@ True
 
 ```
 
-Every `<S^z_n>` is float noise, because the sector is fixed. The entanglement entropy
-across each cut, in nats, keyed by the cut's left site:
+Every $\langle S^z_n\rangle$ is float noise, because the sector is fixed. The entanglement
+entropy across each cut, in nats, keyed by the cut's left site:
 
 ```python
 >>> entropy = out.psi.entanglement_entropy()
@@ -170,7 +170,7 @@ for every operation in the library.
 - [Tensors, legs and spaces](guide/tensors-legs-spaces.md) — `GradedSpace`, `Leg`,
   `SymmetricTensor`, `TensorStructure`.
 - [Symmetries and providers](guide/symmetries-and-providers.md) — sector conventions
-  (SU(2) labels by **2j**), capabilities, and what a `CapabilityError` means.
+  (SU(2) labels by $2j$), capabilities, and what a `CapabilityError` means.
 - [Contraction](guide/contraction.md) — `tensordot`, `einsum`, `compose`, and the
   composition rule.
 - [Building a Hamiltonian](guide/hamiltonians.md) — sites, the four MPO builders, and

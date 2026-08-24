@@ -121,10 +121,10 @@ CTMRG.
 
 ## Gradients at a degenerate spectrum
 
-JAX's own SVD and eigh VJPs carry `1/(sigma_i - sigma_j)` factors that are `NaN` at exact
+JAX's own SVD and eigh VJPs carry $1/(\sigma_i - \sigma_j)$ factors that are `NaN` at exact
 degeneracy, and under a non-Abelian symmetry degeneracy inside a coupled sector is
 generic. `tenet.ad` replaces them with the Lorentzian-broadened form,
-`1/x -> x/(x**2 + eps)`:
+$1/x \to x/(x^2 + \epsilon)$:
 
 ```python
 tenet.enable_jax(ad=True)
@@ -139,11 +139,11 @@ Three things to know before you pass `ad=True`:
   act, so you name it: `ad=True`, every time you want it.
 - **The broadened gradient is correct exactly when the objective is gauge-invariant on
   each degenerate subspace.** Within a degenerate multiplet the singular vectors are
-  defined only up to a unitary, so `dU/dA` does not exist; what exists is the derivative
+  defined only up to a unitary, so $dU/dA$ does not exist; what exists is the derivative
   of gauge-invariant combinations — `U S Vh`, the singular values, a projector onto the
   multiplet. Broadening returns the correct value for those. A gauge-dependent objective
   gets an `eps`-dependent answer.
-- **`eps` is in units of sigma squared.** Call
+- **`eps` is in units of $\sigma^2$.** Call
   [`tenet.ad.install`][tenet.ad.install]`(epsilon=...)` directly to tune it;
   [`tenet.ad.uninstall`][tenet.ad.uninstall] restores autoray's stock bindings.
 

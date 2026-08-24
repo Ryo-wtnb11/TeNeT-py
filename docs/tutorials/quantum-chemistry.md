@@ -1,13 +1,14 @@
 # Quantum chemistry — an FCIDUMP through `from_arrays`
 
-An ab initio Hamiltonian is `O(K^4)` terms over two operator patterns. That shape is what
+An ab initio Hamiltonian is $O(K^4)$ terms over two operator patterns. That shape is what
 [`MPO.from_arrays`][tenet.network.MPO.from_arrays] takes, and `symbolic=True` is what
 keeps it tractable once the MPO bond runs into the thousands.
 
-```
-H = Σ_{pq,σ} h_pq c†_{pσ} c_{qσ}
-  + ½ Σ_{pqrs,στ} (pq|rs) c†_{pσ} c†_{rτ} c_{sτ} c_{qσ}
-```
+$$
+H = \sum_{pq,\sigma} h_{pq}\, c^{\dagger}_{p\sigma} c_{q\sigma}
+  + \tfrac{1}{2} \sum_{pqrs,\sigma\tau} (pq \vert rs)\,
+    c^{\dagger}_{p\sigma} c^{\dagger}_{r\tau} c_{s\tau} c_{q\sigma}
+$$
 
 ## Reading the file
 
@@ -39,9 +40,9 @@ end.
 
 ## Expanding to spin orbitals
 
-Each spatial orbital becomes two sites, `2p` and `2p + 1`. The integral file stores one
+Each spatial orbital becomes two sites, $2p$ and $2p + 1$. The integral file stores one
 representative per permutational orbit, so you expand the orbit yourself: the eight images
-of `(pq|rs)` are eight different operator strings, and folding them into one coefficient
+of $(pq \vert rs)$ are eight different operator strings, and folding them into one coefficient
 would build a different operator. `from_arrays` merges what coincides after the expansion.
 
 ```python
@@ -106,7 +107,7 @@ Three things happen inside, all whole-array work:
   with a repeated spin-orbital index needs this, and `from_arrays` is where it happens;
 - terms agreeing on `(operator labels, sites)` are fused and their coefficients summed,
   then `screen=` drops what is below its magnitude. At its default, `1e-12`, that removes
-  the symmetry-forbidden `~1e-15` entries a real integral file carries and nothing else.
+  the symmetry-forbidden $\sim 10^{-15}$ entries a real integral file carries and nothing else.
   Raising it to `1e-4` and above is an accuracy-for-size trade you take deliberately.
 
 `cutoff=` controls the compressing SVD sweeps, unchanged from
@@ -121,7 +122,7 @@ whose MPO bond is eight wide, and wrong here.
 
 With it, the finite-state-machine description is kept, and `heff2` runs the prepared
 matvec instead: complementary operators assembled per bond, the sum dispatched term family
-by term family. For `O(K^4)` terms over a bond in the thousands that is the route that
+by term family. For $O(K^4)$ terms over a bond in the thousands that is the route that
 fits in memory at all.
 
 Nothing dispatches at run time and no threshold is probed. You state it at build time,

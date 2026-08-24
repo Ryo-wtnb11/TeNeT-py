@@ -28,8 +28,8 @@ The shipped sites:
 
 | call | grading | `ops` |
 |---|---|---|
-| `spin_half()` | `U1`, charge `2 S^z` | `Sz`, `S+`, `S-` (`S.S` as a matrix) |
-| `spin_half(SU2)` | `SU2`, one `j=1/2` multiplet | `S.S` |
+| `spin_half()` | `U1`, charge $2S^z$ | `Sz`, `S+`, `S-` (`S.S` as a matrix) |
+| `spin_half(SU2)` | `SU2`, one $j = 1/2$ multiplet | `S.S` |
 | `spinless_fermion()` | `fZ2` | `c`, `c+`, `n` |
 | `spinful_fermion()` | `fZ2`, `d=4` | `c_up`, `c+_up`, `c_dn`, `c+_dn`, `n_up`, `n_dn`, `n`, `n_up n_dn` |
 | `hard_core_boson()` | `U1`, the occupation | `b`, `b+`, `n` |
@@ -118,15 +118,15 @@ array:
 ```
 
 The pattern's work is done once per block in NumPy instead of once per term in Python,
-which is what a Hamiltonian with `O(K^4)` terms over a handful of patterns needs. Before
+which is what a Hamiltonian with $O(K^4)$ terms over a handful of patterns needs. Before
 the walk, three whole-array steps run: each row is sorted into site order paying the
 Koszul sign of every inversion of two sign-braiding operators; operators coinciding on a
 site are pre-multiplied into one on-site operator, and a term whose on-site product
 vanishes is dropped; terms agreeing on `(operator labels, sites)` are fused and their
 coefficients summed. `screen=` then drops merged terms below a magnitude.
 
-Permutational symmetry is expanded by you and merged here: the eight images of `(ij|kl)`
-are eight different operator strings.
+Permutational symmetry is expanded by you and merged here: the eight images of
+$(ij \vert kl)$ are eight different operator strings.
 
 Every operator here is rank 3 — a block gives one site index per name, so an invariant
 *k*-site operator has nowhere to put its extra indices and is refused, naming
@@ -201,10 +201,11 @@ h.materialize()
 
 ## Fermions
 
-The spinful site is the `d = 4` basis `(|0>, |ud>, |u>, |d>)`, the even sector first,
+The spinful site is the $d = 4$ basis
+$(\lvert 0\rangle, \lvert ud\rangle, \lvert u\rangle, \lvert d\rangle)$, the even sector first,
 because a dense array over a `GradedSpace` is laid out sector by sector. There is **no
-Jordan-Wigner operator to place**: the string is the `fZ2` braiding an odd MPO bond pays
-when it crosses a physical line. A Hubbard chain is its terms:
+Jordan-Wigner operator to place**: the string is the `fZ2` braiding an odd MPO bond pays when
+it crosses a physical line. A Hubbard chain is its terms:
 
 ```python
 >>> from tenet.models import spinful_fermion
@@ -241,7 +242,7 @@ operator per site and so needs it pre-multiplied.
 
 `S+` is not in the table because **there is no such SU(2) operator**. The rank-3
 charge-leg form puts the emitted sector on a `D=1` leg, and the only leg a spin-1 tensor
-operator could emit onto is the `j=1` multiplet, whose dense dimension is 3. What SU(2)
+operator could emit onto is the $j = 1$ multiplet, whose dense dimension is 3. What SU(2)
 has is the invariant two-site operator, and `S.S` is one whole Heisenberg bond term:
 
 ```python
@@ -273,10 +274,11 @@ and truncation is [`MPS.compress_`][tenet.network.MPS.compress_], by name. The c
 the exact product is the operator's bond dimension times the state's, so compress
 promptly on a wide operator.
 
-[`variance`][tenet.network.MPO.variance] is `<psi|H^2|psi> / <psi|psi> - E^2`, zero for an
-exact eigenstate — see [DMRG](dmrg.md) for what to do with it.
+[`variance`][tenet.network.MPO.variance] is
+$\langle\psi\vert H^2 \vert\psi\rangle/\langle\psi\vert\psi\rangle - E^2$, zero for an exact
+eigenstate — see [DMRG](dmrg.md) for what to do with it.
 [`MPO.identity`][tenet.network.MPO.identity] builds the `D=1` identity operator, and
-[`to_dense`][tenet.network.MPO.to_dense] expands the whole `d**N x d**N` operator for a
+[`to_dense`][tenet.network.MPO.to_dense] expands the whole $d^N \times d^N$ operator for a
 small chain.
 
 ## Where next

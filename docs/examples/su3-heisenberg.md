@@ -1,13 +1,17 @@
 # Heisenberg, SU(3)
 
-`H = sum_i P_{i,i+1}` on a chain of fundamental `3`s. The two-site exchange is `+1` on the
-symmetric `6` of `3 x 3` and `-1` on the antisymmetric `3bar`, so the rank-4 term tensor is
-two blocks named with `SymmetricTensor.from_blocks` — no Clebsch-Gordan array is written
-out — and `MPO.from_terms` takes it whole.
+$H = \sum_i P_{i,i+1}$ on a chain of fundamental $\mathbf{3}$s. The two-site exchange is
+$+1$ on the symmetric $\mathbf{6}$ of $\mathbf{3} \otimes \mathbf{3}$ and $-1$ on the
+antisymmetric $\bar{\mathbf{3}}$, so the rank-4 term tensor is two blocks named with
+`SymmetricTensor.from_blocks` — no Clebsch-Gordan array is written out — and
+`MPO.from_terms` takes it whole.
 
 - The dense form of the built term is the permutation matrix, to machine precision.
-- DMRG at `N=6` reproduces the script's own numpy-only dense ED.
-- The `N=24` bond carries ten multiplets over 89 dense states, all of zero triality.
+- DMRG at $N = 6$ reproduces the script's own numpy-only dense ED.
+- The $N = 24$ bond carries ten multiplets over 89 dense states, all of zero triality.
+- Sutherland's Bethe-ansatz energy per site for the infinite SU($N$) fundamental chain is
+  $1 + \frac{2}{N}\left(\gamma + \psi(1/N)\right)$, which at $N = 3$ is
+  $1 - \ln 3 - \pi/(3\sqrt{3}) = -0.703212\ldots$
 
 ## Source
 

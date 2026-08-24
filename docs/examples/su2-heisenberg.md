@@ -1,7 +1,7 @@
 # Heisenberg, SU(2)
 
-The same chain under SU(2): one invariant `S.S` operator per bond, a random multiplet seed,
-and the U(1) run beside it.
+The same chain under SU(2): one invariant $\mathbf{S} \cdot \mathbf{S}$ operator per bond, a
+random multiplet seed, and the U(1) run beside it.
 
 - Both runs give the same energy.
 - The SU(2) bond holds 22 multiplets where the U(1) bond holds 64 states.

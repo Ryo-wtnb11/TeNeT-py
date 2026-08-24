@@ -14,10 +14,10 @@ Each provider has its own frozen sector dataclass:
 | `U1` | `U1Sector(charge)` | any integer charge |
 | `Z2` | `Z2Sector(parity)` | 0 or 1 |
 | `fZ2` | `FZ2Sector(parity)` | 0 or 1, **fermionic** — odd wires braid with Koszul signs |
-| `SU2` | `SU2Sector(two_j)` | **2j**, not j |
+| `SU2` | `SU2Sector(two_j)` | $2j$, **not** $j$ |
 | `Trivial` | `TrivialSector()` | the one sector |
 
-**SU(2) sectors are labelled by `2j`.** `SU2Sector(1)` is the spin-1/2 doublet,
+**SU(2) sectors are labelled by $2j$.** `SU2Sector(1)` is the spin-1/2 doublet,
 `SU2Sector(2)` the spin-1 triplet. The convention keeps every label an exact integer:
 
 ```python

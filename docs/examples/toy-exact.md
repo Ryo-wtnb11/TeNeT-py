@@ -1,17 +1,18 @@
 # Toy exact
 
-Dense exact diagonalization of the same chain, in the `S^z_tot = 0` sector: the reference
-[Toy TEBD](toy-tebd.md) and [Toy DMRG](toy-dmrg.md) both print against.
+Dense exact diagonalization of the same chain, in the $S^z_{\mathrm{tot}} = 0$ sector: the
+reference [Toy TEBD](toy-tebd.md) and [Toy DMRG](toy-dmrg.md) both print against.
 
 - Deliberately **not** written on the tensor layer. It takes `model.h_bonds()` — the same
   two-site operator TEBD exponentiates — reads it out dense, and builds the many-body
   matrix with numpy and nothing else. An oracle that shared the machinery it judges would
   not be one.
-- The basis is the `C(N, N/2)` bitstrings with `N/2` ones; the `(down, up)` order of the
+- The basis is the $\binom{N}{N/2}$ bitstrings with $N/2$ ones; the `(down, up)` order of the
   dense two-site block is `model.PHYS`'s own sector order, so a bit pair indexes the block
   directly.
-- At N=12 that is 924 × 924 and `eigvalsh` costs milliseconds. Above N≈16 the upgrade
-  path named in the file is `scipy.sparse.linalg.eigsh` on the same matrix.
+- At $N = 12$ that is $924 \times 924$ and `eigvalsh` costs milliseconds. Above
+  $N \approx 16$ the upgrade path named in the file is `scipy.sparse.linalg.eigsh` on the
+  same matrix.
 
 ## Source
 
@@ -25,7 +26,7 @@ Dense exact diagonalization of the same chain, in the `S^z_tot = 0` sector: the 
 
 Produced by `exact.main()` at its defaults — exactly `python examples/toy_codes/exact.py` —
 as run by `tests/test_examples.py`. `e_inf` is the Bethe-ansatz thermodynamic limit
-`1/4 - ln 2`, which a finite open chain sits above.
+$1/4 - \ln 2$, which a finite open chain sits above.
 
 ```text
 N= 8  dim=   70  E=-3.374932598688  E/N=-0.421866574836  e_inf=-0.443147180560
