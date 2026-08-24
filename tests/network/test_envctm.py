@@ -525,6 +525,11 @@ def test_every_two_operand_step_is_a_composition(monkeypatch):
     finite.update_(max_bond=6, moves="hv")
     double = EnvCTM(Peps(SquareLattice(dims=(1, 1)), near_product("fz2")), init="eye")
     double.update_(max_bond=6, moves="hv")
+    # M79d's ``bond_metric`` is on this module's list too: both directions, and the site
+    # tensor passed in rather than read off the state, which is how ``truncate_`` calls it
+    site = double.psi.ket[0, 0]
+    double.bond_metric(site, site, (0, 0), (0, 1), "lr")
+    double.bond_metric(site, site, (0, 0), (1, 0), "tb")
     # the C4v specialization lives in the same module, so its move is on the same list
     bulk = ising(0.4)
     c4v = SymmetricTensor.from_dense(
