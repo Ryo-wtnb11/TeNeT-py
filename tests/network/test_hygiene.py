@@ -69,6 +69,7 @@ def test_the_package_has_the_modules_it_claims():
         "env.py",
         "dmrg.py",
         "ctmrg.py",
+        "envctm.py",
         "lattice.py",
         "peps.py",
     }

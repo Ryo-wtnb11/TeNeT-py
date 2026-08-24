@@ -33,16 +33,16 @@ from tenet.network import (
     Peps,
     SquareLattice,
     corner2x2,
+    envctm,
 )
-from tenet.network import envctm
 from tenet.network.envctm import _composed
 from tenet.symmetry import (
     U1,
+    Z2,
     FZ2Sector,
     Trivial,
     TrivialSector,
     U1Sector,
-    Z2,
     Z2Sector,
     fZ2,
 )
@@ -522,7 +522,9 @@ def test_every_two_operand_step_is_a_composition(monkeypatch):
 def test_corner_spectra_are_scaled_and_the_record_is_the_loop_exit():
     env, out = converged(0.4)
     spectra = env.corner_spectra()
-    assert set(spectra) == {(site, name) for site in env.sites() for name in ("tl", "tr", "bl", "br")}
+    assert set(spectra) == {
+        (site, name) for site in env.sites() for name in ("tl", "tr", "bl", "br")
+    }
     for values in spectra.values():
         assert values[0] == pytest.approx(1.0)
         assert values == sorted(values, reverse=True)

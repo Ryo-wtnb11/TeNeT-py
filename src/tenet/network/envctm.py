@@ -74,9 +74,6 @@ __all__ = [
     "proj_corners",
 ]
 
-#: The four corner names and the four edge names, in the order the ring visits them.
-CORNERS = ("tl", "t", "tr", "r", "br", "b", "bl", "l")
-
 #: Per direction, the psi axis it names. ``Peps`` leg order is ``(t, l, b, r, phys)``.
 _AXIS = {"t": 0, "l": 1, "b": 2, "r": 3}
 
@@ -171,8 +168,8 @@ def _supplies_in(leg: Leg) -> bool:
     return (leg.side is IN) != leg.dual
 
 
-def _composed(equation: str, a: SymmetricTensor, b: SymmetricTensor) -> SymmetricTensor:
-    """A two-operand ``tenet.einsum`` whose operand order and bends are **derived**.
+def _composed(equation: str, a: Any, b: Any) -> SymmetricTensor:
+    """One ``tenet.einsum_chain`` step whose operand order and bends are **derived**.
 
     Parameters
     ----------
@@ -180,7 +177,9 @@ def _composed(equation: str, a: SymmetricTensor, b: SymmetricTensor) -> Symmetri
         A two-operand ``einsum`` equation. The output order is the caller's and is not
         touched; only which operand ``einsum`` sees first can change.
     a, b : SymmetricTensor
-        The operands.
+        The operands. Typed ``Any`` because most of them are read off an
+        [EnvLocal][tenet.network.EnvLocal], whose fields are optional until a move has
+        filled them -- an unfilled one is a caller error, not a case to branch on.
 
     Returns
     -------
@@ -221,7 +220,7 @@ def _normalized(t: SymmetricTensor) -> SymmetricTensor:
     return t / tenet.norm(t)
 
 
-def _dual(leg: Leg) -> Leg:
+def _dual(leg: Any) -> Leg:
     """The leg that contracts with ``leg``: the same space and ``dual``, the other side."""
     return Leg(leg.space, IN if leg.side is OUT else OUT, dual=leg.dual)
 
@@ -501,7 +500,7 @@ class EnvCTM:
         """
         if init not in ("eye", "dl"):
             raise ValueError(f"EnvCTM: init={init!r} should be 'eye' or 'dl'")
-        first = self.psi[self.sites()[0]]
+        first: Any = self.psi[self.sites()[0]]
         provider = (first.ket if self.double else first).provider
         unit = tenet.GradedSpace.new(provider, {provider.unit: 1})
         for site in self.sites():
@@ -628,7 +627,9 @@ class EnvCTM:
         outer, cut, tail = "ade"[:n], "ijk"[:n], "mnp"[:n]
         return _composed(f"{outer}{cut},{cut}{tail}->{outer}{tail}", first, second)
 
-    def _groups(self, half: SymmetricTensor, order: tuple[int, int]) -> tuple[Sequence[int], ...]:
+    def _groups(
+        self, half: SymmetricTensor, order: tuple[int, int]
+    ) -> tuple[Sequence[int], Sequence[int]]:
         """A half's two leg groups, in the order ``qr`` should see them."""
         n = half.ndim // 2
         both = (tuple(range(n)), tuple(range(n, 2 * n)))
@@ -677,19 +678,13 @@ class EnvCTM:
         if left is None:
             return
         t_, l_, b_, r_ = (self.wire(d) for d in "tlbr")
-        vec = _composed(
-            f"x{l_}c,c{t_}n->x{l_}{t_}n", self[left].l, self.proj[left].hlt
-        )
+        vec = _composed(f"x{l_}c,c{t_}n->x{l_}{t_}n", self[left].l, self.proj[left].hlt)
         mid = self._absorb_site(left, "tl", vec)
-        fresh.l = _normalized(
-            _composed(f"x{b_}m,x{b_}n{r_}->m{r_}n", self.proj[left].hlb, mid)
-        )
+        fresh.l = _normalized(_composed(f"x{b_}m,x{b_}n{r_}->m{r_}n", self.proj[left].hlb, mid))
         above = self.nn_site(site, "tl")
         if above is not None:
             corner = _composed(f"ad,d{t_}y->a{t_}y", self[left].tl, self[left].t)
-            fresh.tl = _normalized(
-                _composed(f"a{t_}m,a{t_}y->my", self.proj[above].hlb, corner)
-            )
+            fresh.tl = _normalized(_composed(f"a{t_}m,a{t_}y->my", self.proj[above].hlb, corner))
         below = self.nn_site(site, "bl")
         if below is not None:
             corner = _composed(f"ae,e{b_}n->a{b_}n", self[left].bl, self.proj[below].hlt)
@@ -703,9 +698,7 @@ class EnvCTM:
         t_, l_, b_, r_ = (self.wire(d) for d in "tlbr")
         vec = _composed(f"x{r_}c,c{b_}n->x{r_}{b_}n", self[right].r, self.proj[right].hrb)
         mid = self._absorb_site(right, "br", vec)
-        fresh.r = _normalized(
-            _composed(f"x{t_}m,x{t_}n{l_}->m{l_}n", self.proj[right].hrt, mid)
-        )
+        fresh.r = _normalized(_composed(f"x{t_}m,x{t_}n{l_}->m{l_}n", self.proj[right].hrt, mid))
         above = self.nn_site(site, "tr")
         if above is not None:
             corner = _composed(f"ae,e{t_}n->a{t_}n", self[right].tr, self.proj[above].hrb)
@@ -713,9 +706,7 @@ class EnvCTM:
         below = self.nn_site(site, "br")
         if below is not None:
             corner = _composed(f"ae,e{b_}y->a{b_}y", self[right].br, self[right].b)
-            fresh.br = _normalized(
-                _composed(f"a{b_}m,a{b_}y->my", self.proj[below].hrt, corner)
-            )
+            fresh.br = _normalized(_composed(f"a{b_}m,a{b_}y->my", self.proj[below].hrt, corner))
 
     def _move_t(self, fresh: EnvLocal, site: Any) -> None:
         """The top row moves one step down."""
@@ -743,9 +734,7 @@ class EnvCTM:
         t_, l_, b_, r_ = (self.wire(d) for d in "tlbr")
         vec = _composed(f"a{r_}m,a{b_}y->m{r_}{b_}y", self.proj[bottom].vbr, self[bottom].b)
         mid = self._absorb_site(bottom, "br", vec)
-        fresh.b = _normalized(
-            _composed(f"m{t_}y{l_},y{l_}n->m{t_}n", mid, self.proj[bottom].vbl)
-        )
+        fresh.b = _normalized(_composed(f"m{t_}y{l_},y{l_}n->m{t_}n", mid, self.proj[bottom].vbl))
         left = self.nn_site(site, "bl")
         if left is not None:
             corner = _composed(f"ae,e{l_}y->a{l_}y", self[bottom].bl, self[bottom].l)
@@ -819,9 +808,10 @@ class EnvCTM:
             Under ``jax.jit``/``jax.grad``: the loop reads a spectrum to decide when to
             stop and reads singular values to decide a bond.
         """
-        previous, max_dsv, sweep = None, float("inf"), 0
-        for sweep in range(1, max_sweeps + 1):
+        previous, max_dsv, sweeps = None, float("inf"), 0
+        while sweeps < max_sweeps:
             self.update_(max_bond, moves, cutoff)
+            sweeps += 1
             if corner_tol is None:
                 continue
             current = self.corner_spectra()
@@ -830,7 +820,7 @@ class EnvCTM:
             previous = current
             if max_dsv < corner_tol:
                 break
-        return CTM_out(sweep, max_dsv, max_dsv < (corner_tol or 0.0))
+        return CTM_out(sweeps, max_dsv, max_dsv < (corner_tol or 0.0))
 
     def items(self) -> Iterator[tuple[Site, EnvLocal]]:
         """``(site, environment)`` for every unique site."""
