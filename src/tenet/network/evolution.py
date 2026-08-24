@@ -124,7 +124,7 @@ class Gate(NamedTuple):
     >>> from tenet import GradedSpace
     >>> from tenet.network import Bond, Site, gate_nn, local_op
     >>> from tenet.symmetry import U1, U1Sector
-    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> phys = GradedSpace.new(U1, {U1Sector(0): 2})
     >>> sz = np.diag([-0.5, 0.5])
     >>> h = local_op(np.kron(sz, sz), phys=phys)
     >>> g = gate_nn(h, 0.1, Bond(Site(0, 0), Site(0, 1)))
@@ -212,7 +212,7 @@ def gate_nn(h: SymmetricTensor, step: float, bond: Any) -> Gate:
     >>> from tenet import GradedSpace
     >>> from tenet.network import Bond, Site, gate_nn, local_op
     >>> from tenet.symmetry import U1, U1Sector
-    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> phys = GradedSpace.new(U1, {U1Sector(0): 2})
     >>> sz = np.diag([-0.5, 0.5])
     >>> h = local_op(np.kron(sz, sz), phys=phys)
     >>> gate_nn(h, 0.1, Bond(Site(0, 0), Site(1, 0))).g0.shape
@@ -269,7 +269,7 @@ def gates_nn(
     >>> from tenet import GradedSpace
     >>> from tenet.network import SquareLattice, gates_nn, local_op
     >>> from tenet.symmetry import U1, U1Sector
-    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> phys = GradedSpace.new(U1, {U1Sector(0): 2})
     >>> h = local_op(np.kron(np.diag([-0.5, 0.5]), np.diag([-0.5, 0.5])), phys=phys)
     >>> len(gates_nn(SquareLattice(dims=(2, 2), boundary="obc"), h, 0.1))
     8
@@ -324,7 +324,7 @@ def apply_gate(a0: SymmetricTensor, a1: SymmetricTensor, gate: Gate) -> tuple[An
     >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
     >>> from tenet.network import Bond, Site, apply_gate, gate_nn, local_op
     >>> from tenet.symmetry import U1, U1Sector
-    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> phys = GradedSpace.new(U1, {U1Sector(0): 2})
     >>> V = GradedSpace.new(U1, {U1Sector(0): 1})
     >>> legs = (Leg(V, IN), Leg(V, OUT), Leg(V, OUT), Leg(V, IN), Leg(phys, OUT))
     >>> a = SymmetricTensor.random(legs, seed=0)
@@ -592,7 +592,7 @@ def truncate_(
     >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
     >>> from tenet.network import EnvNTU, Peps, SquareLattice, gate_nn, local_op, truncate_
     >>> from tenet.symmetry import U1, U1Sector
-    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> phys = GradedSpace.new(U1, {U1Sector(0): 2})
     >>> V = GradedSpace.new(U1, {U1Sector(0): 1})
     >>> legs = (Leg(V, IN), Leg(V, OUT), Leg(V, OUT), Leg(V, IN), Leg(phys, OUT))
     >>> psi = Peps(SquareLattice(dims=(2, 2)), SymmetricTensor.random(legs, seed=0))
@@ -700,7 +700,7 @@ def evolution_step_(env: Any, gates: Iterable[Gate], **kwargs: Any) -> list[Evol
     >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
     >>> from tenet.network import EnvNTU, Peps, SquareLattice, evolution_step_, gates_nn, local_op
     >>> from tenet.symmetry import U1, U1Sector
-    >>> phys = GradedSpace.new(U1, {U1Sector(-1): 1, U1Sector(1): 1})
+    >>> phys = GradedSpace.new(U1, {U1Sector(0): 2})
     >>> V = GradedSpace.new(U1, {U1Sector(0): 1})
     >>> legs = (Leg(V, IN), Leg(V, OUT), Leg(V, OUT), Leg(V, IN), Leg(phys, OUT))
     >>> psi = Peps(SquareLattice(dims=(2, 2)), SymmetricTensor.random(legs, seed=0))
