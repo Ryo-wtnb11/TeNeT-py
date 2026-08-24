@@ -1,8 +1,8 @@
 """The directional corner-transfer-matrix environment: four corners and four edges per site.
 
-YASTN's ``fpeps/envs/_env_ctm.py`` and ``_env_dataclasses.py`` (b0187c4), adopted by
-M79/#277 and re-spelled on M79a's [Lattice][tenet.network.Lattice],
-[Peps][tenet.network.Peps] and the twelve contraction primitives.
+YASTN's ``fpeps/envs/_env_ctm.py`` and ``_env_dataclasses.py`` (b0187c4), adopted and
+re-spelled on [Lattice][tenet.network.Lattice], [Peps][tenet.network.Peps] and the twelve
+contraction primitives.
 
 **Leg conventions.** Corners are rank 2 and edges rank 3 -- rank 4 for a double layer,
 where the ket bond and the bra bond stay adjacent and separate, exactly as
@@ -36,25 +36,25 @@ book-keeping -- a cycle of eight alternating wires needs its two turning points.
 **No Hermiticity assumption, anywhere.** A projector pair is built from the QR of each
 half of the 4x4 patch and an SVD of ``r0 @ r1^T`` --
 [proj_corners][tenet.network.proj_corners] -- never from an eigendecomposition of an
-enlarged corner and never from a single isometry used on both index groups. That is the
-design point M63/#243 measured its way to: the corner's Hermiticity is a property of the
-*ansatz* (the full C4v point group), so an algorithm that needs it is an algorithm with a
-precondition it cannot check. This one has none.
+enlarged corner and never from a single isometry used on both index groups. The
+corner's Hermiticity is a property of the *ansatz* (the full C4v point group), so an
+algorithm that needs it is an algorithm with a precondition it cannot check. This one has
+none.
 
 **The C4v specialization.** [EnvCTMc4v][tenet.network.EnvCTMc4v] is the same machinery
 with the eight tensors of a site collapsed onto the two a point-group-symmetric ansatz
 leaves distinct -- its class docstring carries the leg conventions, which are the point
 group's and not the ones above.
 
-**The bond metric.** [bond_metric][tenet.network.EnvCTM.bond_metric] is the one thing
-M79d added here: the six environment tensors around a bond, closed around the two
-``qr``-reduced site tensors [truncate_][tenet.network.truncate_] hands it. It is the
-full-update metric and nothing about it is symmetrized or checked -- that is the
-caller's, and ``truncate_`` says what it found.
+**The bond metric.** [bond_metric][tenet.network.EnvCTM.bond_metric] is the six
+environment tensors around a bond, closed around the two ``qr``-reduced site tensors
+[truncate_][tenet.network.truncate_] hands it. It is the full-update metric and nothing
+about it is symmetrized or checked -- that is the caller's, and ``truncate_`` says what
+it found.
 
-**What is deliberately not transcribed** (M79b scope): the ``'1x2'`` projector method,
-the 5x4 extended corners YASTN grows when a PEPS bond is one-dimensional (a hexagonal
-lattice embedded on a square one), ``boundary_mps``, checkpointing, serialization and the
+**What is deliberately not transcribed**: the ``'1x2'`` projector method, the 5x4
+extended corners YASTN grows when a PEPS bond is one-dimensional (a hexagonal lattice
+embedded on a square one), ``boundary_mps``, checkpointing, serialization and the
 ``patch`` mechanism -- and with the last of those, any re-convergence after a truncation:
 an environment is stale the moment a bond changes, and the caller decides when to sweep.
 """
@@ -172,9 +172,9 @@ class CTMRG_out(NamedTuple):
 
 # -- the composition rule, once ------------------------------------------------------
 #
-# ``common.composed`` is the one spelling; M79d moved it there when ``evolution.py``
-# became its second caller, and the two private aliases keep this module's call sites
-# and its ``ast``-driven coverage test reading exactly as they did.
+# ``common.composed`` is the one spelling, shared with ``evolution.py``; the two private
+# aliases keep this module's call sites and its ``ast``-driven coverage test reading as
+# they do.
 
 _supplies_in = supplies_in
 _composed = composed
@@ -248,7 +248,7 @@ def corner2x2(env: "EnvCTM", which: str, site: Any, a: Any = None) -> SymmetricT
     -----
     YASTN's ``corner2x2`` (``_env_contractions.py``:429) is ``t1 @ c @ t2`` followed by a
     ``tensordot`` onto the site, and for a double layer that ``tensordot`` *is* the
-    matching ``append_vec_*``. The grouping falls out for free: M79a's
+    matching ``append_vec_*``. The grouping falls out for free:
     ``append_vec_tl`` already returns ``(x, b, y, r)``, which is those two groups in
     that order, so nothing is fused and nothing is transposed here.
     """
@@ -306,9 +306,9 @@ def proj_corners(
     ``p1 = r0 (u rs)^dagger``, so ``p1^T p0`` inserts ``rs s rs = 1`` on the cut. **No
     step assumes the cut is Hermitian**: the two sides enter as two different tensors and
     leave as two different projectors, and there is no eigendecomposition and no single
-    isometry reused on both index groups. That is the whole answer to #243 -- the
-    property the C4v single-move projector needed and the ansatz did not supply is a
-    property this construction never asks for.
+    isometry reused on both index groups. The property a C4v single-move projector
+    needs and the ansatz does not supply is a property this construction never asks
+    for.
 
     The two new bond legs come out on opposite sides, ``IN`` for ``p0`` and ``OUT`` for
     ``p1``, which is what makes the moved edge's two ends meet the moved corners'.
@@ -853,7 +853,7 @@ class EnvCTM:
         The two 2x2 enlarged corners are [corner2x2][tenet.network.corner2x2] with the
         reduced tensor passed in place of the site's -- the environment ring is the
         site's, the tensor inside it is not -- so this adds no contraction primitive to
-        the ones M79a wrote. The remaining four tensors close the top and bottom (or
+        the twelve. The remaining four tensors close the top and bottom (or
         left and right) of the picture, two compositions each.
 
         **The last composition closes the environment ring, and it pays the ribbon twist

@@ -80,7 +80,7 @@ It **is** ``math.inf``, not a distinct object: infinity is the limit of a tolera
 residual acceptable", so the mode and the tolerance value coincide and every existing
 ``atol=math.inf`` call site keeps working unchanged. The name exists because a call site
 reading ``atol=tenet.PROJECT`` says which of the two operations is happening, while one
-reading ``atol=math.inf`` requires the reader to know the idiom (#210).
+reading ``atol=math.inf`` requires the reader to know the idiom.
 """
 
 Array = Any

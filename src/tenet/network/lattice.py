@@ -1,7 +1,7 @@
 """Square-lattice geometry and the site-indexed container every 2D object is built on.
 
-A transcription of YASTN's ``yastn/tn/fpeps/_geometry.py`` (b0187c4), which M79/#277
-adopts wholesale rather than reinventing: [Site][tenet.network.Site],
+A transcription of YASTN's ``yastn/tn/fpeps/_geometry.py`` (b0187c4), adopted wholesale
+rather than reinvented: [Site][tenet.network.Site],
 [Bond][tenet.network.Bond], [SquareLattice][tenet.network.SquareLattice] with its three
 boundaries, the two pattern subclasses, and [Lattice][tenet.network.Lattice] -- a
 geometry plus one object per *unique* site, which the state, the environment and the
@@ -25,10 +25,10 @@ composition rule makes about operand order in
 [peps][tenet.network.peps]: a fermionic contraction is not symmetric in its two ends, so
 the order is data and it is written down once, here.
 
-**Deliberately not transcribed** (M79a scope): YASTN's ``_patch`` shadow dictionary,
+**Deliberately not transcribed**: YASTN's ``_patch`` shadow dictionary,
 ``to_dict``/``from_dict`` serialization, and ``TriangularLattice``. The patch mechanism
-serves evolution's provisional per-site updates (M79d), serialization has no consumer
-yet, and the triangular lattice is out of scope for every stage of #277.
+serves evolution's provisional per-site updates, serialization has no consumer yet, and
+the triangular lattice is out of scope.
 """
 
 from collections.abc import Iterator, Sequence

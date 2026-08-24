@@ -1,7 +1,7 @@
 """PEPS on a lattice, the lazy double layer, and the twelve contraction primitives.
 
 YASTN's ``fpeps/_peps.py``, ``_doublePepsTensor.py`` and ``envs/_env_contractions.py``
-(b0187c4), adopted by M79/#277 and re-spelled in this package's idiom.
+(b0187c4), adopted and re-spelled in this package's idiom.
 
 **Leg order and signature.** A site tensor is rank 5 on
 ``(t IN, l OUT, b OUT, r IN, phys OUT)`` -- YASTN's ``(top, left, bottom, right,
@@ -36,11 +36,10 @@ has turned a wire the planar diagram does not turn -- and it lands on a differen
 which ``test_the_bend_count_is_minimal`` measures rather than assumes. Two primitives,
 ``edge_t`` and ``edge_r``, contract one ket wire against one bra wire and so tie at one
 bend either way; both are recorded as taking the bra first, and the tie is settled by
-physics rather than by counting when M79b contracts a whole network against its Onsager
-oracle.
+physics rather than by counting: a whole network contracted against its Onsager oracle.
 
 Every chain here runs through [closed][tenet.network.closed] rather than
-[tenet.einsum_chain][] (M82 phase 3): each of these primitives contracts more than one
+[tenet.einsum_chain][]: each of these primitives contracts more than one
 wire between ket and bra, so each closes a cycle, and a step that closes one pays the
 ribbon twist on the wires it bends. That is what makes the bra-first and ket-first
 spellings of the tied primitives the same tensor under fermion parity as well.
@@ -54,7 +53,7 @@ vectors alone (``tests/network/test_peps.py``).
 
 Simplification: no operator on the physical leg. YASTN's ``DoublePepsTensor`` carries an
 ``op`` (and pending swap charges) so a measurement can ride the same primitives; that is
-one extra chain step and it arrives with the measurements, in M79b.
+one extra chain step and it arrives with the measurements.
 """
 
 from typing import Any, NamedTuple
@@ -164,7 +163,7 @@ class DoublePepsTensor(NamedTuple):
     object behaves like the rank-4 tensor a CTM environment sees, while the twelve
     primitives in this module reach past it into ``ket`` and ``bra``. YASTN's
     ``DoublePepsTensor`` is the same idea with a ``trans`` field restricting transposes
-    to the leg-order-preserving ones; that field is not here because no caller in M79a
+    to the leg-order-preserving ones; that field is not here because no caller
     transposes a double layer -- the primitives take the direction in their *names*.
     """
 

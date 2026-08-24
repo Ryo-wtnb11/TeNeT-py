@@ -1,8 +1,8 @@
 """Time evolution on the 2D layer: Trotter gates, the bond metric, and the truncation.
 
 YASTN's ``fpeps/_evolution.py``, ``gates.py``, ``_gates_auxiliary.py`` and
-``envs/_env_ntu.py`` (b0187c4), adopted by M79/#277 and re-spelled on M79a's
-[Peps][tenet.network.Peps] and the twelve contraction primitives.
+``envs/_env_ntu.py`` (b0187c4), adopted and re-spelled on [Peps][tenet.network.Peps] and
+the twelve contraction primitives.
 
 **One step.** A two-site gate ``exp(-step * h)`` is split across the bond
 ([gate_nn][tenet.network.gate_nn]), applied to the two sites -- which multiplies the
@@ -40,30 +40,29 @@ rather than assumed.
 ``env.bond_metric``; ``truncate_`` symmetrizes it to ``(g + g^dagger) / 2`` and reports
 the norm of what it removed (``nonhermitian_part``), the most negative eigenvalue and
 the fraction of eigenvalues below the resulting error scale, in
-[Evolution_out][tenet.network.Evolution_out]. That is the whole point of #243 carried
-into the evolution: nothing here assumes the environment produced a positive form.
+[Evolution_out][tenet.network.Evolution_out]. Nothing here assumes the environment
+produced a positive form.
 
 **Two environments, one interface.** [EnvCTM.bond_metric][tenet.network.EnvCTM.bond_metric]
 closes the six surrounding environment tensors around the bond;
 [EnvNTU][tenet.network.EnvNTU] closes the six sites of the ``'NN'`` cluster instead --
 cheap and needing no converged environment.
 
-**The one gap, named here rather than found later.** A cluster whose contraction closes
-a *loop* around the bond has to pay the ribbon twist on every step that closes a cycle,
-which is [closed][tenet.network.closed] and ``docs/design.md``'s M82 phase 3. With it the
-gate is exact on every bond and the metric is a Hermitian form that reaches its Gram
-oracle on ``EnvNTU``'s ``lr`` bond and ``EnvCTM``'s ``tb`` one; the two mirror-image
-directions still miss it, by exactly ``theta`` on one open bra leg and one open ket leg,
-which is the measurement ``tests/network/test_evolution.py`` carries. Nothing here hides
-it: ``nonhermitian_part`` reports what the environment produced on every bond.
+**The one gap, named here rather than found later.** A cluster whose contraction closes a
+*loop* around the bond has to pay the ribbon twist on every step that closes a cycle, which
+is [closed][tenet.network.closed]. With it the gate is exact on every bond and the metric is
+a Hermitian form that reaches its Gram oracle on ``EnvNTU``'s ``lr`` bond and ``EnvCTM``'s
+``tb`` one; the two mirror-image directions still miss it, by exactly ``theta`` on one open
+bra leg and one open ket leg, which is the measurement ``tests/network/test_evolution.py``
+carries. Nothing here hides it: ``nonhermitian_part`` reports what the environment produced
+on every bond.
 
-**What is deliberately not transcribed** (recorded in ``docs/design.md``, M79d): YASTN's
-EAT and ZMT initializations of the truncation (the SVD initialization plus the
-least-squares sweep is what the oracles reach); the bipartite bond metric and
-``EnvApproximate``; ``EnvNTU``'s larger clusters (``'NN+'``, ``'NN++'``, ``'NNN'`` and
-the rest) and its ladder mode; multi-site gates and the MPO gate form, and with them
-``split_gate_2site`` and ``fill_eye_in_gate``; and local (one-site) gates, which need no
-truncation and are one composition a caller can write.
+**What is deliberately not transcribed**: YASTN's EAT and ZMT initializations of the
+truncation (the SVD initialization plus the least-squares sweep is what the oracles reach);
+the bipartite bond metric and ``EnvApproximate``; ``EnvNTU``'s larger clusters (``'NN+'``,
+``'NN++'``, ``'NNN'`` and the rest) and its ladder mode; multi-site gates and the MPO gate
+form, and with them ``split_gate_2site`` and ``fill_eye_in_gate``; and local (one-site)
+gates, which need no truncation and are one composition a caller can write.
 """
 
 from collections.abc import Iterable, Sequence
@@ -789,10 +788,10 @@ def _unit(leg: Any) -> Any:
 #: ``composed`` derives the bends, and for ``'t'`` and ``'r'`` it also decides the order:
 #: three of the four closed wires take their ``IN`` end from the bra, so the bra leads and
 #: one wire turns. ``'l'`` and ``'b'`` close two ket-``IN`` wires against two bra-``IN``
-#: ones and **tie at two bends either way** -- the same tie M79a recorded for ``edge_t``
-#: and ``edge_r`` -- and there the ket leads. Since M82 phase 3 that tie carries nothing:
-#: a step closing a cycle pays the ribbon twist, and with it paid both readings are the
-#: same tensor under fermionic parity as well.
+#: ones and **tie at two bends either way** -- the same tie ``edge_t`` and ``edge_r``
+#: carry -- and there the ket leads. The tie carries nothing: a step closing a cycle pays
+#: the ribbon twist, and with it paid both readings are the same tensor under fermionic
+#: parity as well.
 _HAIR = {
     "t": ("Tlbrs,tlbrs->tT", False),
     "r": ("tlbRs,tlbrs->rR", False),
@@ -848,7 +847,7 @@ class EnvNTU:
             (+1 +0)==(+1 +1)
 
     for a horizontal bond and its transpose for a vertical one. The four corner sites
-    enter through M79a's ``cor_*`` and the two ends through ``edge_l``/``edge_r`` with a
+    enter through ``cor_*`` and the two ends through ``edge_l``/``edge_r`` with a
     *hair* -- the far neighbour closed on its other three virtual legs -- which is
     YASTN's ``hair_l``/``hair_r``. Every contraction is exact, so the metric is Hermitian
     and positive up to floating point; ``truncate_`` measures that rather than relying on
@@ -856,9 +855,8 @@ class EnvNTU:
 
     The two hairs whose operand order the composition rule leaves *tied* are ``'l'`` and
     ``'b'`` -- two ket-``IN`` wires against two bra-``IN`` ones, two bends either way --
-    and there the ket leads. Since M82 phase 3 the tie is no longer a choice: a step that
-    closes a cycle pays the ribbon twist, and with it paid both operand orders land on the
-    same tensor.
+    and there the ket leads. The tie is not a choice: a step that closes a cycle pays
+    the ribbon twist, and with it paid both operand orders land on the same tensor.
 
     Simplification: the larger clusters are not here. ``'NN+'`` and ``'NN++'`` add rings
     approximated by rank-1 SVDs of the boundary, ``'NNN'`` adds the four diagonal sites
