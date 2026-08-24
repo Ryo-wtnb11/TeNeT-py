@@ -7426,6 +7426,62 @@ with M61 Stage D above, and PEPS containers with M79/#277.
   breaks the other. `test_the_fermionic_gaps_this_stage_measured` carries the two numbers
   and that diagnosis, as M79d carried the four they came from.
 
+- **M84** -- shipped: the two mirror numbers, and they were two different objects.
+  The residual phase 3 measured -- `theta` on one open bra leg and one open ket leg,
+  present on the `EnvNTU` `tb` metric and the `EnvCTM` `lr` one and absent on their
+  mirrors -- looked like one mechanism because it is one *shape*. It is not one
+  mechanism, and the working hypothesis (a left-versus-right partial-trace asymmetry) is
+  refuted before either: `sVect` is a **ribbon** category and therefore spherical, so its
+  left and right traces are equal and no closure can differ by `theta` for having gone
+  round the other way. What separates a closure from the categorical one is direction of
+  the *pairing*, which is phase 2's statement and already paid.
+
+  **The oracle to compare against is a cluster contracted site by site, with no
+  environment.** Both readings below are settled against that: the same 2x2 lattice
+  closed by plain [composed][tenet.network.composed] steps over the eight bra and ket
+  tensors, order-independent to 7e-16, which is what makes the two answers separable at
+  all. It is the object phase 3 did not have.
+
+  **Half of it was never in the metric: a rank-4 metric is not a matrix.** `EnvNTU`'s
+  metric equals that oracle in **both** directions, to 4e-16 and 7e-16. What differed by
+  `theta` on a layer was the *reading*: the Gram entry is `<psi(M') | psi(M)>`, and getting
+  it out of `g` closes two wires against each bond matrix -- one cycle per layer, which
+  pays the twist. `network/evolution.py` already spells that (`_apply` is one
+  [composed][tenet.network.composed] over two wires, and `truncate_` never touches a dense
+  element), so nothing in the driver moved; the test was reading `g`'s dense entry at
+  `[i, j]`, which is that closure only when the twist happens to be trivial -- true on an
+  `lr` bond, false on a `tb` one. `metric_from_the_norm` now reads the metric the way
+  `truncate_` does.
+
+  **The other half was real, and it was in `EnvCTM`, in both directions.** Against the
+  same oracle the CTM metric was out by 1.56 on `lr` **and** 0.795 on `tb`; the `tb` number
+  agreed with the old dense-element reading only because both were wrong by the same
+  `theta`. The cause is the one thing a CTM assembly has and an NTU one does not: **an
+  environment leg is a fused double-layer wire**, the boundary bond of the bra network and
+  of the ket network at once. [closed][tenet.network.closed] reads the bend off
+  `supplies_in`, one answer per leg, and that is sound only while one leg is one line of
+  the diagram. `bond_metric`'s last composition joins the two halves over the two
+  remaining environment wires -- a cycle in each layer -- and both legs supply `IN` from
+  the same half, so the bend set is empty and the step pays nothing. [tenet.twist][] on
+  **both** environment wires is the payment, one `theta` per layer.
+
+  **Both wires, and that is measured rather than assumed.** On an `obc` patch the outer
+  environment wire is one-dimensional, so twisting it is the identity and one wire looks
+  sufficient. On an interior bond of a 3x3, where both carry sectors, twisting one is
+  wrong (0.23, 0.42) and twisting both lands on the oracle at 6e-15 and 1.4e-14. Every
+  loop-free cluster is untouched either way -- there the ring is one-dimensional and
+  `theta` is 1 -- which is why this never showed until a lattice closed a loop.
+
+  **What closed.** All four environment-direction pairs reach their Gram oracle at 4e-16
+  to 4e-15, where they read 1.85, 0.795, 1.56 and 1.85 before M82 phase 3 and 5e-16,
+  0.795, 1.56 and 1.7e-15 after it. `EnvCTM` and `EnvNTU` now agree on the 2x2 patch under
+  `fZ2` as they already did under `Trivial` and U(1) -- the comparison that never ran the
+  graded case is what let the CTM sign stand -- and both directions are checked.
+  `test_the_fermionic_gaps_this_stage_measured` is gone into
+  `test_the_fermionic_metric_on_a_loop_reaches_its_gram_form`, which now runs all four.
+  Bosonic gradings are bit-identical: `theta` is 1 and [tenet.twist][] hands the tensor
+  straight back.
+
 Not planned: TDVP, iDMRG, excited states and fermionic swap gates. PEPS containers left
 that list with M79/#277 and now have their own lane above.
 Fermionic swap gates left that list with M82 above, and for the reason 1D never needed

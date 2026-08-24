@@ -15,14 +15,15 @@ one dense basis element at a time and compares the Gram matrix entry by entry. T
 independent of every contraction in ``network/evolution.py`` and of the twelve primitives
 underneath it.
 
-**The fermionic gap this stage found, narrowed by M82 phase 3, and still not papered
-over.** A cluster with a *loop* closes a cycle, and a step that closes one pays the
-ribbon twist (``docs/design.md``, M82 phase 3). With that paid the dense closer itself
-stops depending on the order its sites are absorbed in, the exact gate reproduces the
-Jordan-Wigner oracle on all four bonds of the 2x2 patch, and the metric is a Hermitian
-form that reaches its Gram oracle on ``EnvNTU``'s ``lr`` bond and ``EnvCTM``'s ``tb`` one.
-``test_the_fermionic_gaps_this_stage_measured`` carries what is left -- the two
-mirror-image directions, and the exact residual that separates them from the oracle.
+**The fermionic gap this stage found, closed by M82 phase 3 and M84.** A cluster with a
+*loop* closes a cycle, and a step that closes one pays the ribbon twist
+(``docs/design.md``, M82 phase 3). With that paid the dense closer stops depending on the
+order its sites are absorbed in and the exact gate reproduces the Jordan-Wigner oracle on
+all four bonds of the 2x2 patch. M84 finished the metric: ``EnvCTM``'s ring closure pays
+the twist its *fused* environment wires hide from the bend rule, and the Gram comparison
+here reads ``g`` through the closure that uses it rather than through a dense element --
+on a ``tb`` bond the two differ by ``theta`` on a layer. All four environment-direction
+pairs now reach the oracle.
 """
 
 import itertools
@@ -48,7 +49,7 @@ from tenet.network import (
     truncate_,
 )
 from tenet.network.common import composed
-from tenet.network.evolution import _bond_matrix, _dagger, _split
+from tenet.network.evolution import _apply, _bond_matrix, _dagger, _split
 from tenet.symmetry import U1, FZ2Sector, Trivial, TrivialSector, U1Sector, fZ2
 
 EVEN, ODD = FZ2Sector(0), FZ2Sector(1)
@@ -257,6 +258,13 @@ def metric_from_the_norm(env, psi, bond, dirn, gate):
     on one dense basis element of the bond-matrix space at a time and takes the inner
     products. It shares no contraction with ``network/evolution.py``.
 
+    **The metric is read the way it is used**: ``g`` is a rank-4 morphism, and turning it
+    into the number ``<psi(M') | psi(M)>`` closes two wires against each bond matrix --
+    one cycle per layer, which pays the ribbon twist (``docs/design.md``, M84). So the
+    entry is ``_apply``'s closure and not ``g``'s dense element at ``[i, j]``: on a ``tb``
+    bond the two differ by ``theta`` on the open bra leg and the open ket leg, and that
+    difference is not a property of the environment.
+
     Returns the keys it could build, the oracle's matrix, and the environment's own.
     """
     a0, a1 = apply_gate(psi[bond[0]], psi[bond[1]], gate)
@@ -264,7 +272,7 @@ def metric_from_the_norm(env, psi, bond, dirn, gate):
     q1, r1 = _split(a1, dirn, 1)
     rr = _bond_matrix(composed("Axc,Bxc->AB", r0, r1))
     absorb = "tlbAs,AB->tlbBs" if dirn == "lr" else "tlAbs,AB->tlBbs"
-    columns = {}
+    columns, probes = {}, {}
     for a in range(rr.shape[0]):
         for b in range(rr.shape[1]):
             entry = np.zeros(rr.shape)
@@ -279,10 +287,13 @@ def metric_from_the_norm(env, psi, bond, dirn, gate):
             trial[bond[0]] = composed(absorb, q0, probe)
             trial[bond[1]] = q1
             columns[a, b] = to_dense_state(trial).reshape(-1)
+            probes[a, b] = probe
     keys = sorted(columns)
     oracle = np.array([[columns[i] @ columns[j] for j in keys] for i in keys])
-    g = np.asarray(env.bond_metric(q0, q1, bond[0], bond[1], dirn).to_dense())
-    mine = np.array([[g[i[0], i[1], j[0], j[1]] for j in keys] for i in keys])
+    g = env.bond_metric(q0, q1, bond[0], bond[1], dirn)
+    mine = np.array(
+        [[float(tenet.inner(probes[i], _apply(g, probes[j]))) for j in keys] for i in keys]
+    )
     return keys, oracle, mine
 
 
@@ -357,16 +368,20 @@ def test_the_dense_closer_does_not_depend_on_the_order_the_sites_are_absorbed_in
         np.testing.assert_allclose(v, values[0], atol=1e-12 * scale)
 
 
-@pytest.mark.parametrize(
-    "which,bond,dirn",
-    [("ntu", ((0, 0), (0, 1)), "lr"), ("ctm", ((0, 0), (1, 0)), "tb")],
-)
+@pytest.mark.parametrize("which", ["ntu", "ctm"])
+@pytest.mark.parametrize("bond,dirn", [(((0, 0), (0, 1)), "lr"), (((0, 0), (1, 0)), "tb")])
 def test_the_fermionic_metric_on_a_loop_reaches_its_gram_form(which, bond, dirn):
-    """``fZ2`` plus a loop, exact: what M79d recorded as a gap and M82 phase 3 closed.
+    """``fZ2`` plus a loop, exact: what M79d recorded as a gap and M84 finished closing.
 
-    A 2x2 ``obc`` cluster closes a loop around the bond, and the steps that close it now
-    pay the ribbon twist, so the metric is the Gram form the dense closer builds -- to
-    machine precision, on the same contraction where it used to be wrong by 1.85.
+    A 2x2 ``obc`` cluster closes a loop around the bond. Both environments and **both**
+    directions now land on the Gram form the dense closer builds, and the two halves that
+    got them there are different objects (``docs/design.md``, M84): ``EnvCTM``'s ring
+    closure pays the ribbon twist its fused environment wires hide, and the metric is read
+    by the closure that uses it rather than by a dense element. The four numbers used to
+    read 1.85, 0.795, 1.56 and 1.85.
+
+    The Hermiticity is asserted alongside, because a Gram form cannot fail it and this one
+    used to.
     """
     psi = peps("fz2", dims=(2, 2))
     gate = gate_nn(hamiltonian("fz2"), 0.4, bond)
@@ -375,55 +390,30 @@ def test_the_fermionic_metric_on_a_loop_reaches_its_gram_form(which, bond, dirn)
         env.update_(max_bond=16, moves="hv")
     _, oracle, mine = metric_from_the_norm(env, psi, bond, dirn, gate)
     assert relative(oracle, mine) < 1e-12
-
-
-@pytest.mark.parametrize(
-    "which,bond,dirn",
-    [("ntu", ((0, 0), (1, 0)), "tb"), ("ctm", ((0, 0), (0, 1)), "lr")],
-)
-def test_the_fermionic_gaps_this_stage_measured(which, bond, dirn):
-    """The two numbers M82 phase 3 left open, with the residual measured, not fitted.
-
-    The mirror-image direction of the two the phase closed: ``EnvNTU`` on a ``tb`` bond
-    and ``EnvCTM`` on an ``lr`` one still miss their Gram oracle. The residual is exact
-    and it is the whole finding -- the metric differs from the oracle by ``theta`` on
-    **one open bra leg and one open ket leg**, so each of those two assemblies closes one
-    cycle per layer that its steps do not account for. Which step that is has not been
-    found, and a uniform extra twist cannot be it: the set that repairs these two is the
-    empty set for the two directions that already agree.
-
-    Both halves are asserted so neither can be forgotten: the disagreement is large (not
-    numerical noise), and one twist per layer removes it exactly. The metric is now a
-    Hermitian form either way -- a Gram form cannot fail that, and it used to.
-    """
-    psi = peps("fz2", dims=(2, 2))
-    gate = gate_nn(hamiltonian("fz2"), 0.4, bond)
-    env = EnvNTU(psi) if which == "ntu" else EnvCTM(psi, init="eye")
-    if which == "ctm":
-        env.update_(max_bond=16, moves="hv")
-    keys, oracle, mine = metric_from_the_norm(env, psi, bond, dirn, gate)
-    assert relative(oracle, mine) > 0.1
     a0, a1 = apply_gate(psi[bond[0]], psi[bond[1]], gate)
     q0, _ = _split(a0, dirn, 0)
     q1, _ = _split(a1, dirn, 1)
     g = env.bond_metric(q0, q1, bond[0], bond[1], dirn)
     assert float(tenet.norm(g - _dagger(g)) / tenet.norm(g)) < 1e-12
-    dense = np.asarray(tenet.twist(g, (0, 2)).to_dense())
-    repaired = np.array([[dense[i[0], i[1], j[0], j[1]] for j in keys] for i in keys])
-    assert relative(oracle, repaired) < 1e-12
 
 
-@pytest.mark.parametrize("provider", ["trivial", "u1"])
-def test_the_ctm_metric_agrees_with_the_ntu_one_on_a_lattice_where_both_are_exact(provider):
+@pytest.mark.parametrize("provider", sorted(SPACES))
+@pytest.mark.parametrize("bond,dirn", [(((0, 0), (0, 1)), "lr"), (((0, 0), (1, 0)), "tb")])
+def test_the_ctm_metric_agrees_with_the_ntu_one_on_a_lattice_where_both_are_exact(
+    provider, bond, dirn
+):
     """Oracle (iii): the two environments, the same bond, the same reduced tensors.
 
     On a 2x2 ``obc`` lattice the ``'NN'`` cluster is the exact environment, and a CTM
     environment seeded on the same open patch is the same object seen through its own
     corners -- so a disagreement here would be about the two constructions and not about
     the physics. They agree to the CTM's own convergence.
+
+    ``fZ2`` is here since M84: the two constructions disagreed by ``theta`` on a layer
+    until ``EnvCTM``'s ring closure paid the twist its fused environment wires hide, and
+    a comparison that never ran the graded case is what let that stand.
     """
     psi = peps(provider, dims=(2, 2))
-    bond, dirn = ((0, 0), (0, 1)), "lr"
     gate = gate_nn(hamiltonian(provider), 0.4, bond)
     a0, a1 = apply_gate(psi[bond[0]], psi[bond[1]], gate)
     q0, _ = _split(a0, dirn, 0)

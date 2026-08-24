@@ -855,6 +855,20 @@ class EnvCTM:
         site's, the tensor inside it is not -- so this adds no contraction primitive to
         the ones M79a wrote. The remaining four tensors close the top and bottom (or
         left and right) of the picture, two compositions each.
+
+        **The last composition closes the environment ring, and it pays the ribbon twist
+        [closed][tenet.network.closed] cannot read.** An environment leg is the boundary
+        bond of the *double* layer -- one line of the bra network and one of the ket at
+        once -- so joining the two halves over the two remaining environment wires closes
+        a cycle in each layer. The bend rule reads one orientation per leg, and both these
+        legs supply ``IN`` from the same half, so it finds nothing to bend and pays
+        nothing; the closure is there all the same, and [tenet.twist][] on both of them is
+        its ``theta``, one per layer. Measured against a cluster contracted site by site
+        with no environment at all: exact on every loop-free cluster either way (the ring
+        is one-dimensional there, so ``theta`` is 1), and 1.6 and 0.79 out on the ``lr``
+        and ``tb`` bonds of a 2x2 ``fZ2`` patch without it -- 4e-15 and 1.7e-15 with it,
+        and the same on an interior bond of a 3x3, where both environment wires carry
+        sectors and twisting only one is wrong (``docs/design.md``, M84).
         """
         if not self.double:
             raise ValueError("EnvCTM.bond_metric: a single-layer network has no bond to truncate")
@@ -871,12 +885,12 @@ class EnvCTM:
             vec0 = _composed("xbBd,dbByrR->xyrR", bottom, vec0)
             top = _composed("xtTc,cd->xtTd", e1.t, e1.tr)
             vec1 = _composed("xtTd,dtTylL->xylL", top, vec1)
-            return _composed("pqrR,qplL->RLrl", vec0, vec1)
+            return _composed("pqrR,qplL->RLrl", tenet.twist(vec0, (0, 1)), vec1)
         right = _composed("cd,dxXe->cxXe", e0.tr, e0.r)
         vec0 = _composed("abByrR,yrRd->abBd", vec0, right)
         left = _composed("cd,dxXe->cxXe", e1.bl, e1.l)
         vec1 = _composed("atTylL,ylLd->atTd", vec1, left)
-        return _composed("abBd,dtTa->BTbt", vec0, vec1)
+        return _composed("abBd,dtTa->BTbt", tenet.twist(vec0, (0, 3)), vec1)
 
     def items(self) -> Iterator[tuple[Site, EnvLocal]]:
         """``(site, environment)`` for every unique site."""
