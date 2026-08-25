@@ -251,6 +251,40 @@ class TensorStructure(_HashMemo):
         """
         return _block_shape_table(self)[self.index_of(key)]
 
+    @property
+    def block_shapes(self) -> tuple[tuple[int, ...], ...]:
+        """Every block's shape, aligned with [block_order][tenet.TensorStructure.block_order].
+
+        The whole-table companion to
+        [block_shape][tenet.TensorStructure.block_shape], for a caller walking
+        ``block_order`` rather than asking about one key. Same information; the
+        difference is cost, and it is not small.
+
+        ``block_shape(key)`` enters two structure-keyed caches -- one to turn the key
+        into an index, one for the table -- and each entry pays a hash of this
+        ``TensorStructure``, which reaches through its legs to their spaces and sectors.
+        Called once per block in a loop, a tensor with a thousand blocks pays two
+        thousand deep hashes to read a tuple that was already built. This property pays
+        one. Hoisting it out of ``SymmetricTensor.__post_init__`` alone took 17% off a
+        cold SU(2) plan workload (#307).
+
+        Returns
+        -------
+        tuple of tuple of int
+            One shape per key of ``block_order``, in that order.
+
+        Examples
+        --------
+        >>> from tenet import GradedSpace, IN, OUT, Leg, TensorStructure
+        >>> from tenet.symmetry import U1, U1Sector
+        >>> V = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1})
+        >>> s = TensorStructure((Leg(V, OUT), Leg(V, IN)))
+        >>> s.block_shapes == tuple(s.block_shape(k) for k in s.block_order)
+        True
+
+        """
+        return _block_shape_table(self)
+
     def validate(self, key: FusionBlockKey | None = None) -> None:
         """Check the legs, and either every key in ``block_order`` or just ``key``.
 
