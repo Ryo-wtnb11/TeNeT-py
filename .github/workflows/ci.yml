@@ -32,12 +32,13 @@ jobs:
       # with `uvx ty@<version> check`.
       - run: uvx ty check src/tenet
       - run: uv run pytest
-      # The docstring examples plus the Getting started / guide pages (#167). A
-      # separate step, not part of the suite: testpaths stays ["tests"], so the
-      # 290 s budget keeps meaning what it means. The md paths are explicit —
-      # most tutorial and example pages carry code blocks that are not doctests,
-      # so the glob reaches only the ones named here.
-      - run: uv run pytest --doctest-modules src/tenet --doctest-glob='*.md' docs/getting-started.md docs/guide docs/tutorials/symmetric-tensors.md
+      # The docstring examples plus the Getting started / guide pages and the
+      # tutorials whose problems run in seconds (#167). A separate step, not part of
+      # the suite: testpaths stays ["tests"], so the 290 s budget keeps meaning what
+      # it means. The md paths are explicit — the remaining tutorial and example
+      # pages carry code blocks that are not doctests, so the glob reaches only the
+      # ones named here.
+      - run: uv run pytest --doctest-modules src/tenet --doctest-glob='*.md' docs/getting-started.md docs/guide docs/tutorials/symmetric-tensors.md docs/tutorials/dmrg.md docs/tutorials/fermions.md docs/tutorials/su2.md
       # Appended to the same job, not a matrix axis: the suite is ~275s (measured
       # 273.76s locally at #146; CI is slower still) and the
       # torch-relevant subset is a few dozen tests, so running everything twice
