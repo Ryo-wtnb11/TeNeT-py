@@ -1,8 +1,34 @@
 # Truncation
 
-Cutting a bond is the one factorization that is **not** jittable: which sectors survive,
-and how many singular values each keeps, is read off the numbers. So the decision and the
-numerics are two functions, and you call them together or apart.
+Cutting a bond means replacing a map by a lower-rank one, and under a symmetry "lower
+rank" is a choice of *which sectors, how many of each* rather than a single integer.
+
+## The decomposition being truncated
+
+Every factorization here reads the tensor as a map $M : D \to C$ and decomposes it
+
+$$
+M \;=\; U S V^{\dagger},
+\qquad
+S = \operatorname{diag}(\sigma_1 \ge \sigma_2 \ge \cdots),
+$$
+
+with $U$ and $V$ isometries. Truncating to a bond space $\chi$ keeps a subset of the
+singular values and the matching columns,
+
+$$
+M_{\chi} \;=\; U_{\chi} S_{\chi} V_{\chi}^{\dagger},
+\qquad
+\lVert M - M_{\chi}\rVert^{2} \;=\; \sum_{\text{discarded}} \operatorname{qdim}(c)\,\sigma^{2},
+$$
+
+the error identity being Pythagoras, since $M - M_\chi$ is supported on the discarded
+directions. Under a symmetry $M$ is block diagonal in the coupled sector $c$, so
+"the singular values" are the union of the per-sector spectra and a *subset* of them is
+not a rank: which sectors survive, and how many values each keeps, is the decision this
+page is about. That decision is read off the numbers, which is why it is the one
+factorization that is **not** jittable — so the decision and the numerics are two
+functions, and you call them together or apart.
 
 ## One call
 

@@ -27,6 +27,7 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - User guide:
+      - Which operation do I want?: guide/api-map.md
       - Tensors, legs and spaces: guide/tensors-legs-spaces.md
       - Symmetries and providers: guide/symmetries-and-providers.md
       - Contraction: guide/contraction.md
@@ -51,6 +52,7 @@ nav:
           - Heisenberg, SU(2): examples/su2-heisenberg.md
           - Heisenberg, SU(3): examples/su3-heisenberg.md
           - 2D Ising CTMRG: examples/ising2d.md
+          - 2D Ising thermodynamics by AD: examples/ising-thermo.md
       - Written on the tensor layer:
           - MPS: examples/toy-mps.md
           - Model: examples/toy-model.md

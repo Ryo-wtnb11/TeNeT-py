@@ -1,13 +1,42 @@
 # Heisenberg, U(1)
 
-A 20-site spin-1/2 Heisenberg chain to its ground state: `tenet.models.spin_half`,
-`MPO.from_terms`, `MPS.product`, `dmrg_`, then bond energies with `expectation_2site`.
+The ground state of the spin-1/2 Heisenberg chain on $N = 20$ sites, open boundaries:
 
-- The bond energies sum to `out.energy`.
-- $\langle S^z_n\rangle$ is zero on every site: the Néel seed fixes
-  $S^z_{\mathrm{tot}} = 0$ and the sweep keeps it.
+$$
+H = \sum_{i=0}^{N-2}\mathbf{S}_i\cdot\mathbf{S}_{i+1}
+  = \sum_{i=0}^{N-2}\left[S^z_iS^z_{i+1}
+    + \tfrac12\left(S^+_iS^-_{i+1} + S^-_iS^+_{i+1}\right)\right],
+\qquad
+E_0 = \min_{\psi}\frac{\langle\psi\vert H\vert\psi\rangle}{\langle\psi\vert\psi\rangle}.
+$$
 
-Explained step by step in the [DMRG tutorial](../tutorials/dmrg.md).
+**Representation.** `spin_half()` grades the physical doublet by U(1) with charge $2S^z$,
+so $S^\pm$ are rank-3 tensors carrying $\mp 2$ on a `D=1` charge leg.
+`tenet.models.heisenberg(N)` writes the three summands above as three `MPO.from_terms`
+entries, coefficient for coefficient, and lets the builder derive the graded MPO bond
+from the operators' own charges;
+[Heisenberg, U(1) walkthrough](heisenberg-walkthrough.md) spells that term list out. The state is an
+MPS, $\Psi_{s_1\cdots s_N} = A^{s_1}\cdots A^{s_N}$, seeded as the Néel product state,
+whose `D=1` bond-0 leg carries charge $0$ — that is $S^z_{\mathrm{tot}} = 0$, structurally.
+
+**Approximation.** `dmrg_` sweeps two-site updates, each a Lanczos ground eigenpair of the
+two-site effective Hamiltonian followed by a truncated SVD back onto the chosen bond. The
+schedule ramps $\chi$ — three sweeps at 16 with noise $10^{-4}$, three at 32 with
+$10^{-5}$, then 64 noiseless — because noise repopulates bond sectors a `D=1` product seed
+left empty, which a rescaling update can never reach on its own. The energy is
+variational, so it approaches $E_0$ from above.
+
+**Checks.**
+
+- $E$ matches the recorded $N = 20$ exact-diagonalization energy to $10^{-10}$.
+- The bond energies $\langle\mathbf{S}_i\cdot\mathbf{S}_{i+1}\rangle$, measured with a single
+  invariant $\mathbf{S}\cdot\mathbf{S}$ operator rather than the three-term sum the MPO was
+  built from, sum to `out.energy` — the measurement and the sweep agree.
+- $\langle S^z_n\rangle$ is float noise on every site: the sector is fixed by the boundary
+  leg and the tensors' invariance, not by a penalty term.
+
+Step by step in the [DMRG tutorial](../tutorials/dmrg.md); the semantics of every call in
+[DMRG](../guide/dmrg.md).
 
 ## Source
 

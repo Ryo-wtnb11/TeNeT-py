@@ -16,6 +16,32 @@ case, which is where the composition rule at the end earns its keep.
 
 ```
 
+## What a contraction is
+
+All three compute the same thing a dense index sum computes. For two rank-2 tensors,
+
+$$
+C_{ac} \;=\; \sum_b A_{ab}\, B_{bc},
+$$
+
+where the indices $a$, $b$, $c$ run over *dense* basis states of three spaces, and
+$A$, $B$ are the two tensors built above (`a` and `b` in the code — the capitals are the
+mathematical objects, the lowercase names the Python variables). In TeNeT each index is
+carried by a `Leg`, and which legs may play the role of $b$ is the only thing the graded
+version adds:
+
+| index | leg | side | role |
+| --- | --- | --- | --- |
+| $a$ | `a.legs[0]` | `OUT` | free — survives into `C` unchanged |
+| $b$ | `a.legs[1]` meets `b.legs[0]` | `IN` meets `OUT` | the summed wire |
+| $c$ | `b.legs[1]` | `IN` | free |
+
+The sum over $b$ is not over $\dim V$ independent numbers. $V = \bigoplus_s
+\mathbb{C}^{m_s}\otimes V_s$ is block diagonal, so the sum factorizes into one dense
+matrix product per allowed fusion channel, over $m_s$ degeneracy indices each — and the
+channels the symmetry forbids contribute nothing because they were never stored. That is
+the whole computational content of the grading; nothing about the equation above changes.
+
 ## `tensordot` — axes, paired in order
 
 `axes=((i, ...), (j, ...))` contracts axis `i` of `a` against axis `j` of `b`, pairwise.
@@ -70,6 +96,12 @@ True
 
 ```
 
+`"ab,bc->ac"` is $C_{ac} = \sum_b A_{ab}B_{bc}$ read out loud: `b` occurs twice, so it is
+the wire; `a` and `c` occur once, so they are free and appear in the output in the order
+written. The label letters are yours — they name axes, not sectors — but which *legs* a
+label may join is fixed by the same duality rule `tensordot` uses, so `"ab,bc->ac"` on
+two tensors whose middle legs are both `OUT` is a refusal, not a transpose.
+
 The parser refuses, by name, everything with no equivariant meaning. A label repeated
 *within* one operand is a diagonal or a single-operand trace — [tenet.trace][] is the
 trace, and the diagonal is not equivariant:
@@ -111,9 +143,16 @@ Each message says what to write in place of the refused equation; the full list 
 
 ## `compose` — `a @ b`, codomain meets domain
 
-Composition is the map-level operation: `b`'s codomain is consumed by `a`'s domain,
-which must carry the same `(space, dual)` sequence in the same order. No axis labels, no
-reordering. Its unit is [tenet.identity][]:
+Composition is the map-level operation. Reading $A : V_b \to V_a$ and
+$B : V_c \to V_b$ as maps, $A \circ B : V_c \to V_a$ is
+
+$$
+(A\circ B)^{a}{}_{c} \;=\; \sum_b A^{a}{}_{b}\, B^{b}{}_{c},
+$$
+
+the same sum as above with the bookkeeping moved from axis positions to sides: `b`'s
+codomain is consumed by `a`'s domain, which must carry the same `(space, dual)` sequence
+in the same order. No axis labels, no reordering. Its unit is [tenet.identity][]:
 
 ```python
 >>> bool(tenet.allclose(tenet.identity(a.codomain) @ a, a))
