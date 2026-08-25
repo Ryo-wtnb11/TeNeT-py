@@ -401,6 +401,13 @@ def closed(steps: Sequence[tuple[str, Any, Any, str]]) -> SymmetricTensor:
     bends without closing anything and pays nothing, which is why the 1D drivers
     (``network/env.py``) are untouched.
 
+    **This reads one orientation per leg, so it is right while one leg is one line of the
+    diagram.** A CTM environment bond is not: it carries the bra network's line and the
+    ket network's at once, and a step joining two halves over two of them closes a cycle
+    in each layer while both legs may supply ``IN`` from the same half -- an empty bend
+    set for a real closure. That twist is paid where the fused wires are known, in
+    [EnvCTM.bond_metric][tenet.network.EnvCTM.bond_metric] (``docs/design.md``, M84).
+
     ``theta`` is ``1`` on every bosonic grading, where [tenet.twist][] hands the tensor
     straight back, so nothing but a fermionic network moves. Either end of a wire carries
     the same sector, so a continued step (operand 1 ``None``) pays on operand 2 instead.
