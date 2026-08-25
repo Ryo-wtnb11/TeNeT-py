@@ -392,13 +392,12 @@ def closed(steps: Sequence[tuple[str, Any, Any, str]]) -> SymmetricTensor:
 
     Notes
     -----
-    **Two disjoint blobs joined over ``k`` wires close ``k - 1`` cycles**, so a step is a
-    tree edge exactly when it contracts one wire and closes something whenever it
-    contracts more. A closure's value depends on the direction its duality pairing runs
-    (``docs/design.md``, M82 phase 2), and the wires running against the composition are
-    the ones the step has to **bend** -- so the step pays ``theta`` on its bent wires,
-    which is [tenet.twist][] and PEPSKit's ``twistdual`` discipline. A one-wire step
-    bends without closing anything and pays nothing, which is why the 1D drivers
+    **Two disjoint blobs joined over ``k`` wires close ``k - 1`` cycles**, so a step is a tree
+    edge exactly when it contracts one wire and closes something whenever it contracts more. A
+    closure's value depends on the direction its duality pairing runs and the wires running
+    against the composition are the ones the step has to **bend** -- so the step pays ``theta``
+    on its bent wires, which is [tenet.twist][] and PEPSKit's ``twistdual`` discipline. A
+    one-wire step bends without closing anything and pays nothing, which is why the 1D drivers
     (``network/env.py``) are untouched.
 
     **This reads one orientation per leg, so it is right while one leg is one line of the
@@ -457,18 +456,17 @@ def composed(equation: str, a: Any, b: Any) -> SymmetricTensor:
 
     Notes
     -----
-    ``network/env.py``'s ``_composed`` is handed its bend set; here both the order and
-    the set are computed. **Bend-minimality is the criterion** (``docs/design.md``,
-    M79a): a bend is a real categorical operation, so a spelling that turns two wires
-    where one suffices lands on a different tensor, and the minimal one is the planar
-    diagram's. Every wire has exactly one ``IN`` end, so the two orders' bend counts sum
-    to the number of shared wires and the minimum is well defined; a tie keeps the stated
-    order, which is YASTN's throughout the callers.
+    ``network/env.py``'s ``_composed`` is handed its bend set; here both the order and the set
+    are computed. **Bend-minimality is the criterion**: a bend is a real categorical operation,
+    so a spelling that turns two wires where one suffices lands on a different tensor, and the
+    minimal one is the planar diagram's. Every wire has exactly one ``IN`` end, so the two
+    orders' bend counts sum to the number of shared wires and the minimum is well defined; a
+    tie keeps the stated order, which is YASTN's throughout the callers.
 
-    The step goes through [closed][tenet.network.closed], so a call that contracts more
-    than one wire closes a cycle and pays the ribbon twist on the wires it bends (M82
-    phase 3). That is also what makes the tie above free: with the twist paid the two
-    operand orders are the same tensor under fermion parity as well.
+    The step goes through [closed][tenet.network.closed], so a call that contracts more than
+    one wire closes a cycle and pays the ribbon twist on the wires it bends. That is also what
+    makes the tie above free: with the twist paid the two operand orders are the same tensor
+    under fermion parity as well.
     """
     lhs, out = equation.split("->")
     ta, tb = lhs.split(",")

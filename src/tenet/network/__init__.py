@@ -24,7 +24,7 @@ Two families, independent of each other:
   [corner2x2][tenet.network.corner2x2] and
   [proj_corners][tenet.network.proj_corners], and ``update_``/``iterate_`` reporting a
   [CTMRG_out][tenet.network.CTMRG_out]. Its projectors assume nothing about the corner's
-  Hermiticity, which is what M63/#243 measured a C4v route cannot have.
+  Hermiticity.
   [EnvCTMc4v][tenet.network.EnvCTMc4v] is its C4v specialization: one corner and one edge
   ([EnvLocalC4v][tenet.network.EnvLocalC4v]) for a point-group-symmetric ansatz, whose
   four identical virtual legs tile the plane as a checkerboard of ``A`` and ``flip(A)``

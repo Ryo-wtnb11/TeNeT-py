@@ -763,16 +763,15 @@ def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
 
     Notes
     -----
-    **The closed wire pays the ribbon twist, and that is what makes a loop's value
-    unique.** Of the two wires this closure runs — one to each leg of the identity —
-    exactly one has its duality pairing against the direction the composition takes, and
-    the categorical closure differs from the naive one by ``theta`` there. Without it the
-    same fermionic loop takes different values depending on which of its wires was chosen
-    to close, measured at a spread of 2.0 on a 4-cycle; with it the choice does not matter
-    to 1e-16 (``docs/design.md``, M82 phase 2, and ``tests/ops/test_twist.py``). It is
-    PEPSKit's ``str`` — ``tr`` for a bosonic braiding, where ``theta`` is 1 and
-    [tenet.twist][] hands the tensor straight back. The *map view*'s closure,
-    [full_trace][tenet.full_trace], is the pivotal trace and deliberately not this.
+    **The closed wire pays the ribbon twist, and that is what makes a loop's value unique.** Of
+    the two wires this closure runs — one to each leg of the identity — exactly one has its
+    duality pairing against the direction the composition takes, and the categorical closure
+    differs from the naive one by ``theta`` there. Without it the same fermionic loop takes
+    different values depending on which of its wires was chosen to close, measured at a spread
+    of 2.0 on a 4-cycle; with it the choice does not matter to 1e-16
+    (``tests/ops/test_twist.py``). It is PEPSKit's ``str`` — ``tr`` for a bosonic braiding,
+    where ``theta`` is 1 and [tenet.twist][] hands the tensor straight back. The *map view*'s
+    closure, [full_trace][tenet.full_trace], is the pivotal trace and deliberately not this.
 
     The identity's OUT leg meets
     whichever of the two carries the dual object it needs, so a same-side pair
@@ -1148,8 +1147,7 @@ def einsum(
     # The output reordering stays a separate ``transpose`` and is *not* folded into the
     # contraction's restore plan, though ``_tensordot`` would take it: the reordering is
     # applied to a value ``tensordot`` has already returned, and folding it would mean
-    # ``einsum`` no longer calling ``tensordot``. docs/design.md "M70" measures what that
-    # costs and where the coefficient passes that are left actually sit.
+    # ``einsum`` no longer calling ``tensordot``.
     return transpose(
         tensordot(*operands, axes),  # ty: ignore[too-many-positional-arguments]
         tuple(free.index(label) for label in out),

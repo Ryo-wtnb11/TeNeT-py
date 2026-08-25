@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 __all__ = ["SymmetricTensor"]
 
 Array = Any
-"""Milestone 1 keeps blocks NumPy; ``autoray`` dispatch is Milestone 2."""
+"""A backend array, whatever ``autoray`` dispatches on."""
 
 
 # A FusionBlockKey reprs to ~200 characters, so a structure of any size cannot have
