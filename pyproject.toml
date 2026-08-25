@@ -11,13 +11,14 @@ dependencies = [
     "opt-einsum>=3.4.0",
     # SU(N) coefficients (F/R/CG with outer multiplicity) come from the racah Rust crate
     # through its PyO3 wheel; since M28 (#180) it is also the SU(2) source, so it is a
-    # core dependency rather than an extra. >=0.1.1 is the first release shipping
-    # ``racah.pyi`` and ``py.typed``, which the `uvx ty check` CI gate needs.
-    # TODO(#307): bump to the release that ships the exact SU(2) bindings
-    # (racah#108). `tenet.symmetry._su2_coeff` calls `racah.su2_f_symbol`,
-    # `su2_r_symbol` and `su2_authority_fingerprint`, none of which exist in
-    # 0.1.1, so this pin is wrong until that release is cut.
-    "racah-py>=0.1.1",
+    # core dependency rather than an extra. >=0.1.2 is the first release binding racah's
+    # *exact* SU(2) surface (racah#107/#108), which ``tenet.symmetry._su2_coeff`` calls
+    # for F/R/B and the Frobenius-Schur indicator: ``su2_f_symbol``, ``su2_r_symbol``,
+    # ``su2_frobenius_schur`` and ``su2_authority_fingerprint``. It is also the first
+    # shipping ``racah.pyi`` and ``py.typed`` bar 0.1.1, which the `uvx ty check` CI gate
+    # needs. Clebsch-Gordan tensors still come from the generated SU(N) surface in the
+    # same wheel -- see ``_su2_coeff``'s docstring for why that split is where it is.
+    "racah-py>=0.1.2",
 ]
 
 [project.optional-dependencies]
