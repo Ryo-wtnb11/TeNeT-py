@@ -559,6 +559,26 @@ def test_from_dense_with_the_default_atol(name):
     close(back, t, atol=1e-12)
 
 
+def test_a_block_less_operand_takes_the_other_one_s_backend():
+    """A tensor whose legs cannot couple carries no block, hence no backend of its own.
+
+    Contracting it against a torch operand still has to produce torch zeros wherever the
+    output structure admits blocks — the rule that ``ops.map.block_ref`` states.
+    """
+    zero = GradedSpace.new(SU2, {SU2Sector(0): 1})
+    one = GradedSpace.new(SU2, {SU2Sector(2): 1})
+    empty = SymmetricTensor.random((Leg(zero, OUT), Leg(one, IN)), seed=0)
+    assert empty.blocks == ()
+    b = tt((Leg(one, OUT), Leg(one, IN), Leg(one, IN)), seed=31)
+
+    c = tenet.tensordot(empty, b, axes=((1,), (0,)))
+    assert is_torch(c)
+    assert all(not block.any() for block in c.blocks)
+    assert is_torch(tenet.einsum("ab,bcd->acd", empty, b))
+    assert is_torch(tenet.einsum_chain([("ab,bcd->acd", empty, b, "")]))
+    assert is_torch(empty @ b)
+
+
 # --- linalg ----------------------------------------------------------------------
 
 

@@ -162,20 +162,17 @@ def test_a_two_state_env_refuses_the_prepared_matvec():
         env.heff2_families(0, aa)
 
 
-def test_two_chains_must_share_a_bond_sector_to_be_contracted():
-    """The standing limitation, asserted rather than described.
+def test_two_chains_sharing_no_bond_sector_measure_zero():
+    """Two chains whose bond spaces share no sector at some cut have a zero transfer.
 
-    Two chains whose bond spaces share no sector at some cut have an identically zero
-    transfer there, and ``tenet.compose`` has no block to take its backend reference
-    from -- so the two-state ``Env`` raises instead of returning the structural zero.
-    It never bites the excited-state workflow, whose states are seeded on one set of
-    bond spaces and swept together, and it is why
-    [dmrg_][tenet.network.dmrg_] skips an ``orthogonal_to`` state whose boundary leg
-    puts it in another sector: that state is orthogonal already.
+    The intermediate tensors there are block-less -- their legs cannot couple -- and the
+    contraction returns the structural zero rather than refusing. It is also why
+    [dmrg_][tenet.network.dmrg_] skips an ``orthogonal_to`` state whose boundary leg puts
+    it in another sector: that state is orthogonal already, and the projection would be
+    adding zero.
     """
     phys = GradedSpace.new(U1, {U1Sector(1): 1, U1Sector(-1): 1})
     up, down = U1Sector(1), U1Sector(-1)
     psi = MPS.product(phys, [up, down, up, down])
     phi = MPS.product(phys, [up, up, down, down])  # same sector, disjoint bond spaces
-    with pytest.raises(IndexError):
-        Env(psi, MPO.identity(4, phys), bra=phi).measure()
+    assert float(Env(psi, MPO.identity(4, phys), bra=phi).measure()) == 0.0

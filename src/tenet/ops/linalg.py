@@ -47,6 +47,7 @@ from tenet.map_view import (
     map_layout,
     to_matrices,
 )
+from tenet.ops.map import block_ref
 from tenet.ops.repartition import _validated as _validated_sides
 from tenet.ops.repartition import repartition, sides_plan
 from tenet.space import GradedSpace
@@ -197,6 +198,13 @@ def svd(
 
     Notes
     -----
+    A **block-less** ``t`` — legs that cannot couple to any total charge — factorizes
+    rather than refusing: the bond space is empty, and ``U``, ``S`` and ``Vh`` come back
+    block-less on it. That is the honest answer, not a degenerate one; the factorization
+    is exact (both sides are the zero-dimensional map) and it composes, so a caller that
+    hit an uncouplable partition gets the same reconstruction identity as anywhere else
+    instead of an exception it would only have to special-case.
+
     ``bond=None`` is the *compact* SVD: exact, on the ``min(rows_c, cols_c)`` bond,
     no truncation. **``bond=B`` is the same factorization projected onto ``B``, and
     then the reconstruction is no longer exact** — ``U @ S @ Vh`` is the best
@@ -307,6 +315,9 @@ def qr(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "Sym
 
     Notes
     -----
+    A block-less ``t`` gives a block-less ``Q`` and ``R`` on an empty bond, as in
+    [svd][tenet.ops.linalg.svd].
+
     Differentiability: the gradient is JAX's own, and it is the standard rule
     (Liao-Liu-Wang-Xiang Eq. (5) for the square/tall case; Roberts-Roberts
     Eqs. (9)-(10) for the wide one, which is what JAX >= 0.10 implements). It is
@@ -532,6 +543,13 @@ def polar(
     singular. Same fact as ``svd``'s zero-rank sectors — structure is metadata,
     rank is data.
 
+    A block-less ``t`` — legs that cannot couple to any total charge — gives a
+    block-less ``W``, and then ``W @ P`` reproduces ``t`` for *every* ``P``: the
+    mirrored structure it lives on does admit blocks, and the zero morphism is the
+    representative returned. Its backend and dtype follow the same rule as everywhere
+    a block-less operand meets a structure with blocks: NumPy ``float64``, there being
+    no other operand to take them from.
+
     """
     # Simplification: ``PolarViaSVD``, MatrixAlgebraKit's own default, because ``autoray``
     # has no uniform ``linalg.polar`` and the alternative is a Newton-Schulz iteration,
@@ -553,18 +571,23 @@ def polar(
         )
 
     mirrored = m.domain if side == "left" else m.codomain
-    return (
-        from_matrices(m.structure, isometry),
-        from_matrices(
-            TensorStructure(
-                (
-                    *(replace(leg, side=OUT) for leg in mirrored),
-                    *(replace(leg, side=IN) for leg in mirrored),
-                )
-            ),
-            positive,
-        ),
+    structure = TensorStructure(
+        (
+            *(replace(leg, side=OUT) for leg in mirrored),
+            *(replace(leg, side=IN) for leg in mirrored),
+        )
     )
+    if not positive:
+        # ``t``'s legs cannot couple, so ``W`` is block-less too and ``W @ P`` reproduces
+        # ``t`` for every ``P``. The mirrored structure still admits blocks, and the zero
+        # morphism is the representative taken; backend and dtype as in ``block_ref``.
+        layout = map_layout(structure)
+        ref = block_ref(t)
+        positive = {
+            c: ar.do("zeros", layout.shape(c), dtype=ar.get_dtype_name(ref), like=ref)
+            for c in layout.sectors
+        }
+    return (from_matrices(m.structure, isometry), from_matrices(structure, positive))
 
 
 def lq(t: "SymmetricTensor", axes: Axes = None) -> tuple["SymmetricTensor", "SymmetricTensor"]:
