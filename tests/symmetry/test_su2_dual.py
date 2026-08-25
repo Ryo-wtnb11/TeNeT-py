@@ -227,12 +227,26 @@ def test_cap_against_cup_gives_the_identity_with_the_fs_sign(dj):
 # --- containment ----------------------------------------------------------------
 
 
+def _code_without_docstrings(path) -> str:
+    """The module's source with every string literal removed, so a grep sees calls only."""
+    import ast
+
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            node.value = ""
+    return ast.unparse(tree)
+
+
 def test_z_matrix_is_only_used_by_to_dense_in_library_code():
     import pathlib
 
     import tenet
 
+    global _SU2_COEFF_CODE
+
     src = pathlib.Path(tenet.__file__).parent
+    _SU2_COEFF_CODE = _code_without_docstrings(src / "symmetry" / "_su2_coeff.py")
     users = {
         p.name
         for p in src.rglob("*.py")
@@ -240,6 +254,11 @@ def test_z_matrix_is_only_used_by_to_dense_in_library_code():
     }
     # #82 moved `_tree_cgt` (the one caller of `z_matrix`) out of tensor.py and
     # into ops/dense.py, where the dense boundary now lives, unedited.
+    #
+    # `_su2_coeff.py` is a *docstring* mention, not a call: the scan is textual and
+    # cannot tell them apart. It is there because that module has to say which tier
+    # `z_matrix` stays on and why -- gauge data, unlike the F/R it does serve -- and
+    # deleting the sentence to satisfy a grep would delete the reason the split exists.
     assert users == {
         "dense.py",
         "su2.py",
@@ -248,7 +267,12 @@ def test_z_matrix_is_only_used_by_to_dense_in_library_code():
         "z2.py",
         "sun.py",
         "_sun_coeff.py",
+        "_su2_coeff.py",
     }
+    assert "z_matrix" not in _SU2_COEFF_CODE, (
+        "_su2_coeff.py now *calls* z_matrix; it is admitted to the set above as a "
+        "docstring mention only, and a call means the tier split has moved"
+    )
 
 
 def test_to_dense_still_refuses_a_provider_without_dual_basis():

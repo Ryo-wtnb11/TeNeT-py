@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import racah
 
-from tenet.symmetry import _sun_coeff
+from tenet.symmetry import _su2_coeff, _sun_coeff
 from tenet.symmetry.base import (
     CapabilityError,
     FusionRules,
@@ -52,17 +52,31 @@ def triangle(dj1: int, dj2: int, dj3: int) -> bool:
     return abs(dj1 - dj2) <= dj3 <= dj1 + dj2 and (dj1 + dj2 + dj3) % 2 == 0
 
 
-_SU2_GAUGE = f"su2=racah;{racah.sun_authority_fingerprint()}"
+_SU2_GAUGE = (
+    f"su2=racah;fr={racah.su2_authority_fingerprint()};cgc={racah.sun_authority_fingerprint()}"
+)
 """Internal gauge fingerprint of the running ``racah`` build, verbatim from the crate.
 
 Written into a saved file's header by [tenet.save][] and compared on
 [tenet.load][], which refuses a file recorded under a different convention.
 
-This is racah's own fingerprint, exactly as ``_SUN_GAUGE`` is: the string records
-the coefficient *source*, which is racah at ``(two_j,)``. One further string is
-accepted on load — ``tenet.serialize._LEGACY_GAUGES`` — because its coefficients
-agree with these to 4.95e-14 over the full fixture table, so those blocks are
-numerically comparable and refusing them would be a false alarm.
+**Two fingerprints, because SU(2) now draws on two racah tiers.** F, R, B and the
+Frobenius-Schur indicator come from the exact closed-form engine
+([tenet.symmetry._su2_coeff][]); Clebsch-Gordan tensors and the duality map stay on the
+generated SU(N) surface ([tenet.symmetry._sun_coeff][]), because those are gauge *data*
+and the two tiers fix that gauge differently. Recording one string would name an
+authority that produced only half the values.
+
+No value moved when the split was introduced: the exact and generated F/R agree to
+1.3e-15 (pinned in racah's own ``racah-py/tests/test_su2_exact.py``), which is exactly
+why the split is drawable there. The previous single-fingerprint spelling is therefore
+accepted on load — ``tenet.serialize._LEGACY_GAUGES`` — like the older one below it: the
+blocks under it are the same numbers.
+
+Two further strings are accepted on load for the same reason. The first is that previous
+spelling; the second predates racah and agrees with these to 4.95e-14 over the full
+fixture table, so those blocks are numerically comparable and refusing them would be a
+false alarm.
 
 The conventions themselves are unchanged: 3j and CG in Condon-Shortley phase with
 magnetic indices descending, F/R/FS matching TensorKitSectors' ``SU2Irrep``.
@@ -199,19 +213,20 @@ class SU2Provider:
             empty |= n == 0
         if empty:
             return 0.0
-        return float(_sun_coeff.f_matrix(*((x.two_j,) for x in (a, b, c, d, e, f)))[0, 0, 0, 0])
+        return _su2_coeff.f_symbol(*(x.two_j for x in (a, b, c, d, e, f)))
 
     def r_symbol(self, a: SU2Sector, b: SU2Sector, c: SU2Sector) -> int:
         """``R^{ab}_c = (-1)^(ja + jb - jc)``, exactly ``+-1``; SU(2) braiding is symmetric.
 
-        racah returns it as a float ``+-1`` carrying float noise (``-0.9999999999999998``);
-        it is snapped back to ``int`` behind the unit-modulus assert, because the exact
-        integer is the contract every braid phase in ``permute_braided_tree`` multiplies
-        through, and a float chain there would buy nothing.
+        racah's exact tier returns the closed-form sign directly, so the float is already
+        exactly ``+-1.0``; it is still snapped to ``int`` behind the unit-modulus assert,
+        because the exact integer is the contract every braid phase in
+        ``permute_braided_tree`` multiplies through and the assert is what would catch a
+        tier that stopped being exact.
         """
         if not triangle(a.two_j, b.two_j, c.two_j):
             return 0
-        v = float(_sun_coeff.r_matrix((a.two_j,), (b.two_j,), (c.two_j,))[0, 0])
+        v = _su2_coeff.r_symbol(a.two_j, b.two_j, c.two_j)
         assert abs(abs(v) - 1.0) < 1e-12, f"{self.name}: R^{a}{b}_{c} = {v!r} is not +-1"
         return round(v)
 
@@ -220,7 +235,7 @@ class SU2Provider:
         [f_symbol][tenet.symmetry.SU2Provider.f_symbol]; real, of unit modulus."""
         if not triangle(a.two_j, b.two_j, c.two_j):
             return 0.0
-        return float(_sun_coeff.b_matrix((a.two_j,), (b.two_j,), (c.two_j,))[0, 0])
+        return _su2_coeff.b_symbol(a.two_j, b.two_j, c.two_j)
 
     def permute_tree(
         self, tree: "FusionTree", perm: tuple[int, ...]
@@ -247,7 +262,7 @@ class SU2Provider:
 
     def frobenius_schur(self, a: SU2Sector) -> int:
         """``chi_a = (-1)^(2j)``: ``+1`` for integer spin, ``-1`` for half-integer."""
-        return _sun_coeff.frobenius_schur((a.two_j,))
+        return _su2_coeff.frobenius_schur(a.two_j)
 
     def twist(self, a: SU2Sector) -> int:
         """``theta_a = 1``: SU(2) braiding is symmetric, so the twist is trivial."""

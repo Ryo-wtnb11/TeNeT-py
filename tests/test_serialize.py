@@ -238,22 +238,30 @@ def test_mutated_gauge_is_refused(name, kind, gauge, tmp_path):
     assert "mutated" in str(exc.value)
 
 
-def test_the_one_legacy_su2_gauge_loads_and_a_fabricated_third_does_not(tmp_path):
-    """#180 moved SU(2)'s coefficients to racah and the fingerprint moved with them.
+@pytest.mark.parametrize("legacy", sorted(_LEGACY_GAUGES["SU2"]))
+def test_each_legacy_su2_gauge_loads(tmp_path, legacy):
+    """Two grandfathered strings, each because its blocks hold the same numbers.
 
-    The two sets agree to 4.95e-14 over all 109,900 fixture rows, so blocks written
-    under the old string are numerically comparable and refusing them would be a false
-    alarm. That is one grandfathered string, not a relaxation: anything else, including
-    a near-miss of the legacy string itself, is still refused.
+    The pre-racah one agrees with the current coefficients to 4.95e-14 over all 109,900
+    fixture rows (#180). The single-fingerprint racah one was written while F/R/B came
+    from the generated SU(N) tier rather than the exact closed-form one, and those two
+    agree to 1.3e-15 (racah ``racah-py/tests/test_su2_exact.py``). Neither is a
+    relaxation: see the refusal below.
     """
     original = tensor("su2")
     tenet.save(original, tmp_path / "t.npz")
     header = header_of(tmp_path / "t.npz")
-    (legacy,) = _LEGACY_GAUGES["SU2"]
     header["gauges"]["SU2"] = legacy
     rewrite_header(tmp_path / "t.npz", header)
     assert tenet.load(tmp_path / "t.npz").structure == original.structure
 
+
+def test_a_fabricated_su2_gauge_is_still_refused(tmp_path):
+    """A near-miss of a grandfathered string is not itself grandfathered."""
+    original = tensor("su2")
+    tenet.save(original, tmp_path / "t.npz")
+    header = header_of(tmp_path / "t.npz")
+    legacy = next(g for g in _LEGACY_GAUGES["SU2"] if "tks-su2irrep" in g)
     header["gauges"]["SU2"] = legacy.replace("tks-su2irrep", "fabricated-su2irrep")
     rewrite_header(tmp_path / "t.npz", header)
     with pytest.raises(ValueError, match="different coefficient convention"):

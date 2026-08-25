@@ -13,6 +13,10 @@ dependencies = [
     # through its PyO3 wheel; since M28 (#180) it is also the SU(2) source, so it is a
     # core dependency rather than an extra. >=0.1.1 is the first release shipping
     # ``racah.pyi`` and ``py.typed``, which the `uvx ty check` CI gate needs.
+    # TODO(#307): bump to the release that ships the exact SU(2) bindings
+    # (racah#108). `tenet.symmetry._su2_coeff` calls `racah.su2_f_symbol`,
+    # `su2_r_symbol` and `su2_authority_fingerprint`, none of which exist in
+    # 0.1.1, so this pin is wrong until that release is cut.
     "racah-py>=0.1.1",
 ]
 
