@@ -155,9 +155,19 @@ sector budget, and `properties()` bundles the derived classification, cached:
 
 ```
 
-Nothing here runs on an operation's hot path. If you implement your own provider, the
-validators are how you prove its coefficient tables are coherent before a tensor touches
-them.
+This runs in tests only — operations gate through `supports`/`requires`, not through a
+validator — with one exception worth knowing about. `transpose` gates on the
+symmetric-braiding property, so `symmetric_braiding` is called whenever axes reorder
+within a side. It is cached per `(provider, sectors)`: a repeat is a dict lookup, while
+the first call over a given sector budget evaluates the provider's R-symbols, which for a
+provider whose coefficients come from a runtime generator is milliseconds rather than
+microseconds. It is paid once per distinct budget per process.
+
+(`full_trace`'s sphericality refusal is not one of these. It compares exact quantum
+dimensions on the sectors actually traced and never calls a validator.)
+
+If you implement your own provider, the validators are how you prove its coefficient
+tables are coherent before a tensor touches them.
 
 ## Gauge fingerprints
 
