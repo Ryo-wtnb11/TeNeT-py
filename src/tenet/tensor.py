@@ -157,6 +157,10 @@ class SymmetricTensor:
         penalise the case the constructor exists for, which is naming one block
         of many.
 
+        ``docs/tutorials/symmetric-tensors.md`` is this constructor at length:
+        reading a key, the U(1) and SU(3) operators built with it, and what the
+        foreign-key refusal catches.
+
         Examples
         --------
         >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
