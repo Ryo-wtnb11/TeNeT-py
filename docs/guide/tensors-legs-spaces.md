@@ -179,6 +179,10 @@ every other block over — the immutable spelling of assigning to one block:
 Both refuse a key that is not in `block_order`, with a message naming where the legal
 keys live, and a block of the wrong shape is refused naming the shape expected.
 
+[Symmetric tensors from their blocks](../tutorials/symmetric-tensors.md) is this
+constructor at length: reading a key, the U(1) and SU(3) operators the examples are built
+from, and what the refusal catches.
+
 ### Blockwise maps
 
 [apply_blocks][tenet.apply_blocks] applies a function to every reduced block and
