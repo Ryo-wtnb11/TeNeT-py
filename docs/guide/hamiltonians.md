@@ -21,7 +21,7 @@ symmetry a parameter:
 
 | call | Hamiltonian | grading |
 |---|---|---|
-| `heisenberg(n, J=1.0, spin=0.5)` | $J \sum_i \vec{S}_i \cdot \vec{S}_{i+1}$ | `U1` (default) or `SU2` |
+| `heisenberg(n, symmetry=U1, J=1.0, spin=0.5)` | $J \sum_i \vec{S}_i \cdot \vec{S}_{i+1}$ | `U1` (default) or `SU2` |
 | `xxz(n, Delta=1.0, J=1.0)` | $J \sum_i S^x S^x + S^y S^y + \Delta S^z S^z$ | `U1` |
 | `transverse_field_ising(n, J=1.0, g=1.0)` | $-J\left(\sum_i \sigma^z_i \sigma^z_{i+1} + g \sum_i \sigma^x_i\right)$ | `Z2` |
 | `hubbard(n, t=1.0, U=4.0)` | $-t \sum_{i\sigma} (c^\dagger_{i\sigma} c_{i+1\sigma} + h.c.) + U \sum_i n_{i\uparrow} n_{i\downarrow}$ | `fZ2` |
