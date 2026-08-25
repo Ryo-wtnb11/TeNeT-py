@@ -8,9 +8,9 @@ Under SU(2), ``S^z`` alone is symmetry-forbidden -- only the invariant two-site
 ``S . S`` is a term, and it is the *entire* operator set
 :func:`tenet.models.spin_half` returns for this grading -- which is what
 :func:`tenet.models.heisenberg` hands ``MPO.from_terms`` under this symmetry. The
-builder splits that term, deriving the graded MPO bond from the operator's own blocks. The seed is
-:meth:`MPS.random`: ``MPS.product`` refuses non-Abelian symmetries by construction (a
-single spin-up is not an SU(2) multiplet).
+builder splits that term, deriving the graded MPO bond from the operator's own blocks.
+The seed is :meth:`MPS.random`: ``MPS.product`` refuses non-Abelian symmetries by
+construction (a single spin-up is not an SU(2) multiplet).
 The point is the printed table -- same energy as the U(1) run this file computes by
 importing ``examples/heisenberg.py``, from a mid-chain bond of far fewer multiplets
 than the dense states ``chi`` counts.
