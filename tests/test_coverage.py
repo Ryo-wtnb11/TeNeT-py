@@ -99,11 +99,11 @@ NO_PARAMS: dict[str, str] = {
         "a NamedTuple of two sites; its fields are documented in the class "
         "docstring's Attributes section"
     ),
-    "tenet.network.DoubleLayer": (
+    "tenet.network.DoublePepsTensor": (
         "a NamedTuple holding a bra and a ket; its fields are documented in the "
         "class docstring's Attributes section"
     ),
-    "tenet.network.CTM_out": (
+    "tenet.network.CTMRG_out": (
         "a result record built by EnvCTM.iterate_, never by users; its fields are "
         "documented in the class docstring's Attributes section"
     ),

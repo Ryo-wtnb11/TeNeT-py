@@ -11,7 +11,7 @@ is carried by [Peps][tenet.network.Peps] but not by the double layer.
 
 **The double layer is never materialized.**
 [Peps2Layers][tenet.network.Peps2Layers] is a *view*: indexing it returns a
-[DoubleLayer][tenet.network.DoubleLayer], which holds a bra and a ket and knows it has
+[DoublePepsTensor][tenet.network.DoublePepsTensor], which holds a bra and a ket and knows it has
 four legs, each a ket/bra pair. Every contraction below reaches through it into the two
 rank-5 tensors, so nothing of size ``d^2 D^8`` is ever written.
 
@@ -65,7 +65,7 @@ from tenet.network.common import closed
 from tenet.network.lattice import Lattice
 
 __all__ = [
-    "DoubleLayer",
+    "DoublePepsTensor",
     "Peps",
     "Peps2Layers",
     "append_vec_bl",
@@ -134,7 +134,7 @@ class Peps(Lattice):
         return self[self.sites()[0]].ndim == 5
 
 
-class DoubleLayer(NamedTuple):
+class DoublePepsTensor(NamedTuple):
     """One site of a bra-ket double layer, held as its two factors and never multiplied.
 
     Attributes
@@ -149,18 +149,18 @@ class DoubleLayer(NamedTuple):
     --------
     >>> import tenet
     >>> from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-    >>> from tenet.network import DoubleLayer
+    >>> from tenet.network import DoublePepsTensor
     >>> from tenet.symmetry import U1, U1Sector
     >>> V = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 1})
     >>> legs = (Leg(V, IN), Leg(V, OUT), Leg(V, OUT), Leg(V, IN), Leg(V, OUT))
     >>> a = SymmetricTensor.random(legs, seed=0)
-    >>> t = DoubleLayer(a, tenet.adjoint(a))
+    >>> t = DoublePepsTensor(a, tenet.adjoint(a))
     >>> t.ndim, len(t.legs)
     (4, 4)
 
     Notes
     -----
-    ``ndim`` is 4 and [legs][tenet.network.DoubleLayer.legs] returns four *pairs*: the
+    ``ndim`` is 4 and [legs][tenet.network.DoublePepsTensor.legs] returns four *pairs*: the
     object behaves like the rank-4 tensor a CTM environment sees, while the twelve
     primitives in this module reach past it into ``ket`` and ``bra``. YASTN's
     ``DoublePepsTensor`` is the same idea with a ``trans`` field restricting transposes
@@ -212,7 +212,7 @@ class Peps2Layers(Lattice):
 
     Notes
     -----
-    Indexing builds a [DoubleLayer][tenet.network.DoubleLayer], which costs a tuple.
+    Indexing builds a [DoublePepsTensor][tenet.network.DoublePepsTensor], which costs a tuple.
     The bra tensors are built once, at construction, rather than per read: an
     ``adjoint`` is a pass over every block, and a CTMRG sweep reads each site many
     times.
@@ -231,8 +231,8 @@ class Peps2Layers(Lattice):
             else Peps(ket.geometry, {s: tenet.adjoint(t) for s, t in ket.items()})
         )
 
-    def __getitem__(self, site: Any) -> DoubleLayer:
-        return DoubleLayer(ket=self.ket[site], bra=self.bra[site])
+    def __getitem__(self, site: Any) -> DoublePepsTensor:
+        return DoublePepsTensor(ket=self.ket[site], bra=self.bra[site])
 
     def __setitem__(self, site: Any, obj: Any) -> None:
         raise TypeError("Peps2Layers is a view; set the tensor on its ket or bra instead")
@@ -250,12 +250,12 @@ class Peps2Layers(Lattice):
 # tabulated once here and quoted per function.
 
 
-def cor_tl(a: DoubleLayer) -> SymmetricTensor:
+def cor_tl(a: DoublePepsTensor) -> SymmetricTensor:
     """YASTN ``cor_tl``. Close ``t``, ``l`` and ``phys``; keep ``(b_k, b_b, r_k, r_b)``.
 
     Parameters
     ----------
-    a : DoubleLayer
+    a : DoublePepsTensor
         The site.
 
     Returns
@@ -272,12 +272,12 @@ def cor_tl(a: DoubleLayer) -> SymmetricTensor:
     return closed([("tlBRs,tlbrs->bBrR", a.bra, a.ket, "t")])
 
 
-def cor_bl(a: DoubleLayer) -> SymmetricTensor:
+def cor_bl(a: DoublePepsTensor) -> SymmetricTensor:
     """YASTN ``cor_bl``. Close ``l``, ``b`` and ``phys``; keep ``(r_k, r_b, t_k, t_b)``.
 
     Parameters
     ----------
-    a : DoubleLayer
+    a : DoublePepsTensor
         The site.
 
     Returns
@@ -294,12 +294,12 @@ def cor_bl(a: DoubleLayer) -> SymmetricTensor:
     return closed([("TlbRs,tlbrs->rRtT", a.bra, a.ket, "")])
 
 
-def cor_br(a: DoubleLayer) -> SymmetricTensor:
+def cor_br(a: DoublePepsTensor) -> SymmetricTensor:
     """YASTN ``cor_br``. Close ``b``, ``r`` and ``phys``; keep ``(t_k, t_b, l_k, l_b)``.
 
     Parameters
     ----------
-    a : DoubleLayer
+    a : DoublePepsTensor
         The site.
 
     Returns
@@ -316,12 +316,12 @@ def cor_br(a: DoubleLayer) -> SymmetricTensor:
     return closed([("TLbrs,tlbrs->tTlL", a.bra, a.ket, "r")])
 
 
-def cor_tr(a: DoubleLayer) -> SymmetricTensor:
+def cor_tr(a: DoublePepsTensor) -> SymmetricTensor:
     """YASTN ``cor_tr``. Close ``t``, ``r`` and ``phys``; keep ``(l_k, l_b, b_k, b_b)``.
 
     Parameters
     ----------
-    a : DoubleLayer
+    a : DoublePepsTensor
         The site.
 
     Returns
@@ -343,12 +343,12 @@ def cor_tr(a: DoubleLayer) -> SymmetricTensor:
 # -- edges: one site closed on one virtual leg and the physical one -------------------
 
 
-def edge_t(a: DoubleLayer) -> SymmetricTensor:
+def edge_t(a: DoublePepsTensor) -> SymmetricTensor:
     """YASTN ``edge_t``. Close ``t`` and ``phys``; keep ``l``, ``b``, ``r`` pairs.
 
     Parameters
     ----------
-    a : DoubleLayer
+    a : DoublePepsTensor
         The site.
 
     Returns
@@ -366,12 +366,12 @@ def edge_t(a: DoubleLayer) -> SymmetricTensor:
     return closed([("tLBRs,tlbrs->lLbBrR", a.bra, a.ket, "t")])
 
 
-def edge_l(a: DoubleLayer) -> SymmetricTensor:
+def edge_l(a: DoublePepsTensor) -> SymmetricTensor:
     """YASTN ``edge_l``. Close ``l`` and ``phys``; keep ``b``, ``r``, ``t`` pairs.
 
     Parameters
     ----------
-    a : DoubleLayer
+    a : DoublePepsTensor
         The site.
 
     Returns
@@ -387,12 +387,12 @@ def edge_l(a: DoubleLayer) -> SymmetricTensor:
     return closed([("TlBRs,tlbrs->bBrRtT", a.bra, a.ket, "")])
 
 
-def edge_b(a: DoubleLayer) -> SymmetricTensor:
+def edge_b(a: DoublePepsTensor) -> SymmetricTensor:
     """YASTN ``edge_b``. Close ``b`` and ``phys``; keep ``r``, ``t``, ``l`` pairs.
 
     Parameters
     ----------
-    a : DoubleLayer
+    a : DoublePepsTensor
         The site.
 
     Returns
@@ -408,12 +408,12 @@ def edge_b(a: DoubleLayer) -> SymmetricTensor:
     return closed([("TLbRs,tlbrs->rRtTlL", a.bra, a.ket, "")])
 
 
-def edge_r(a: DoubleLayer) -> SymmetricTensor:
+def edge_r(a: DoublePepsTensor) -> SymmetricTensor:
     """YASTN ``edge_r``. Close ``r`` and ``phys``; keep ``t``, ``l``, ``b`` pairs.
 
     Parameters
     ----------
-    a : DoubleLayer
+    a : DoublePepsTensor
         The site.
 
     Returns
@@ -441,12 +441,12 @@ def edge_r(a: DoubleLayer) -> SymmetricTensor:
 # nothing of the fused double layer is ever formed.
 
 
-def append_vec_tl(a: DoubleLayer, vec: SymmetricTensor) -> SymmetricTensor:
+def append_vec_tl(a: DoublePepsTensor, vec: SymmetricTensor) -> SymmetricTensor:
     """YASTN ``append_vec_tl``. Absorb ``a`` into a top-left vector.
 
     Parameters
     ----------
-    a : DoubleLayer
+    a : DoublePepsTensor
         The site to absorb.
     vec : SymmetricTensor
         Rank 6, ``(x, l_ket, l_bra, t_ket, t_bra, y)``.
@@ -474,12 +474,12 @@ def append_vec_tl(a: DoubleLayer, vec: SymmetricTensor) -> SymmetricTensor:
     )
 
 
-def append_vec_br(a: DoubleLayer, vec: SymmetricTensor) -> SymmetricTensor:
+def append_vec_br(a: DoublePepsTensor, vec: SymmetricTensor) -> SymmetricTensor:
     """YASTN ``append_vec_br``. Absorb ``a`` into a bottom-right vector.
 
     Parameters
     ----------
-    a : DoubleLayer
+    a : DoublePepsTensor
         The site to absorb.
     vec : SymmetricTensor
         Rank 6, ``(x, r_ket, r_bra, b_ket, b_bra, y)``.
@@ -505,12 +505,12 @@ def append_vec_br(a: DoubleLayer, vec: SymmetricTensor) -> SymmetricTensor:
     )
 
 
-def append_vec_tr(a: DoubleLayer, vec: SymmetricTensor) -> SymmetricTensor:
+def append_vec_tr(a: DoublePepsTensor, vec: SymmetricTensor) -> SymmetricTensor:
     """YASTN ``append_vec_tr``. Absorb ``a`` into a top-right vector.
 
     Parameters
     ----------
-    a : DoubleLayer
+    a : DoublePepsTensor
         The site to absorb.
     vec : SymmetricTensor
         Rank 6, ``(x, t_ket, t_bra, r_ket, r_bra, y)``.
@@ -536,12 +536,12 @@ def append_vec_tr(a: DoubleLayer, vec: SymmetricTensor) -> SymmetricTensor:
     )
 
 
-def append_vec_bl(a: DoubleLayer, vec: SymmetricTensor) -> SymmetricTensor:
+def append_vec_bl(a: DoublePepsTensor, vec: SymmetricTensor) -> SymmetricTensor:
     """YASTN ``append_vec_bl``. Absorb ``a`` into a bottom-left vector.
 
     Parameters
     ----------
-    a : DoubleLayer
+    a : DoublePepsTensor
         The site to absorb.
     vec : SymmetricTensor
         Rank 6, ``(x, b_ket, b_bra, l_ket, l_bra, y)``.

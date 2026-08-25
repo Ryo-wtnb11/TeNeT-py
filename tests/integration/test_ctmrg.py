@@ -169,7 +169,7 @@ def beta_free_energy(env, site=(0, 0)):
 
 
 def converged(beta: float, chi: int = CHI, tol: float = 1e-10, max_sweeps: int = 100):
-    """``(env, CTM_out)``, memoized on the full set of knobs that decides it."""
+    """``(env, CTMRG_out)``, memoized on the full set of knobs that decides it."""
     key = (beta, chi, tol, max_sweeps)
     if key not in _ENVS:
         env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), ising(beta)))
@@ -241,7 +241,7 @@ def test_convergence_is_monotone_and_terminating():
     """Asserted, not assumed: the corner-spectrum change reaches ``corner_tol`` inside the
     sweep budget, and it decreases over the run.
 
-    [CTM_out][tenet.network.CTM_out] reports the exit and not the history, so the second
+    [CTMRG_out][tenet.network.CTMRG_out] reports the exit and not the history, so the second
     half is re-derived here from [corner_spectra][tenet.network.EnvCTM.corner_spectra] on
     a sweep of its own -- the same quantity ``iterate_`` stops on.
     """

@@ -32,7 +32,7 @@ import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.network import (
     CheckerboardLattice,
-    DoubleLayer,
+    DoublePepsTensor,
     EnvCTM,
     EnvCTMc4v,
     Peps,
@@ -566,4 +566,4 @@ def test_a_double_layer_environment_carries_the_pair_unfused():
     assert layered[0, 0].l.ndim == 4
     assert layered.double and not flat.double
     a = layered.psi[0, 0]
-    assert isinstance(a, DoubleLayer)
+    assert isinstance(a, DoublePepsTensor)

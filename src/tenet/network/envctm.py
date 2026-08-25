@@ -70,7 +70,7 @@ from tenet import IN, OUT, Leg, SymmetricTensor
 from tenet.network.common import composed, ones, spectrum, supplies_in
 from tenet.network.lattice import Lattice, Site
 from tenet.network.peps import (
-    DoubleLayer,
+    DoublePepsTensor,
     Peps2Layers,
     append_vec_bl,
     append_vec_br,
@@ -79,7 +79,7 @@ from tenet.network.peps import (
 )
 
 __all__ = [
-    "CTM_out",
+    "CTMRG_out",
     "EnvCTM",
     "EnvCTMc4v",
     "EnvLocal",
@@ -151,7 +151,7 @@ class EnvProjectors:
     vbr: SymmetricTensor | None = None
 
 
-class CTM_out(NamedTuple):
+class CTMRG_out(NamedTuple):
     """What a [iterate_][tenet.network.EnvCTM.iterate_] run reports, YASTN's ``CTMRG_out``.
 
     Attributes
@@ -228,7 +228,7 @@ def corner2x2(env: "EnvCTM", which: str, site: Any, a: Any = None) -> SymmetricT
         ``'tl'``, ``'tr'``, ``'bl'`` or ``'br'``.
     site : Site or tuple[int, int]
         The site whose ring supplies the three environment tensors.
-    a : DoubleLayer or SymmetricTensor or None, optional
+    a : DoublePepsTensor or SymmetricTensor or None, optional
         The tensor to absorb, in place of the one the state has at ``site``. Default
         ``None``, i.e. the state's. [bond_metric][tenet.network.EnvCTM.bond_metric]
         passes the ``qr``-reduced site here, which is the only reason the parameter
@@ -755,7 +755,7 @@ class EnvCTM:
         max_sweeps: int = 100,
         corner_tol: float | None = 1e-10,
         cutoff: float | None = 1e-14,
-    ) -> CTM_out:
+    ) -> CTMRG_out:
         """Sweep until the corner spectra stop moving, YASTN ``iterate_``:841.
 
         Parameters
@@ -776,7 +776,7 @@ class EnvCTM:
 
         Returns
         -------
-        CTM_out
+        CTMRG_out
             ``sweeps``, ``max_dsv`` and ``converged``.
 
         Raises
@@ -797,7 +797,7 @@ class EnvCTM:
             previous = current
             if max_dsv < corner_tol:
                 break
-        return CTM_out(sweeps, max_dsv, max_dsv < (corner_tol or 0.0))
+        return CTMRG_out(sweeps, max_dsv, max_dsv < (corner_tol or 0.0))
 
     def bond_metric(
         self, q0: SymmetricTensor, q1: SymmetricTensor, s0: Any, s1: Any, dirn: str
@@ -864,8 +864,8 @@ class EnvCTM:
                 f"EnvCTM.bond_metric: {Site(*s0)} and {Site(*s1)} are not a {dirn} bond"
             )
         e0, e1 = self[s0], self[s1]
-        vec0 = corner2x2(self, "tl", s0, DoubleLayer(q0, tenet.adjoint(q0)))
-        vec1 = corner2x2(self, "br", s1, DoubleLayer(q1, tenet.adjoint(q1)))
+        vec0 = corner2x2(self, "tl", s0, DoublePepsTensor(q0, tenet.adjoint(q0)))
+        vec1 = corner2x2(self, "br", s1, DoublePepsTensor(q1, tenet.adjoint(q1)))
         if dirn == "lr":
             bottom = _composed("xbBc,cd->xbBd", e0.b, e0.bl)
             vec0 = _composed("xbBd,dbByrR->xyrR", bottom, vec0)
@@ -965,7 +965,7 @@ class PepsFlip:
     Notes
     -----
     YASTN's ``PsiFlip``, wrapped *outside* the double layer rather than inside it, so a
-    [DoubleLayer][tenet.network.DoubleLayer]'s bra is flipped with its ket. The two
+    [DoublePepsTensor][tenet.network.DoublePepsTensor]'s bra is flipped with its ket. The two
     agree: ``flip(adjoint(a))`` is ``adjoint(flip(a))``.
     """
 
@@ -984,7 +984,7 @@ class PepsFlip:
         ket = getattr(obj, "ket", None)
         if ket is None:
             return flip(obj)
-        return DoubleLayer(ket=flip(ket), bra=flip(obj.bra))
+        return DoublePepsTensor(ket=flip(ket), bra=flip(obj.bra))
 
     def __repr__(self) -> str:
         return f"PepsFlip({self._base!r})"

@@ -44,14 +44,14 @@ env[0, 0].tl, env[0, 0].t                           # one corner, one edge
 
 A rank-4 site tensor is a classical partition function and is used as it is; a rank-5 one
 becomes a [`Peps2Layers`][tenet.network.Peps2Layers] view, whose items are lazy
-[`DoubleLayer`][tenet.network.DoubleLayer] pairs — the bra-ket product is never formed,
+[`DoublePepsTensor`][tenet.network.DoublePepsTensor] pairs — the bra-ket product is never formed,
 and the environment edge carries the ket bond and the bra bond adjacent and separate.
 
 `init='eye'` (the default) seeds a one-dimensional environment bond; `init='dl'` absorbs
 one layer of the network into that seed without truncating.
 [`update_`][tenet.network.EnvCTM.update_] is one sweep and
 [`iterate_`][tenet.network.EnvCTM.iterate_] the loop, sweeping until the corner spectra
-stop moving and reporting a [`CTM_out`][tenet.network.CTM_out] — `sweeps`, `max_dsv`,
+stop moving and reporting a [`CTMRG_out`][tenet.network.CTMRG_out] — `sweeps`, `max_dsv`,
 `converged`. `max_bond` is an input; the realized environment bond is on the corner's own
 legs.
 

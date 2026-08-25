@@ -27,7 +27,7 @@ from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.network import (
     Bond,
     CheckerboardLattice,
-    DoubleLayer,
+    DoublePepsTensor,
     Lattice,
     Peps,
     Peps2Layers,
@@ -215,11 +215,11 @@ FERMIONIC = "fz2"
 KET_SIDES = (IN, OUT, OUT, IN, OUT)
 
 
-def site(provider: str, seed: int = 5) -> DoubleLayer:
+def site(provider: str, seed: int = 5) -> DoublePepsTensor:
     sp = SPACES[provider]
     legs = tuple(Leg(sp[k], s) for k, s in zip("tlbrs", KET_SIDES, strict=True))
     ket = SymmetricTensor.random(legs, seed=seed)
-    return DoubleLayer(ket=ket, bra=tenet.adjoint(ket))
+    return DoublePepsTensor(ket=ket, bra=tenet.adjoint(ket))
 
 
 def vector(provider: str, pairs: str, seed: int = 9) -> SymmetricTensor:

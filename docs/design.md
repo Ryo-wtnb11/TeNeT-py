@@ -6718,7 +6718,7 @@ with M61 Stage D above, and PEPS containers with M79/#277.
   `network/peps.py` is `_peps.py` plus `_doublePepsTensor.py` plus
   `envs/_env_contractions.py`'s twelve primitives: `Peps` on rank-5 sites
   `(t IN, l OUT, b OUT, r IN, phys OUT)`, the `Peps2Layers` view whose items are lazy
-  `DoubleLayer` pairs, and `cor_{tl,bl,br,tr}` / `edge_{t,l,b,r}` /
+  `DoublePepsTensor` pairs, and `cor_{tl,bl,br,tr}` / `edge_{t,l,b,r}` /
   `append_vec_{tl,tr,bl,br}` as `einsum_chain`s. Out of scope and named as such: the
   patch mechanism (it serves M79d's provisional per-site updates), `to_dict`
   serialization, `TriangularLattice`, and the physical-leg operator YASTN's
