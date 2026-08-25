@@ -867,7 +867,7 @@ class EnvCTM:
         and ``tb`` bonds of a 2x2 patch under fermion parity without it -- 4e-15 and
         1.7e-15 with it,
         and the same on an interior bond of a 3x3, where both environment wires carry
-        sectors and twisting only one is wrong (``docs/design.md``, M84).
+        sectors and twisting only one is wrong.
         """
         if not self.double:
             raise ValueError("EnvCTM.bond_metric: a single-layer network has no bond to truncate")
