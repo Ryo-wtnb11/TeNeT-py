@@ -6,8 +6,9 @@ Run it standalone::
 
 What ``examples/toy_codes/dmrg.py`` writes out by hand -- the 5x5 ``W`` matrix, its
 channel table, the reachable bond spaces -- this file never mentions: the Hamiltonian is
-a term list, ``MPO.from_terms`` derives the graded MPO bond, and the Neel product state
-seeds the ``S^z_tot = 0`` sector by its own charges. ``examples/heisenberg_walkthrough.py``
+one call to ``tenet.models.heisenberg``, which writes the term list and lets
+``MPO.from_terms`` derive the graded MPO bond, and the Neel product state seeds the
+``S^z_tot = 0`` sector by its own charges. ``examples/heisenberg_walkthrough.py``
 is the middle of the three: the same library calls, with the ``W`` and the bond spaces
 spelled out beside them. The schedule below ramps ``chi``
 with noise because writing one is what a user does; on this chain it buys nothing -- the
@@ -15,8 +16,8 @@ flat ``chi=64`` run reaches the same energy, since a degeneracy-1 U(1) seed alre
 ramps for free (see docs/tutorials/dmrg.md, "Schedules and noise", for when it pays).
 """
 
-from tenet.models import spin_half
-from tenet.network import MPO, MPS, Sweep, dmrg_, expectation_1site, expectation_2site, local_op
+from tenet.models import heisenberg, spin_half
+from tenet.network import MPS, Sweep, dmrg_, expectation_1site, expectation_2site, local_op
 from tenet.symmetry import U1Sector
 
 # The standard spin-1/2 site, graded by U(1): charge t = 2 S^z, so the doublet is
@@ -25,25 +26,6 @@ from tenet.symmetry import U1Sector
 SITE = spin_half()
 PHYS = SITE.phys
 SZ = SITE.matrices["Sz"]
-
-
-def heisenberg_mpo(n_sites: int) -> MPO:
-    """``H = sum_i S_i . S_{i+1}``, J = 1, open boundaries, as a term list."""
-    # S+ and S- each carry charge +-2 on their own; only the product of the two is
-    # neutral, which is why they enter the list paired across a bond and never alone.
-    op_sz, op_sp, op_sm = (SITE.ops[name] for name in ("Sz", "S+", "S-"))
-    terms = []
-    for i in range(n_sites - 1):
-        # S.S = S^z S^z + (S^+ S^- + S^- S^+)/2 -- the isotropic dot product written in
-        # the U(1) basis, where the transverse half has to be split into the two
-        # hopping directions because raising and lowering are separate operators here.
-        terms.append((1.0, [(op_sz, i), (op_sz, i + 1)]))
-        terms.append((0.5, [(op_sp, i), (op_sm, i + 1)]))
-        terms.append((0.5, [(op_sm, i), (op_sp, i + 1)]))
-    # from_terms reads each operator's charge and grades the MPO bond itself: the bond
-    # carries one channel per partially-applied term, plus the "not started" and
-    # "finished" channels that run the identity along the rest of the chain.
-    return MPO.from_terms(n_sites, terms)
 
 
 def main(n_sites: int = 20, chi: int = 64):
@@ -58,7 +40,11 @@ def main(n_sites: int = 20, chi: int = 64):
     # what is already there. It decays because by then the missing sectors are found
     # and further noise would only be energy the last, noiseless sweep has to undo.
     schedule = [Sweep(16, noise=1e-4)] * 3 + [Sweep(32, noise=1e-5)] * 3 + [Sweep(chi)]
-    out = dmrg_(psi, heisenberg_mpo(n_sites), schedule=schedule)
+    # H = sum_i S_i . S_{i+1}, J = 1, open boundaries. Under U(1) that term list is
+    # S^z S^z with the transverse half split into S^+ S^- and S^- S^+, since raising and
+    # lowering are separate operators here; examples/heisenberg_walkthrough.py writes it
+    # out, and this file asks the model function for it.
+    out = dmrg_(psi, heisenberg(n_sites), schedule=schedule)
     # legs[0] of site n is its left virtual bond, so this is the cut through the middle
     # of the chain -- the one that carries the most entanglement and the largest bond.
     mid = out.psi[n_sites // 2].legs[0].space

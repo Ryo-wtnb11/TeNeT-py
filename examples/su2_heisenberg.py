@@ -6,8 +6,9 @@ Run it standalone::
 
 Under SU(2), ``S^z`` alone is symmetry-forbidden -- only the invariant two-site
 ``S . S`` is a term, and it is the *entire* operator set
-:func:`tenet.models.spin_half` returns for this grading. ``MPO.from_terms`` splits it,
-deriving the graded MPO bond from the operator's own blocks. The seed is
+:func:`tenet.models.spin_half` returns for this grading -- which is what
+:func:`tenet.models.heisenberg` hands ``MPO.from_terms`` under this symmetry. The
+builder splits that term, deriving the graded MPO bond from the operator's own blocks. The seed is
 :meth:`MPS.random`: ``MPS.product`` refuses non-Abelian symmetries by construction (a
 single spin-up is not an SU(2) multiplet).
 The point is the printed table -- same energy as the U(1) run this file computes by
@@ -18,22 +19,13 @@ than the dense states ``chi`` counts.
 import heisenberg
 
 from tenet import GradedSpace
+from tenet.models import heisenberg as heisenberg_mpo
 from tenet.models import spin_half
-from tenet.network import MPO, MPS, dmrg_
+from tenet.network import MPS, dmrg_
 from tenet.symmetry import SU2, SU2Sector
 
 SITE = spin_half(SU2)  # one spin-1/2 multiplet, dense dim 2
 PHYS = SITE.phys
-
-
-def su2_mpo(n_sites: int) -> MPO:
-    """``H = sum_i S_i . S_{i+1}`` as one invariant two-site term per bond."""
-    op = SITE.ops["S.S"]  # the site's whole SU(2) operator set: one invariant term
-    # The site pair (i, i+1) is passed as a tuple, not two separate one-site factors:
-    # S.S is irreducible under SU(2), and from_terms splits it across the bond itself
-    # by fusing the two sites and cutting the result -- the j=0 and j=1 channels of the
-    # split are the MPO bond, and they are what the SU(2) grading is made of.
-    return MPO.from_terms(n_sites, [(1.0, [(op, (i, i + 1))]) for i in range(n_sites - 1)])
 
 
 def bond_spaces(n_sites: int) -> list[GradedSpace]:
@@ -55,7 +47,12 @@ def main(n_sites: int = 20, chi: int = 64):
     psi = MPS.random(PHYS, bond_spaces(n_sites), seed=0)
     # Flat chi, no schedule: chi counts dense states here too, so an SU(2) bond keeps
     # (2j+1)-fold more physical states per unit of cost than the U(1) run below.
-    su2 = dmrg_(psi, su2_mpo(n_sites), chi=chi)
+    # ``models.heisenberg(n, SU2)`` is one invariant two-site term per bond: the site pair
+    # (i, i+1) enters as a tuple, not two one-site factors, because S.S is irreducible
+    # under SU(2) and from_terms splits it across the bond itself by fusing the two
+    # sites and cutting the result -- the j=0 and j=1 channels of that split are the
+    # MPO bond, and they are what the SU(2) grading is made of.
+    su2 = dmrg_(psi, heisenberg_mpo(n_sites, SU2), chi=chi)
     u1, _ = heisenberg.main(n_sites, chi)
 
     # Same cut, both runs. dim counts dense states, reduced_dim counts multiplets: the

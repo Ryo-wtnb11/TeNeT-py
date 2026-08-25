@@ -38,6 +38,15 @@ it returns, so the sites are what the sweep should run on. An ab initio Hamilton
 writes ``symbolic=True`` and keeps the description.
 """
 
+from tenet.models.hamiltonians import (
+    heisenberg,
+    hubbard,
+    spinless_tv,
+    sun_exchange,
+    sun_heisenberg,
+    transverse_field_ising,
+    xxz,
+)
 from tenet.models.sites import (
     Site,
     hard_core_boson,
@@ -49,7 +58,14 @@ from tenet.models.sites import (
 __all__ = [
     "Site",
     "hard_core_boson",
+    "heisenberg",
+    "hubbard",
     "spin_half",
     "spinful_fermion",
     "spinless_fermion",
+    "spinless_tv",
+    "sun_exchange",
+    "sun_heisenberg",
+    "transverse_field_ising",
+    "xxz",
 ]
