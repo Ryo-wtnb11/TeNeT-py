@@ -4,12 +4,19 @@ The twin of [tenet.symmetry._sun_coeff][] for the one symmetry that has a closed
 Both are ``racah``; they are different *tiers* of it, and the split is deliberate:
 
 * **F, R, B and the Frobenius-Schur indicator come from here.** They are gauge-invariant
-  combinations, so the exact tier and the generated SU(N) tier return the same numbers --
-  measured over 55 R triangles and 76 F classes at worst 1.3e-15 apart, pinned in
-  ``racah``'s own ``racah-py/tests/test_su2_exact.py``. Taking them from the closed form
-  is therefore a cost change and not a value change: ``racah.su2_r_symbol`` is a sign,
-  where the generated path builds a Clebsch-Gordan tensor by SVD nullspace, least-squares
-  descent and QR gauge fixing to reach the same number (#307: 3.8 ms per cold call).
+  combinations, so the exact tier and the generated SU(N) tier return the same numbers.
+  Taking them from the closed form is therefore a cost change and not a value change:
+  ``racah.su2_r_symbol`` is a sign, where the generated path builds a Clebsch-Gordan
+  tensor by SVD nullspace, least-squares descent and QR gauge fixing to reach the same
+  number (#307: 3.8 ms per cold call).
+
+  That is not taken on trust. ``tests/symmetry/test_su2_recoupling.py`` pins these
+  against an oracle *outside* racah -- the vendored TensorKitSectors tables, 109,909 F
+  rows and 625 R rows -- and, more to the point here, two of its cases derive F and B by
+  *contracting the Clebsch-Gordan tensors this module does not serve*
+  (``test_f_symbol_from_cg_contraction``, 500+ labellings at 1e-12, and
+  ``test_b_symbol_from_cg_contraction``). Those two are exactly the statement that mixing
+  the tiers is sound, computed rather than argued.
 
 * **Clebsch-Gordan tensors and the duality map do not come from here.** They are gauge
   *data*, not gauge-invariant, and the two tiers fix that gauge differently: the
@@ -27,15 +34,12 @@ module a performance change with no gauge consequence.
 
 import racah
 
-__all__ = ["GAUGE", "b_symbol", "f_symbol", "frobenius_schur", "r_symbol"]
+__all__ = ["b_symbol", "f_symbol", "frobenius_schur", "r_symbol"]
 
-GAUGE = f"su2=racah;{racah.su2_authority_fingerprint()}"
-"""Gauge fingerprint of the exact tier, verbatim from the crate.
-
-Distinct from [tenet.symmetry._sun_coeff.GAUGE][] on purpose: numerical agreement on F
-and R is not authority identity, and a file that recorded one string while its values
-came from the other tier would validate against the wrong contract.
-"""
+# No ``GAUGE`` constant here, unlike ``_sun_coeff``. SU(2) draws on two tiers, so its
+# fingerprint is a *pair* and cannot be assembled by either module alone; it lives in
+# ``su2._SU2_GAUGE``, which names both. A ``GAUGE`` here would be the half-string that
+# tempts a caller to record one authority for values two produced.
 
 
 def f_symbol(a: int, b: int, c: int, d: int, e: int, f: int) -> float:
