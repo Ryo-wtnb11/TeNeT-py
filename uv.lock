@@ -1153,18 +1153,18 @@ wheels = [
 
 [[package]]
 name = "racah-py"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/20/c1/19ec9b309bb0a58385c2871d0ac82a31925ddb653676f1b943ca7eb02376/racah_py-0.1.1.tar.gz", hash = "sha256:9cc444f4c0ff4d0cb8ca1b30e353177438b565fd96ce5b2bf3e1cb1810fd2736", size = 3773870, upload-time = "2026-08-18T12:51:06.183Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/08/cf/700b8c7c7dd7a13657b810e7cc547909edad882ea868ecedd6f496573804/racah_py-0.1.2.tar.gz", hash = "sha256:b2d85bfde8379d3684f42939316dfd5e01622a1ea4176d30e68b595e54664ab6", size = 3782958, upload-time = "2026-08-25T21:10:32.254Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b6/e9/62fb163ae5c23ceac079d8a3ab4fe232bc98349deb9e3bcb673781587bec/racah_py-0.1.1-cp312-abi3-macosx_10_12_x86_64.whl", hash = "sha256:bd0f406dc55626d0dcdf5a6a18e5c743492ef08a1dd8e5d377ed9e49ef20a745", size = 14545115, upload-time = "2026-08-18T12:50:55.811Z" },
-    { url = "https://files.pythonhosted.org/packages/ce/31/6cf40cd28b3dd55015029f89c85b35d92d4c025e39dec55bbffe24e6376f/racah_py-0.1.1-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:e50d8924eeca08208bf99d8129d106760fdd0c4847a6448c15a1f0f9fe88ecbb", size = 12713734, upload-time = "2026-08-18T12:50:58.144Z" },
-    { url = "https://files.pythonhosted.org/packages/73/1f/dbe8a959bfd2f0761541d6f33f18c0eca69b3b8ffd63eadc430faf586b57/racah_py-0.1.1-cp312-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:abb44fb8a7b93580d5e55c3182d4c4cfa9e04ba67f2afd7974ecd9c5a6bd41ee", size = 12127684, upload-time = "2026-08-18T12:51:00.298Z" },
-    { url = "https://files.pythonhosted.org/packages/f8/96/45fb04405bfd3943e60e18bc693ee82499bdd52e860579b27172b49830bd/racah_py-0.1.1-cp312-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:42159742da2f9b98128fb4dc7b94fa89d31af14482e21da2adc98ac5e1c1fd10", size = 13304778, upload-time = "2026-08-18T12:51:02.308Z" },
-    { url = "https://files.pythonhosted.org/packages/43/64/d13f932f203412af68b3062e8e12f9da4132a27665fa2fc0982781b150ef/racah_py-0.1.1-cp312-abi3-win_amd64.whl", hash = "sha256:0048e0eed3eac2ab56de7dc4b8f0f95b65f3485cb954e03cbf12cc8225e73daa", size = 14959384, upload-time = "2026-08-18T12:51:04.283Z" },
+    { url = "https://files.pythonhosted.org/packages/04/b0/3a8ba2786dd82d16c8dbc32593d134ba1f15e9ed0c577fad4f64448d5994/racah_py-0.1.2-cp312-abi3-macosx_10_12_x86_64.whl", hash = "sha256:f844b4b23314dd7450b83c51ba9a8538f585cb19b91193cfb39d0dc4e09cec35", size = 14565581, upload-time = "2026-08-25T21:10:20.494Z" },
+    { url = "https://files.pythonhosted.org/packages/b7/78/78ee34f90dec85056365f4ed12fa27da86c5c37af102361945575fe613d7/racah_py-0.1.2-cp312-abi3-macosx_11_0_arm64.whl", hash = "sha256:a0d7cbd4f78fdf4f2e8913ff83b1ac78aa398d00bb55f1c03b07846071cbccdf", size = 12695221, upload-time = "2026-08-25T21:10:22.781Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/59/aa557034854637d57a351b626c82405b277db54f533d6d5efec77c42f072/racah_py-0.1.2-cp312-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:411afcc72dcfafd4b52a7e4236d9acadb6fdedbc1f9937c3fa17a28d63cb9bb6", size = 12158516, upload-time = "2026-08-25T21:10:25.556Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/59/6ccd7fec24f373be2a9c8a3eaef06830ae085b856c708c028fdc7fa867c5/racah_py-0.1.2-cp312-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d925b85d83a72aec0d7b84c024ae13dd35598b2edc29fce21df48ee19fd1c83a", size = 13343196, upload-time = "2026-08-25T21:10:27.748Z" },
+    { url = "https://files.pythonhosted.org/packages/96/02/0e0889a715c7cdf471a4c994accfe91ca277964ba92ac70edf6491b4caaf/racah_py-0.1.2-cp312-abi3-win_amd64.whl", hash = "sha256:10817576b517b9dba3864a7ad9b4054a98252d18e313edc1a1bbe81e8c5ec7a2", size = 14999209, upload-time = "2026-08-25T21:10:30.038Z" },
 ]
 
 [[package]]
@@ -1328,7 +1328,7 @@ requires-dist = [
     { name = "jax", marker = "extra == 'jax'", specifier = ">=0.10" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "opt-einsum", specifier = ">=3.4.0" },
-    { name = "racah-py", specifier = ">=0.1.1" },
+    { name = "racah-py", specifier = ">=0.1.2" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'torch'", specifier = ">=2.0", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "sys_platform != 'linux' and extra == 'torch'", specifier = ">=2.0" },
 ]
