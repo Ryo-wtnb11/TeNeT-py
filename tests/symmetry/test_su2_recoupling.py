@@ -4,9 +4,18 @@ Pentagon and unitarity are gauge-*covariant* and hold in every valid gauge
 simultaneously, so only a full-table comparison can tell ours apart from a
 plausible-looking convention slip.
 
-Since #180 the coefficients come from racah at Dynkin label ``(two_j,)``, so the
-fixtures are the cross-check rather than the specification: the two agree, but they
-are two independent computations and the tolerance below says so.
+Since #180 the coefficients come from racah, so the fixtures are the cross-check rather
+than the specification: the two agree, but they are two independent computations and the
+tolerance below says so.
+
+**Which racah tier answers is no longer one answer.** F, R, B and the Frobenius-Schur
+indicator come from the exact closed-form engine (``tenet.symmetry._su2_coeff``);
+Clebsch-Gordan tensors and ``z_matrix`` still come from the generated SU(N) surface at
+Dynkin label ``(two_j,)`` (``tenet.symmetry._sun_coeff``), because those are gauge data
+and the two tiers fix that gauge differently. That makes two cases here load-bearing
+beyond their original purpose: ``test_f_symbol_from_cg_contraction`` and
+``test_b_symbol_from_cg_contraction`` derive F and B *from the generated CGC* and compare
+against the exact tier's, so they are the check that mixing the two is sound.
 """
 
 from itertools import product

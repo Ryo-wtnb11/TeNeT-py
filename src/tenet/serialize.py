@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 import numpy as np
+import racah
 
 from tenet.leg import Leg, Side
 from tenet.space import GradedSpace
@@ -96,9 +97,19 @@ _GAUGES["SUN"] = _SUN_GAUGE
 # numerically comparable, so refusing them would be a false alarm rather than a caught
 # error. A future racah upgrade that moves values is a real refusal and gets one, because
 # racah's contract makes any coefficient-affecting change a breaking release.
+# The second SU(2) entry is the spelling used while F/R/B and the CGC all came from the
+# generated SU(N) tier. The exact tier now serves F/R/B, and its values agree with the
+# generated ones to 1.3e-15 (racah `racah-py/tests/test_su2_exact.py`), so a file written
+# under the old string holds the same numbers and refusing it would be a false alarm --
+# the same argument the first entry carries. It is computed rather than a literal because
+# it interpolated the running build's SU(N) fingerprint, exactly as `_SU2_GAUGE` still
+# does for its CGC half.
 _LEGACY_GAUGES: dict[str, frozenset[str]] = {
     "SU2": frozenset(
-        {"3j=condon-shortley;cg=condon-shortley;f=tks-su2irrep;r=tks-su2irrep;fs=tks-su2irrep"}
+        {
+            "3j=condon-shortley;cg=condon-shortley;f=tks-su2irrep;r=tks-su2irrep;fs=tks-su2irrep",
+            f"su2=racah;{racah.sun_authority_fingerprint()}",
+        }
     )
 }
 

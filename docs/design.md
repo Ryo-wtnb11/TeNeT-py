@@ -15,7 +15,8 @@ A symmetry is a **provider**: a frozen object implementing `FusionRules` plus wh
 optional data protocols it supplies — quantum dimensions, Clebsch-Gordan tensors, F- and
 R-symbols, bending coefficients, branching rules. Every operation requires exactly the
 protocols it uses and raises `CapabilityError` otherwise. U(1), Z2, fermionic Z2, SU(2),
-SU(N) and Deligne products of them ship; SU(2) and SU(N) coefficients come from `racah-py`.
+SU(N) and Deligne products of them ship; SU(2) and SU(N) coefficients come from `racah-py`
+(SU(2) from two of its tiers — see the reference table below).
 
 The tensor layer is `tenet.ops` (`einsum`, `tensordot`, `compose`, `transpose`,
 `repartition`, `fuse`, `trace`, arithmetic, block access) and `tenet.linalg` (`svd`, `qr`,
@@ -204,7 +205,7 @@ others are read but not copied.
 | 2D methods — CTMRG, PEPS | YASTN | `examples/ctmrg.py` was written against YASTN's design and M11b (#114) promoted it into `tenet.network`; the API-naming survey (#120) took `CTMEnv`, `ctmrg`, `Absorb` from that family |
 | 1D interfaces and API shape | tenpy, YASTN | the trailing-underscore in-place convention (`dmrg_`, `sweep_`, `canonize_`) and the two-criteria convergence, energy plus Schmidt values, are YASTN's (#112); the one-record-per-sweep schedule shape came from SUNDMRG (#136) |
 | Algorithm cores at quantum-chemistry scale | block2 | per-sweep schedule semantics and the guard requiring noise to be zero before convergence (#136); the prepared-operator idea (#141), which MPSKit's `JordanMPO_AC2` shares |
-| Coefficients | racah | racah-py is a core dependency and the sole gauge source (M28); TensorKitSectors remains the SU(2) oracle of record and SUNRepresentations.jl the SU(N) one, consulted through racah rather than directly |
+| Coefficients | racah | racah-py is a core dependency and the sole gauge source (M28); TensorKitSectors remains the SU(2) oracle of record and SUNRepresentations.jl the SU(N) one, consulted through racah rather than directly. SU(2) draws on **two** racah tiers, and so carries two fingerprints: F/R/B and the Frobenius-Schur indicator from the exact closed-form engine, Clebsch-Gordan tensors and `z_matrix` from the generated SU(N) surface. The tiers agree on the first group (gauge-invariant) and differ on the second by one sign per fusion channel (gauge data), which is why the split is drawn there rather than anywhere else (#307) |
 | The categorical model | TensorKit | as stated above, with a deliberate divergence: the M24 capability lattice (#158) uses capability protocols and a data/property split instead of TensorKit's space-carried dual flag and type hierarchy |
 
 Where YASTN goes further than `tenet` — two-site unit cells, other CTM move
