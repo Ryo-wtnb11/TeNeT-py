@@ -9,8 +9,9 @@ The site is one fundamental ``3`` of SU(3) and the Hamiltonian is
 the exchange is ``+1`` on the symmetric ``6`` and ``-1`` on the antisymmetric ``3bar``,
 and that sentence *is* the construction: the rank-4 term tensor has exactly one block
 per coupled sector, so ``SymmetricTensor.from_blocks`` writes ``+1`` and ``-1`` into
-them and no Clebsch-Gordan array is spelled out. ``MPO.from_terms`` takes the whole
-two-site term, exactly as ``examples/su2_heisenberg.py`` passes ``S.S``.
+them and no Clebsch-Gordan array is spelled out. That is
+:func:`tenet.models.sun_exchange`, and :func:`tenet.models.sun_heisenberg` hands it to
+``MPO.from_terms`` whole, exactly as ``examples/su2_heisenberg.py`` passes ``S.S``.
 
 Two oracles are printed beside the run: a numpy-only dense ED of the same permutation
 chain, and Sutherland's Bethe-ansatz energy per site for the infinite chain.
@@ -18,8 +19,9 @@ chain, and Sutherland's Bethe-ansatz energy per site for the infinite chain.
 
 import numpy as np
 
-from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
-from tenet.network import MPO, MPS, dmrg_, expectation_2site
+from tenet import GradedSpace, TensorStructure
+from tenet.models import sun_exchange, sun_heisenberg
+from tenet.network import MPS, dmrg_, expectation_2site
 from tenet.symmetry import SUNProvider, SUNSector
 
 SU3 = SUNProvider(3)
@@ -36,35 +38,12 @@ SUTHERLAND = 1.0 - np.log(3.0) - np.pi / (3.0 * np.sqrt(3.0))
 SWAP = np.eye(9).reshape(3, 3, 3, 3).transpose(0, 1, 3, 2)
 
 
-def exchange() -> SymmetricTensor:
-    """``P`` on two fundamental sites: ``+1`` on the ``6``, ``-1`` on the ``3bar``."""
-    # Two OUT (ket) then two IN (bra) legs: an operator's row indices are what it emits,
-    # its column indices what it absorbs, and that ordering is what expectation_2site
-    # and MPO.from_terms both read the term through.
-    legs = (Leg(PHYS, OUT), Leg(PHYS, OUT), Leg(PHYS, IN), Leg(PHYS, IN))
-    eigenvalue = {SIX: 1.0, THREEBAR: -1.0}  # symmetric, antisymmetric
-    structure = TensorStructure(legs)
-    return SymmetricTensor.from_blocks(
-        legs,
-        {
-            # A FusionBlockKey names one way the four legs fuse to a singlet: an output
-            # tree fusing the two kets, an input tree fusing the two bras, joined on the
-            # coupled irrep they share. Here 3 x 3 = 6 + 3bar gives exactly two keys, and
-            # the coupled irrep of the key is the eigenvalue's whole address. The block
-            # is a constant times the identity on the multiplicity space -- degeneracy 1
-            # on both sides, so np.full and the Clebsch-Gordan coefficients stay implicit.
-            key: np.full(structure.block_shape(key), eigenvalue[key.output_tree.coupled])
-            for key in structure.block_order
-        },
-    )
-
-
-P = exchange()
-
-
-def su3_mpo(n_sites: int) -> MPO:
-    """``H = sum_i P_{i,i+1}`` as one invariant two-site term per bond."""
-    return MPO.from_terms(n_sites, [(1.0, [(P, (i, i + 1))]) for i in range(n_sites - 1)])
+# ``sun_exchange(3)`` is P on two fundamental sites: one block per coupled sector of
+# 3 x 3, +1 on the symmetric 6 and -1 on the antisymmetric 3bar, written with
+# SymmetricTensor.from_blocks -- degeneracy 1 on both sides, so the Clebsch-Gordan
+# coefficients stay implicit. Its legs are two OUT (ket) then two IN (bra), the ordering
+# expectation_2site and MPO.from_terms both read a term through.
+P = sun_exchange(3)
 
 
 def bond_spaces(n_sites: int) -> list[GradedSpace]:
@@ -100,7 +79,9 @@ def run(n_sites: int, chi: int):
     # Random seed rather than a product state: a single fundamental is not an SU(3)
     # singlet, so there is no product state in the target sector to start from.
     psi = MPS.random(PHYS, bond_spaces(n_sites), seed=0)
-    return dmrg_(psi, su3_mpo(n_sites), chi=chi)
+    # H = sum_i P_{i,i+1}: one invariant two-site term per bond, the site pair passed
+    # as a tuple, and from_terms splits it across the bond itself.
+    return dmrg_(psi, sun_heisenberg(n_sites, 3), chi=chi)
 
 
 def main(n_sites: int = 24, chi: int = 96, n_ed: int = 6):

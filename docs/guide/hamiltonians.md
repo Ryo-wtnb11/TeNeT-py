@@ -2,7 +2,36 @@
 
 A Hamiltonian in TeNeT-py is an [MPO][tenet.network.MPO]. You build one from local
 operators, and `tenet.models` ships the standard sites so you do not write the same three
-matrices again.
+matrices again — or, for the models below, the finished operator.
+
+## Named models
+
+One function per model, each returning the `MPO` for an open chain of `n` sites, with the
+symmetry a parameter:
+
+```python
+>>> from tenet.models import heisenberg, hubbard, sun_heisenberg
+>>> from tenet.symmetry import SU2
+>>> h = heisenberg(20)                  # U(1), J = 1, spin 1/2
+>>> h_su2 = heisenberg(20, SU2)         # the same chain, one invariant term per bond
+>>> len(hubbard(8, t=1.0, U=4.0)), len(sun_heisenberg(8, 3))
+(8, 8)
+
+```
+
+| call | Hamiltonian | grading |
+|---|---|---|
+| `heisenberg(n, symmetry=U1, J=1.0, spin=0.5)` | $J \sum_i \vec{S}_i \cdot \vec{S}_{i+1}$ | `U1` (default) or `SU2` |
+| `xxz(n, Delta=1.0, J=1.0)` | $J \sum_i S^x S^x + S^y S^y + \Delta S^z S^z$ | `U1` |
+| `transverse_field_ising(n, J=1.0, g=1.0)` | $-J\left(\sum_i \sigma^z_i \sigma^z_{i+1} + g \sum_i \sigma^x_i\right)$ | `Z2` |
+| `hubbard(n, t=1.0, U=4.0)` | $-t \sum_{i\sigma} (c^\dagger_{i\sigma} c_{i+1\sigma} + h.c.) + U \sum_i n_{i\uparrow} n_{i\downarrow}$ | `fZ2` |
+| `spinless_tv(n, t=1.0, V=1.0)` | $-t \sum_i (c^\dagger_i c_{i+1} + h.c.) + V \sum_i n_i n_{i+1}$ | `fZ2` |
+| `sun_heisenberg(n, N, J=1.0)` | $J \sum_i P_{i,i+1}$ on SU($N$) fundamentals | SU($N$) |
+
+Each takes `symbolic=`, passed to the builder below. Every function's docstring carries
+its sign and ordering conventions — the basis a grading puts the site in is part of the
+model, so read it before comparing a number against another library. The rest of this
+page is what to do when your Hamiltonian is not one of these, which is the usual case.
 
 ## Sites
 
