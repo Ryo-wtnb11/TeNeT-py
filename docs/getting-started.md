@@ -45,8 +45,24 @@ Each entry of `site.ops` is a rank-3 tensor: the two physical legs plus a `D=1` 
 carrying the charge the operator emits. That third leg is what makes `S+` expressible —
 it changes $2S^z$ by $-2$, and the leg carries the change.
 
-Now the Hamiltonian. `MPO.from_terms` takes `(coefficient, [(operator, site), ...])`
-tuples, with the identity implied on every site a term does not name:
+Now the Hamiltonian. The spin-1/2 Heisenberg chain is
+
+$$
+H \;=\; J\sum_i \mathbf{S}_i\cdot\mathbf{S}_{i+1}
+  \;=\; J\sum_i\left[
+      S^z_i S^z_{i+1}
+      + \tfrac{1}{2}\left(S^+_i S^-_{i+1} + S^-_i S^+_{i+1}\right)
+  \right],
+$$
+
+at $J = 1$ and open boundaries, so the sum runs $i = 0,\dots,N-2$. The rewriting on the
+right is what makes it expressible under U(1): $S^xS^x + S^yS^y$ is not $S^z$-conserving
+term by term, while $S^+_iS^-_{i+1}$ and $S^-_iS^+_{i+1}$ each move one unit of charge
+from one site to the next and so are.
+
+`MPO.from_terms` takes `(coefficient, [(operator, site), ...])` tuples, with the identity
+implied on every site a term does not name — one tuple per term of the sum above, in the
+same order:
 
 ```python
 >>> from tenet.network import MPO
@@ -62,11 +78,29 @@ tuples, with the identity implied on every site a term does not name:
 
 ```
 
+The three `terms.append` lines are the three summands: coefficient $1$ on
+$S^z_iS^z_{i+1}$, coefficient $\tfrac12$ on each of $S^+_iS^-_{i+1}$ and
+$S^-_iS^+_{i+1}$. Nothing else is implied, and nothing is normalized behind your back.
+
 You declared no MPO bond spaces. The builder derives them: every term is a bond-1 MPO,
 they are stacked with a direct sum, and two compressing SVD sweeps collapse the stack to
 the operator Schmidt rank. The grading comes out of the operators' own charges.
 
-The starting state is a Néel product state, one physical sector per site:
+The state is a matrix product state: its $2^N$ coefficients are stored as $N$ small
+tensors,
+
+$$
+\Psi_{s_1 s_2\cdots s_N} \;=\; \sum_{\{\alpha\}}
+A^{s_1}_{\alpha_0\alpha_1} A^{s_2}_{\alpha_1\alpha_2}\cdots A^{s_N}_{\alpha_{N-1}\alpha_N},
+$$
+
+with the boundary indices $\alpha_0$ and $\alpha_N$ one-dimensional, so the product
+closes to a number. `psi[n]` is $A^{s_n}$, a rank-3 `SymmetricTensor` whose legs are
+`(left bond OUT, physical OUT, right bond IN)` — axis 0 is $\alpha_{n-1}$, axis 1 is
+$s_n$, axis 2 is $\alpha_n$.
+
+The starting state is a Néel product state, one physical sector per site — every bond
+$D = 1$, so the sum above has exactly one term:
 
 ```python
 >>> from tenet.network import MPS
@@ -133,6 +167,40 @@ True
 
 ```
 
+## The four objects underneath
+
+Nothing above named a leg or a space, because `spin_half()` and `MPO.from_terms` built
+them. One level down there are exactly four objects, and the rest of the library is them:
+
+$$
+\underbrace{\texttt{GradedSpace}}_{\text{which sectors}}
+\;\longrightarrow\;
+\underbrace{\texttt{Leg}}_{\text{one axis}}
+\;\longrightarrow\;
+\underbrace{\texttt{TensorStructure}}_{\text{which blocks exist}}
+\;\longrightarrow\;
+\underbrace{\texttt{SymmetricTensor}}_{\text{the numbers}}
+$$
+
+- A **`GradedSpace`** is $V = \bigoplus_a \mathbb{C}^{m_a}\otimes V_a$: a mapping from
+  symmetry sectors $a$ to degeneracies $m_a$. `site.phys` above is one.
+- A **`Leg`** attaches a space to one tensor axis with two independent flags. `side` is
+  `OUT` or `IN` — the axis belongs to the map's codomain or its domain — and `dual` says
+  whether the axis carries $V$ or $V^{*}$. They are independent, and an input is never
+  identified with a dual: which of the two ends of a wire a leg supplies is `side`, and
+  which vector space it lives in is `dual`.
+- A **`TensorStructure`** is everything derivable from the legs and no numbers: which
+  fusion channels are allowed, hence which blocks exist and what shape each has. It is
+  frozen and hashable, which is what lets it be a `jax.jit` cache key.
+- A **`SymmetricTensor`** is a structure plus one dense array per allowed channel.
+
+What the symmetry buys is the third object. A rank-$k$ tensor over $d$-dimensional
+spaces has $d^k$ entries; an *equivariant* one has far fewer independent ones, because
+every fusion channel that does not couple to the identity is forced to zero. Those
+entries are not stored and set to zero — they have no block to live in, so they cannot be
+written even by mistake, and no operation spends time on them. A symmetry violation
+therefore surfaces as a *refusal* at construction rather than as small numbers later.
+
 ## Checking yourself against dense NumPy
 
 Every tensor in the library expands to an ordinary array with
@@ -167,6 +235,8 @@ for every operation in the library.
 
 ## Where to go next
 
+- [Which operation do I want?](guide/api-map.md) — the goal-to-call map for the whole
+  public API, sorted by how much categorical machinery each call exposes.
 - [Tensors, legs and spaces](guide/tensors-legs-spaces.md) — `GradedSpace`, `Leg`,
   `SymmetricTensor`, `TensorStructure`.
 - [Symmetries and providers](guide/symmetries-and-providers.md) — sector conventions

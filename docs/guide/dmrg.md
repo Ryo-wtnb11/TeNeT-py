@@ -22,6 +22,48 @@ place, with two-site updates. Everything on this page runs on the core install: 
 
 ```
 
+## What is being minimized
+
+DMRG minimizes the Rayleigh quotient over matrix product states of a bounded bond
+dimension:
+
+$$
+E[\psi] \;=\; \frac{\langle\psi\vert H\vert\psi\rangle}{\langle\psi\vert\psi\rangle},
+\qquad
+\Psi_{s_1\cdots s_N} \;=\; \sum_{\{\alpha\}}
+A^{s_1}_{\alpha_0\alpha_1} A^{s_2}_{\alpha_1\alpha_2}\cdots A^{s_N}_{\alpha_{N-1}\alpha_N},
+$$
+
+with $\alpha_0$ and $\alpha_N$ one-dimensional — that is the `D=1` boundary leg every
+`MPS` carries. Site $n$'s tensor is `psi[n]`, whose legs are
+`(left bond OUT, physical OUT, right bond IN)`, so $\alpha_{n-1}$, $s_n$, $\alpha_n$ are
+axes 0, 1, 2 in that order. Charge flows left to right, $\alpha_{n-1} \otimes s_n \to
+\alpha_n$, which is why a non-unit sector on bond 0 *is* the targeted total charge.
+
+The minimization is not global. A sweep fixes every tensor but two, which makes $E$ a
+Rayleigh quotient in the remaining variables alone: with the rest of the chain in
+canonical form the norm denominator is the identity, and the stationarity condition is an
+ordinary Hermitian eigenproblem for the two-site block
+$\Theta_{\alpha_{n-1} s_n s_{n+1} \alpha_{n+1}}$,
+
+$$
+H^{\mathrm{eff}}_{(n,n+1)}\,\Theta \;=\; E\,\Theta,
+$$
+
+where $H^{\mathrm{eff}}$ is the left environment, the two MPO tensors $W_n$, $W_{n+1}$ and
+the right environment, contracted around the open block.
+[`Env.heff2`][tenet.network.Env.heff2] is that operator as a matrix-vector product — it is
+never formed as a matrix — and [`lanczos`][tenet.network.lanczos] finds its lowest
+eigenpair. The updated $\Theta$ is then split back into two site tensors by a truncated
+SVD, and *that* split is where the bond dimension bound enters:
+[Truncation](truncation.md) is what it means.
+
+Two consequences worth keeping in view. The energy is variational, so a converged
+`out.energy` is an upper bound on the true ground-state energy. And $H^{\mathrm{eff}}$ is
+built from the same graded tensors as everything else, so it is block diagonal in the
+symmetry sector: the eigensolver cannot leave the sector the boundary legs fixed, and
+`dmrg_` needs no constraint machinery to keep it there.
+
 ## The driver
 
 `dmrg_` right-canonicalizes `psi` first, so a freshly seeded random MPS or a product

@@ -1,14 +1,50 @@
 # 2D Ising CTMRG
 
-The classical 2D Ising partition function through `EnvCTMc4v`. The Boltzmann tensor is
-symmetric under every permutation of its four legs — the full C4v point group — so one
-corner and one edge describe its whole environment.
+The free energy per site of the classical 2D Ising model,
 
-- `rel` is the free energy against Onsager's exact result.
-- In the ordered phase the corner spectrum is exactly two-fold degenerate: the doublet
-  spans the two Z2 parity sectors.
+$$
+H = -\sum_{\langle ij\rangle} s_i s_j,
+\qquad
+Z(\beta) = \sum_{\{s\}} e^{-\beta H},
+\qquad
+\beta f = -\frac{1}{N}\ln Z,
+$$
 
-Explained in the [CTMRG tutorial](../tutorials/ctmrg.md).
+computed by contracting the network $Z$ is with a corner-and-edge environment, and
+compared with Onsager's closed form. Runs on a core install — no JAX.
+
+**The network.** Splitting each bond weight symmetrically,
+$e^{\beta ss'} = \sum_\mu W_{s\mu}W_{s'\mu}$ with $W = \bigl(\begin{smallmatrix}
+\sqrt{\cosh\beta} & \sqrt{\sinh\beta}\\ \sqrt{\cosh\beta} & -\sqrt{\sinh\beta}
+\end{smallmatrix}\bigr)$, and summing out each site spin gives one rank-4 tensor per site,
+
+$$
+a_{tlbr} = \sum_{s=\pm1} W_{st}W_{sl}W_{sb}W_{sr},
+$$
+
+so $Z$ is the translation-invariant contraction of copies of `ising_bulk(beta)`. The
+columns of $W$ are the $\mathbb{Z}_2$ parity basis, which is why `ising_bulk` grades its
+four legs by `Z2`: the eight entries with an odd number of odd legs cancel in the sum over
+$s$ and have no block to live in. All four legs are `OUT` and identical — the C4v ansatz's
+signature, and what lets one corner and one edge describe the whole environment.
+
+**The approximation.** `EnvCTMc4v.iterate_(max_bond=chi)` converges a corner $C$ and an
+edge $T$ standing for a quadrant and a half-row, each truncated to $\chi = 24$ states.
+`log_kappa` then reads off $\ln\kappa = \frac1N \ln Z$ by Baxter's telescoping,
+$\kappa = Z_{(L+1)^2} Z_{L^2} / Z_{(L+1)L} Z_{L(L+1)}$, in which every environment tensor
+and gauge factor cancels.
+
+**Checks.**
+
+- `rel` is $\lvert \beta f_{\mathrm{TN}} / \beta f_{\mathrm{Onsager}} - 1\rvert$: $10^{-16}$
+  off criticality, $2\times 10^{-6}$ at $\beta_c$ where the correlation length outruns any
+  finite $\chi$.
+- In the ordered phase the corner spectrum is exactly two-fold degenerate, the doublet
+  spanning the two Z2 parity sectors — spontaneous symmetry breaking read off the
+  environment.
+
+Derivation in the [CTMRG tutorial](../tutorials/ctmrg.md); differentiating this same
+contraction is [2D Ising thermodynamics by AD](ising-thermo.md).
 
 ## Source
 

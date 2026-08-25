@@ -11,10 +11,81 @@ is the Ising half through the library, on a core install; its output is committe
 writes a C4v CTMRG out on the tensor layer and adds the iPEPS gradient; it needs the
 `jax` extra.
 
+[`examples/ising_thermo.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/ising_thermo.py)
+differentiates the library lane's contraction twice; its output is on
+[2D Ising thermodynamics by AD](../examples/ising-thermo.md).
+
 ```sh
 uv run python examples/ising2d.py
+uv run --extra jax python examples/ising_thermo.py
 uv run --extra jax python examples/toy_codes/ctmrg.py
 ```
+
+## The two problems, stated
+
+**Classical Ising.** $H = -\sum_{\langle ij\rangle} s_i s_j$ on the square lattice with
+$s_i = \pm 1$, and
+
+$$
+Z(\beta) = \sum_{\{s\}} e^{-\beta H},
+\qquad
+\beta f = -\lim_{N\to\infty}\frac{1}{N}\ln Z .
+$$
+
+$Z$ is already a tensor network. Split each bond weight symmetrically,
+$e^{\beta s s'} = \sum_\mu W_{s\mu}W_{s'\mu}$ with
+
+$$
+W = \begin{pmatrix}\sqrt{\cosh\beta} & \sqrt{\sinh\beta}\\[2pt]
+                   \sqrt{\cosh\beta} & -\sqrt{\sinh\beta}\end{pmatrix},
+$$
+
+and sum out each site spin, leaving one rank-4 tensor per site:
+
+$$
+a_{tlbr}(\beta) = \sum_{s=\pm 1} W_{st}W_{sl}W_{sb}W_{sr},
+\qquad
+Z = \operatorname{tTr}\bigotimes_{\text{sites}} a .
+$$
+
+The columns of $W$ are the $\mathbb{Z}_2$ parity basis — column $0$ is even in $s$,
+column $1$ odd — so the sum over $s$ annihilates every entry whose four leg parities
+multiply to odd. Those eight entries have no block in a graded `SymmetricTensor`; the
+grading *is* the model, not a claim checked afterwards.
+
+**iPEPS.** A single site tensor $A^{s}_{lurd}$ tiles the plane into a state
+$\lvert\Psi(A)\rangle$, and the objective is
+
+$$
+E(A) = \frac{\langle\Psi(A)\vert H\vert\Psi(A)\rangle}
+             {\langle\Psi(A)\vert\Psi(A)\rangle}.
+$$
+
+Both quantities are contractions of an infinite network, and CTMRG is how both are
+approximated.
+
+## What the environment approximates
+
+CTMRG replaces the infinite lattice around a patch by a corner tensor $C$ and an edge
+tensor $T$: $C$ stands for a whole quadrant of the lattice, $T$ for a half-row, each
+compressed onto an environment bond of dimension $\chi$. The sweep alternates *absorb* —
+grow $C$ and $T$ by one row/column of bulk tensors — and *renormalize* — project the
+grown object back onto $\chi$ states with an isometry read off an SVD. The fixed point of
+that map is the environment.
+
+For the classical model the observable then comes out by Baxter's corner-transfer
+telescoping,
+
+$$
+\kappa = \frac{Z_{(L+1)\times(L+1)}\; Z_{L\times L}}
+              {Z_{(L+1)\times L}\; Z_{L\times(L+1)}},
+\qquad
+\ln \kappa = \frac{1}{N}\ln Z,
+$$
+
+since $(L+1)^2 + L^2 - 2L(L+1) = 1$: three patches built from the same $C$ and $T$
+differ by exactly one site, so every environment tensor and every gauge factor cancels.
+That ratio is `log_kappa` in both example files, and $\beta f = -\ln\kappa$.
 
 ## The two lanes
 
@@ -126,10 +197,46 @@ That is the same decide-outside / project-inside pairing as
 array-free metadata — so it enters `jit` as a cache key rather than as a flattened leaf.
 
 The gradient is a **truncated backprop through `k` unrolled moves**, not the implicit
-fixed point. Its oracle is $\mathrm{d}(\beta f)/\mathrm{d}\beta$ from Onsager's closed
-form, which `tests/integration/test_ctmrg.py` checks the unrolled moves against.
+fixed point. The two are different objects: the implicit derivative differentiates the
+fixed-point *condition* $C = \mathcal{F}(C, a(\beta))$ and needs a linear solve inside the
+VJP; this differentiates a composition of $k$ concrete moves whose initial condition is a
+constant. They agree in the limit $k \to \infty$, and the difference at finite $k$ is
+measurable rather than a caveat.
+
+Its oracle is Onsager's closed form, twice over:
+
+$$
+u = \frac{\partial(\beta f)}{\partial\beta},
+\qquad
+c_V = -\beta^{2}\frac{\partial^{2}(\beta f)}{\partial\beta^{2}} .
+$$
+
+`tests/integration/test_ctmrg.py` checks $u$ against $\mathrm{d}(\beta f)/\mathrm{d}\beta$,
+and [2D Ising thermodynamics by AD](../examples/ising-thermo.md) takes the second
+derivative as well — where the finite $k$ becomes visible, because the environment sits at
+its fixed point when the traced region starts, so $u$ is converged at $k = 2$ while $c_V$
+is still moving at $k = 8$.
 
 ## The iPEPS half
+
+The variational chain is
+
+$$
+A \;\rightarrow\; \lvert\Psi(A)\rangle \;\rightarrow\; \{C, T\}
+\;\rightarrow\; E(A) \;\rightarrow\; \nabla_A E \;\rightarrow\; A' = A - \eta\,\nabla_A E ,
+$$
+
+with $E(A)$ evaluated as a ratio of two contractions of the same $2\times 1$ patch — the
+numerator with the two sites' physical legs held open for $h$ to close, the denominator
+with them closed against each other. The environment is only defined up to a scale, so
+the *ratio* is the observable and the numerator alone is not.
+
+`jax.grad` differentiates that whole chain, including the environment: the same
+decide-outside / project-inside pairing as the Ising half, with the converged $(C,T)$ as
+a constant initial condition and $k$ unrolled moves carrying the derivative. The gradient
+is a `SymmetricTensor` with $A$'s own structure, so `jax.tree.map(lambda p, g: p - lr*g,
+a, grad)` touches only block values and the updated ansatz is symmetric by construction —
+no projection back onto the symmetric manifold, because the step never left it.
 
 A single-site iPEPS over a **self-conjugate** virtual space, averaged over the eight
 elements of C4v, with a random symmetric two-site `h`. It exercises graded truncation,

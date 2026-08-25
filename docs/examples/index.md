@@ -22,6 +22,7 @@ Two kinds of example:
 | [Heisenberg, SU(2)](su2-heisenberg.md) | `examples/su2_heisenberg.py` | the U(1) run in the same script |
 | [Heisenberg, SU(3)](su3-heisenberg.md) | `examples/su3_heisenberg.py` | dense ED in the same script, N=6 |
 | [2D Ising CTMRG](ising2d.md) | `examples/ising2d.py` | Onsager's free energy |
+| [2D Ising thermodynamics by AD](ising-thermo.md) | `examples/ising_thermo.py` (needs `jax`) | Onsager's free energy and its first two $\beta$-derivatives |
 
 ## Written on the tensor layer
 

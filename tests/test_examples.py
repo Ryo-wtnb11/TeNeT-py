@@ -196,6 +196,97 @@ def test_ising2d_page_output_is_current(ising_run):
     check_example_page("ising2d.md", _STDOUT["ising2d"])
 
 
+# --- the differentiable lane: examples/ising_thermo.py (needs jax) ------------------
+
+
+@pytest.fixture(scope="module")
+def thermo_run():
+    """``ising_thermo.main()`` at its defaults, run once.
+
+    Skipped without JAX, as every AD-facing test in the suite is. It is the slowest
+    entry in this module (~20 s: two converged environments, three reverse-mode passes
+    each, plus the K scan) and every assertion below reads the same run.
+    """
+    pytest.importorskip("jax")
+    import ising_thermo
+
+    return _capture("ising_thermo", ising_thermo.main)
+
+
+def test_ising_thermo_traced_bulk_is_the_same_tensor():
+    """``from_blocks`` naming the blocks and ``from_dense`` projecting onto them agree.
+
+    The traced builder exists only because ``from_dense`` asks a concrete-value question
+    a tracer cannot answer; if the two ever stopped being the same tensor, every number
+    on the page would be measuring a different model from ``examples/ising2d.py``.
+    """
+    pytest.importorskip("jax")
+    import ising_thermo
+    import numpy as np
+
+    beta = 0.4
+    np.testing.assert_allclose(
+        np.asarray(ising_thermo.traced_bulk(beta).to_dense()),
+        ising2d.ising_bulk(beta).to_dense(),
+        rtol=1e-14,
+        atol=1e-14,
+    )
+
+
+def test_ising_thermo_free_energy_matches_onsager(thermo_run):
+    """The undifferentiated quantity first: nothing downstream means anything without it."""
+    results, _ = thermo_run
+    for beta, (bf, *_) in results.items():
+        assert abs(bf / ising2d.onsager(beta) - 1) < 1e-12
+
+
+def test_ising_thermo_internal_energy_matches_onsager(thermo_run):
+    """``d(beta f)/d beta`` from ``jax.grad`` against Onsager's own derivative.
+
+    ``1e-6`` relative is the level the *oracle* is good to: a central difference of a
+    1e-12-accurate quadrature at ``h = 1e-4``. The AD value is not measurably worse than
+    that, which is the statement -- the environment is at its fixed point when the traced
+    region starts, so the first derivative is already converged in ``K``.
+    """
+    results, _ = thermo_run
+    for _, (_, u, _, u_ref, _) in results.items():
+        assert abs(u - u_ref) / max(1.0, abs(u_ref)) < 1e-6
+
+
+def test_ising_thermo_specific_heat_matches_onsager(thermo_run):
+    """``-beta^2 d^2(beta f)/d beta^2`` from ``jax.grad(jax.grad(...))``.
+
+    Looser than the first derivative, and the loosening is physics rather than slop:
+    :func:`test_ising_thermo_specific_heat_converges_in_the_unrolling` shows the residual
+    is the finite unrolling, not the environment.
+    """
+    results, _ = thermo_run
+    for _, (_, _, cv, _, cv_ref) in results.items():
+        assert abs(cv / cv_ref - 1) < 1e-3
+
+
+def test_ising_thermo_specific_heat_converges_in_the_unrolling(thermo_run):
+    """The truncated backprop, measured: ``c_V(K)`` approaches Onsager monotonically.
+
+    This is the assertion that makes "differentiation through ``K`` unrolled moves, not
+    an implicit fixed-point derivative" a checkable claim rather than a caveat. The
+    environment is *converged* before the traced region starts, so ``beta f`` and its
+    first derivative do not move with ``K`` at all; the second derivative does, because
+    the ``K`` moves have to carry the environment's second-order response themselves.
+    """
+    import ising_thermo
+
+    _, scan = thermo_run
+    _, cv_ref = ising_thermo.onsager_derivatives(0.5)
+    errors = [abs(cv - cv_ref) for _, cv in scan]
+    assert errors == sorted(errors, reverse=True), scan
+    assert errors[-1] < errors[0] / 10, scan
+
+
+def test_ising_thermo_page_output_is_current(thermo_run):
+    check_example_page("ising-thermo.md", _STDOUT["ising_thermo"])
+
+
 @pytest.fixture(scope="module")
 def toy_chain():
     """``tebd.main()`` and ``exact.main()``, run once, with their stdout kept for the pages.
