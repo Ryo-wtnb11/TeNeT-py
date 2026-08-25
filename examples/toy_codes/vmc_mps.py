@@ -77,8 +77,12 @@ def build_mps(n_sites: int, *, provider: str = "u1", seed: int = 0) -> list[Symm
     not rank 0. Charge flows left to right: ``bond_i (x) phys_i -> bond_{i+1}``.
     """
     phys, bond, trivial = SPACES[provider]
+    # Trivial at both ends, the interior bond everywhere between: the two D=1 boundaries
+    # are what pin the total charge and what make the closed network rank 2.
     spaces = [trivial, *[bond] * (n_sites - 1), trivial]
     return [
+        # A distinct seed per site, and to_backend("jax") here rather than later: the
+        # blocks have to be JAX arrays before grad ever sees them as pytree leaves.
         SymmetricTensor.random(
             (Leg(spaces[i], OUT), Leg(phys, OUT), Leg(spaces[i + 1], IN)), seed=seed + i
         ).to_backend("jax")
@@ -89,6 +93,8 @@ def build_mps(n_sites: int, *, provider: str = "u1", seed: int = 0) -> list[Symm
 def build_h(provider: str = "u1", seed: int = 100) -> SymmetricTensor:
     """A random two-site operator on legs ``(P OUT, P OUT, P IN, P IN)``."""
     phys = SPACES[provider][0]
+    # Random block values, but the legs make it symmetric by construction: an operator
+    # that cannot break the symmetry, whatever numbers are drawn.
     legs = (Leg(phys, OUT), Leg(phys, OUT), Leg(phys, IN), Leg(phys, IN))
     return SymmetricTensor.random(legs, seed=seed).to_backend("jax")
 
@@ -106,8 +112,12 @@ def canonicalize(mps: list[SymmetricTensor]) -> list[SymmetricTensor]:
     ``A_0 = U @ S @ Vh`` exactly, so absorbing ``S @ Vh`` into ``A_1`` leaves the
     energy unchanged; this is a gauge transformation, not an approximation.
     """
+    # Default partition: site 0's last leg against the rest, so u is the new site tensor
+    # and s @ vh is the gauge factor that has to go somewhere.
     u, s, vh = tenet.linalg.svd(mps[0])
     # (bond OUT, old bond IN) @ (old bond OUT, phys OUT, next IN) -> (bond, phys, next)
+    # Pushing s @ vh right leaves the product of the chain identical, so the energy below
+    # is unchanged -- and u is now an isometry, which is what "canonical" means here.
     absorbed = tenet.einsum("xy,yzw->xzw", tenet.einsum("xy,yz->xz", s, vh), mps[1])
     return [u, absorbed, *mps[2:]]
 
@@ -151,10 +161,15 @@ def contract(mps: list[SymmetricTensor]) -> SymmetricTensor:
     what makes the ``jit`` behaviour easy to reason about: one static chain, one
     trace. It collapses to a single call once a multi-operand contraction path lands.
     """
+    # a is the left boundary, z the running open right bond, and one letter of _PHYS per
+    # site accumulates in between -- the equation grows by one physical label per step.
     psi, eq = mps[0], "a" + _PHYS[0] + "z"
     for i, a in enumerate(mps[1:], start=1):
         out = eq[:-1] + _PHYS[i] + "y"
+        # z is summed away: the running bond meets the next site's left leg, and y takes
+        # over as the new open right bond.
         psi = tenet.einsum(f"{eq},z{_PHYS[i]}y->{out}", psi, a)
+        # Rename y back to z, so the next iteration's equation is the same shape.
         eq = out[:-1] + "z"
     return psi
 
@@ -168,12 +183,19 @@ def energy(mps: list[SymmetricTensor], h: SymmetricTensor):
     which ``tenet.full_trace`` closes to the scalar it holds.
     """
     psi = contract(canonicalize(mps))
+    # Two boundary legs on top of the physical ones, hence ndim - 2 sites.
     n = psi.ndim - 2
     phys, rest = _PHYS[:2], _PHYS[2:n]
+    # h eats the first two physical legs (lowercase) and emits B, C in their place; every
+    # other site's leg rides along untouched.
     hpsi = tenet.einsum(f"BC{phys},a{phys}{rest}z->aBC{rest}z", h, psi)
     bra = tenet.adjoint(psi)
+    # Close every physical leg and the left boundary a, leaving the two right-boundary
+    # legs s and z open: a rank-2 map on the trivial space.
     num = tenet.einsum(f"aBC{rest}s,aBC{rest}z->sz", bra, hpsi)
     den = tenet.einsum(f"a{phys}{rest}s,a{phys}{rest}z->sz", bra, psi)
+    # The Rayleigh quotient: dividing by the norm is what makes the gradient point at the
+    # eigenvector rather than merely at a shorter vector.
     return tenet.full_trace(num) / tenet.full_trace(den)
 
 
@@ -181,7 +203,11 @@ def step(mps: list[SymmetricTensor], h: SymmetricTensor, lr: float):
     """One plain SGD step. ``optax`` would slot in here; one line does not need it."""
     import jax
 
+    # grad with respect to the first argument only: h is a constant of the problem.
     e, grads = jax.value_and_grad(energy)(mps, h)
+    # tree.map walks each tensor's blocks as pytree leaves, so the update touches only the
+    # block values and the grading is carried through untouched -- the step cannot leave
+    # the symmetric manifold, which is why no projection back onto it is needed.
     return [jax.tree.map(lambda p, g: p - lr * g, t, g) for t, g in zip(mps, grads, strict=True)], e
 
 
@@ -198,6 +224,8 @@ def main(n_sites: int = 4, steps: int = 20, seed: int = 5, provider: str = "u1",
     mps, h = build_mps(n_sites, provider=provider, seed=seed), build_h(provider)
     trace = []
     for _ in range(steps):
+        # The energy returned is the one *before* this step's update, so the trace reads
+        # as the objective at each visited point rather than lagging by one.
         mps, e = step(mps, h, lr)
         trace.append(float(e))
     return trace
@@ -207,6 +235,8 @@ if __name__ == "__main__":
     import jax
 
     jax.config.update("jax_enable_x64", True)  # tests/conftest.py does this for the suite
+    # Both providers on the same pipeline: nothing between build_mps and the SGD step
+    # names a symmetry, so swapping U(1) for SU(2) changes only the spaces.
     for provider in ("u1", "su2"):
         trace = main(provider=provider)
         print(f"{provider}: " + " ".join(f"{e:+.6f}" for e in trace))

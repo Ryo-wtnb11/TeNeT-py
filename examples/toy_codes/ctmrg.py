@@ -153,12 +153,17 @@ def c4v(a: SymmetricTensor) -> SymmetricTensor:
     ``{q = 0: 1, q = -1: 1}`` -- there is no rotation-invariant tensor to reach. The iPEPS
     half of this file is plumbing, said out loud above, and this is the shape of that.
     """
+    # Axis 0 is physical and stays put; (1,2) and (3,4) are the l/u and r/d pairs, so the
+    # permutation is the mirror. Averaging a tensor with its mirror image is the
+    # projection onto the symmetric part, and the /2 is what makes it idempotent.
     return (a + tenet.transpose(a, (0, 2, 1, 4, 3))) / 2
 
 
 def build_ipeps(provider: str = "u1", seed: int = 1) -> SymmetricTensor:
     """A random single-site iPEPS, legs ``(P OUT, l OUT, u OUT, r IN, d IN)``."""
     phys, virt = SPACES[provider]
+    # l/u OUT and r/d IN, so a site's r meets its right neighbour's l without a bend when
+    # the lattice is tiled -- and l/u sharing a side is what makes the mirror a transpose.
     legs = (Leg(phys, OUT), Leg(virt, OUT), Leg(virt, OUT), Leg(virt, IN), Leg(virt, IN))
     return SymmetricTensor.random(legs, seed=seed).to_backend("jax")
 
@@ -205,6 +210,8 @@ def ones(legs: Sequence[Leg]) -> SymmetricTensor:
     and project.
     """
     structure = TensorStructure(tuple(legs))
+    # block_order is every sector combination the grading allows, block_shape its
+    # degeneracies -- so no dense array is built and nothing has to be projected out.
     blocks = {key: np.ones(structure.block_shape(key)) for key in structure.block_order}
     return SymmetricTensor.from_blocks(legs, blocks)
 
@@ -220,10 +227,15 @@ def spectrum(s: SymmetricTensor) -> list[float]:
     """
     qdim = s.provider.qdim
     out = [
+        # One stored value stands for qdim dense ones, and sqrt(qdim) is the weight that
+        # makes a multiplet's entry comparable with an Abelian sector's.
         float(m[i, i]) * qdim(sector) ** 0.5
         for sector, m in tenet.to_matrices(s).items()
         for i in range(m.shape[0])
     ]
+    # One descending list across all sectors: the convergence test compares spectra
+    # entrywise, and a per-sector ordering would make that comparison meaningless as soon
+    # as the truncation moved weight from one sector to another.
     return sorted(out, reverse=True)
 
 
@@ -265,13 +277,22 @@ def single_layer(bulk: SymmetricTensor) -> Absorb:
         Legs ``(X OUT, V IN, X IN, V IN)``. The two index pairs are the diagonal mirror of
         each other, so this is a bilinear form rather than a map.
         """
+        # a/b are the corner's two environment legs; each is eaten by one edge, and the
+        # two edges hand their virtual legs e and g to the bulk tensor. What is left --
+        # c and f, the edges' outgoing environment legs, and h and i, the bulk's r and d
+        # -- is the corner grown by one row and one column.
         return tenet.einsum("ab,ace,fbg,gehi->chfi", c, e, e, bulk)
 
     def edge(e: SymmetricTensor, p: SymmetricTensor) -> SymmetricTensor:
         """One edge with one bulk tensor absorbed -- legs ``(X IN, X OUT, V OUT, V IN,
         V IN)`` -- then projected with ``p`` on its incoming pair and ``adjoint(p)`` on its
         outgoing one."""
+        # One bulk tensor absorbed: the edge's virtual leg e meets the bulk's u, leaving
+        # the bulk's l (g), r (h) and d (i) open beside the edge's two environment legs.
         big_e = tenet.einsum("abe,gehi->abghi", e, bulk)
+        # The projector cuts (a, g) and (b, h) -- environment leg paired with the bulk leg
+        # it just grew -- back down to chi. u on the incoming pair, adjoint(u) on the
+        # outgoing one, because the two are related by the mirror inside svd(axes=...).
         return tenet.einsum("abghi,agx,bhy->xyi", big_e, p, tenet.adjoint(p))
 
     return Absorb(corner, edge)
@@ -289,6 +310,9 @@ def layers(ket: SymmetricTensor) -> tuple[SymmetricTensor, SymmetricTensor]:
     bra's bonds meet the ``dual=True`` bra bonds of the rank-4 environment edge. The fused
     convention this replaced hid the same flip inside a ``fuse`` of a ``(V, V*)`` pair.
     """
+    # adjoint conjugates and flips every side; the repartition then bends l and u back to
+    # the codomain, which is what turns their dual flag on. That flag is precisely what
+    # lets these bonds meet the environment edge's dual=True bra legs.
     return ket, tenet.repartition(tenet.adjoint(ket), (1, 2), (0, 3, 4))
 
 
@@ -314,15 +338,26 @@ def double_layer(ket: SymmetricTensor, bra: SymmetricTensor) -> Absorb:
         ``contract_enlarged_corner`` return, ``permute((2,0,4),(3,1,5))``, in tenet
         spelling. Its two index triples are the diagonal mirror of each other, exactly as
         the single-layer corner's two pairs are."""
+        # Environment first, and only the environment: corner plus two edges, each edge
+        # carrying its ket bond and its bra bond separately (lowercase/uppercase).
         env = tenet.einsum("ab,acjJ,fbgG->cfgGjJ", c, e, e)  # (X, X, l_k, l_b, u_k, u_b)
+        # Then the ket, closing the two ket bonds g and j. Its physical leg s stays open
+        # for exactly one step -- long enough for the bra to close it.
         env = tenet.einsum("cfgGjJ,sgjri->csfGJri", env, ket)  # rank 7, physical open
+        # Then the bra, closing s and the two bra bonds. Peak rank 7, never 8: the double
+        # layer is never formed, which is what keeps this at chi^2 D^4 rather than D^8.
         return tenet.einsum("csfGJri,GJsRI->crRfiI", env, bra)
 
     def edge(e: SymmetricTensor, p: SymmetricTensor) -> SymmetricTensor:
         """``T @ P``, ket, bra, ``Pt`` -- four steps, peak rank 7, result rank 4."""
+        # The projector goes on *first*: it cuts the environment leg a to x before the
+        # site is absorbed, so every step after this carries chi' and not a full chi.
         t = tenet.einsum("abuU,alLx->buUlLx", e, p)
+        # Ket, then bra, same order as the corner. Physical s is open for one step only.
         t = tenet.einsum("buUlLx,slurd->bULxsrd", t, ket)
         t = tenet.einsum("bULxsrd,LUsRD->bxrRdD", t, bra)
+        # The second projector closes the other environment leg, and the edge comes back
+        # rank 4: only X was ever truncated, the two virtual bonds are untouched.
         return tenet.einsum("bxrRdD,brRy->xydD", t, tenet.adjoint(p))
 
     return Absorb(corner, edge)
@@ -353,8 +388,11 @@ def init_env(site: SymmetricTensor, *bonds: Leg) -> tuple[SymmetricTensor, Symme
     growing from one dimension takes an extra sweep or two to fill the space;
     ``tenet.isometry``/``random_isometry`` slot straight in at that point.
     """
+    # The unit sector at degeneracy 1: a one-dimensional environment, which is what says
+    # "nothing has been absorbed yet". The environment grows one bulk leg per move.
     unit = GradedSpace.new(site.provider, {site.provider.unit: 1})
     c = tenet.identity((Leg(unit, OUT),), dtype=site.dtype, like=site.backend)
+    # The edge's virtual legs are the caller's; only its two environment legs are trivial.
     return c, ones((Leg(unit, IN), Leg(unit, OUT), *bonds)).to_backend(site.backend)
 
 
@@ -383,6 +421,8 @@ def double_layer_ctm(ket: SymmetricTensor) -> tuple[Absorb, SymmetricTensor, Sym
     """
     bra = layers(ket)[1]
     virt = ket.legs[1].space
+    # Two virtual legs on the edge, the same space twice: the second carries dual=True so
+    # it meets the bra's bent bond, which is why the pair is never fused into one.
     seed = init_env(ket, Leg(virt, IN), Leg(virt, IN, dual=True))
     return double_layer(ket, bra), *seed
 
@@ -427,13 +467,22 @@ def move(
     when it is positive. Fixing the indefinite case wants a fixed-bond ``eigh`` -- which the
     library does not offer -- or four directional moves.
     """
+    # Grow first: the corner takes on one more row and column, so its index groups now
+    # carry X (x) V and are too wide to keep.
     big_c = absorb.corner(c, e)
     n = big_c.ndim // 2  # (0..n-1 | n..2n-1): 2 for a single layer, 3 for a double one
     axes = (tuple(range(n)), tuple(range(n, 2 * n)))
     if bond is None:
+        # Outside a trace: the singular values decide which sectors survive, so the bond
+        # space that comes back is data-dependent -- which is exactly what a trace forbids.
         p, s, _ = tenet.linalg.svd_truncated(big_c, axes, max_bond=chi)
     else:
+        # Inside: the same factorization onto a space decided out there. Shape-static, so
+        # it traces; the truncation is still happening, it is just no longer choosing.
         p, s, _ = tenet.linalg.svd(big_c, axes, bond=bond)
+    # s is already adjoint(u) . big_c . v, so it *is* the projected corner -- forming it
+    # would be the same numbers through two more contractions. Both are renormalized
+    # because the corner norm otherwise grows like the partition function itself.
     return normalized(s), normalized(absorb.edge(e, p)), p.legs[-1].space
 
 
@@ -469,8 +518,13 @@ def converge(
     """
     bond, previous = None, spectrum(c)
     for _ in range(max_sweeps):
+        # Each move grows the environment by one row and column, so after enough of them
+        # the corner represents a half-infinite quadrant and stops changing.
         c, e, bond = move(c, e, absorb, chi=chi)
         current = spectrum(c)
+        # The corner spectrum, not the corner: the environment is only defined up to a
+        # gauge, so its tensors keep changing after the physics has stopped. The spectrum
+        # is gauge-invariant, which is what makes it a convergence criterion at all.
         change, previous = _spectrum_change(previous, current), current
         if change < tol:
             break
@@ -496,6 +550,9 @@ def unrolled(
     loop being static is what makes the whole region one trace.
     """
     for _ in range(k):
+        # The same move, at a frozen bond. Starting from the converged environment means
+        # k moves are enough for the gradient: the fixed point is already reached, and
+        # these k carry the derivative of the environment with respect to the tensor.
         c, e, _ = move(c, e, absorb, bond=bond)
     return c, e
 
@@ -515,13 +572,21 @@ def log_kappa(beta, env, k: int = 4):
     do.
     """
     c0, e0, bond = env
+    # Rebuilt from beta *inside* the traced region: this is where the derivative with
+    # respect to beta enters, and the converged c0/e0 are a constant initial condition.
     bulk = ising_bulk(beta)
     c, e = unrolled(c0, e0, single_layer(bulk), bond, k=k)
     cc, ca, ec, ea = ring(c, e)
+    # Four corners closed into a ring, alternating with their adjoints so every leg meets
+    # its opposite: Z on an L x L patch.
     z_c = tenet.full_trace(tenet.einsum("ab,ac,dc,eb->de", cc, ca, cc, ca))
+    # The same ring with two opposite edges wedged in -- f is the virtual bond they share
+    # across the gap: an L x (L+1) patch.
     z_h = tenet.full_trace(
         tenet.einsum("ab,ac,dcf,ed,eg,ghf->hb", cc, ca, ea, cc, ca, ec, optimize=PATH)
     )
+    # Corners and edges alternating all the way round one bulk tensor, whose four legs
+    # p/q/r/s each meet one edge: an (L+1) x (L+1) patch.
     z_a = tenet.full_trace(
         tenet.einsum(
             "ab,acp,cd,edq,fe,gfr,gh,hks,spqr->kb",
@@ -537,6 +602,8 @@ def log_kappa(beta, env, k: int = 4):
             optimize=PATH,
         )
     )
+    # (L+1)^2 + L^2 - 2 L(L+1) = 1: the patches telescope, every environment tensor and
+    # every gauge factor cancels, and one site's partition function is what is left.
     return jnp.log(z_a * z_c / z_h**2)
 
 
@@ -573,12 +640,19 @@ def _halves(r, ket, bra, phys1: str = "", phys2: str = ""):
     network by its *blocks*.
     """
     cc, ca, ec, ea = r
+    # When phys is empty both labels become "s", so the ket's and the bra's physical legs
+    # carry the same name and the einsum closes them: that is the denominator. When phys
+    # is given they get distinct names and stay open for h to close.
     k1, b1 = (phys1[1], phys1[0]) if phys1 else ("s", "s")
     k2, b2 = (phys2[1], phys2[0]) if phys2 else ("s", "s")
+    # Environment, ket, bra, then the remaining environment -- the same order the corner
+    # absorber uses, and for the same reason: the peak stays rank 7.
     left = tenet.einsum("ij,jklL,ihdD->khlLdD", ca, ec, ea)
     left = tenet.einsum(f"khlLdD,{k1}lurd->khLD{k1}ur", left, ket)
     left = tenet.einsum(f"khLD{k1}ur,LU{b1}RD->{phys1}khuUrR", left, bra)
     left = tenet.einsum(f"{phys1}khuUrR,ab,acuU->{phys1}bckhrR", left, cc, ec, optimize=PATH)
+    # The mirror image around the second site. r/R are what the two halves share, so
+    # closing them against each other is what joins the 2x1 patch back up.
     right = tenet.einsum("cduU,de,ferR->cfuUrR", ec, ca, ea)
     right = tenet.einsum(f"cfuUrR,{k2}lurd->cfUR{k2}ld", right, ket)
     right = tenet.einsum(f"cfUR{k2}ld,LU{b2}RD->{phys2}cflLdD", right, bra)
@@ -603,12 +677,19 @@ def energy(a: SymmetricTensor, h: SymmetricTensor, env, k: int = 4):
     factorization in a file that already teaches two.
     """
     c0, e0, bond = env
+    # c4v inside the differentiated function, so the gradient is taken with respect to the
+    # symmetrized tensor and the step cannot walk off the mirror-symmetric manifold.
     ket, bra = layers(c4v(a))
     r = ring(*unrolled(c0, e0, double_layer(ket, bra), bond, k=k))
+    # Physical legs left open on both sites, so h can close all four: W/X are the bras'
+    # and w/x the kets', which is the ordering h's (P OUT, P OUT, P IN, P IN) expects.
     left, right = _halves(r, ket, bra, "Ww", "Xx")
     numerator = tenet.full_trace(
         tenet.einsum("WwbckhrR,XxchrR,WXwx->kb", left, right, h, optimize=PATH)
     )
+    # The same network with the physical legs closed against each other: <psi|psi> on the
+    # same patch. The environment is only defined up to a scale, so the ratio is the
+    # observable and the numerator alone is not.
     left, right = _halves(r, ket, bra)
     denominator = tenet.full_trace(tenet.einsum("bckhrR,chrR->kb", left, right))
     return numerator / denominator
@@ -619,6 +700,8 @@ def step(a: SymmetricTensor, h: SymmetricTensor, env, lr: float, k: int = 4):
     import jax
 
     value, grad = jax.value_and_grad(energy)(a, h, env, k)
+    # tree.map touches only the block values, so the grading rides through untouched: the
+    # updated ansatz is symmetric by construction and needs no projection back.
     return jax.tree.map(lambda p, g: p - lr * g, a, grad), value
 
 
@@ -631,9 +714,13 @@ def main(chi_ising: int = 16, chi_ipeps: dict | None = None, k: int = 4, steps: 
     # that half is process-global (tenet.ad's module docstring)
     tenet.enable_jax(ad=True)
 
+    # Below, near and above the critical point. Correlations are longest at beta_c, so
+    # that is where a finite chi costs the most accuracy.
     for beta in (0.3, 0.4, 0.5):
         env = converge(*single_layer_ctm(ising_bulk(beta)), chi=chi_ising)
         bf = float(beta_free_energy(beta, env, k=k))
+        # d(beta f)/d beta is the internal energy per site, so differentiating through the
+        # unrolled sweeps produces a second physical quantity Onsager also pins.
         grad = float(jax.grad(beta_free_energy)(beta, env, k))
         print(
             f"ising beta={beta:.2f}  beta*f={bf:+.10f}  onsager={onsager(beta):+.10f}  "
@@ -642,6 +729,8 @@ def main(chi_ising: int = 16, chi_ipeps: dict | None = None, k: int = 4, steps: 
 
     for provider in ("u1", "su2"):
         a, h = build_ipeps(provider), build_h(provider)
+        # The environment is converged once, outside the loop: it supplies the frozen bond
+        # and the initial condition, and the k unrolled moves inside carry the gradient.
         env = converge(*double_layer_ctm(c4v(a)), chi=(chi_ipeps or CHI_IPEPS)[provider])
         trace = []
         for _ in range(steps):

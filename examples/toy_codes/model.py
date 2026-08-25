@@ -67,13 +67,20 @@ def _blocks(legs, values: dict) -> SymmetricTensor:
     silent projection onto some other operator.
     """
     structure = TensorStructure(tuple(legs))
+    # A FusionBlockKey keeps the OUT legs and the IN legs on separate fusion trees, so the
+    # axis positions of each side have to be recovered before the two can be interleaved.
     outs = [i for i, leg in enumerate(legs) if leg.side is OUT]
     ins = [i for i, leg in enumerate(legs) if leg.side is IN]
     keys = {}
     for key in structure.block_order:
+        # ``uncoupled`` is the tuple of sectors on that tree's legs, in that tree's order;
+        # zipping it back against the axis positions recovers "which sector on which leg".
         sectors = dict(zip(outs, key.output_tree.uncoupled, strict=True))
         sectors.update(zip(ins, key.input_tree.uncoupled, strict=True))
+        # Reassembled in axis order, which is how the callers below name their blocks.
         keys[tuple(sectors[i] for i in range(len(legs)))] = key
+    # A KeyError here means the named sector tuple is not allowed by the legs -- that is
+    # the refusal a wrong grading earns, rather than a silent projection.
     return SymmetricTensor.from_blocks(legs, {keys[s]: values[s] for s in values})
 
 
@@ -101,10 +108,17 @@ def h_bond() -> SymmetricTensor:
     return _blocks(
         (Leg(PHYS, OUT), Leg(PHYS, OUT), Leg(PHYS, IN), Leg(PHYS, IN)),
         {
+            # S^z S^z on aligned pairs: (+-1/2)(+-1/2) = +1/4, and the exchange cannot
+            # flip them, so these two are diagonal and alone.
             (UP, UP, UP, UP): np.full((1, 1, 1, 1), 0.25),
             (DOWN, DOWN, DOWN, DOWN): np.full((1, 1, 1, 1), 0.25),
+            # S^z S^z on antialigned pairs: -1/4, the diagonal of the 2x2 the exchange
+            # acts inside.
             (UP, DOWN, UP, DOWN): np.full((1, 1, 1, 1), -0.25),
             (DOWN, UP, DOWN, UP): np.full((1, 1, 1, 1), -0.25),
+            # (S^+ S^- + S^- S^+)/2 swapping an antialigned pair. This off-diagonal 1/2 is
+            # what makes the singlet lie below the triplet, so it is the whole physics of
+            # the antiferromagnet; the diagonal alone would be a classical Ising chain.
             (UP, DOWN, DOWN, UP): np.full((1, 1, 1, 1), 0.5),
             (DOWN, UP, UP, DOWN): np.full((1, 1, 1, 1), 0.5),
         },
@@ -141,6 +155,11 @@ def mpo_blocks() -> dict:
     """
     return {
         # I and S^z: the charge-0 corner of the bond, as a 3x3 channel matrix
+        # Rows are the incoming channel and columns the outgoing one, both in the
+        # _END, _SZ, _START order above. So [END, END] = 1 is the identity running right
+        # of a finished term, [SZ, END] = -+1/2 closes an S^z S^z term, [START, SZ]
+        # opens one, and [START, START] = 1 is the identity running left of it. The two
+        # blocks differ only in the sign of S^z, which is the physical leg's charge.
         (ZERO, DOWN, DOWN, ZERO): np.array(
             [[1.0, 0.0, 0.0], [-0.5, 0.0, 0.0], [0.0, -0.5, 1.0]]
         ).reshape(3, 1, 1, 3),
@@ -148,9 +167,15 @@ def mpo_blocks() -> dict:
             3, 1, 1, 3
         ),
         # S^-/2 and S^+/2 leaving the START channel
+        # Extent 1 on the right: an S^+- moves the bond charge, so it lands in a sector
+        # of its own rather than in the 3x3. Only the START entry is nonzero -- a term
+        # can be opened once. down<-up is S^-, and it sends the bond to PLUS.
         (ZERO, DOWN, UP, PLUS): np.array([0.0, 0.0, 0.5]).reshape(3, 1, 1, 1),
         (ZERO, UP, DOWN, MINUS): np.array([0.0, 0.0, 0.5]).reshape(3, 1, 1, 1),
         # S^+ and S^- arriving at the END channel
+        # The mirror image: extent 1 on the left, and only the END entry nonzero. The 1/2
+        # was already paid on opening, so these carry coefficient 1, and the charge the
+        # bond was carrying is handed back so the outgoing bond is neutral again.
         (PLUS, UP, DOWN, ZERO): np.array([1.0, 0.0, 0.0]).reshape(1, 1, 1, 3),
         (MINUS, DOWN, UP, ZERO): np.array([1.0, 0.0, 0.0]).reshape(1, 1, 1, 3),
     }
@@ -173,10 +198,15 @@ def mpo(n_sites: int, bond: GradedSpace = MPO_BOND) -> list[SymmetricTensor]:
         return (Leg(left, IN), Leg(PHYS, OUT), Leg(PHYS, IN), Leg(right, OUT))
 
     bulk = _blocks(legs(bond, bond), blocks)
+    # Site 0 has nothing to its left, so it can only be in the START channel: keep that
+    # one row, as a length-1 slice so the leg survives and the tensor stays rank 4. Only
+    # blocks whose left bond is neutral have a START row at all.
     first = _blocks(
         legs(BOUNDARY, bond),
         {key: blocks[key][_START : _START + 1] for key in blocks if key[0] == ZERO},
     )
+    # The last site mirrors it: every term must be finished, so only the END column
+    # survives, sliced on the right bond instead.
     last = _blocks(
         legs(bond, BOUNDARY),
         {key: blocks[key][..., _END : _END + 1] for key in blocks if key[3] == ZERO},
