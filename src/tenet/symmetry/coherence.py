@@ -6,10 +6,21 @@ a provider is data/capabilities (``tenet.symmetry.base``) plus validated
 properties (this module). Each validator takes a provider and an explicit
 sector budget, checks every instance of its identity that the budget reaches,
 raises ``ValueError`` on the first violation and returns the number of
-instances checked. Nothing here runs on an operation's hot path — operations
-gate through ``requires``/``supports``; validators run in tests and at the two
-property gates (``transpose``'s symmetric-braiding check, ``full_trace``'s
-sphericality check), both cached.
+instances checked. Operations gate through ``requires``/``supports``, so this module
+runs in tests only — with **one exception**, worth knowing about:
+[symmetric_braiding][tenet.symmetry.coherence.symmetric_braiding] is called from
+``tenet.ops.permutation``'s refusal path on every within-side reordering, so it is on
+the operation path rather than beside it. (``full_trace``'s sphericality gate is *not*
+one of these: it compares exact quantum dimensions inline in ``tenet.ops.contraction``
+and never enters this module.)
+
+It is cached per ``(provider, sectors)``, so a repeat is a dict lookup; a *cold* one is
+not free. Measured on SU(2), whose R-symbols reach ``racah`` through the generated SU(N)
+surface, a six-sector budget costs ~0.12 s the first time and ~2 us afterwards, and a
+process planning over many distinct leg gradings pays one of those per distinct budget.
+The cost is the underlying coefficients' first evaluation, not this module's arithmetic
+— a second cache here buys nothing, because ``racah`` already serves the repeats
+(TeNeT-py #307).
 
 Tolerances follow the arithmetic: exact identities (quantum dimensions,
 ``R**2`` for a symmetric provider) are compared exactly; float-folded ones
