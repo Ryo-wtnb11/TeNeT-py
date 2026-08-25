@@ -32,6 +32,7 @@ fails if a symbol on this page stops resolving.
 | An isometry between two leg tuples | `tenet.isometry` / `tenet.random_isometry` | map |
 | A standard physical site + operators | `tenet.models.spin_half`, `tenet.models.spinless_fermion`, `tenet.models.spinful_fermion`, `tenet.models.hard_core_boson` | common |
 | A local operator with a charge leg | `tenet.network.local_op` | common |
+| A named model Hamiltonian, as an MPO | `tenet.models.heisenberg`, `tenet.models.xxz`, `tenet.models.transverse_field_ising`, `tenet.models.hubbard`, `tenet.models.spinless_tv`, `tenet.models.sun_heisenberg` | common |
 | Which blocks does this tensor have? | `tenet.TensorStructure.block_order` (keys are `tenet.FusionBlockKey`) | map |
 
 `GradedSpace` answers two size questions and they are not the same number: `reduced_dim`
@@ -138,6 +139,7 @@ and a top-level spelling of it would read like one.
 | Goal | Canonical API | Level |
 | --- | --- | --- |
 | A matrix product state | `tenet.network.MPS.product`, `tenet.network.MPS.random` | common |
+| A standard model Hamiltonian | `tenet.models.heisenberg` and the others above — one call, open chain | common |
 | A Hamiltonian from a term list | `tenet.network.MPO.from_terms` | common |
 | …from operator patterns and index arrays | `tenet.network.MPO.from_arrays` | common |
 | …from a hand-written `W`, sparse or dense | `tenet.network.MPO.from_entries` / `tenet.network.MPO.from_w` | common |

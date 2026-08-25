@@ -73,7 +73,7 @@ import autoray as ar
 from tenet.leg import IN, OUT, Leg
 from tenet.map_view import check_square, lower_plan, to_matrices
 from tenet.ops.basic import _check_same_structure
-from tenet.ops.map import compose_lowered, identity
+from tenet.ops.map import block_ref, compose_lowered, identity
 from tenet.ops.permutation import permutation_plan, transpose, twist
 from tenet.ops.repartition import _compose as compose_terms
 from tenet.ops.repartition import apply_plan, repartition, repartition_plan, sides_plan
@@ -372,6 +372,14 @@ def tensordot(a: "SymmetricTensor", b: "SymmetricTensor", axes: Axes) -> "Symmet
     ``axes=((), ())`` is the outer product and falls out of the
     lowering rather than being special-cased.
 
+    A **block-less operand** — legs that cannot couple to any total charge — is legal
+    and needs no special case either. It lowers to no coupled-sector matrices, so every
+    coupled sector of the output is one the operands do not both carry, and the
+    composition's own missing-sector rule writes it as zeros: the result is the
+    structurally implied tensor, itself block-less whenever the free legs cannot couple
+    and explicit zeros wherever they can. Those zeros take their backend and dtype from
+    the other operand, and NumPy ``float64`` when both operands are block-less.
+
     All refusals, and all axis bookkeeping, live in ``contraction_plan``;
     what is left here is the execution of four already-tested operations.
     """
@@ -463,9 +471,15 @@ Operand = Any
 """A chain step's operand: a ``SymmetricTensor`` or a ``_Pending`` standing for one."""
 
 
-def _ref(x: Operand) -> Any:
-    """A block to take a backend and a dtype from."""
-    return x.source.blocks[0] if isinstance(x, _Pending) else x.blocks[0]
+def _ref(*xs: Operand) -> Any:
+    """A block to take a backend and a dtype from, first block-carrying operand wins.
+
+    An operand whose legs cannot couple to any total charge carries no block, and so
+    neither a backend nor a dtype: the zeros standing for it take both from the other
+    operand, and NumPy ``float64`` when neither operand has a block. See
+    [block_ref][tenet.ops.map.block_ref], which is where that rule lives.
+    """
+    return block_ref(*(x.source if isinstance(x, _Pending) else x for x in xs))
 
 
 def _lower_operand(
@@ -513,7 +527,7 @@ def _contracted(
     joined = TensorStructure(
         (*(sa.legs[i] for i in sa.out_axes), *(sb.legs[i] for i in sb.in_axes))
     )
-    c = compose_lowered(joined, ma, mb, _ref(a))
+    c = compose_lowered(joined, ma, mb, _ref(a, b))
     return _Pending(
         c,
         *_restore_plan(
@@ -782,11 +796,13 @@ def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
     The identity is built on ``t``'s own backend and dtype — the
     ``dtype=ar.get_dtype_name(ref), like=ref`` spelling ``ops/map.py::compose``
     already uses for its zero-filled sectors. Without it a torch-backed
-    ``t`` would meet NumPy blocks in ``matmul``.
+    ``t`` would meet NumPy blocks in ``matmul``. A block-less ``t`` carries neither,
+    and the identity is then NumPy ``float64`` by the same rule the contraction's
+    zeros follow.
     """
     i, j = axes
     p = 0 if t.legs[j].side is OUT else 1
-    ref = t.blocks[0]
+    ref = _ref(t)
     t = twist(t, i if t.legs[i].side is OUT else j)
     return tensordot(
         t,

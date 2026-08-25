@@ -2,7 +2,36 @@
 
 A Hamiltonian in TeNeT-py is an [MPO][tenet.network.MPO]. You build one from local
 operators, and `tenet.models` ships the standard sites so you do not write the same three
-matrices again.
+matrices again — or, for the models below, the finished operator.
+
+## Named models
+
+One function per model, each returning the `MPO` for an open chain of `n` sites, with the
+symmetry a parameter:
+
+```python
+>>> from tenet.models import heisenberg, hubbard, sun_heisenberg
+>>> from tenet.symmetry import SU2
+>>> h = heisenberg(20)                  # U(1), J = 1, spin 1/2
+>>> h_su2 = heisenberg(20, SU2)         # the same chain, one invariant term per bond
+>>> len(hubbard(8, t=1.0, U=4.0)), len(sun_heisenberg(8, 3))
+(8, 8)
+
+```
+
+| call | Hamiltonian | grading |
+|---|---|---|
+| `heisenberg(n, symmetry=U1, J=1.0, spin=0.5)` | $J \sum_i \vec{S}_i \cdot \vec{S}_{i+1}$ | `U1` (default) or `SU2` |
+| `xxz(n, Delta=1.0, J=1.0)` | $J \sum_i S^x S^x + S^y S^y + \Delta S^z S^z$ | `U1` |
+| `transverse_field_ising(n, J=1.0, g=1.0)` | $-J\left(\sum_i \sigma^z_i \sigma^z_{i+1} + g \sum_i \sigma^x_i\right)$ | `Z2` |
+| `hubbard(n, t=1.0, U=4.0)` | $-t \sum_{i\sigma} (c^\dagger_{i\sigma} c_{i+1\sigma} + h.c.) + U \sum_i n_{i\uparrow} n_{i\downarrow}$ | `fZ2` |
+| `spinless_tv(n, t=1.0, V=1.0)` | $-t \sum_i (c^\dagger_i c_{i+1} + h.c.) + V \sum_i n_i n_{i+1}$ | `fZ2` |
+| `sun_heisenberg(n, N, J=1.0)` | $J \sum_i P_{i,i+1}$ on SU($N$) fundamentals | SU($N$) |
+
+Each takes `symbolic=`, passed to the builder below. Every function's docstring carries
+its sign and ordering conventions — the basis a grading puts the site in is part of the
+model, so read it before comparing a number against another library. The rest of this
+page is what to do when your Hamiltonian is not one of these, which is the usual case.
 
 ## Sites
 
@@ -107,6 +136,18 @@ array:
 
 ```python
 >>> bonds = [(i, i + 1) for i in range(n - 1)]
+>>> bonds[:3]
+[(0, 1), (1, 2), (2, 3)]
+
+```
+
+`bonds` is the index array, and one **row** of it is one term's site list — one entry per
+operator named in `expr`, in the same order. `("Sz Sz", bonds, ...)` therefore says: the
+first `Sz` sits on the row's first site, the second on its second, and there are `n - 1`
+such terms. A three-operator pattern would need rows of three sites; a two-operator
+pattern acting twice on one site has rows like `(i, i)`.
+
+```python
 >>> h2 = MPO.from_arrays(n, site.ops, [
 ...     ("Sz Sz", bonds, [1.0] * (n - 1)),
 ...     ("S+ S-", bonds, [0.5] * (n - 1)),
@@ -116,6 +157,10 @@ array:
 8
 
 ```
+
+Three patterns share the one `bonds` array, each with its own length-`n - 1` coefficient
+array. The coefficients' dtype decides the MPO's, so a complex coupling makes a complex
+operator without anything else being said.
 
 The pattern's work is done once per block in NumPy instead of once per term in Python,
 which is what a Hamiltonian with $O(K^4)$ terms over a handful of patterns needs. Before
@@ -217,16 +262,24 @@ it crosses a physical line. A Hubbard chain is its terms:
 ...     expr = "c+_" + flavour + " c_" + flavour
 ...     blocks += [(expr, fwd, [-1.0] * (m - 1)), (expr, bwd, [-1.0] * (m - 1))]
 >>> blocks.append(("n_up n_dn", [(i, i) for i in range(m)], [u] * m))
->>> hub = MPO.from_arrays(m, fsite.ops, blocks)
->>> len(hub)
-6
 
 ```
+
+Four hopping blocks — two flavours, each in both directions — and one interaction block.
+Writing the backward hop out explicitly is what makes the operator Hermitian; the Koszul
+sign of the braid is paid by the builder's own argsort, not by you.
 
 The last block names two operators on two *coincident* site indices, and `from_arrays`
 multiplies them into one on-site operator before the walk. The site also ships that
 product under the same key, `fsite.ops["n_up n_dn"]`, for `from_terms`, which places one
 operator per site and so needs it pre-multiplied.
+
+```python
+>>> hub = MPO.from_arrays(m, fsite.ops, blocks)
+>>> len(hub)
+6
+
+```
 
 ## SU(2)
 

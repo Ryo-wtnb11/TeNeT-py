@@ -163,6 +163,12 @@ array([[1., 0.],
 
 ```
 
+The $\sqrt{2}$ is not a fudge. The Clebsch-Gordan coefficients coupling
+$V_{1/2} \otimes V_{1/2}^{*}$ to the singlet carry $1/\sqrt{2}$, so a reduced block of 1
+lands on $\mathbb{1}/\sqrt{2}$ in the dense basis; multiplying it back is what makes the
+identity readable. `block_shape(key)` gives the reduced block's shape — here `(1, 1)`,
+one multiplet against one multiplet — never the dense one.
+
 To *change* blocks rather than build them,
 [with_blocks][tenet.SymmetricTensor.with_blocks] takes the same mapping and carries
 every other block over — the immutable spelling of assigning to one block:
@@ -178,6 +184,10 @@ every other block over — the immutable spelling of assigning to one block:
 
 Both refuse a key that is not in `block_order`, with a message naming where the legal
 keys live, and a block of the wrong shape is refused naming the shape expected.
+
+[Symmetric tensors from their blocks](../tutorials/symmetric-tensors.md) is this
+constructor at length: reading a key, the U(1) and SU(3) operators the examples are built
+from, and what the refusal catches.
 
 ### Blockwise maps
 

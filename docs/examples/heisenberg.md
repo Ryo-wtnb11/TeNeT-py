@@ -11,8 +11,11 @@ E_0 = \min_{\psi}\frac{\langle\psi\vert H\vert\psi\rangle}{\langle\psi\vert\psi\
 $$
 
 **Representation.** `spin_half()` grades the physical doublet by U(1) with charge $2S^z$,
-so $S^\pm$ are rank-3 tensors carrying $\mp 2$ on a `D=1` charge leg. The three summands
-above are the three `MPO.from_terms` entries, coefficient for coefficient. The state is an
+so $S^\pm$ are rank-3 tensors carrying $\mp 2$ on a `D=1` charge leg.
+`tenet.models.heisenberg(N)` writes the three summands above as three `MPO.from_terms`
+entries, coefficient for coefficient, and lets the builder derive the graded MPO bond
+from the operators' own charges;
+[Heisenberg, U(1) walkthrough](heisenberg-walkthrough.md) spells that term list out. The state is an
 MPS, $\Psi_{s_1\cdots s_N} = A^{s_1}\cdots A^{s_N}$, seeded as the Néel product state,
 whose `D=1` bond-0 leg carries charge $0$ — that is $S^z_{\mathrm{tot}} = 0$, structurally.
 

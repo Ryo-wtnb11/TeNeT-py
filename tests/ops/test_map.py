@@ -377,9 +377,11 @@ def test_ops_map_has_no_dense_expansion_and_no_provider_branching():
     assert "to_dense(" not in src
     assert "if provider ==" not in src
     assert "isinstance(provider" not in src
-    # numpy appears as identity's/isometry's default dtype and as random_isometry's
-    # seeded draw (#89) — constructors run at setup time, outside any trace. Never
-    # in an operation on a tensor, which is what the closed list above is about.
+    # numpy appears as identity's/isometry's default dtype, as random_isometry's
+    # seeded draw (#89), and as ``block_ref``'s last-resort reference when every
+    # operand is block-less and there is no backend to inherit — constructors and
+    # that fallback run at setup time, outside any trace. Never in an operation on
+    # a tensor's blocks, which is what the closed list above is about.
     assert set(re.findall(r"np\.\w+", src)) == {
         "np.float64",
         "np.random",
@@ -389,6 +391,7 @@ def test_ops_map_has_no_dense_expansion_and_no_provider_branching():
         "np.linalg",
         "np.diagonal",
         "np.abs",
+        "np.zeros",
     }
 
 

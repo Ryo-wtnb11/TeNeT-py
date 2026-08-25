@@ -10,8 +10,9 @@ declared under its full SU(2) symmetry instead of the U(1) subgroup it contains.
 
 **What changes.** $S^+$, $S^-$ and $S^z$ do not appear: none of them is an SU(2)-invariant
 tensor, and the rank-3 charge-leg form has no leg to emit a spin-1 sector onto. What
-exists is the invariant two-site operator $\mathbf{S}\cdot\mathbf{S}$, one whole bond term,
-which `MPO.from_terms` splits with an SVD — so the MPO bond grading comes out of the
+exists is the invariant two-site operator $\mathbf{S}\cdot\mathbf{S}$, one whole bond term
+— which is exactly what `tenet.models.heisenberg(N, SU2)` hands `MPO.from_terms`, and the
+builder splits it with an SVD — so the MPO bond grading comes out of the
 operator's own blocks and no coupling tree is named anywhere.
 
 **What it buys.** A U(1) bond stores $\chi$ states; an SU(2) bond stores *multiplets*, and

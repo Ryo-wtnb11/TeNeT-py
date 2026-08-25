@@ -118,7 +118,10 @@ def compose(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
     -------
     SymmetricTensor
         The composition; its public axis order is ``a``'s OUT legs followed by
-        ``b``'s IN legs, each in its own public order.
+        ``b``'s IN legs, each in its own public order. A coupled sector that only
+        one operand carries — every sector, when an operand is block-less because
+        its legs cannot couple — is zero, and those zeros take their backend and
+        dtype from the other operand, NumPy ``float64`` when neither has a block.
 
     Raises
     ------
@@ -154,7 +157,35 @@ def compose(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
     """
     _check_composable(a, b)
     structure = TensorStructure((*a.codomain, *b.domain))
-    return compose_lowered(structure, to_matrices(a), to_matrices(b), a.blocks[0])
+    return compose_lowered(structure, to_matrices(a), to_matrices(b), block_ref(a, b))
+
+
+def block_ref(*tensors: "SymmetricTensor") -> Any:
+    """A block to take a backend and a dtype from, first block-carrying tensor wins.
+
+    Parameters
+    ----------
+    *tensors : SymmetricTensor
+        The operands, in the order they should be consulted.
+
+    Returns
+    -------
+    array
+        ``tensors[i].blocks[0]`` for the first ``i`` that carries a block, and a
+        NumPy ``float64`` scalar when none of them does.
+
+    Notes
+    -----
+    A tensor whose legs cannot couple to any total charge is block-less and legal, and
+    it therefore carries no backend and no dtype of its own. Where such an operand meets
+    a structure that *does* admit blocks, the zeros that stand for it have to be built
+    somewhere: they take the backend and the dtype of the other operand, and NumPy
+    ``float64`` only when every operand is block-less and there is nothing else to ask.
+    """
+    for t in tensors:
+        if t.blocks:
+            return t.blocks[0]
+    return np.zeros((), dtype=np.float64)
 
 
 def compose_lowered(
@@ -174,7 +205,7 @@ def compose_lowered(
         [to_matrices][tenet.to_matrices] returns them.
     ref : array
         A block to take a backend and a dtype from when a coupled sector is
-        missing from both products.
+        missing from both products, as [block_ref][tenet.ops.map.block_ref] returns it.
 
     Returns
     -------

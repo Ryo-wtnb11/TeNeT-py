@@ -37,6 +37,7 @@ nav:
       - JAX and backends: guide/jax-and-backends.md
       - Saving and loading: guide/saving-and-loading.md
   - Tutorials:
+      - Symmetric tensors from their blocks: tutorials/symmetric-tensors.md
       - DMRG end to end: tutorials/dmrg.md
       - Fermions and the Hubbard model: tutorials/fermions.md
       - SU(2): tutorials/su2.md

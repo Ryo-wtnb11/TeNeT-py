@@ -48,6 +48,10 @@ the **dense** bond dimension $\sum_c \operatorname{qdim}(c)\, m_c$, `cutoff` app
 
 ```
 
+`W` has dense dimension 3, so the untruncated bond would carry three singular values;
+`max_bond=2` cuts it to two, and `s` — a square map on the new bond — comes back `(2, 2)`.
+Which sector lost its value is not something the call was told, only something it decided.
+
 Passing neither `max_bond` nor `cutoff` is refused, naming [tenet.ops.linalg.svd][].
 `None` means "no truncation" on either; there are no sentinel values.
 
@@ -99,12 +103,26 @@ inside.
 
 ```python
 selection = tenet.linalg.select_bond(t0, axes, max_bond=D)   # outside jit/grad
+```
 
+`t0` is a representative tensor — the first iterate, or a converged warm-up — and `axes`
+is the same index grouping the loop will use, so that the bond this decides is the bond
+the loop's own factorization produces. Nothing of `selection` is traced; it is computed
+once, in eager NumPy, before the loop starts.
+
+```python
 @jax.jit
 def step(t):
     u, s, vh = tenet.linalg.svd(t, axes, bond=selection.bond)
     ...
 ```
+
+Only `selection.bond` crosses into the trace, and it is a `GradedSpace`: frozen, hashable,
+array-free. So it enters as part of the `jit` cache key rather than as a flattened leaf,
+the output shapes are fixed at trace time, and `svd` here is the *best approximation at
+that bond's per-sector ranks* rather than an exact factorization of `t`. The kept subspace
+is frozen across the loop, which is the point — re-deciding it every iteration would mean
+differentiating through a discrete choice, which has no derivative.
 
 Calling `svd_truncated` under `jax.jit`, `jax.grad` or `jax.vmap` raises
 [StructureChangingError][tenet.symmetry.StructureChangingError], naming the pairing to

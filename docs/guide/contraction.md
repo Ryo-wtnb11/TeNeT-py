@@ -70,6 +70,12 @@ tensordot: pair 0, axis
 
 ```
 
+`d` carries the same space `V` on both axes, so every dimension matches — and the
+contraction is still refused, because `d`'s axis 0 and `a`'s axis 1 present the same end
+of the wire rather than dual ends. The message is sliced here only to keep the doctest
+short; in full it names both legs and the reason, and the refusals below are printed the
+same way.
+
 Two more refusals to know. A contraction that would leave no free leg is a `ValueError`:
 a rank-0 `SymmetricTensor` does not exist, and scalars leave the tensor world through
 [tenet.norm][], [tenet.inner][] and [tenet.full_trace][]. An axis pattern that moves a

@@ -4425,13 +4425,10 @@ The split:
   with — it is orthogonal by the symmetry before the sweep does anything — and the run is
   then byte-identical to the plain ground-state run, which the suite asserts at `abs=0.0`.
 
-  **The standing limitation, asserted rather than described.** Two chains whose bond
-  spaces share no sector at some cut have an identically zero transfer there, and
-  `tenet.compose` has no block to take its backend reference from (`ops/map.py`:167), so
-  the two-state `Env` raises instead of returning the structural zero. It does not reach
-  the excited-state workflow, whose states are seeded on one set of bond spaces and swept
-  together, and the sector skip above keeps the one case that would reach it out of the
-  contraction.
+  **Two chains that share no bond sector measure zero.** Their transfer at that cut is
+  identically zero, the intermediate tensors are block-less, and the two-state `Env`
+  returns the structural zero. The sector skip above keeps that case out of the sweep
+  anyway — such a state is orthogonal by the symmetry before the sweep does anything.
 
   **The name is TenPy's.** YASTN spells the same argument `project` and TenPy
   `orthogonal_to`; the second is taken because `project` names *a* mechanism and this

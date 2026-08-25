@@ -16,11 +16,22 @@ place, with two-site updates. Everything on this page runs on the core install: 
 ...     terms.append((0.5, [(site.ops["S-"], i), (site.ops["S+"], i + 1)]))
 >>> h = MPO.from_terms(n, terms)
 >>> psi = MPS.product(site.phys, [U1Sector(1 if i % 2 else -1) for i in range(n)])
+
+```
+
+Three terms per bond, a Néel product state as the seed, and no bond space written down
+anywhere: the MPO's grading comes out of the operators' own charges, and the state's
+comes out of the seed's.
+
+```python
 >>> out = dmrg_(psi, h, chi=32)
 >>> round(out.energy, 9)
 -3.374932599
 
 ```
+
+One call sweeps to convergence and mutates `psi` in place. Everything below is a lens on
+that call.
 
 ## What is being minimized
 
@@ -258,6 +269,45 @@ files.
 
 ## Measuring the converged state
 
+A measurement is an expectation on `out.psi`, and it is a different act from reading
+`out.energy`. `out.energy` is the effective eigenvalue the two-site eigensolver returned
+at the orthogonality centre of the final sweep, that is $E = \langle \psi \vert H \vert
+\psi \rangle$; a measurement contracts an operator you choose against the state
+afterwards.
+
+The **bond energy** is the clearest case. The Hamiltonian is a sum of two-site terms, one
+per bond of the open chain,
+
+$$
+H = \sum_{n=1}^{N-1} h_{n,n+1},
+\qquad h_{n,n+1} = \mathbf{S}_n \cdot \mathbf{S}_{n+1},
+$$
+
+and the bond energy is the expectation of one such term,
+$e_n = \langle \psi \vert h_{n,n+1} \vert \psi \rangle$. By linearity
+$\sum_n e_n = E$, which makes the sum a cross-check that the two readings are on one
+scale:
+
+```python
+>>> from tenet.network import expectation_2site, local_op
+>>> ss = local_op(site.matrices["S.S"], phys=site.phys)
+>>> bonds = [expectation_2site(out.psi, ss, i) for i in range(n - 1)]
+>>> round(sum(bonds), 9) == round(out.energy, 9)
+True
+>>> [round(e, 4) for e in bonds]
+[-0.6612, -0.2843, -0.5874, -0.3092, -0.5874, -0.2843, -0.6612]
+
+```
+
+The canonical form of the state enters only as the *evaluation method*, not as part of the
+definition: with the orthogonality centre on bond $n$ every environment outside the bond
+is an identity, so $e_n$ is a contraction two sites wide rather than a pass over the whole
+chain. The profile is not flat — open boundaries induce an alternating, dimerized pattern,
+strongest at the two edges and decaying inward towards the uniform bulk value, which in
+the thermodynamic limit is $1/4 - \ln 2 \approx -0.4431$ per bond.
+
+The rest of the measurement set reads the same way:
+
 ```python
 >>> import numpy as np
 >>> import tenet
@@ -374,6 +424,27 @@ consumes. The split is `svd_truncated`, or `eigh` of a density matrix under pert
 noise, per the table above. The contractions inside the sweep run in hand-written pairwise
 orders, which is what keeps them right on a U(1) bond with unevenly filled sectors, where
 a cost model reading physical leg sizes misprices the network.
+
+The matvec the eigensolver calls is [`Env.heff2`][tenet.network.Env.heff2], and it has
+**two paths**. Which one runs is decided when the operator is built, not at run time:
+
+| the MPO was built | `heff2` runs |
+|---|---|
+| at the default | the **site-tensor contraction** — the two `W` tensors between the two environments |
+| `symbolic=True` | the **prepared matvec** — complementary operators assembled per bond, the sum dispatched term family by term family |
+
+The first is the cheapest thing that can happen to a lattice model whose MPO bond is five
+or eight wide. The second is what a Hamiltonian with a bond in the thousands needs — in
+practice, quantum chemistry, where it is the route that fits in memory at all. Nothing
+probes a threshold and nothing switches mid-run: the representation the operator is in
+when you hand it to `dmrg_` *is* the choice.
+[`MPO.materialize()`][tenet.network.MPO.materialize] moves an operator from the second
+path to the first, and [Building a Hamiltonian](hamiltonians.md#symbolictrue) is where the
+choice is made.
+
+`heff2` refuses outright on a two-state environment — see the measurement section above —
+because the prepared path reads the `IdL`/`IdR` channels as gauge identities, which is
+true of a canonical chain against itself and false of a mixed transfer.
 
 ## Where next
 
