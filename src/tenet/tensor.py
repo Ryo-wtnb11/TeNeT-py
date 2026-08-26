@@ -101,8 +101,12 @@ class SymmetricTensor:
         order = self.structure.block_order
         if len(blocks) != len(order):
             raise ValueError(f"expected {len(order)} blocks, got {len(blocks)}")
+        # ``block_shapes``, not ``block_shape(key)`` per block: this loop runs on every
+        # tensor construction, and the per-key spelling would pay two structure-keyed
+        # cache lookups -- each a deep hash -- for every block (#307).
+        shapes = self.structure.block_shapes
         for i, (key, block) in enumerate(zip(order, blocks, strict=True)):
-            expected = self.structure.block_shape(key)
+            expected = shapes[i]
             if tuple(block.shape) != expected:
                 raise ValueError(
                     f"block {i} has shape {tuple(block.shape)}, expected {expected} for {key}"
@@ -184,10 +188,8 @@ class SymmetricTensor:
         return cls(
             structure,
             tuple(
-                blocks[key]
-                if key in blocks
-                else ar.do("zeros", structure.block_shape(key), dtype=ref.dtype, like=ref)
-                for key in structure.block_order
+                blocks[key] if key in blocks else ar.do("zeros", shape, dtype=ref.dtype, like=ref)
+                for key, shape in zip(structure.block_order, structure.block_shapes, strict=True)
             ),
         )
 
@@ -210,7 +212,7 @@ class SymmetricTensor:
         structure = TensorStructure(tuple(legs))
         return cls(
             structure,
-            tuple(np.zeros(structure.block_shape(k), dtype) for k in structure.block_order),
+            tuple(np.zeros(shape, dtype) for shape in structure.block_shapes),
         )
 
     @classmethod
@@ -239,10 +241,7 @@ class SymmetricTensor:
         # if a test ever needs genuinely complex random data.
         return cls(
             structure,
-            tuple(
-                rng.standard_normal(structure.block_shape(k)).astype(dtype)
-                for k in structure.block_order
-            ),
+            tuple(rng.standard_normal(shape).astype(dtype) for shape in structure.block_shapes),
         )
 
     # --- derived views --------------------------------------------------------

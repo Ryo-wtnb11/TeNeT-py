@@ -341,3 +341,35 @@ def test_su2_structure_is_block_sparse():
     dense = prod(leg.space.dim for leg in s.legs)
     assert dense == (2 * 2) ** 3 * (3 * 2) == 384
     assert stored < dense / 4
+
+
+# --- the whole-table shape accessor ---------------------------------------------
+
+
+def test_block_shapes_is_block_shape_over_block_order():
+    """The two spellings are the same information; only their cost differs (#307).
+
+    Asserted on a structure whose legs carry *different* degeneracies, because the
+    table is the one structure-keyed table that does not delegate to the
+    degeneracy-free pattern -- a shape depends on degeneracies, an index does not --
+    so a bug that read the pattern's table instead would be invisible on a
+    degeneracy-1 structure.
+    """
+    s = su2_half_structure(out_deg=2, in_deg=3)
+    assert s.block_shapes == tuple(s.block_shape(k) for k in s.block_order)
+    assert len(s.block_shapes) == s.num_blocks
+    assert len({sum(shape) for shape in s.block_shapes}) >= 1
+
+
+def test_block_shapes_distinguishes_structures_that_share_a_pattern():
+    """Two structures with one sector pattern and different degeneracies.
+
+    ``block_order`` and ``index_of`` are shared across a degeneracy pattern; shapes are
+    not. If ``block_shapes`` ever started delegating the way its neighbours do, every
+    tensor built through it would get its sibling's block shapes -- silently, since the
+    key set is identical.
+    """
+    a = su2_half_structure(out_deg=2, in_deg=3)
+    b = su2_half_structure(out_deg=5, in_deg=1)
+    assert a.block_order == b.block_order
+    assert a.block_shapes != b.block_shapes
