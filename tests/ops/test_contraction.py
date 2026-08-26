@@ -16,7 +16,7 @@ import pathlib
 import autoray as ar
 import numpy as np
 import pytest
-from helpers import supersign
+from helpers import NoBendProvider, supersign
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
@@ -67,6 +67,15 @@ def uf(charge: int, parity: int) -> ProductSector:
 
 S1 = GradedSpace.new(UF, {uf(0, 0): 2, uf(1, 1): 1, uf(-1, 1): 1})
 S2 = GradedSpace.new(UF, {uf(0, 0): 1, uf(1, 1): 2})
+
+# A provider with the product's sectors and *no* bending: #312 forwarded
+# ``BendingCoefficients`` through products, so ``UF`` no longer refuses a bend and the
+# refusal cases below need a vehicle that still does. ``helpers.NoBendProvider`` withholds
+# exactly that capability and delegates the rest, so the layout, the fZ2 signs and the
+# sector pattern are unchanged -- only the bend is out of contract.
+NB = NoBendProvider(UF)
+NB_S1 = GradedSpace.new(NB, {uf(0, 0): 2, uf(1, 1): 1, uf(-1, 1): 1})
+NB_S2 = GradedSpace.new(NB, {uf(0, 0): 1, uf(1, 1): 2})
 
 
 def pair(a_legs, b_legs, seeds=(0, 1)):
@@ -264,8 +273,8 @@ def test_dense_oracle_product_provider_composition_shaped():
     check_oracle((Leg(S1, OUT), Leg(S2, IN)), (Leg(S2, OUT), Leg(S1, IN)), ((1,), (0,)))
 
 
-def test_product_provider_refuses_a_bend_and_names_the_way_out():
-    a, b = pair((Leg(S1, OUT), Leg(S2, IN)), (Leg(S2, IN, dual=True), Leg(S1, OUT)))
+def test_a_provider_without_bending_refuses_and_names_the_way_out():
+    a, b = pair((Leg(NB_S1, OUT), Leg(NB_S2, IN)), (Leg(NB_S2, IN, dual=True), Leg(NB_S1, OUT)))
     with pytest.raises(CapabilityError) as excinfo:
         tenet.tensordot(a, b, ((1,), (0,)))
     message = str(excinfo.value)
@@ -477,7 +486,7 @@ def test_refuses_a_full_contraction_and_cites_the_minimum_one_leg_rule():
 
 def test_nothing_moves_before_a_refusal(monkeypatch):
     """Refuse-before-move: not one ``ar.do`` call happens on the way out."""
-    a, b = pair((Leg(S1, OUT), Leg(S2, IN)), (Leg(S2, IN, dual=True), Leg(S1, OUT)))
+    a, b = pair((Leg(NB_S1, OUT), Leg(NB_S2, IN)), (Leg(NB_S2, IN, dual=True), Leg(NB_S1, OUT)))
 
     def boom(*args, **kwargs):
         raise AssertionError("tensordot moved a block before refusing")

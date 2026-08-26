@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pytest
+from helpers import dense_repartition
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
@@ -31,8 +32,10 @@ from tenet.structure import TensorStructure
 from tenet.symmetry import (
     SU2,
     U1,
+    BendingCoefficients,
     CapabilityError,
     ClebschGordanData,
+    DualBasis,
     FusionRules,
     FZ2Sector,
     PermutationCoefficients,
@@ -44,6 +47,7 @@ from tenet.symmetry import (
     fZ2,
 )
 from tenet.symmetry.base import Sector, permute_unique_tree
+from tenet.symmetry.coherence import supports
 from tenet.symmetry.product import assemble, mu_decode, mu_encode, project
 
 # static conformance: fails type checking if ProductProvider drifts from the protocols
@@ -922,6 +926,131 @@ def test_jax_matches_numpy(p):
         np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
 
 
+# --- bending and duality forwarding (#312) ------------------------------------------
+#
+# A product had no ``BendingCoefficients`` and no ``DualBasis``, so ``repartition`` --
+# and therefore every ``tenet.network`` container, whose write barrier repartitions --
+# refused every product provider. The coefficients were never the obstacle: a bend moves
+# one line, that line carries one component per factor, and each moves under its own
+# factor's coefficient. What had held it back was the *oracle*: ``tests/helpers.py``'s
+# dense-side parity vector covered multiplets rather than dense indices and padded a
+# length mismatch with zeros, which deleted every Koszul sign on a fermionic factor
+# beside a non-Abelian one. Fixed in the same change; see ``helpers._parities``.
+
+#: fZ2 x U(1) x SU(2) -- the spinful-fermion grading, and the reason this matters. It is
+#: the first product here with a fermionic *and* a non-Abelian factor, which is exactly
+#: the combination the old oracle could not weigh.
+FUS = ProductProvider((fZ2, U1, SU2))
+
+
+def fus(parity: int, charge: int, two_j: int) -> ProductSector:
+    return ProductSector((FZ2Sector(parity), U1Sector(charge), SU2Sector(two_j)))
+
+
+#: A Hubbard-shaped site: empty and doubly-occupied are even spin singlets, the
+#: singly-occupied states an odd ``j = 1/2`` doublet.
+FUS_SPACE = GradedSpace.new(FUS, {fus(0, 0, 0): 1, fus(1, 1, 1): 1, fus(0, 2, 0): 1})
+
+
+@pytest.mark.parametrize(
+    ("provider", "space"),
+    [(UU, UU_SPACE), (UF, UF_SPACE), (SU, SU_SPACE), (FUS, FUS_SPACE)],
+    ids=lambda x: getattr(x, "name", ""),
+)
+def test_bending_and_duality_are_forwarded(provider, space):
+    """The capability answers, and the answer is the right shape.
+
+    ``supports`` is a *structural* check -- it asks whether the object has the methods --
+    so on a product it is True for every forwarded capability regardless of the factors,
+    exactly as it already was for ``cgc`` and ``qdim``. The refusal for a factor that
+    lacks one is call-time; see
+    :func:`test_a_factor_without_bending_refuses_the_whole_product`. So what is asserted
+    here is that the call *works*, not that the flag is set.
+    """
+    assert supports(provider, BendingCoefficients)
+    assert supports(provider, DualBasis)
+    key = TensorStructure((Leg(space, OUT), Leg(space, OUT), Leg(space, IN))).block_order[0]
+    for terms in (provider.bend_right(key, dual=False), provider.bend_right(key, dual=True)):
+        assert terms
+        assert all(isinstance(coeff, (int, float, complex)) for _, coeff in terms)
+    sector = next(iter(space))
+    z = provider.z_matrix(sector)
+    assert z.shape == (provider.irrep_dim(sector), provider.irrep_dim(provider.dual(sector)))
+
+
+@pytest.mark.parametrize(
+    ("provider", "space"),
+    [(UU, UU_SPACE), (UF, UF_SPACE), (SU, SU_SPACE), (FUS, FUS_SPACE)],
+    ids=lambda x: getattr(x, "name", ""),
+)
+@pytest.mark.parametrize("partition", [((0,), (1, 2, 3)), ((0, 1, 2), (3,)), ((0, 2), (1, 3))])
+def test_repartition_matches_explicit_dense_expansion(provider, space, partition):
+    """The acceptance criterion: every bend against the dense array it must reproduce.
+
+    ``dense_repartition`` builds the answer from ``to_dense()`` alone -- transposes into
+    fermionic line order, pays the Koszul sign of the permutation relating the two line
+    sequences, and transposes back -- so it shares no code with the plan under test.
+    """
+    legs = (Leg(space, OUT), Leg(space, OUT), Leg(space, IN), Leg(space, IN))
+    t = SymmetricTensor.random(legs, seed=5)
+    outs, ins = partition
+    want, _ = dense_repartition(t.to_dense(), legs, outs, ins)
+    np.testing.assert_allclose(tenet.repartition(t, outs, ins).to_dense(), want, atol=1e-12)
+
+
+def test_repartition_round_trips_back_to_the_original():
+    """There and back is the identity, coefficients included -- a bend that dropped a
+    phase would still land on the right *structure* and fail only here."""
+    legs = (Leg(FUS_SPACE, OUT), Leg(FUS_SPACE, OUT), Leg(FUS_SPACE, IN), Leg(FUS_SPACE, IN))
+    t = SymmetricTensor.random(legs, seed=7)
+    there = tenet.repartition(t, (0,), (1, 2, 3))
+    back = tenet.repartition(there, (0, 1), (2, 3))
+    assert back.legs == t.legs
+    assert tenet.allclose(back, t)
+
+
+def test_z_matrix_is_the_kronecker_product_of_the_factors():
+    """Stated as the Kronecker product; asserted against one, in the flattening
+    ``cgc`` uses -- the two agree by construction and this is that construction
+    cashed."""
+    for sector in FUS_SPACE:
+        want = np.array([[1.0]])
+        for factor, component in zip(FUS.factors, sector.components, strict=True):
+            want = np.kron(want, factor.z_matrix(component))
+        np.testing.assert_allclose(FUS.z_matrix(sector), want, atol=1e-15)
+
+
+def test_a_factor_without_bending_refuses_the_whole_product():
+    """Forwarded iff *every* factor has it, and the message names the factor."""
+
+    @dataclass(frozen=True, slots=True)
+    class NoBend:
+        name: str = "NoBend"
+
+        @property
+        def unit(self) -> MSector:
+            return MSector(0)
+
+        def dual(self, a: MSector) -> MSector:
+            return a
+
+        def fusion(self, a: MSector, b: MSector) -> tuple[MSector, ...]:
+            return (MSector((a.label + b.label) % 2),)
+
+        def n_symbol(self, a: MSector, b: MSector, c: MSector) -> int:
+            return int(c in self.fusion(a, b))
+
+    product = ProductProvider((U1, NoBend()))
+    # `supports` stays True -- it is structural, and the product *has* the methods. That
+    # is the pre-existing contract for every forwarded capability (`cgc`, `qdim`), not
+    # something bending introduced, and it is why the refusal below is the real check.
+    assert supports(product, BendingCoefficients)
+    space = GradedSpace.new(product, {ProductSector((U1Sector(0), MSector(0))): 1})
+    key = TensorStructure((Leg(space, OUT), Leg(space, IN))).block_order[0]
+    with pytest.raises(CapabilityError, match="factor 1 .NoBend."):
+        product.bend_right(key, dual=False)
+
+
 # --- exports and hygiene ------------------------------------------------------------
 
 SRC = pathlib.Path(sys.modules["tenet"].__file__).parent
@@ -936,16 +1065,75 @@ def test_exports():
     assert {"ProductProvider", "ProductSector"} <= set(sym.__all__)
 
 
-def test_module_is_backend_free_and_numpy_only_in_cgc():
+def test_module_is_backend_free_and_numpy_only_in_the_two_dense_methods():
+    """NumPy appears in ``cgc`` and ``z_matrix`` and nowhere else.
+
+    Those two are the module's only *dense* outputs -- a Clebsch-Gordan tensor and a
+    duality matrix -- and each is built by an iterated outer product of the factors'.
+    Everything else here is sector combinatorics and coefficient arithmetic, which must
+    stay array-free; a ``np.`` appearing outside them is the module growing a numerical
+    layer it has no business having.
+    """
     assert "ar.do" not in PRODUCT_SRC
     assert "autoray" not in PRODUCT_SRC
     assert "to_dense" not in PRODUCT_SRC
-    body = PRODUCT_SRC.split("    def cgc(")[1].split("\n    def ")[0]
-    assert PRODUCT_SRC.count("np.") == body.count("np.")
-    assert body.count("np.") >= 2
+    bodies = [
+        PRODUCT_SRC.split(f"    def {name}(")[1].split("\n    def ")[0]
+        for name in ("cgc", "z_matrix")
+    ]
+    assert PRODUCT_SRC.count("np.") == sum(b.count("np.") for b in bodies)
+    assert all(b.count("np.") >= 2 for b in bodies)
 
 
 def test_no_provider_identity_branching():
     for needle in ("provider == ", "isinstance(provider,", "U1Provider", "SU2Provider"):
         assert needle not in PRODUCT_SRC
     assert PRODUCT_SRC.count("requires(") >= 1
+
+
+def test_a_spinful_fermion_grading_reaches_the_network_layer():
+    """The point of #312, end to end: ``fZ2 x U(1) x SU(2)`` through ``tenet.network``.
+
+    Every ``MPS`` write repartitions -- the container normalizes each site onto its
+    stated partition -- so before bending was forwarded a product provider could build
+    an ``MPS`` and then fail on the first ``norm()`` or ``canonize_()``. That is the
+    grading a spinful fermion wants (parity, charge, total spin), so the refusal fell
+    exactly where it hurt.
+
+    The state is at half filling in the total singlet: the right boundary carries charge
+    ``N``, which is what makes the chain non-trivial. Left as ``UNIT`` on both ends it
+    would be forced onto the vacuum, since every physical charge here is non-negative --
+    a legal but empty check.
+    """
+    from tenet.network import MPS
+
+    n = 4
+    unit = GradedSpace.new(FUS, {FUS.unit: 1})
+    right = GradedSpace.new(FUS, {fus(0, n, 0): 1})
+    bond = GradedSpace.new(
+        FUS, {fus(0, 0, 0): 1, fus(1, 1, 1): 1, fus(0, 2, 0): 1, fus(1, 3, 1): 1, fus(0, 4, 0): 1}
+    )
+    sites = [
+        SymmetricTensor.random(
+            (
+                Leg(unit if i == 0 else bond, OUT),
+                Leg(FUS_SPACE, OUT),
+                Leg(right if i == n - 1 else bond, IN),
+            ),
+            seed=i,
+        )
+        for i in range(n)
+    ]
+    psi = MPS(sites)
+    psi.canonize_()
+    assert psi.norm() == pytest.approx(1.0, abs=1e-12)
+
+    # Genuinely entangled, so the canonization is not passing on a product state.
+    entropy = psi.entanglement_entropy()
+    assert set(entropy) == set(range(n - 1))
+    assert all(s > 1e-6 for s in entropy.values()), entropy
+
+    # And the SU(2) factor is doing its work: a mid-chain bond holds fewer multiplets
+    # than dense states, which is the whole reason to grade by total spin.
+    mid = psi[n // 2].legs[0].space
+    assert mid.reduced_dim < mid.dim

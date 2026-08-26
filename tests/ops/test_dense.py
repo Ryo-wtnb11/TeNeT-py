@@ -13,6 +13,7 @@ import re
 
 import numpy as np
 import pytest
+from helpers import NoBendProvider
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
@@ -388,15 +389,37 @@ def test_from_dense_refuses_a_shape_that_disagrees_with_the_legs():
 
 
 def test_both_directions_refuse_a_dual_leg_without_dual_basis():
-    """Same message, same capability, both ways round."""
-    provider = ProductProvider((U1, U1))  # documented to forward no DualBasis (#40)
-    leg = Leg(P, OUT, dual=True)
-    t = SymmetricTensor.random((leg, Leg(P, IN)), seed=17)
+    """Same message, same capability, both ways round.
+
+    The vehicle used to be ``ProductProvider((U1, U1))``, documented to forward no
+    ``DualBasis`` (#40). #312 forwarded it, so a product now expands a dual leg like any
+    other provider -- asserted just below, so the widening is recorded rather than merely
+    losing a test. ``helpers.NoBendProvider`` withholds the capability instead.
+    """
+    provider = NoBendProvider(UU)
+    space = GradedSpace.new(
+        provider,
+        {
+            ProductSector((U1Sector(0), U1Sector(0))): 2,
+            ProductSector((U1Sector(1), U1Sector(0))): 1,
+        },
+    )
+    leg = Leg(space, OUT, dual=True)
+    t = SymmetricTensor.random((leg, Leg(space, IN)), seed=17)
     with pytest.raises(CapabilityError, match="DualBasis"):
         t.to_dense()
     with pytest.raises(CapabilityError, match="DualBasis"):
-        SymmetricTensor.from_dense(np.zeros((P.dim, P.dim)), (leg, Leg(P, IN)))
-    assert provider == UU
+        SymmetricTensor.from_dense(np.zeros((space.dim, space.dim)), (leg, Leg(space, IN)))
+
+
+def test_a_product_expands_a_dual_leg_since_the_forwarding():
+    """The other side of the case above: the refusal it used to ride on is gone."""
+    leg = Leg(P, OUT, dual=True)
+    t = SymmetricTensor.random((leg, Leg(P, IN)), seed=17)
+    dense = t.to_dense()
+    assert dense.shape == (P.dim, P.dim)
+    back = SymmetricTensor.from_dense(dense, (leg, Leg(P, IN)))
+    assert tenet.allclose(back, t)
 
 
 def test_both_directions_refuse_a_provider_without_clebsch_gordan():

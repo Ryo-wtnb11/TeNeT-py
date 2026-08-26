@@ -52,6 +52,29 @@ tuples of the factors' sectors, and every coefficient factorizes across them:
 
 ```
 
+A capability is forwarded when **every** factor has it, so a product is as capable as
+its weakest factor and no more. The spinful-fermion grading — parity, charge and total
+spin at once — is the one worth naming:
+
+```python
+>>> from tenet.symmetry import SU2, SU2Sector, FZ2Sector, fZ2
+>>> from tenet import GradedSpace
+>>> F = ProductProvider((fZ2, U1, SU2))
+>>> F.name
+'fZ2 x U1 x SU2'
+>>> def sector(parity, charge, two_j):
+...     return ProductSector((FZ2Sector(parity), U1Sector(charge), SU2Sector(two_j)))
+>>> site = GradedSpace.new(F, {sector(0, 0, 0): 1, sector(1, 1, 1): 1, sector(0, 2, 0): 1})
+>>> site.dim, site.reduced_dim
+(4, 3)
+
+```
+
+That is a Hubbard site: empty and doubly-occupied are even spin singlets, the
+singly-occupied states an odd $j = 1/2$ doublet. Four physical states, three multiplets
+— the SU(2) factor is what makes those two numbers differ, and what a bond of such a
+space compresses.
+
 ## SU(N)
 
 SU(N) lives in `tenet.symmetry.sun` and is not re-exported from `tenet.symmetry`,

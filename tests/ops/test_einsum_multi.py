@@ -28,7 +28,7 @@ import sys
 
 import numpy as np
 import pytest
-from helpers import supersign
+from helpers import NoBendProvider, supersign
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
@@ -75,6 +75,15 @@ def uf(charge: int, parity: int) -> ProductSector:
 
 S1 = GradedSpace.new(UF, {uf(0, 0): 2, uf(1, 1): 1, uf(-1, 1): 1})
 S2 = GradedSpace.new(UF, {uf(0, 0): 1, uf(1, 1): 2})
+
+# A provider with the product's sectors and *no* bending: #312 forwarded
+# ``BendingCoefficients`` through products, so ``UF`` no longer refuses a bend and the
+# refusal cases below need a vehicle that still does. ``helpers.NoBendProvider`` withholds
+# exactly that capability and delegates the rest, so the layout, the fZ2 signs and the
+# sector pattern are unchanged -- only the bend is out of contract.
+NB = NoBendProvider(UF)
+NB_S1 = GradedSpace.new(NB, {uf(0, 0): 2, uf(1, 1): 1, uf(-1, 1): 1})
+NB_S2 = GradedSpace.new(NB, {uf(0, 0): 1, uf(1, 1): 2})
 
 BONDS, FREES = "cegik", "dfhjl"
 
@@ -228,12 +237,17 @@ def test_dense_oracle_is_np_einsum_with_duals_and_bends(provider_id, n):
 @pytest.mark.parametrize("n", NS)
 def test_the_bending_chain_really_bends(n):
     """Teeth for the layout above: the same network is refused for a provider with
-    no ``BendingCoefficients``, which is only possible if legs must cross."""
-    equation, legs = matrix_chain((S1, S2, S1, S2), n)  # the product provider's own layout
+    no ``BendingCoefficients``, which is only possible if legs must cross.
+
+    The vehicle is ``NB``, not ``UF``: #312 forwarded bending through products, so the
+    product itself no longer refuses anything. ``NB`` carries the same sectors and the
+    same fZ2 signs and withholds only the bend, which is what this case is weighing.
+    """
+    equation, legs = matrix_chain((NB_S1, NB_S2, NB_S1, NB_S2), n)  # that layout
     tensors = build(equation, legs, seed=3)
     tenet.einsum(equation, *tensors, optimize=chain_path(n))  # bend-free: fine
 
-    equation, legs = chain((S1, S2, S1, S2), n)
+    equation, legs = chain((NB_S1, NB_S2, NB_S1, NB_S2), n)
     tensors = build(equation, legs, seed=3)
     with pytest.raises(CapabilityError, match="BendingCoefficients"):
         tenet.einsum(equation, *tensors)
