@@ -255,6 +255,10 @@ def test_z_matrix_is_only_used_by_to_dense_in_library_code():
     # #82 moved `_tree_cgt` (the one caller of `z_matrix`) out of tensor.py and
     # into ops/dense.py, where the dense boundary now lives, unedited.
     #
+    # Everything but `dense.py` and `_su2_coeff.py` is a provider *implementing*
+    # `z_matrix`, which is what `DualBasis` is; `product.py` joined them in #312, where
+    # a product's duality map became the Kronecker product of its factors'.
+    #
     # `_su2_coeff.py` is a *docstring* mention, not a call: the scan is textual and
     # cannot tell them apart. It is there because that module has to say which tier
     # `z_matrix` stays on and why -- gauge data, unlike the F/R it does serve -- and
@@ -266,6 +270,7 @@ def test_z_matrix_is_only_used_by_to_dense_in_library_code():
         "fz2.py",
         "z2.py",
         "sun.py",
+        "product.py",
         "_sun_coeff.py",
         "_su2_coeff.py",
     }

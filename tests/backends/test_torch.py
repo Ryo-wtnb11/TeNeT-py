@@ -77,8 +77,10 @@ LEGS = {
     "u1": (Leg(Q1, OUT), Leg(Q2, IN), Leg(Q2, OUT), Leg(Q1, IN)),
     "su2": (Leg(V, OUT), Leg(W, IN), Leg(X, OUT), Leg(V, IN)),
     "fz2": (Leg(F1, OUT), Leg(F2, IN), Leg(F2, OUT), Leg(F1, IN)),
-    # A product provider forwards no BendingCoefficients (#40), so its case keeps
-    # both OUT legs in the codomain and its domain mirrors the codomain in order.
+    # Both OUT legs in the codomain, domain mirroring it in order. That shape was
+    # forced when a product forwarded no BendingCoefficients (#40); since #312 it does,
+    # and the arrangement is kept as an ordinary fixture choice rather than a
+    # constraint -- the two spaces still differ, which is what the axes below read.
     "product": (Leg(P1, OUT), Leg(P2, OUT), Leg(P1, IN), Leg(P2, IN)),
 }
 PROVIDERS = list(LEGS)
@@ -399,9 +401,10 @@ def test_compose_and_tensordot(name):
     """SU(2) braiding and fZ2 Koszul signs again, this time inside a contraction."""
     a, b = tt(LEGS[name], seed=16), tt(LEGS[name], seed=17)
     ra, rb = a.to_backend("numpy"), b.to_backend("numpy")
-    # leg 0 against leg 3 is a contractible pair everywhere but the product
-    # provider, which forwards no BendingCoefficients and so takes the
-    # composition-shaped pattern (a's IN axes against b's OUT axes).
+    # leg 0 against leg 3 is a contractible pair everywhere but the product row, whose
+    # fixture puts two *different* spaces on those axes; it takes the
+    # composition-shaped pattern instead (a's IN axes against b's OUT axes). Not a
+    # capability limit any more -- #312 forwarded bending -- a fixture one.
     axes = ((2, 3), (0, 1)) if name == "product" else ((0,), (3,))
     got = tenet.tensordot(a, b, axes)
     assert is_torch(got)

@@ -14,6 +14,7 @@ import sys
 
 import numpy as np
 import pytest
+from helpers import NoBendProvider
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
@@ -57,14 +58,23 @@ def uf(charge: int, parity: int) -> ProductSector:
 V_UF = GradedSpace.new(UF, {uf(0, 0): 2, uf(1, 1): 1})
 W_UF = GradedSpace.new(UF, {uf(0, 0): 1, uf(1, 1): 2})
 
+# The bend-refusal vehicle. #312 forwarded ``BendingCoefficients`` through products, so
+# ``UF`` bends like any other provider now; ``helpers.NoBendProvider`` keeps its sectors
+# and its fZ2 signs and withholds exactly that capability.
+NB = NoBendProvider(UF)
+V_NB = GradedSpace.new(NB, {uf(0, 0): 2, uf(1, 1): 1})
+W_NB = GradedSpace.new(NB, {uf(0, 0): 1, uf(1, 1): 2})
+
 # ``(id, V, W, bends)`` — every provider, with a bending pattern only where the
-# provider implements BendingCoefficients (ProductProvider does not).
+# provider implements BendingCoefficients. Since #312 that is every row including the
+# product; ``no-bend`` is the stub that still does not.
 PROVIDERS = [
     pytest.param(V_SU2, W_SU2, True, id="su2"),
     pytest.param(V_U1, W_U1, True, id="u1"),
     pytest.param(V_FZ2, W_FZ2, True, id="fz2"),
     pytest.param(V_TR, W_TR, True, id="trivial"),
-    pytest.param(V_UF, W_UF, False, id="product"),
+    pytest.param(V_UF, W_UF, True, id="product"),
+    pytest.param(V_NB, W_NB, False, id="no-bend"),
 ]
 
 
@@ -200,7 +210,7 @@ REFUSALS = [
         id="no-free-leg",
     ),
     pytest.param(
-        ((Leg(V_UF, OUT, dual=True), Leg(W_UF, IN)), (Leg(V_UF, OUT), Leg(W_UF, IN))),
+        ((Leg(V_NB, OUT, dual=True), Leg(W_NB, IN)), (Leg(V_NB, OUT), Leg(W_NB, IN))),
         ((0,), (0,)),
         CapabilityError,
         "BendingCoefficients",
@@ -227,8 +237,8 @@ def test_refusal_is_raised_by_the_plan_with_the_same_message_as_tensordot(
 
 def test_refusal_happens_before_one_sub_plan_is_built():
     """``permutation_plan`` is never reached: not one sub-plan, let alone a block."""
-    a = SymmetricTensor.random((Leg(V_UF, OUT, dual=True), Leg(W_UF, IN)), seed=0)
-    b = SymmetricTensor.random((Leg(V_UF, OUT), Leg(W_UF, IN)), seed=1)
+    a = SymmetricTensor.random((Leg(V_NB, OUT, dual=True), Leg(W_NB, IN)), seed=0)
+    b = SymmetricTensor.random((Leg(V_NB, OUT), Leg(W_NB, IN)), seed=1)
     contraction_plan.cache_clear()
 
     before = permutation_plan.cache_info()

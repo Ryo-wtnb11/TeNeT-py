@@ -219,13 +219,66 @@ def test_dense_oracle(provider, space):
 
 
 def test_flip_dual_needs_only_the_phase_capabilities_not_dual_basis():
-    """A ProductProvider has no z_matrix, so ``to_dense`` refuses its dual leg —
-    ``flip_dual`` needs only ``FSIndicatorData`` + ``TwistData`` and works anyway."""
-    t = SymmetricTensor.random((Leg(PROD_SPACE, OUT, dual=True), Leg(PROD_SPACE, IN)), seed=10)
+    """``flip_dual`` gates on ``FSIndicatorData`` + ``TwistData``, and on nothing else.
+
+    The vehicle changed in #312 and the claim did not. This used to ride on
+    ``ProductProvider``, which had no ``z_matrix``, so ``to_dense`` refused its dual leg
+    while ``flip_dual`` went through — a neat demonstration that the two gate on
+    different capabilities. A product now forwards ``DualBasis``, so it no longer
+    demonstrates anything; the stub below lacks ``z_matrix`` on purpose and carries the
+    two phase capabilities, which is the statement stripped of its accident.
+    """
+
+    @dataclasses.dataclass(frozen=True, slots=True)
+    class PhasesOnly:
+        """The flip scalar and nothing to expand a dual leg with."""
+
+        name: str = "PhasesOnly"
+
+        @property
+        def unit(self):
+            return TrivialSector()
+
+        def dual(self, a):
+            return a
+
+        def fusion(self, a, b):
+            return (TrivialSector(),)
+
+        def n_symbol(self, a, b, c):
+            return 1
+
+        def frobenius_schur(self, a) -> int:
+            return 1
+
+        def twist(self, a) -> int:
+            return 1
+
+        # ClebschGordanData too, so `to_dense` gets far enough to refuse on the
+        # capability this case is about rather than on a missing expansion basis.
+        def irrep_dim(self, a) -> int:
+            return 1
+
+        def cgc(self, a, b, c):
+            return np.ones((1, 1, 1, 1))
+
+    space = GradedSpace.new(PhasesOnly(), {TrivialSector(): 2})
+    t = SymmetricTensor.random((Leg(space, OUT, dual=True), Leg(space, IN)), seed=10)
     with pytest.raises(CapabilityError, match="DualBasis"):
         t.to_dense()
     flipped = flip_dual(t, 0)
     assert flipped.legs[0].dual is False
+
+
+def test_a_product_dual_leg_now_expands():
+    """The other half of the change: ``to_dense`` on a product's dual leg used to raise.
+
+    A product forwards ``DualBasis`` since #312, so the refusal this file's neighbour
+    above used to ride on is gone — recorded here so the widening is a test rather than
+    an absence.
+    """
+    t = SymmetricTensor.random((Leg(PROD_SPACE, OUT, dual=True), Leg(PROD_SPACE, IN)), seed=10)
+    assert t.to_dense().shape == t.shape
 
 
 # --- the capability gate --------------------------------------------------------

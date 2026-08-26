@@ -6,6 +6,7 @@ issue #39 and promoted here unchanged when #51 needed the same oracle for
 ``transpose``, so the two suites must weigh it on the same scale.
 """
 
+import dataclasses
 import math
 import os
 import pathlib
@@ -16,6 +17,7 @@ import numpy as np
 from tenet.space import GradedSpace
 
 __all__ = [
+    "NoBendProvider",
     "check_example_page",
     "dense_compose",
     "dense_repartition",
@@ -142,9 +144,32 @@ def _koszul_sign(pars, q) -> np.ndarray:
 
 
 def _parities(space, n: int) -> np.ndarray:
-    """``parity_vector`` padded to a dense axis length -- zeros where qdim > 1."""
-    v = parity_vector(space)
-    return v if len(v) == n else np.zeros(n, dtype=int)
+    """Fermionic parity of each **dense** index of ``space``, in canonical sector order.
+
+    ``parity_vector`` gives one entry per *multiplet*, which is the reduced dimension.
+    A dense axis is longer wherever a sector has ``irrep_dim > 1``, so the two disagree
+    on any non-Abelian space and this repeats each sector's parity across its dense
+    indices. Parity is a property of the sector, not of the magnetic index inside it, so
+    the within-sector layout does not matter here.
+
+    It used to pad with zeros on a length mismatch, which read as "no fermionic sign on
+    a non-Abelian space". That is right for a bosonic provider, where every parity is
+    zero anyway, and **silently wrong** for a fermionic factor sitting beside a
+    non-Abelian one in a Deligne product -- ``fZ2 x SU2``'s odd ``j = 1/2`` sector has
+    parity 1 and dense dimension 2, so every Koszul sign on it was being deleted. The
+    ``assert`` is what turns the next such mismatch into a failure instead of a silent
+    zero.
+    """
+    provider = space.provider
+    irrep_dim = getattr(provider, "irrep_dim", None)
+    parities = np.concatenate(
+        [
+            np.full(m * (irrep_dim(a) if irrep_dim else 1), sector_parity(a), dtype=int)
+            for a, m in space.sectors
+        ]
+    )
+    assert len(parities) == n, f"dense axis is {n} long, parities cover {len(parities)}"
+    return parities
 
 
 def _regauge(arr, spaces, pub_old, seq_old, pub_new, seq_new):
@@ -230,3 +255,67 @@ def dense_step(equation, arr_a, legs_a, arr_b, legs_b, bend=""):
         arr_a, legs_a, ta = bent(arr_a, legs_a, ta)
         arr_b, legs_b, tb = bent(arr_b, legs_b, tb)
     return dense_compose(f"{ta},{tb}->{out}", arr_a, legs_a, arr_b, legs_b)
+
+
+# --- a provider that cannot bend (#312) ---------------------------------------------
+#
+# `ProductProvider` used to be the repository's only provider without
+# `BendingCoefficients`, so eight refusal tests across four modules reached for it when
+# they needed one. #312 forwarded bending through products and took that vehicle away.
+#
+# The refusals themselves are contract and must stay pinned, so the vehicle is replaced
+# rather than the tests deleted: `NoBendProvider` delegates every capability to a real
+# provider and withholds exactly two, `bend_right`/`bend_left` and `z_matrix`. Written as
+# explicit delegation, not `__getattr__`, because the capability lattice is a *structural*
+# check -- a catch-all would answer `hasattr` for the very methods this exists to lack.
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class NoBendProvider:
+    """``base`` with ``BendingCoefficients`` and ``DualBasis`` withheld.
+
+    Sectors, fusion, duals, quantum dimensions, Clebsch-Gordan tensors and tree
+    permutation are the base provider's, so spaces and tensors behave normally and a
+    test reaches the bend on real data. What it cannot do is move a line between the two
+    trees, or expand a dual leg.
+    """
+
+    base: object = None
+    name: str = "NoBend"
+
+    def __post_init__(self) -> None:
+        if self.base is None:
+            from tenet.symmetry import U1
+
+            object.__setattr__(self, "base", U1)
+
+    @property
+    def unit(self):
+        return self.base.unit
+
+    def dual(self, a):
+        return self.base.dual(a)
+
+    def fusion(self, a, b):
+        return self.base.fusion(a, b)
+
+    def n_symbol(self, a, b, c):
+        return self.base.n_symbol(a, b, c)
+
+    def qdim(self, a):
+        return self.base.qdim(a)
+
+    def irrep_dim(self, a):
+        return self.base.irrep_dim(a)
+
+    def cgc(self, a, b, c):
+        return self.base.cgc(a, b, c)
+
+    def frobenius_schur(self, a):
+        return self.base.frobenius_schur(a)
+
+    def twist(self, a):
+        return self.base.twist(a)
+
+    def permute_tree(self, tree, perm):
+        return self.base.permute_tree(tree, perm)

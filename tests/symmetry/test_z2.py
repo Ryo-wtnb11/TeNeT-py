@@ -439,9 +439,12 @@ def test_product_forwards_exactly_what_it_forwards_today(factors):
             assert product.n_symbol(a, b, c) == 1
             assert product.cgc(a, b, c).shape == (1, 1, 1, 1)
 
-    # this issue's product claim is pinned to exactly what exists: no bending, no dual basis
-    assert not isinstance(product, BendingCoefficients)
-    assert not isinstance(product, DualBasis)
+    # The pin was on the gap, and #312 closed it: a product now forwards bending and the
+    # dual basis, so a Z2 x U(1) tensor repartitions and expands like any other. Kept as
+    # an assertion rather than deleted, because "what a product forwards" is exactly what
+    # this case exists to state.
+    assert isinstance(product, BendingCoefficients)
+    assert isinstance(product, DualBasis)
 
     space = GradedSpace.new(product, {a: 1 for a in sectors[:3]})
     legs = (Leg(space, OUT), Leg(space, OUT), Leg(space, IN))

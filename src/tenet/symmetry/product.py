@@ -21,7 +21,7 @@ Two conventions, stated once and used twice:
   ``reshape`` *is* mixed radix with the leading factor most significant. The two
   flattenings therefore agree by construction rather than by matching arithmetic.
 
-Two known gaps, deliberate:
+One known gap, deliberate:
 
 * **``GradedSpace.new``'s sector-type check weakens under products.** It uses
   ``type(provider.unit)``, which is ``ProductSector`` for every product, so a
@@ -30,10 +30,14 @@ Two known gaps, deliberate:
   ``dual`` / ``fusion`` / ``n_symbol`` validate component count and per-component
   sector type and raise ``TypeError`` naming the position, so the failure happens
   loudly at the first fusion query.
-* **No ``BendingCoefficients`` / ``DualBasis`` forwarding.** The pattern is the
-  same (the duality matrix becomes a Kronecker product with this same flattening)
-  but it has its own dense-oracle criteria; a product has no bending capability
-  and fails loudly.
+* **``GradedSpace.new``'s check is the only one of the two gaps left.** The other was
+  ``BendingCoefficients`` / ``DualBasis`` forwarding, added in #312: a bend's
+  coefficient is the product of the factors' and the duality matrix is their Kronecker
+  product with this same flattening, both validated against explicit dense expansion.
+  What had held it back was the oracle rather than the coefficients --
+  ``tests/helpers.py``'s dense-side parity vector covered *multiplets* rather than dense
+  indices and padded a length mismatch with zeros, which deleted every Koszul sign on a
+  fermionic factor sitting beside a non-Abelian one. Fixed in the same change.
 
 **Nested products are not flattened.** ``ProductProvider((ProductProvider((A, B)),
 C))`` is a legal provider whose sectors are nested ``ProductSector``s, and it is
@@ -50,8 +54,10 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from tenet.symmetry.base import (
+    BendingCoefficients,
     CapabilityError,
     ClebschGordanData,
+    DualBasis,
     FSIndicatorData,
     PermutationCoefficients,
     QuantumDimensionData,
@@ -63,6 +69,7 @@ from tenet.symmetry.base import (
 
 if TYPE_CHECKING:
     from tenet.fusion_tree import FusionTree
+    from tenet.structure import FusionBlockKey
 
 __all__ = [
     "ProductProvider",
@@ -78,6 +85,14 @@ _PERM_HINT = (
     "(not implemented for SU(2)); it will not be faked by permuting block axes."
 )
 _CGC_HINT = "A product's Clebsch-Gordan tensor is the outer product of the factors'."
+_BEND_HINT = (
+    "A product's bending coefficient is the product of the factors', because a bend is "
+    "one line moving between the two trees and each factor's line moves with it."
+)
+_DUAL_HINT = (
+    "A product's duality map is the Kronecker product of the factors', flattened in the "
+    "same C order as its Clebsch-Gordan tensor."
+)
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -261,6 +276,76 @@ class ProductProvider:
             out = np.einsum("abcm,ABCM->aAbBcCmM", out, g).reshape(shape)
         # a product has at least one factor, so the loop assigned out
         return out  # ty: ignore[invalid-return-type]
+
+    def z_matrix(self, a: Sector) -> np.ndarray:
+        """``Z_a: V_a -> V_a^*``, the Kronecker product of the factors' duality maps.
+
+        Flattened in the same C order as [cgc][tenet.symmetry.ProductProvider.cgc], and
+        for the same reason: ``np.kron`` of the factor matrices *is* the mixed radix with
+        the leading factor most significant, so the two flattenings agree by construction
+        rather than by matching arithmetic.
+        """
+        self._require_all(DualBasis, _DUAL_HINT)
+        out = np.array([[1.0]])
+        for f, x in self._zip(a):
+            out = np.kron(out, f.z_matrix(x))
+        return out
+
+    def bend_right(
+        self, key: "FusionBlockKey", *, dual: bool
+    ) -> tuple[tuple["FusionBlockKey", complex], ...]:
+        """The distributed product of the factors' bends, as ``permute_tree`` is.
+
+        A bend moves one line from the end of the output tree to the end of the input
+        tree, and in a product that one line carries one component per factor, each
+        moving under its own factor's bending coefficient. So the bent product key is
+        ``⊗_i (Σ_α c_α^(i) k_α^(i))``, which multiplies out to this. Written for many
+        terms per factor because SU(2)'s bend reaches more than one.
+
+        The ``dual`` flag is passed through unchanged rather than distributed: each
+        factor applies its own Frobenius-Schur phase, and the product's
+        [frobenius_schur][tenet.symmetry.ProductProvider.frobenius_schur] is exactly the
+        product of those, so the phases compose to the right one without being counted
+        here as well.
+        """
+        return self._bend("bend_right", key, dual)
+
+    def bend_left(
+        self, key: "FusionBlockKey", *, dual: bool
+    ) -> tuple[tuple["FusionBlockKey", complex], ...]:
+        """The inverse direction of [bend_right][tenet.symmetry.ProductProvider.bend_right],
+        assembled the same way."""
+        return self._bend("bend_left", key, dual)
+
+    def _bend(
+        self, which: str, key: "FusionBlockKey", dual: bool
+    ) -> tuple[tuple["FusionBlockKey", complex], ...]:
+        """``bend_right`` and ``bend_left`` differ only in the factor method they call."""
+        from tenet.structure import FusionBlockKey
+
+        self._require_all(BendingCoefficients, _BEND_HINT)
+        per_factor = [
+            getattr(f, which)(
+                FusionBlockKey(project(self, key.output_tree, i), project(self, key.input_tree, i)),
+                dual=dual,
+            )
+            for i, f in enumerate(self.factors)
+        ]
+        out = []
+        for terms in itertools.product(*per_factor):
+            coeff = math.prod(c for _, c in terms)
+            if coeff == 0:
+                continue
+            out.append(
+                (
+                    FusionBlockKey(
+                        assemble(self, tuple(k.output_tree for k, _ in terms)),
+                        assemble(self, tuple(k.input_tree for k, _ in terms)),
+                    ),
+                    coeff,
+                )
+            )
+        return tuple(out)
 
     def permute_tree(
         self, tree: "FusionTree", perm: tuple[int, ...]

@@ -40,7 +40,7 @@ in CI**; every empty cell is a decision, not a constraint.
 | 1b | keyed construction: `from_blocks` / `with_blocks` (#208) | `{u1, su2, su3}` on numpy; all five torch columns; the rest are (b6) below | `tests/test_tensor_keyed.py` (round trip through `items`, absent-key zero fill, the two refusals, the frozen/pytree contracts); `tests/backends/test_torch.py` (the zero fill follows the supplied block's backend); the two cups it replaced, `tests/symmetry/test_sun.py:349-355` and `tests/symmetry/test_su2_dual.py:189-195` |
 | 1c | dtype and backend moves: `astype` / `to_backend(dtype=)` (#207) | `{su2}` × `{numpy, jax, torch}`; provider-independent, (b6) below | `tests/test_tensor_properties.py` (float64↔complex128 round trip, the block-free refusal, and the subprocess that pins what `dtype=` cannot do to a JAX without `jax_enable_x64`); `tests/backends/test_torch.py` (both dtype spellings, since autoray's torch `astype` takes only the name) |
 | 2 | `transpose` / braiding | all 8 | `tests/ops/test_permutation.py`; `tests/symmetry/test_z2.py:264-298`; `tests/symmetry/test_fz2.py`; `tests/symmetry/test_product.py`; `tests/symmetry/test_su3_multiplicity.py:157-171`; `tests/symmetry/test_sun.py:330-345` |
-| 3 | `repartition` / `bend` | all 8 | `tests/ops/test_repartition.py`; `tests/ops/test_repartition_plan.py:51` (`UF`); `tests/symmetry/test_z2.py:330-357`; `tests/symmetry/test_su3_multiplicity.py:174-207`; `tests/symmetry/test_sun.py:350-382` |
+| 3 | `repartition` / `bend` | all 8 | `tests/ops/test_repartition.py`; `tests/ops/test_repartition_plan.py:51` (`UF`); `tests/symmetry/test_z2.py:330-357`; `tests/symmetry/test_su3_multiplicity.py:174-207`; `tests/symmetry/test_sun.py:350-382`; `tests/symmetry/test_product.py` (#312: `BendingCoefficients`/`DualBasis` forwarding, four products incl. `fZ2 x U1 x SU2`, each against `helpers.dense_repartition`) |
 | 4 | `fuse` / `unfuse` | `{su2, u1, trivial, fz2}` | `tests/ops/test_fusion.py:49` (`ALL_LEGS`; fZ2 joined in #146); dense oracles at `:245-262` |
 | 5 | `compose` / `tensordot` / `einsum` | `{trivial, u1, su2, fz2, product}`; `einsum_multi` drops product | `tests/ops/test_einsum.py:75`; `tests/ops/test_einsum_multi.py:82`; `tests/ops/test_contraction.py:61` |
 | 5b | `einsum_chain` (#260) | `{trivial, u1, z2, fz2, su2, su3}` on numpy; `{u1, su2}` on torch | `tests/ops/test_einsum_chain.py`; `tests/backends/test_torch.py::test_einsum_chain_fuses_on_torch` |
@@ -177,9 +177,11 @@ contract** (with the refusal test), **(d) blocked** (with what blocks it).
   purpose; `SUNProvider(3)` covers the row — `tests/symmetry/test_sun.py:451-501`.
 - **c5.** Non-Abelian MPO terms fusing through three channels —
   `tests/network/test_mpo.py:293-305`.
-- **c6.** `inner` × product provider: `inner` bends every leg past the first,
-  and a product provider forwards no `BendingCoefficients` (#40) —
-  `tests/backends/test_torch.py:414` pins the `CapabilityError`.
+- **c6.** *Retired twice over.* It read: `inner` × product provider is out of
+  contract, because `inner` bends every leg past the first and a product forwards
+  no `BendingCoefficients` (#40). M62's coefficient-space `inner` bends nothing, so
+  the refusal fell away then; #312 forwarded bending, so the premise is gone too.
+  The row takes the ordinary path — `tests/backends/test_torch.py:471`.
 
 ### (d) blocked on infrastructure
 
