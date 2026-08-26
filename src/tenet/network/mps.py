@@ -1034,24 +1034,37 @@ def _as_w(t: SymmetricTensor) -> SymmetricTensor:
 
 
 def _braids_with_signs(space: GradedSpace) -> bool:
-    """Whether exchanging two lines of ``space`` can carry a minus sign (super-vector spaces).
+    """Whether a line of ``space`` can carry a minus sign (super-vector spaces).
 
     Asked of the braiding rather than of the provider's identity -- a category is fermionic
-    exactly when some sector braids past itself with coefficient ``-1``, which is
-    symmetry-generic recoupling metadata and not a provider branch. The sign is demanded
-    in **every** channel, because in a super-vector space it depends on parity alone:
-    SU(2) wears a minus in some channels only (``(-1)^(j_a + j_b - j_c)``, ``-1`` on the
-    singlet and ``+1`` on the triplet), and it is not fermionic.
+    exactly when some sector's *line* carries a sign, which is symmetry-generic recoupling
+    metadata and not a provider branch. The line's own datum is the ribbon twist, and the
+    ribbon identity gives it from the self-braiding channel by channel:
+
+        theta_a = (1 / d_a) * sum_c d_c * R^{aa}_c
+
+    ``-1`` on an odd fermion-parity line (one channel, ``R = -1``) and ``+1`` on every
+    sector of a symmetric bosonic category -- SU(2) wears a minus in some channels only
+    (``(-1)^(j_a + j_b - j_c)``, ``-1`` on the singlet and ``+1`` on the triplet) and the
+    weighted sum cancels it: ``(1/2)(1*(-1) + 3*(+1)) = +1`` on ``j = 1/2``.
+
+    **The weights are what survives a product.** Demanding the sign in every channel
+    instead reads correctly on fermion parity and on SU(2) alone and fails on their
+    product with U(1), whose odd ``j = 1/2`` doublet braids ``+1`` in the singlet channel
+    and ``-1`` in the triplet: a genuinely fermionic grading called bosonic (#312). Its
+    twist is ``(1/2)(1*(+1) + 3*(-1)) = -1``, the product of the factors' twists, as it
+    must be.
     """
     sym = space.provider
     for a, _ in space.sectors:
-        signs = [
-            # permute_tree is the opt-in PermutationCoefficients capability;
-            # every provider that reaches this braiding question implements it
-            sym.permute_tree(FusionTree((a, a), (), (0,), c), (1, 0))[0][1].real  # ty: ignore[unresolved-attribute]
+        # ``d_a`` is positive and only the sign is asked, so it is left off. permute_tree
+        # is the opt-in PermutationCoefficients capability; every provider that reaches
+        # this braiding question implements it
+        theta = sum(
+            sym.qdim(c) * sym.permute_tree(FusionTree((a, a), (), (0,), c), (1, 0))[0][1].real  # ty: ignore[unresolved-attribute]
             for c in sym.fusion(a, a)
-        ]
-        if signs and all(sign < 0 for sign in signs):
+        )
+        if theta < 0:
             return True
     return False
 
@@ -1139,9 +1152,9 @@ def _w_entry(value: Any, key: Any, n: int) -> tuple[Any, SymmetricTensor | None]
     )
 
 
-def _unit_leg(sym, dual: bool) -> Leg:
-    """The trivial ``D=1`` MPO boundary leg, ``IN``."""
-    return Leg(GradedSpace.new(sym, {sym.unit: 1}), IN, dual)
+def _unit_leg(sym) -> Leg:
+    """The trivial ``D=1`` MPO boundary leg: ``IN``, and ``dual`` as the derived bonds are."""
+    return Leg(GradedSpace.new(sym, {sym.unit: 1}), IN, True)
 
 
 def _identity_w(aux: Leg, phys: GradedSpace) -> SymmetricTensor:
@@ -1169,18 +1182,28 @@ def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
 
     The util legs are ``dual`` because ``_as_w``'s bend makes the *derived* bonds dual, and
     an MPO bond carries one ``dual`` convention — ``V (+) V*`` is not a graded space; on
-    the unit sector the flag is free. **Except on a sign-braiding grading**: for a bond
-    sector with a ``-1`` self-braiding the two caps differ by exactly that twist, so a
-    dual odd bond contracted in the package's composition order pays one Koszul sign per
-    cut — ``(-1)^(number of odd internal bonds)`` on the chain. The
-    factors are therefore flipped to the non-dual convention the rank-3 route already
-    uses, with the twist paid once per bond (``inv`` on exactly one end -- ``flip_dual`` twice
-    is ``chi_a * theta_a``, ``-1`` on an odd line); bosonic splits are byte-identical.
+    the unit sector the flag is free.
+
+    **Each cut owes the twist of its own bond sector, and that is the whole graded
+    content.** A cut's two ends meet through the duality pairing the SVD's bend left
+    behind, which runs *against* the direction the chain's composition takes, and two
+    closures of one line that disagree about direction differ by the ribbon twist
+    ``theta`` on it (M82 phase 2). So one [tenet.twist][] per internal bond, on either end
+    -- both ends carry the same sector in a block -- and nothing else. It is paid per
+    *sector*, so a bond that mixes an odd sector with an even one is right in both, and
+    bosonic splits are byte-identical: ``theta`` is ``1`` and ``twist`` hands the tensor
+    straight back.
+
+    Not ``flip_dual``, which was the sign this paid before #312: that scalar is the
+    ``V_a -> V_a^*`` isomorphism's ``chi_a * theta_a``, the twist **times** the
+    Frobenius-Schur indicator, because it relabels the sector as well as turning the wire.
+    Only the turn is owed. The two agree wherever ``chi_a = 1``, which is every sector of
+    a pure super-vector space (fermion parity's FS indicator is ``+1``), and part ways on a
+    half-integer-spin multiplet, where ``chi_a = -1`` made the correction the identity.
     """
     sym = op.legs[0].space.provider
-    fermionic = _braids_with_signs(op.legs[0].space)
     body = string.ascii_uppercase[: op.ndim]
-    util = _unit_leg(sym, not fermionic)
+    util = _unit_leg(sym)
     carry = tenet.einsum(f"ba,{body}->a{body}b", tenet.identity((util,)), op)
     out = []
     while carry.ndim > 4:
@@ -1191,11 +1214,8 @@ def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
         body = string.ascii_uppercase[: vh.ndim - 1]
         carry = tenet.einsum(f"xy,y{body}->x{body}", s, vh)
     out.append(_as_w(carry))
-    if fermionic:
-        for k in range(len(out) - 1):
-            out[k] = tenet.flip_dual(out[k], 3)
-            out[k + 1] = tenet.flip_dual(out[k + 1], 0, inv=True)
-    return out
+    # one closure per internal bond, on the right end of the factor to its left
+    return [w if k == len(out) - 1 else tenet.twist(w, 3) for k, w in enumerate(out)]
 
 
 # --- the symbolic layer -------------------------------------------------------------
@@ -3259,13 +3279,10 @@ class MPO:
         if phys is None:
             raise ValueError("from_terms: no terms; the physical space is read off an operator")
         # One dual convention per MPO, set by whether any k-site split runs in it: the
-        # split's derived bonds come back dual, and a bond hosts both kinds of state.
-        # On a sign-braiding grading ``_split`` hands its bonds back non-dual (the dual
-        # cap would cost the twist per odd cut; see its docstring), so the whole MPO
-        # stays on the rank-3 route's non-dual convention there.
-        dual = any(op.ndim != 3 for _, ops in strings for op, _ in ops) and not (
-            _braids_with_signs(phys)
-        )
+        # split's derived bonds come back dual, and a bond hosts both kinds of state. The
+        # grading does not enter: ``_split`` pays its cuts' twist where the cut is made,
+        # so its bonds are dual on every provider (see its docstring).
+        dual = any(op.ndim != 3 for _, ops in strings for op, _ in ops)
         split_cutoff = 1e-13 if cutoff is None else cutoff
         splits: dict[int, list[SymmetricTensor]] = {}
 

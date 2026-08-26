@@ -10,7 +10,16 @@ import pytest
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.network import MPO, local_op
-from tenet.symmetry import SU2, U1, FZ2Sector, SU2Sector, U1Sector, fZ2
+from tenet.symmetry import (
+    SU2,
+    U1,
+    FZ2Sector,
+    ProductProvider,
+    ProductSector,
+    SU2Sector,
+    U1Sector,
+    fZ2,
+)
 
 
 def _ops():
@@ -835,3 +844,153 @@ def test_a_state_space_that_disagrees_with_its_bond_slot_raises_inside_from_dens
     assert ok.legs[0].space == bond
     with pytest.raises(ValueError, match="not symmetric"):
         _mps._place([(block, state, honest, state, corrupt)], bond, bond, phys, False, False)
+
+
+# --- #312: the built MPO *is* the operator, on every grading -------------------------
+#
+# Every fermionic test above this line measures an *energy* on an open chain, where
+# ``t -> -t`` is the site-local gauge ``c_m -> (-1)^m c_m`` and every spectrum is
+# unchanged -- which is why a whole-term sign error survived them all. These compare
+# tensors instead: ``MPO.from_terms`` of one k-site term against the operator
+# ``local_op`` built, element for element, with no state anywhere.
+
+_FUS = ProductProvider((fZ2, U1, SU2))
+
+
+def _fus(parity, charge, two_j):
+    return ProductSector((FZ2Sector(parity), U1Sector(charge), SU2Sector(two_j)))
+
+
+def _hop(annihilate, parity):
+    """``sum_s (c+_0 c_1 + c+_1 c_0)`` on one bond, ``np.kron`` layout, JW ``Z`` included."""
+    forward = sum(np.kron(c.T @ parity, c) for c in annihilate)
+    return forward + forward.T
+
+
+_SPINLESS_HOP = _hop((_A,), _Z)
+
+# The spinful d=4 site of ``tests/network/test_hubbard.py``, in its graded basis.
+_P4 = np.diag([1.0, 1.0, -1.0, -1.0])
+_C_UP = np.zeros((4, 4))
+_C_UP[0, 2], _C_UP[3, 1] = 1.0, 1.0
+_C_DN = np.zeros((4, 4))
+_C_DN[0, 3], _C_DN[2, 1] = 1.0, -1.0
+_SPINFUL_HOP = _hop((_C_UP, _C_DN), _P4)
+_SZ4, _SP4 = (_C_UP.T @ _C_UP - _C_DN.T @ _C_DN) / 2, _C_UP.T @ _C_DN
+_SS4 = np.kron(_SZ4, _SZ4) + (np.kron(_SP4, _SP4.T) + np.kron(_SP4.T, _SP4)) / 2
+
+_SZ2, _SP2 = np.diag([0.5, -0.5]), np.array([[0.0, 1.0], [0.0, 0.0]])
+_SS2 = np.kron(_SZ2, _SZ2) + (np.kron(_SP2, _SP2.T) + np.kron(_SP2.T, _SP2)) / 2
+
+_FU = ProductProvider((fZ2, U1))
+_FU_PHYS = GradedSpace.new(
+    _FU,
+    {
+        ProductSector((FZ2Sector(0), U1Sector(0))): 1,
+        ProductSector((FZ2Sector(1), U1Sector(1))): 1,
+    },
+)
+# The same spinless site with the SU(2) factor along for the ride: its odd sector is the
+# singlet, so ``chi = +1`` and the Frobenius-Schur indicator cannot be seen there.
+_FUS_SPINLESS_PHYS = GradedSpace.new(_FUS, {_fus(0, 0, 0): 1, _fus(1, 1, 0): 1})
+# The Hubbard site: the singly-occupied states are one ``j = 1/2`` doublet, ``chi = -1``.
+_FUS_PHYS = GradedSpace.new(_FUS, {_fus(0, 0, 0): 1, _fus(0, 2, 0): 1, _fus(1, 1, 1): 1})
+_SU2_PHYS = GradedSpace.new(SU2, {SU2Sector(1): 1})
+
+
+@pytest.mark.parametrize(
+    ("label", "phys", "matrix"),
+    [
+        ("fZ2 hop (odd bond)", FZ2_PHYS, _SPINLESS_HOP),
+        ("fZ2xU1 hop (odd bond)", _FU_PHYS, _SPINLESS_HOP),
+        ("fZ2xU1xSU2 spinless hop (odd bond, chi=+1)", _FUS_SPINLESS_PHYS, _SPINLESS_HOP),
+        ("fZ2xU1xSU2 spinful hop (odd bond, chi=-1)", _FUS_PHYS, _SPINFUL_HOP),
+        ("fZ2xU1xSU2 S.S (even bond)", _FUS_PHYS, _SS4),
+        ("SU2 S.S (even bond)", _SU2_PHYS, _SS2),
+        ("fZ2 hop x hop (two internal bonds)", FZ2_PHYS, np.kron(_SPINLESS_HOP, np.eye(2))),
+        (
+            "fZ2xU1xSU2 spinful hop x id (two internal bonds)",
+            _FUS_PHYS,
+            np.kron(_SPINFUL_HOP, np.eye(4)),
+        ),
+    ],
+)
+@pytest.mark.parametrize("cutoff", [None, 1e-13], ids=["deferred", "compressed"])
+def test_a_split_term_builds_the_operator_it_was_given(label, phys, matrix, cutoff):
+    """``MPO.from_terms`` of one k-site term **is** ``local_op``'s operator (#312).
+
+    The state-free statement of the whole ``_split`` contract, over the gradings that
+    move the answer: fermion parity alone, parity beside U(1), parity beside a non-Abelian
+    factor with the odd sector at ``j = 0`` (Frobenius-Schur ``chi = +1``) and at
+    ``j = 1/2`` (``chi = -1``), an even MPO bond on the same product, and SU(2) on its
+    own. The last two rows put a third site under the term, so more than one internal bond
+    is cut, and each row is built in both MPO representations -- the deferred table and the
+    compressed one write their bond ``dual`` flag differently.
+
+    The ``chi = -1`` row is #312 itself: ``_split`` paid its cuts with a ``flip_dual``
+    pair, whose scalar is ``chi_a * theta_a`` and not the ``theta_a`` a cut owes, so a
+    half-integer-spin bond sector cancelled the correction and ``from_terms`` returned
+    ``-H`` -- silently, since ``local_op`` and every dense boundary were and are exact.
+    """
+    op = local_op(matrix, phys=phys)
+    n_sites = op.ndim // 2
+    built = MPO.from_terms(n_sites, [(1.0, [(op, tuple(range(n_sites)))])], cutoff=cutoff)
+    want = np.asarray(op.to_dense()).reshape(phys.dim**n_sites, -1)
+    assert np.abs(np.asarray(built.to_dense()) - want).max() < 1e-12, label
+
+
+_NN = (_C_UP.T @ _C_UP) @ (_C_DN.T @ _C_DN)  # the Hubbard U operator, one site
+
+
+def _hubbard_bond(t, u):
+    """``t * hop + u * n_up n_dn`` on the left site: one invariant two-site term."""
+    return t * _SPINFUL_HOP + u * np.kron(_NN, np.eye(4))
+
+
+def _hubbard_oracle(pairs, t, u):
+    """The same Hamiltonian by explicit Jordan-Wigner ``kron``, on three ``d=4`` sites."""
+
+    def spread(site, local, string):
+        full = np.array([[1.0]])
+        for f in [_P4 if string else np.eye(4)] * site + [local] + [np.eye(4)] * (2 - site):
+            full = np.kron(full, f)
+        return full
+
+    h = np.zeros((64, 64))
+    for i, j in pairs:
+        for c in (_C_UP, _C_DN):
+            forward = spread(i, c.T, True) @ spread(j, c, True)
+            h = h + t * (forward + forward.T)
+        h = h + u * spread(i, _NN, False)
+    return h
+
+
+def test_the_hop_sign_is_physical_on_a_ring_and_a_gauge_on_a_chain():
+    """A loop is where ``t -> -t`` stops being removable -- the geometry #312 needed.
+
+    On an open chain ``H(t)`` and ``H(-t)`` are conjugate by the site-local gauge
+    ``c_m -> (-1)^m c_m``, which leaves the diagonal ``U`` term alone, so the two have the
+    **same spectrum** and no energy-measuring test can tell a flipped hopping term from an
+    unflipped one. That is why every fermionic test in this repository passed while
+    ``from_terms`` was returning ``-H`` for the spinful hop. Around a loop the gauge has to
+    close and the product of the three hoppings does not, so the two spectra separate --
+    and here the built ring is pinned to the explicit Jordan-Wigner oracle as well, which
+    is what makes this a regression test and not only a statement about geometry.
+    """
+    chain = [(0, 1), (1, 2)]
+    ring = [*chain, (0, 2)]
+    u = 4.0
+
+    def built(pairs, t):
+        op = local_op(_hubbard_bond(t, u), phys=_FUS_PHYS)
+        return np.asarray(MPO.from_terms(3, [(1.0, [(op, pair)]) for pair in pairs]).to_dense())
+
+    for pairs in (chain, ring):
+        for t in (1.0, -1.0):
+            assert np.abs(built(pairs, t) - _hubbard_oracle(pairs, t, u)).max() < 1e-12
+
+    def spectrum(pairs, t):
+        return np.linalg.eigvalsh(built(pairs, t))
+
+    assert np.allclose(spectrum(chain, 1.0), spectrum(chain, -1.0))
+    assert not np.allclose(spectrum(ring, 1.0), spectrum(ring, -1.0))
