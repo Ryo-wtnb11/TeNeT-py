@@ -19,6 +19,8 @@ from tenet.symmetry import (
     SU2,
     U1,
     FZ2Sector,
+    ProductProvider,
+    ProductSector,
     SU2Sector,
     Trivial,
     TrivialSector,
@@ -56,6 +58,30 @@ _C_UP[3, 1] = 1.0  # c_up |ud> = +|d>
 _C_DN = np.zeros((4, 4))
 _C_DN[0, 3] = 1.0  # c_dn |d> = |0>
 _C_DN[2, 1] = -1.0  # c_dn |ud> = -|u>
+_N_UP, _N_DN = _C_UP.T @ _C_UP, _C_DN.T @ _C_DN
+
+# The site parity, ``(-1)^n``: the Jordan-Wigner ``Z`` a two-site term pays on its left
+# site, which a *matrix* has to carry because ``np.kron`` knows nothing about braiding.
+_PARITY = np.diag([1.0, 1.0, -1.0, -1.0])
+
+# The invariant two-site matrices, in the ``np.kron(a, b)`` layout ``local_op``'s
+# invariant form reads: one whole bond term each.
+# ``sum_sigma c+_{i,sigma} c_{j,sigma}``, and the whole hopping bond with its h.c.
+_HOP_FWD = np.kron(_C_UP.T @ _PARITY, _C_UP) + np.kron(_C_DN.T @ _PARITY, _C_DN)
+_HOP = _HOP_FWD + _HOP_FWD.T
+# ``S_i . S_j`` on the spinful site: ``S^z = (n_up - n_dn)/2``, ``S^+ = c+_up c_dn``.
+_SPIN_Z, _SPIN_P = (_N_UP - _N_DN) / 2, _C_UP.T @ _C_DN
+_SPIN_SS = (
+    np.kron(_SPIN_Z, _SPIN_Z) + (np.kron(_SPIN_P, _SPIN_P.T) + np.kron(_SPIN_P.T, _SPIN_P)) / 2
+)
+
+# The spin-SU(2) grading of the same site: fermion parity, particle number, total spin.
+_FUS = ProductProvider((fZ2, U1, SU2))  # ty: ignore[invalid-argument-type]
+
+
+def _fus(parity: int, charge: int, two_j: int) -> ProductSector:
+    """One sector of the ``fZ2 x U1 x SU2`` grading."""
+    return ProductSector((FZ2Sector(parity), U1Sector(charge), SU2Sector(two_j)))
 
 
 @dataclass(frozen=True)
@@ -230,27 +256,51 @@ def spinless_fermion() -> Site:
     )
 
 
-def spinful_fermion() -> Site:
-    """The spinful fermion site on ``fZ2``: the ``d=4`` basis ``(|0>, |ud>, |u>, |d>)``.
+def spinful_fermion(symmetry: _DualFusionRules = fZ2) -> Site:  # ty: ignore[invalid-parameter-default]
+    """The spinful fermion site, graded by ``fZ2`` or by ``fZ2 x U1 x SU2``.
+
+    Parameters
+    ----------
+    symmetry : FusionRules, optional
+        ``fZ2`` (the default), the fermion parity alone, whose ``d=4`` basis is
+        ``(|0>, |ud>, |u>, |d>)``; or ``ProductProvider((fZ2, U1, SU2))`` -- parity,
+        particle number and total spin -- on which the singly-occupied states are one
+        ``j = 1/2`` multiplet. Any other provider is refused, and so is a product whose
+        factors are not exactly those three in that order.
 
     Returns
     -------
     Site
-        ``c_up``, ``c+_up``, ``c_dn``, ``c+_dn`` (odd), and ``n_up``, ``n_dn``, ``n``,
-        ``n_up n_dn`` (even). The last is the Hubbard ``U`` operator, pre-multiplied
-        because [MPO.from_terms][tenet.network.MPO.from_terms] places one operator per
-        site; under [MPO.from_arrays][tenet.network.MPO.from_arrays] the *same spelling*
-        is a two-name block expression on two coincident site indices, which its merge
-        multiplies into this very operator.
+        Under ``fZ2``: ``c_up``, ``c+_up``, ``c_dn``, ``c+_dn`` (odd), and ``n_up``,
+        ``n_dn``, ``n``, ``n_up n_dn`` (even). The last is the Hubbard ``U`` operator,
+        pre-multiplied because [MPO.from_terms][tenet.network.MPO.from_terms] places one
+        operator per site; under [MPO.from_arrays][tenet.network.MPO.from_arrays] the
+        *same spelling* is a two-name block expression on two coincident site indices,
+        which its merge multiplies into this very operator. Under ``fZ2 x U1 x SU2``:
+        the invariant set ``n``, ``n_up n_dn``, ``hop``, ``S.S`` and nothing else
+        (see Notes).
+
+    Raises
+    ------
+    ValueError
+        If ``symmetry`` is neither ``fZ2`` nor ``ProductProvider((fZ2, U1, SU2))``.
 
     Examples
     --------
     >>> from tenet.models import spinful_fermion
+    >>> from tenet.symmetry import SU2, U1, ProductProvider, fZ2
     >>> site = spinful_fermion()
     >>> site.phys.dim
     4
     >>> site.matrices["n"].diagonal().tolist()
     [0.0, 2.0, 1.0, 1.0]
+    >>> su2 = spinful_fermion(ProductProvider((fZ2, U1, SU2)))
+    >>> su2.phys.dim, su2.phys.reduced_dim  # four states, three multiplets
+    (4, 3)
+    >>> sorted(su2.ops)
+    ['S.S', 'hop', 'n', 'n_up n_dn']
+    >>> su2.ops["hop"].ndim  # rank 2k, k = 2: one whole bond
+    4
 
     Notes
     -----
@@ -260,23 +310,63 @@ def spinful_fermion() -> Site:
     ``c_up`` carries no intra-site sign and ``c_dn`` pays the Jordan-Wigner ``Z`` on the
     up mode (``c_dn |ud> = -|u>``). Inter-site strings are the braiding's business, not
     a matrix's, and this convention is pinned against a dense oracle.
+
+    ``fZ2 x U1 x SU2`` splits the same four states into ``(even, q=0, j=0)``,
+    ``(even, q=2, j=0)`` and the doublet ``(odd, q=1, j=1/2)``, in that canonical order,
+    so it is the *same* even-before-odd dense basis and every matrix above is still the
+    matrix of the same operator. What changes is which of them is a tensor: **the set is
+    ``{n, n_up n_dn, hop, S.S}`` and that is the whole answer.** ``c_up`` and its five
+    relatives are not omitted by preference -- none of them is an SU(2)-invariant
+    tensor, so the invariant form refuses them, and the charge-leg form cannot carry
+    them either, for the reason [spin_half][tenet.models.spin_half] has no ``S+``: that
+    form puts the emitted sector on a ``D=1`` *dense* leg, and the sector ``c_up`` emits
+    is the ``j = 1/2`` doublet, of dense dimension 2. ``n_up`` and ``n_dn`` are
+    invariant under neither, individually; only their sum and their product are.
+
+    What is left is enough for the Hubbard model, because the pieces that are not
+    invariant one-site operators are invariant *bond* operators: ``hop`` is the whole
+    hopping term ``sum_sigma (c+_{i,sigma} c_{j,sigma} + c+_{j,sigma} c_{i,sigma})`` on
+    one bond, the analogue of ``spin_half(SU2)``'s ``S.S``, and
+    [MPO.from_terms][tenet.network.MPO.from_terms] splits it across that bond with an
+    SVD. ``n`` and ``n_up n_dn`` arrive in the invariant *one*-site form, rank 2, which
+    is what [expectation_1site][tenet.network.expectation_1site] measures with; a
+    non-Abelian physical space admits no charge-leg form of them, so a ``U`` term
+    reaches a term list as part of a bond operator (``np.kron`` with the identity)
+    rather than on its own.
     """
-    n_up, n_dn = _C_UP.T @ _C_UP, _C_DN.T @ _C_DN
-    return _build(
-        GradedSpace.new(
-            fZ2,  # ty: ignore[invalid-argument-type]
-            {FZ2Sector(0): 2, FZ2Sector(1): 2},
-        ),
-        {
-            "c_up": (_C_UP, FZ2Sector(1)),
-            "c+_up": (_C_UP.T, FZ2Sector(1)),
-            "c_dn": (_C_DN, FZ2Sector(1)),
-            "c+_dn": (_C_DN.T, FZ2Sector(1)),
-            "n_up": (n_up, FZ2Sector(0)),
-            "n_dn": (n_dn, FZ2Sector(0)),
-            "n": (n_up + n_dn, FZ2Sector(0)),
-            "n_up n_dn": (n_up @ n_dn, FZ2Sector(0)),
-        },
+    if symmetry is fZ2:
+        return _build(
+            GradedSpace.new(
+                fZ2,
+                {FZ2Sector(0): 2, FZ2Sector(1): 2},
+            ),
+            {
+                "c_up": (_C_UP, FZ2Sector(1)),
+                "c+_up": (_C_UP.T, FZ2Sector(1)),
+                "c_dn": (_C_DN, FZ2Sector(1)),
+                "c+_dn": (_C_DN.T, FZ2Sector(1)),
+                "n_up": (_N_UP, FZ2Sector(0)),
+                "n_dn": (_N_DN, FZ2Sector(0)),
+                "n": (_N_UP + _N_DN, FZ2Sector(0)),
+                "n_up n_dn": (_N_UP @ _N_DN, FZ2Sector(0)),
+            },
+        )
+    if isinstance(symmetry, ProductProvider) and symmetry.factors == _FUS.factors:
+        return _build(
+            GradedSpace.new(
+                _FUS,
+                {_fus(0, 0, 0): 1, _fus(0, 2, 0): 1, _fus(1, 1, 1): 1},
+            ),
+            {
+                "n": (_N_UP + _N_DN, None),
+                "n_up n_dn": (_N_UP @ _N_DN, None),
+                "hop": (_HOP, None),
+                "S.S": (_SPIN_SS, None),
+            },
+        )
+    raise ValueError(
+        f"spinful_fermion: the shipped gradings are fZ2 and "
+        f"ProductProvider((fZ2, U1, SU2)), got {symmetry!r}"
     )
 
 
