@@ -1034,37 +1034,34 @@ def _as_w(t: SymmetricTensor) -> SymmetricTensor:
 
 
 def _braids_with_signs(space: GradedSpace) -> bool:
-    """Whether a line of ``space`` can carry a minus sign (super-vector spaces).
+    """Whether *crossing* two lines of ``space`` can carry a minus sign.
 
-    Asked of the braiding rather than of the provider's identity -- a category is fermionic
-    exactly when some sector's *line* carries a sign, which is symmetry-generic recoupling
-    metadata and not a provider branch. The line's own datum is the ribbon twist, and the
-    ribbon identity gives it from the self-braiding channel by channel:
+    The Jordan-Wigner question: a bond line passing a physical line, or two odd operators
+    swapping places, pays the braiding ``R``. Asked of the braiding rather than of the
+    provider's identity -- symmetry-generic recoupling metadata, not a provider branch.
+    The sign is demanded in **every** channel, because a caller that multiplies one scalar
+    into a whole block can only act on a sign that does not depend on the channel: SU(2)
+    wears a minus in some channels only (``(-1)^(j_a + j_b - j_c)``, ``-1`` on the singlet
+    and ``+1`` on the triplet), and a crossing there is not one sign.
 
-        theta_a = (1 / d_a) * sum_c d_c * R^{aa}_c
-
-    ``-1`` on an odd fermion-parity line (one channel, ``R = -1``) and ``+1`` on every
-    sector of a symmetric bosonic category -- SU(2) wears a minus in some channels only
-    (``(-1)^(j_a + j_b - j_c)``, ``-1`` on the singlet and ``+1`` on the triplet) and the
-    weighted sum cancels it: ``(1/2)(1*(-1) + 3*(+1)) = +1`` on ``j = 1/2``.
-
-    **The weights are what survives a product.** Demanding the sign in every channel
-    instead reads correctly on fermion parity and on SU(2) alone and fails on their
-    product with U(1), whose odd ``j = 1/2`` doublet braids ``+1`` in the singlet channel
-    and ``-1`` in the triplet: a genuinely fermionic grading called bosonic (#312). Its
-    twist is ``(1/2)(1*(+1) + 3*(-1)) = -1``, the product of the factors' twists, as it
-    must be.
+    **A crossing, not a turn.** What a line pays for *turning around* is the ribbon twist,
+    and the two are not the same question: they coincide on a pure super-vector space,
+    where the braiding is the parity sign, and part ways on a product with a non-Abelian
+    factor, whose odd ``j = 1/2`` doublet braids ``+1`` in the singlet channel and ``-1``
+    in the triplet while its twist is ``-1``. ``_split`` used to gate on this predicate
+    and now pays [tenet.twist][] unconditionally instead (#312), which needs no
+    classification at all -- ``theta`` is ``1`` on a bosonic grading and the twist hands
+    the tensor straight back. Do not route a turn through here again.
     """
     sym = space.provider
     for a, _ in space.sectors:
-        # ``d_a`` is positive and only the sign is asked, so it is left off. permute_tree
-        # is the opt-in PermutationCoefficients capability; every provider that reaches
-        # this braiding question implements it
-        theta = sum(
-            sym.qdim(c) * sym.permute_tree(FusionTree((a, a), (), (0,), c), (1, 0))[0][1].real  # ty: ignore[unresolved-attribute]
+        signs = [
+            # permute_tree is the opt-in PermutationCoefficients capability;
+            # every provider that reaches this braiding question implements it
+            sym.permute_tree(FusionTree((a, a), (), (0,), c), (1, 0))[0][1].real  # ty: ignore[unresolved-attribute]
             for c in sym.fusion(a, a)
-        )
-        if theta < 0:
+        ]
+        if signs and all(sign < 0 for sign in signs):
             return True
     return False
 
