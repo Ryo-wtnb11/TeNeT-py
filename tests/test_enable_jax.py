@@ -17,8 +17,8 @@ import tenet
 
 pytest.importorskip("jax")
 
-# Build one U(1) tensor with more than one block, so "the leaves are the blocks" is a
-# statement the un-registered case cannot accidentally satisfy.
+# Build one U(1) tensor with more than one coupled sector, so "the leaves are the sector
+# matrices" is a statement the un-registered case cannot accidentally satisfy.
 FIXTURE = """
     import autoray as ar
     import jax
@@ -63,8 +63,8 @@ def test_it_does_what_the_three_statements_do():
         tenet.enable_jax(ad=True)
 
         import tenet.ad
-        assert len(leaves()) == T.structure.num_blocks
-        assert all(a is b for a, b in zip(leaves(), T.blocks))
+        assert len(leaves()) == len(T.data)
+        assert all(a is b for a, b in zip(leaves(), T.data))
         assert svd_override() is tenet.ad._svd_dispatch
         assert eigh_override() is tenet.ad._eigh_dispatch
         print("OK")
@@ -76,7 +76,7 @@ def test_the_default_registers_the_pytree_and_leaves_autorays_table_untouched():
     run("""
         tenet.enable_jax()
 
-        assert len(leaves()) == T.structure.num_blocks   # effect 1 happened
+        assert len(leaves()) == len(T.data)              # effect 1 happened
         assert svd_override() is None                    # effect 2 did not
         assert eigh_override() is None
         print("OK")

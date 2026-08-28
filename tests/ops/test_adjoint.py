@@ -8,7 +8,7 @@ import pytest
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-from tenet.map_view import to_matrices
+from tenet.map_view import map_layout, to_matrices
 from tenet.ops.map import adjoint_plan
 from tenet.symmetry import SU2, U1, SU2Sector, U1Sector
 
@@ -82,16 +82,28 @@ def test_legs_flip_side_only(legs):
 
 
 @pytest.mark.parametrize("legs", ALL_LEGS)
-def test_block_shapes_are_a_permutation_and_no_transpose_is_called(legs, monkeypatch):
+def test_block_shapes_are_a_permutation_and_the_transpose_is_the_sector_s(legs, monkeypatch):
+    """No block axis moves; what is transposed is one coupled-sector matrix each.
+
+    Swapping the two trees of every key *is* the transpose of the coupled-sector matrix
+    -- flipping ``side`` moves no axis and touches no space, so the adjoint's row bands
+    are this tensor's column bands -- so the dagger costs one conjugate-transpose per
+    sector and not one conjugate per block. The block axes still travel with their own
+    legs, which is what the shape permutation below says.
+    """
     t = cx(legs)
     real_do = ar.do
+    calls: list[str] = []
 
-    def guard(fn, *args, **kw):
-        assert fn != "transpose", "adjoint must not transpose blocks"
+    def spy(fn, *args, **kw):
+        calls.append(fn)
         return real_do(fn, *args, **kw)
 
-    monkeypatch.setattr(ar, "do", guard)
-    d = t.adjoint()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(ar, "do", spy)
+        d = t.adjoint()
+    assert calls.count("transpose") == len(map_layout(t.structure).sectors)
+    assert calls.count("transpose") <= t.structure.num_blocks
     assert sorted(b.shape for b in d.blocks) == sorted(b.shape for b in t.blocks)
 
 

@@ -789,12 +789,19 @@ def differentiable(t):
 
 
 def grads_are_finite(t, objective):
+    """The gradient arrives on the leaves ``differentiable`` made, which are the params.
+
+    ``get_params`` and not ``blocks``: the parameters are the coupled-sector matrices,
+    and a block is a view cut out of one of them. A view is a non-leaf with no ``.grad``
+    of its own, so asking a block for one would be asking the wrong array -- the same
+    reason ``tenet.pytree`` gives JAX the matrices as leaves.
+    """
     x = differentiable(t)
     objective(x).backward()
-    for block, source in zip(x.blocks, t.blocks, strict=True):
-        assert block.grad is not None
-        assert block.grad.shape == source.shape
-        assert bool(torch.isfinite(block.grad).all())
+    for leaf, source in zip(x.get_params(), t.get_params(), strict=True):
+        assert leaf.grad is not None
+        assert leaf.grad.shape == source.shape
+        assert bool(torch.isfinite(leaf.grad).all())
 
 
 @pytest.mark.parametrize("name", ["u1", "su2"])
@@ -838,18 +845,21 @@ def test_finite_differences_on_the_singular_values():
     x = differentiable(t)
     objective(x).backward()
 
+    # over the parameters, which are the coupled-sector matrices: they are the leaves
+    # ``differentiable`` made and the only arrays that carry a ``.grad``
     h = 1e-6
-    for i, block in enumerate(t.blocks):
-        want = np.zeros(tuple(block.shape))
+    params = t.get_params()
+    for i, matrix in enumerate(params):
+        want = np.zeros(tuple(matrix.shape))
         for idx in np.ndindex(want.shape):
 
             def shifted(delta, i=i, idx=idx):
-                bs = [b.clone() for b in t.blocks]
-                bs[i][idx] += delta
-                return float(objective(SymmetricTensor(t.structure, tuple(bs))))
+                ms = [m.clone() for m in params]
+                ms[i][idx] += delta
+                return float(objective(t.set_params(ms)))
 
             want[idx] = (shifted(h) - shifted(-h)) / (2 * h)
-        np.testing.assert_allclose(ar.to_numpy(x.blocks[i].grad), want, rtol=0, atol=1e-9)
+        np.testing.assert_allclose(ar.to_numpy(x.get_params()[i].grad), want, rtol=0, atol=1e-9)
 
 
 # --- tenet.ad stays JAX-only -----------------------------------------------------

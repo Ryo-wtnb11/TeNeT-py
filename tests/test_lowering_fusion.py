@@ -131,6 +131,8 @@ def test_the_fused_lowering_writes_once_per_term_and_multiplies_nowhere_standalo
     """
     t = SymmetricTensor.random(legs, seed=1)
     structure, perm, terms = _plan(t, outputs, inputs)
+    t.blocks  # noqa: B018  # cutting the source's blocks out of its matrices is the
+    # tensor's own memoized work, not the plan's; the plan is what is being counted
     counts = _count_ar_do(monkeypatch, lambda: lower_plan(t, structure, perm, terms))
 
     assert not [name for name, _ in counts if name in {"reshape", "concatenate"}]
@@ -138,9 +140,11 @@ def test_the_fused_lowering_writes_once_per_term_and_multiplies_nowhere_standalo
     assert counts.get(("multiply", False), 0) == 0
     assert counts.get(("add", False), 0) == 0
     assert counts.get(("empty", False), 0) == len(map_layout(structure).sectors)
-    # one transposed source view per term -- the write itself is a slice assignment
+    # one transposed source view per distinct *source*, not per term -- ``order`` is
+    # per-plan and only the coefficient is per-term, so terms sharing a source would
+    # otherwise recompute a byte-identical view. The write itself is a slice assignment
     # (``dest[...] = block``) or the ``out=`` of the multiply, never a fresh array
-    assert counts.get(("transpose", False), 0) == len(terms)
+    assert counts.get(("transpose", False), 0) == len({src for src, _, _ in terms})
 
 
 @pytest.mark.parametrize(
@@ -229,15 +233,16 @@ def test_lower_writes_one_pass_per_term_and_matches_the_old_route(
     structure, _, terms = _plan(t, outputs, inputs)
     m, bond, mats = _lower(t, (outputs, inputs))
 
-    # one transposed source view per term. What is left over is ``from_matrices``'
-    # walk back onto the matrices -- per rectangle of the grid, never per block -- and
-    # it is measured rather than predicted, each under its own patch so that neither
-    # count sees the other's calls.
+    # one transposed source view per distinct source. What is left over is the walk back
+    # onto the matrices -- per rectangle of the grid, never per block -- and it is
+    # measured rather than predicted, each under its own patch so that neither count sees
+    # the other's calls.
     with pytest.MonkeyPatch.context() as patch:
         walk = _count_ar_do(patch, lambda: from_matrices(structure, mats))
     with pytest.MonkeyPatch.context() as patch:
         counts = _count_ar_do(patch, lambda: _lower(t, (outputs, inputs)))
-    assert counts.get(("transpose", False), 0) - walk.get(("transpose", False), 0) == len(terms)
+    sources = len({src for src, _, _ in terms})
+    assert counts.get(("transpose", False), 0) - walk.get(("transpose", False), 0) == sources
     assert counts.get(("multiply", False), 0) == 0
     assert counts.get(("add", False), 0) == 0
     assert ("concatenate", False) not in counts
@@ -255,3 +260,40 @@ def test_lower_writes_one_pass_per_term_and_matches_the_old_route(
             t.provider, {c: min(map_layout(m.structure).shape(c)) for c in mats}
         ).sectors
     )
+
+
+# --- the lowering's Python work is the grouping's, not the terms' (#325 stage 3) -------
+
+
+def test_the_lowering_dispatches_per_bucket_and_not_per_term():
+    """The recoupling claim: a plan's terms are gathered, scaled and summed in bulk.
+
+    ``lower_plan`` runs the same grouping ``apply_plan`` does -- by destination shape,
+    then by multiplicity -- and writes each bucket's rows straight into the destination
+    coupled-sector matrix. So the dispatch count follows the buckets and the tail the
+    grouping declined, never the term count: on this rank-5 SU(2) bend that is two orders
+    of magnitude apart. The fixture is SU(2) because an Abelian provider has one term per
+    destination and nothing to group.
+    """
+    from tenet.ops.batch import batch_plan
+
+    space = GradedSpace.new(SU2, {ZERO: 2, HALF: 2, ONE: 2})
+    legs = tuple(Leg(space, OUT if i % 2 == 0 else IN) for i in range(5))
+    t = SymmetricTensor.random(legs, seed=8)
+    plan = repartition_plan(t.structure, (0, 1, 2, 3), (4,))
+    structure, perm, terms = plan.new_structure, plan.perm, plan.terms
+    groups, loose = batch_plan(structure, perm, terms)
+    assert groups and len(loose) < len(terms)  # the fixture really does group
+
+    t.blocks  # noqa: B018  # the source's own cut, memoized, is not the plan's work
+    calls: list[str] = []
+    with count_backend_calls(pytest.MonkeyPatch(), lambda name, a, k: calls.append(name)):
+        mats = lower_plan(t, structure, perm, terms)
+    assert mats is not None
+    assert len(calls) < len(terms) // 3
+    # and the bulk path is what ran: a stack and a matmul-shaped gather per group
+    assert calls.count("stack") == len(groups)
+
+    # bit for bit what the term walk would have written
+    want = to_matrices(repartition(t, (0, 1, 2, 3), (4,)))
+    assert all(mats[c].tobytes() == want[c].tobytes() for c in want)

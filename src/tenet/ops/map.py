@@ -172,8 +172,8 @@ def block_ref(*tensors: "SymmetricTensor") -> Any:
     Returns
     -------
     array
-        ``tensors[i].blocks[0]`` for the first ``i`` that carries a block, and a
-        NumPy ``float64`` scalar when none of them does.
+        One array of the first ``i`` that carries a block -- whichever of its two
+        forms it already holds -- and a NumPy ``float64`` scalar when none does.
 
     Notes
     -----
@@ -184,8 +184,11 @@ def block_ref(*tensors: "SymmetricTensor") -> Any:
     ``float64`` only when every operand is block-less and there is nothing else to ask.
     """
     for t in tensors:
-        if t.blocks:
-            return t.blocks[0]
+        if t.structure.num_blocks:
+            # whichever form the tensor holds: a block and its coupled-sector matrix
+            # share both, and forcing the other one to read a dtype would gather (or cut)
+            # every block for nothing -- a graph node each, under a trace
+            return t._first_block()
     return np.zeros((), dtype=np.float64)
 
 
@@ -549,13 +552,20 @@ def adjoint(t: "SymmetricTensor") -> "SymmetricTensor":
     # Simplification: a provider with complex Clebsch-Gordan coefficients would need the
     # same capability gate ``ops.basic.conj`` already flags — one ``requires(provider,
     # DaggerData)`` line, once DaggerData grows content. Not a second speculative protocol.
-    from tenet.tensor import _unchecked
+    from tenet.tensor import SymmetricTensor
 
     plan = adjoint_plan(t.structure)
-    # ``conj`` moves no axis and the legs keep their spaces, so the block the plan
-    # names for each key of ``plan.new_structure`` already has that key's shape (#328)
-    return _unchecked(
-        plan.new_structure, tuple(ar.do("conj", t.blocks[src]) for src in plan.sources)
+    # One conjugate-transpose per coupled sector, not one conjugate per block.
+    # ``adjoint_plan`` says what this is: swap the two trees of every key. On the
+    # coupled-sector matrix that swap *is* the transpose, because flipping ``side``
+    # moves no axis and touches no space, so the adjoint's row bands are this tensor's
+    # column bands and vice versa -- band order being a pure function of one side's
+    # ordered legs, and ``space_sector`` reading ``dual`` rather than ``side``. The
+    # degeneracy multi-index of a side is flattened over that side's public axis order,
+    # which is likewise unchanged, so cell for cell ``B'_c = conj(B_c)^T``.
+    return SymmetricTensor.from_data(
+        plan.new_structure,
+        tuple(ar.do("conj", ar.do("transpose", m)) for m in t.data),
     )
 
 

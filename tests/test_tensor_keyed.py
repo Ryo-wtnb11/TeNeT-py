@@ -12,7 +12,7 @@ import dataclasses
 import numpy as np
 import pytest
 
-from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
+from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure, map_layout
 from tenet.symmetry import SU2, U1, SU2Sector, U1Sector
 from tenet.symmetry.sun import SUNProvider, SUNSector
 
@@ -72,7 +72,9 @@ def test_from_blocks_with_every_key_holds_the_supplied_blocks_in_block_order(leg
     structure = TensorStructure(legs)
     blocks = [ones_for(structure, k) for k in structure.block_order]
     keyed = SymmetricTensor.from_blocks(legs, dict(zip(structure.block_order, blocks, strict=True)))
-    assert all(a is b for a, b in zip(keyed.blocks, blocks, strict=True))
+    # value for value and in block order: the supplied blocks are gathered into the
+    # tensor's coupled-sector matrices, and ``blocks`` is the view back out of them
+    assert all(np.array_equal(a, b) for a, b in zip(keyed.blocks, blocks, strict=True))
 
 
 def test_from_blocks_takes_dtype_and_backend_from_the_supplied_blocks():
@@ -203,7 +205,7 @@ def test_the_result_is_a_plain_frozen_symmetric_tensor(legs):
         assert dataclasses.is_dataclass(t)
         assert isinstance(t.blocks, tuple)
         with pytest.raises(dataclasses.FrozenInstanceError):
-            t.blocks = ()
+            t._data = ()
 
 
 def test_the_result_is_still_a_jax_pytree():
@@ -216,5 +218,5 @@ def test_the_result_is_still_a_jax_pytree():
     t = SymmetricTensor.from_blocks(SU2_LEGS, {key: ones_for(structure, key)})
 
     leaves, treedef = jax.tree_util.tree_flatten(t)
-    assert len(leaves) == structure.num_blocks
+    assert len(leaves) == len(map_layout(structure).sectors)
     assert jax.tree_util.tree_unflatten(treedef, leaves) == t

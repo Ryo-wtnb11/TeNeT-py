@@ -64,9 +64,15 @@ def apply_generator(dense: np.ndarray, legs, which: int) -> np.ndarray:
 def test_frozen_hashable_structure_tuple_blocks():
     t = SymmetricTensor.zeros((Leg(TRIV, OUT), Leg(TRIV, IN)))
     assert isinstance(t.blocks, tuple)
+    assert isinstance(t.data, tuple)
     hash(t.structure)
     with pytest.raises(dataclasses.FrozenInstanceError):
-        t.blocks = ()
+        t._data = ()
+    # ``blocks`` and ``data`` are derived views, so they are read-only for the plainer
+    # reason that a property without a setter is
+    for name in ("blocks", "data"):
+        with pytest.raises((AttributeError, TypeError)):
+            setattr(t, name, ())
 
 
 def test_wrong_block_count_raises():

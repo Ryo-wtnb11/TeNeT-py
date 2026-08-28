@@ -56,7 +56,7 @@ import autoray as ar
 
 from tenet.backend import lib_fn
 from tenet.leg import IN, OUT, Leg, Side
-from tenet.map_view import scaled
+from tenet.map_view import from_matrices, is_identity_plan, lower_plan, scaled
 from tenet.ops.batch import batch_plan, cast_coefficients
 from tenet.ops.permutation import permutation_plan
 from tenet.space import GradedSpace
@@ -237,7 +237,8 @@ def bend(t: "SymmetricTensor", axis: int) -> "SymmetricTensor":
     sources = {s for s, _, _ in plan.terms}
     # a blockless tensor has no backend to resolve against, and no source to move either
     transpose = lib_fn(t.backend, "transpose") if sources else None
-    moved = {src: transpose(t.blocks[src], perm) for src in sources} if transpose else {}
+    blocks = t.blocks  # read once: it is a property, not a field
+    moved = {src: transpose(blocks[src], perm) for src in sources} if transpose else {}
 
     blocks: dict[int, Any] = {}
     for src, dst, coeff in plan.terms:
@@ -535,7 +536,8 @@ def _looped(
     if not terms:  # a blockless tensor has no backend to resolve against either
         return blocks
     transpose = lib_fn(t.backend, "transpose")
-    moved = {src: transpose(t.blocks[src], perm) for src in {s for s, _, _ in terms}}
+    source = t.blocks  # read once: it is a property, not a field
+    moved = {src: transpose(source[src], perm) for src in {s for s, _, _ in terms}}
     for src, dst, coeff in terms:
         contrib = moved[src]
         if coeff != 1:
@@ -579,48 +581,6 @@ def _batches(t: "SymmetricTensor") -> bool:
     return bool(t.blocks) and t.backend == "numpy"
 
 
-@cache
-def _is_identity(
-    structure: TensorStructure,
-    perm: tuple[int, ...],
-    terms: tuple[tuple[int, int, complex], ...],
-) -> bool:
-    """Whether the plan asks for nothing: every block back where it was, unscaled.
-
-    Parameters
-    ----------
-    structure : TensorStructure
-        The structure the plan builds.
-    perm : tuple of int
-        The plan's single per-block axis permutation.
-    terms : tuple of (int, int, complex)
-        ``(source block, target block, coefficient)``.
-
-    Returns
-    -------
-    bool
-        True when ``perm`` is the identity and ``terms`` is the identity map with unit
-        coefficients, so applying the plan would rebuild the tensor it read.
-
-    Notes
-    -----
-    Not a micro-optimization: a contraction whose axes need no bend composes a restore
-    that *is* the identity, and it is one term per block. On an SU(2) rank-8
-    intermediate that is 613,468 terms walked to hand back the tensor they were read
-    from, measured at 0.4 s of a 0.47 s ``tensordot``. The predicate costs one pass over
-    the terms and is cached with them, so it is paid once per distinct plan against a
-    saving paid on every call.
-    """
-    if perm != tuple(range(len(perm))) or len(terms) != structure.num_blocks:
-        return False
-    # every block once, in place, unscaled -- the destination set is checked too, so a
-    # plan that repeats one block and drops another cannot pass for the identity
-    return (
-        all(src == dst and coeff == 1 for src, dst, coeff in terms)
-        and len({dst for _, dst, _ in terms}) == structure.num_blocks
-    )
-
-
 def apply_plan(
     t: "SymmetricTensor",
     structure: TensorStructure,
@@ -657,34 +617,41 @@ def apply_plan(
     Notes
     -----
     Every term shares the plan's single ``perm``, so the whole plan is one transpose per
-    source followed by a scatter-add, and on NumPy — see [_batches][tenet.ops.repartition._batches]
-    for why only there — terms whose destination has the same shape, hence whose source
-    has the same shape, stack and run as array operations instead of Python iterations.
-    The buckets are few: a rank-8 SU(2) intermediate with 74,800 blocks and 447,752 terms
-    has 1 bucket at uniform degeneracies and ~4,000 at the most ragged ones.
-    [batch_plan][tenet.ops.batch.batch_plan] holds the index arrays, keyed on the plan, so
-    the grouping is paid once per distinct plan rather than once per call.
+    source followed by a scatter-add, and terms whose destination has the same shape,
+    hence whose source has the same shape, stack and run as array operations instead of
+    Python iterations. The buckets are few: a rank-8 SU(2) intermediate with 74,800
+    blocks and 447,752 terms has 1 bucket at uniform degeneracies and ~4,000 at the most
+    ragged ones. [batch_plan][tenet.ops.batch.batch_plan] holds the index arrays, keyed on
+    the plan, so the grouping is paid once per distinct plan rather than once per call.
+
+    **The grouping runs through [lower_plan][tenet.map_view.lower_plan] where it can**,
+    which writes each bucket's rows straight into the result's coupled-sector matrices.
+    The tensor holds those matrices, so the blocks this would otherwise build -- and the
+    gather that would then copy every one of them into a matrix -- never exist: one pass
+    where there were two. It declines on an immutable backend and on a genuinely complex
+    coefficient, and there the loop below builds blocks and the constructor gathers them.
 
     A bucket too small to repay the array-operation overhead — an Abelian plan is one term
     per destination, so nothing to fuse and pure loss — stays on
     [_looped][tenet.ops.repartition._looped], which is also the reference the batched path
     is tested against, term for term and bit for bit, and which runs the whole plan on
-    every other backend.
-
-    A term with coefficient 1 on the looped path leaves its transposed **view** in place
-    and moves no element at all; the first consumer that needs contiguity pays for it,
-    which on the contraction path is the sector-matrix assembly.
+    every other backend (see [_batches][tenet.ops.repartition._batches]).
     """
     from tenet.tensor import _unchecked
 
-    if structure == t.structure and _is_identity(structure, perm, terms):
+    if structure == t.structure and is_identity_plan(structure, perm, terms):
         return t  # the plan rebuilds what it reads; tensors are immutable, so hand it back
+
+    mats = lower_plan(t, structure, perm, terms)
+    if mats is not None:
+        return from_matrices(structure, mats)
 
     groups, loose = batch_plan(structure, perm, terms) if _batches(t) else ((), terms)
 
+    source = t.blocks if groups else ()  # read once: it is a property, not a field
     blocks: dict[int, Any] = {}
     for srcs, buckets in groups:
-        stacked = ar.do("stack", tuple(t.blocks[s] for s in srcs))
+        stacked = ar.do("stack", tuple(source[s] for s in srcs))
         stacked = ar.do("transpose", stacked, (0, *(ax + 1 for ax in perm)))
         for take, coeff, width, dsts in buckets:
             rows = ar.do("multiply", stacked[take], cast_coefficients(coeff, stacked))

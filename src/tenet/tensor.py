@@ -1,10 +1,22 @@
-"""The public tensor type: a [TensorStructure][tenet.TensorStructure] plus ordered reduced blocks.
+"""The public tensor type: a [TensorStructure][tenet.TensorStructure] plus its sector matrices.
 
-Fields are ``(structure, blocks)``, never ``(legs, blocks)``: the structure is the
-static, hashable half -- the JAX treedef -- and ``blocks`` is the clean parameter
-tree of dynamic leaves, ordered by ``structure.block_order`` (invariant 8).
-``T.legs``, ``T.domain``, ``T.codomain``, ``T.block(key)`` and ``T.items()`` are
-derived views; ``from_blocks`` builds one from public legs.
+Fields are ``(structure, data)``, never ``(legs, blocks)``: the structure is the
+static, hashable half -- the JAX treedef -- and ``data`` is the clean parameter tree of
+dynamic leaves, one dense matrix per coupled sector in ``map_layout(structure).sectors``
+order (invariant 8).
+[blocks][tenet.SymmetricTensor.blocks] keeps its meaning -- ``blocks[i]`` belongs to
+``structure.block_order[i]`` -- and is the public *view* of that storage, cut out of the
+matrices on demand and memoized. ``T.legs``, ``T.domain``, ``T.codomain``,
+``T.block(key)`` and ``T.items()`` are derived views; ``from_blocks`` builds one from
+public legs.
+
+Why the storage is the matrices and not the blocks: every categorical operation is
+already defined on the coupled-sector matrices -- composition is one matmul per sector,
+``svd``/``qr``/``eigh`` one call per sector -- so holding the blocks meant gathering them
+into matrices and cutting them back out around every operation. Holding the matrices
+deletes that round trip. A block is then a two-dimensional slice reshaped, which is a
+view on every backend tenet reaches, JAX included; a flat vector with a stride table --
+TensorKit's storage -- would not be, since JAX has no ``as_strided``.
 
 [to_dense][tenet.SymmetricTensor.to_dense] and [from_dense][tenet.SymmetricTensor.from_dense]
 are the only way to cross into the dense basis — there is deliberately no ``__array__``
@@ -59,9 +71,9 @@ def _reject_foreign_keys(
     )
 
 
-@dataclass(frozen=True, slots=True, eq=False)
+@dataclass(frozen=True, slots=True, eq=False, init=False)
 class SymmetricTensor:
-    """A symmetric tensor: categorical structure plus one reduced block per key.
+    """A symmetric tensor: categorical structure plus one dense matrix per coupled sector.
 
     Parameters
     ----------
@@ -69,7 +81,9 @@ class SymmetricTensor:
         The static, hashable half: legs and everything derived from them.
     blocks : tuple of array
         One reduced block per key, in ``structure.block_order``, all sharing
-        one dtype.
+        one dtype. They are checked and then gathered into the coupled-sector
+        matrices the tensor stores; [blocks][tenet.SymmetricTensor.blocks] reads
+        them back as views.
 
     Raises
     ------
@@ -93,18 +107,20 @@ class SymmetricTensor:
     """
 
     structure: TensorStructure
-    blocks: tuple[Array, ...]
+    _data: tuple[Array, ...] | None
+    _views: tuple[Array, ...] | None
 
-    def __post_init__(self) -> None:
-        blocks = tuple(self.blocks)
-        object.__setattr__(self, "blocks", blocks)
-        order = self.structure.block_order
+    def __init__(self, structure: TensorStructure, blocks: "Sequence[Array]") -> None:
+        from tenet.map_view import gather
+
+        blocks = tuple(blocks)
+        order = structure.block_order
         if len(blocks) != len(order):
             raise ValueError(f"expected {len(order)} blocks, got {len(blocks)}")
         # ``block_shapes``, not ``block_shape(key)`` per block: this loop runs on every
         # tensor construction, and the per-key spelling would pay two structure-keyed
         # cache lookups -- each a deep hash -- for every block (#307).
-        shapes = self.structure.block_shapes
+        shapes = structure.block_shapes
         for i, (key, block) in enumerate(zip(order, blocks, strict=True)):
             expected = shapes[i]
             if tuple(block.shape) != expected:
@@ -114,6 +130,107 @@ class SymmetricTensor:
         dtypes = {block.dtype for block in blocks}
         if len(dtypes) > 1:
             raise ValueError(f"blocks must share one dtype, got {sorted(map(str, dtypes))}")
+        object.__setattr__(self, "structure", structure)
+        data, cut = gather(structure, blocks)
+        object.__setattr__(self, "_data", data)
+        object.__setattr__(self, "_views", blocks if cut is None else cut)
+
+    @classmethod
+    def from_data(cls, structure: TensorStructure, data: "Sequence[Array]") -> "SymmetricTensor":
+        """Wrap coupled-sector matrices as a tensor, unchecked and zero-copy.
+
+        Parameters
+        ----------
+        structure : TensorStructure
+            The structure the matrices belong to.
+        data : sequence of array
+            One matrix per coupled sector, in ``map_layout(structure).sectors`` order
+            and of the shape that layout gives.
+
+        Returns
+        -------
+        SymmetricTensor
+            The tensor holding exactly those arrays.
+
+        Notes
+        -----
+        The storage constructor, for a caller that already *has* the matrices --
+        [from_matrices][tenet.from_matrices], which checks them, and the plan appliers,
+        which built them from the structure they are being handed. The public
+        constructor stays the trust boundary and keeps validating; this one takes the
+        arrays as given, since re-deriving what the layout just produced would be
+        checking our own arithmetic.
+        """
+        t = object.__new__(cls)
+        object.__setattr__(t, "structure", structure)
+        object.__setattr__(t, "_data", tuple(data))
+        object.__setattr__(t, "_views", None)
+        return t
+
+    @property
+    def data(self) -> tuple[Array, ...]:
+        """One dense matrix per coupled sector, in ``map_layout(structure).sectors`` order.
+
+        Returns
+        -------
+        tuple of array
+            The tensor's coupled-sector matrices -- its storage, and its pytree leaves.
+
+        Notes
+        -----
+        **Gathered on demand where gathering is not free.** On a mutable backend the
+        constructor gathers immediately: it is one strided copy per block and it hands
+        back every block of the result as a view into the matrix it just wrote, so the
+        two forms cost one pass between them and a write through either reaches the
+        other. On an immutable backend there is no memory to alias and no destination to
+        write through, so a gather is a fresh array built by concatenation -- and under a
+        JAX trace, one graph node per block with a backward pass of its own. There it is
+        deferred until something actually asks for a matrix, which the pytree does at
+        every traced boundary and a contraction does at every lowering, and which a
+        transpose or an elementwise map never does at all.
+
+        Either way the two forms hold the same values and the tensor is the same tensor;
+        what the backend decides is only which of them is built first.
+        """
+        if self._data is None:
+            from tenet.map_view import assemble
+
+            # ``_views`` is what the constructor stored when it deferred the gather
+            blocks: tuple[Array, ...] = self._views  # ty: ignore[invalid-assignment]
+            object.__setattr__(self, "_data", assemble(self.structure, blocks))
+        return self._data  # ty: ignore[invalid-return-type]  # set just above
+
+    @property
+    def blocks(self) -> tuple[Array, ...]:
+        """One reduced block per key, in ``structure.block_order``. Views into ``data``.
+
+        Returns
+        -------
+        tuple of array
+            ``blocks[i]`` belongs to ``structure.block_order[i]``, in public axis order.
+
+        Notes
+        -----
+        The storage contract, unchanged in meaning and changed in mechanism: each block
+        is a two-dimensional slice of its coupled-sector matrix, reshaped into the
+        block's axes and permuted back into public axis order. Nothing is copied, and
+        writing into a block writes into the tensor. The cut is memoized, so a caller
+        that reads ``blocks`` in a loop pays for it once.
+
+        **A block is a live view and is usually not C-contiguous.** Two consequences for
+        a caller that wants a block of its own. ``numpy.array(block, copy=True)`` and
+        ``numpy.ascontiguousarray(block)`` are both the wrong tool: the first defaults to
+        order ``"K"`` and keeps the block's layout, so ``.reshape(-1)`` on the result
+        hands back another copy and a write into it is lost; the second does not copy at
+        all when the block already happens to be contiguous, so a write into it reaches
+        this tensor. ``numpy.array(block, order="C", copy=True)`` is the one that is both
+        a copy and flat.
+        """
+        if self._views is None:
+            from tenet.map_view import views
+
+            object.__setattr__(self, "_views", views(self.structure, self.data))
+        return self._views  # ty: ignore[invalid-return-type]  # set just above
 
     # --- constructors ---------------------------------------------------------
 
@@ -475,12 +592,21 @@ class SymmetricTensor:
         return getattr(self._first_block(), "device", None)
 
     def _first_block(self) -> Array:
-        if not self.blocks:
+        """The first coupled-sector matrix -- what dtype/backend/device are read off.
+
+        A block and its matrix share all three, and the matrix is there without cutting
+        the views out, so the storage is what these questions are asked of.
+        """
+        # whichever form the tensor already holds: a block and its matrix share dtype,
+        # backend and device, and forcing the other one to read a dtype would be a
+        # gather (or a cut) for nothing
+        held = self._views if self._data is None else self._data
+        if not held:
             raise ValueError(
                 "tensor has no blocks: dtype/backend/device are undefined "
                 f"(structure with legs {self.legs})"
             )
-        return self.blocks[0]
+        return held[0]
 
     def astype(self, dtype: Any) -> "SymmetricTensor":
         """Same structure and backend, every block cast to ``dtype``.
@@ -534,8 +660,8 @@ class SymmetricTensor:
             dtype = np.dtype(dtype).name
         except TypeError:
             pass
-        return SymmetricTensor(
-            self.structure, tuple(ar.do("astype", b, dtype) for b in self.blocks)
+        return SymmetricTensor.from_data(
+            self.structure, tuple(ar.do("astype", m, dtype) for m in self.data)
         )
 
     def to_backend(self, backend: str, dtype: Any = None) -> "SymmetricTensor":
@@ -576,27 +702,33 @@ class SymmetricTensor:
         >>> t.to_backend("numpy", dtype=np.complex128).dtype
         dtype('complex128')
         """
-        moved = SymmetricTensor(
-            self.structure, tuple(ar.do("array", b, like=backend) for b in self.blocks)
+        moved = SymmetricTensor.from_data(
+            self.structure, tuple(ar.do("array", m, like=backend) for m in self.data)
         )
         return moved if dtype is None else moved.astype(dtype)
 
     # --- parameter protocol (quimb / autoray) ---------------------------------
 
     def get_params(self) -> tuple[Array, ...]:
-        """The blocks, in ``structure.block_order`` — a pytree of backend arrays.
+        """The coupled-sector matrices — a pytree of backend arrays. See ``data``.
 
         Returns
         -------
         tuple of array
-            ``self.blocks``, the identity.
+            ``self.data``, the identity.
 
         Notes
         -----
-        The identity, deliberately: ``blocks`` was chosen to be an ordered tuple
-        so that no dict ordering or key hashing ever enters the dynamic data.
+        The identity, deliberately: ``data`` is an ordered tuple, so no dict ordering
+        and no key hashing ever enters the dynamic data.
+
+        These are the same leaves [tenet.pytree][] hands JAX, and for the same reason:
+        they are the arrays the tensor is made of. A block is a *view* cut out of one of
+        them, so a torch leaf handed back as a block would be a non-leaf with no ``.grad``
+        of its own, and a JAX leaf handed back as a block would put the cut in the graph.
+        The optimizer differentiates the storage; ``blocks`` is how the result is read.
         """
-        return self.blocks
+        return self.data
 
     def set_params(self, params: Sequence[Array]) -> "SymmetricTensor":
         """Same structure, new numerical data. A **new** tensor; ``self`` is untouched.
@@ -604,39 +736,48 @@ class SymmetricTensor:
         Parameters
         ----------
         params : sequence of array
-            The new blocks, in ``structure.block_order``.
+            The new coupled-sector matrices, in the order
+            [get_params][tenet.SymmetricTensor.get_params] returns them.
 
         Returns
         -------
         SymmetricTensor
             A new tensor over the same structure.
 
-        Notes
-        -----
-        Goes through the ordinary constructor, so block count and per-block shape
-        are validated by ``__post_init__``.
+        Raises
+        ------
+        ValueError
+            If the count, a shape or the dtypes do not match the structure's layout --
+            [from_matrices][tenet.from_matrices]'s refusals, which are the trust
+            boundary for arrays given as matrices.
 
         """
         # Simplification: quimb's ``inject_variables`` may expect this to mutate in place.
         # quimb is not a dependency, so this is not guessed at here — the frozen structure
         # is what the JAX story rests on. If M8 finds quimb needs it, a thin mutable
         # adapter belongs there, not in the core type.
-        return SymmetricTensor(self.structure, tuple(params))
+        from tenet.map_view import from_matrices, map_layout
+
+        sectors = map_layout(self.structure).sectors
+        return from_matrices(self.structure, dict(zip(sectors, params, strict=True)))
 
     def copy(self) -> "SymmetricTensor":
-        """A new instance sharing the same structure and block objects.
+        """A new instance sharing the same structure and stored arrays.
 
         Returns
         -------
         SymmetricTensor
             The shallow copy.
         """
-        return SymmetricTensor(self.structure, self.blocks)
+        return SymmetricTensor.from_data(self.structure, self.data)
 
     # --- value semantics ------------------------------------------------------
 
     def __eq__(self, other: object) -> bool:
-        """Exact equality: same ``structure`` and every block exactly equal.
+        """Exact equality: same ``structure`` and every stored matrix exactly equal.
+
+        The matrices carry exactly the blocks, cell for cell and with no cell left over,
+        so this is block equality read off the storage.
 
         Never raises on a structure mismatch. Under a JAX trace ``bool()`` of a
         traced comparison does raise, correctly: ``==`` is a concrete-value
@@ -646,9 +787,7 @@ class SymmetricTensor:
             return NotImplemented
         if self.structure != other.structure:
             return False
-        return all(
-            bool(ar.do("all", a == b)) for a, b in zip(self.blocks, other.blocks, strict=True)
-        )
+        return all(bool(ar.do("all", a == b)) for a, b in zip(self.data, other.data, strict=True))
 
     __hash__ = None  # type: ignore[assignment]  # holds arrays; T.structure is the hashable half
 
@@ -1004,7 +1143,7 @@ class SymmetricTensor:
         return (
             f"SymmetricTensor(ndim={self.ndim}, shape={safe(lambda: self.shape)}, "
             f"dtype={safe(lambda: self.dtype)}, backend={safe(lambda: self.backend)!r}, "
-            f"blocks={len(self.blocks)})"
+            f"blocks={self.structure.num_blocks})"
         )
 
     # --- dense expansion ------------------------------------------------------
@@ -1071,6 +1210,11 @@ def _unchecked(structure: TensorStructure, blocks: tuple[Array, ...]) -> Symmetr
     Private to ``tenet.ops`` and ``tenet.map_view``, and deliberately not
     exported: it is the one construction path that trusts its caller.
 
+    The blocks are still *gathered* into the coupled-sector matrices the tensor
+    stores -- that is the storage, not a check --
+    and [from_data][tenet.SymmetricTensor.from_data] is the door for a caller
+    that already has the matrices and needs no gathering either.
+
     Parameters
     ----------
     structure : TensorStructure
@@ -1120,7 +1264,11 @@ def _unchecked(structure: TensorStructure, blocks: tuple[Array, ...]) -> Symmetr
     which is never the block list -- and it is why no trusted caller needs a
     dtype-only door into this function.
     """
+    from tenet.map_view import gather
+
+    data, cut = gather(structure, blocks)
     t = object.__new__(SymmetricTensor)
     object.__setattr__(t, "structure", structure)
-    object.__setattr__(t, "blocks", blocks)
+    object.__setattr__(t, "_data", data)
+    object.__setattr__(t, "_views", cut)
     return t

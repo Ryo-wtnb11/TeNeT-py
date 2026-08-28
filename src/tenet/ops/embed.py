@@ -200,6 +200,8 @@ def embed(t: "SymmetricTensor", legs: Sequence["Leg"]) -> "SymmetricTensor":
 
     new = TensorStructure(tuple(legs))
     _check_containment(t.structure, new, op="embed")
+    if new == t.structure:
+        return t  # nothing to pad; tensors are immutable, so hand it back
 
     index = {k: i for i, k in enumerate(t.structure.block_order)}
     ref = t.blocks[0]

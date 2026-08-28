@@ -3,9 +3,15 @@
 [tenet.enable_jax][] is the one-call spelling of that import, and is what the docs
 teach; this module stays importable directly and its effect is unchanged.
 
-The contract: the leaves of a [SymmetricTensor][tenet.SymmetricTensor] are its ``blocks``, in
-``structure.block_order``; the aux data (the treedef) is its ``structure``, which is
-frozen, hashable and array-free (invariant 8) and therefore a sound JIT cache key.
+The contract: the leaves of a [SymmetricTensor][tenet.SymmetricTensor] are its ``data`` --
+one dense matrix per coupled sector, in ``map_layout(structure).sectors`` order; the aux
+data (the treedef) is its ``structure``, which is frozen, hashable and array-free
+(invariant 8) and therefore a sound JIT cache key.
+
+That is a handful of large leaves rather than tens of thousands of small ones, which is
+a strict improvement for JAX: the per-block slices whose VJPs used to produce thousands
+of single-primitive XLA compilations are gone, and ``jax.tree.map`` over a tensor now
+walks the coupled sectors.
 
 ``_unflatten`` deliberately does **not** validate, because JAX calls it with sentinels,
 tracers and whatever a ``jax.tree.map`` returned
@@ -42,11 +48,11 @@ __all__: list[str] = []
 
 
 def _flatten(t: SymmetricTensor) -> tuple[tuple[Array, ...], TensorStructure]:
-    """Leaves are the blocks in ``structure.block_order``; aux data is the structure."""
-    return t.blocks, t.structure
+    """Leaves are the sector matrices in layout order; aux data is the structure."""
+    return t.data, t.structure
 
 
-def _unflatten(structure: TensorStructure, blocks: object) -> SymmetricTensor:
+def _unflatten(structure: TensorStructure, data: object) -> SymmetricTensor:
     """Rebuild WITHOUT running ``__init__`` / ``__post_init__``.
 
     This is the pytree contract, not a shortcut: JAX legitimately calls this with
@@ -58,17 +64,18 @@ def _unflatten(structure: TensorStructure, blocks: object) -> SymmetricTensor:
     """
     t = object.__new__(SymmetricTensor)
     object.__setattr__(t, "structure", structure)
-    # ``blocks`` is whatever iterable the tree library hands back (see docstring);
+    # ``data`` is whatever iterable the tree library hands back (see docstring);
     # it is deliberately typed ``object`` and left unvalidated here, so the
     # checker cannot see it is iterable.
-    object.__setattr__(t, "blocks", tuple(blocks))  # ty: ignore[invalid-argument-type]
+    object.__setattr__(t, "_data", tuple(data))  # ty: ignore[invalid-argument-type]
+    object.__setattr__(t, "_views", None)
     return t
 
 
 # Registration is the import's side effect; a second import is a no-op because the
 # module object is cached in sys.modules, so no explicit guard flag is needed.
 # register_pytree_node, not register_pytree_with_keys: the keyed variant buys nicer
-# error paths (`.blocks[3]` over a positional index) for a third callback and a key
+# error paths (`.data[3]` over a positional index) for a third callback and a key
 # type, on a leaf list that is already positional-by-contract. Cheap follow-up if
 # debugging ever demands it.
 jax.tree_util.register_pytree_node(SymmetricTensor, _flatten, _unflatten)

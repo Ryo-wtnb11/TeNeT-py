@@ -366,8 +366,28 @@ def test_composition_is_exact(p):
 
 @pytest.mark.parametrize("p", ALL_PERMS)
 def test_norm_conj_and_dtype(p):
+    """A transpose moves no element: the norm is invariant, the blocks exactly permuted.
+
+    The norm is compared to the last bits and not to the last bit. Its reduction runs
+    over the blocks, and a block is a view into its coupled-sector matrix, so the memory
+    layout NumPy sums a block in is the *transposed* tensor's layout and not the
+    original's. Every element is the same element and every partial sum is the same
+    partial sum; only their order differs, which for a Frobenius norm is a rounding
+    difference of a couple of ulp and not a fact about fZ2. The exactness that is a
+    statement about the provider -- the blocks themselves -- is asserted above, in
+    ``test_transpose_composes``, with ``assert_array_equal``.
+
+    **Do not tighten this back to ``==``.** It held before the tensor stored its
+    coupled-sector matrices, and it held by accident: a transposed block was then a
+    strided view of the *source* block's own buffer, so NumPy's reduction visited the
+    same addresses in the same order and returned the same bits. The blocks are now views
+    into a matrix, so a transpose changes which buffer the reduction walks and in what
+    order. Restoring bit-equality would mean pinning a reduction order to the tensor's
+    history, which nothing in the library promises and no other test wants.
+    """
     t = mixed_tensor()
-    assert tenet.norm(t.transpose(p)) == tenet.norm(t)
+    a, b = float(tenet.norm(t.transpose(p))), float(tenet.norm(t))
+    assert a == pytest.approx(b, rel=1e-15)
     assert t.transpose(p).conj() == t.conj().transpose(p)
     assert t.dtype == np.float64
     assert t.transpose(p).dtype == np.float64

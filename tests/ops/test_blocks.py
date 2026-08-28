@@ -125,10 +125,17 @@ def test_apply_blocks_keeps_the_same_structure_object():
     assert out.legs == t.legs
 
 
-def test_apply_blocks_with_identity_returns_the_identical_block_objects():
+def test_apply_blocks_with_identity_returns_the_identical_blocks():
+    """The identity map moves no element -- the blocks come back value for value.
+
+    Not object for object: the tensor stores coupled-sector matrices and ``blocks`` cuts
+    them out, so the identity map's result gathers the same values into its own matrices
+    and hands back its own views of them.
+    """
     t = tensor("su2")
     out = tenet.apply_blocks(t, lambda b: b)
-    assert all(a is b for a, b in zip(out.blocks, t.blocks, strict=True))
+    assert out == t
+    assert all(np.array_equal(a, b) for a, b in zip(out.blocks, t.blocks, strict=True))
 
 
 def test_apply_blocks_is_set_params_of_get_params():
@@ -353,7 +360,7 @@ def test_negative_entries_give_the_backend_nan_before_and_after_ad_install():
     blocks = [np.array(b, copy=True) for b in t.blocks]
     blocks[0] = blocks[0].copy()
     blocks[0].flat[0] = -1.0
-    t = t.set_params(blocks)
+    t = SymmetricTensor(t.structure, blocks)
 
     def check():
         out = tenet.block_sqrt(t)

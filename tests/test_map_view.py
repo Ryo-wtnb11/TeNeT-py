@@ -1,6 +1,7 @@
 """Tests for the coupled-sector matrix lowering — issue #29."""
 
 import dataclasses
+import math
 import pathlib
 
 import autoray as ar
@@ -9,7 +10,13 @@ import pytest
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-from tenet.map_view import _degeneracies, from_matrices, map_layout, to_matrices
+from tenet.map_view import (
+    _degeneracies,
+    from_matrices,
+    map_layout,
+    to_matrices,
+    tree_structure,
+)
 from tenet.structure import FusionBlockKey, TensorStructure
 from tenet.symmetry import SU2, U1, SU2Sector, Trivial, TrivialSector, U1Sector
 
@@ -120,14 +127,22 @@ def test_bands_tile_their_axis_contiguously(legs):
             assert offset == total
 
 
-def test_band_order_is_block_order_sorted_by_extent():
+def test_band_order_is_block_order_laid_out_by_configuration():
     """Derived, never invented — this is what makes #30's matmul re-indexing-free.
 
-    The trees are ``block_order``'s and nothing else; what the layout adds is the
-    order, ``(extent, degeneracies)`` with ``block_order`` as the tie break. Both keys
-    are functions of *this side's* ordered legs, so the two operands of a composition
-    still agree band for band — and equal extents landing together is what lets
-    ``from_matrices`` read a whole rectangle of the grid with one slice.
+    The trees are ``block_order``'s and nothing else; what the layout adds is the order.
+    That order is now the *irrep configuration* order: the bands are laid out one
+    configuration -- one choice of uncoupled irrep per leg on this side -- at a time,
+    configurations sorted by ``(degeneracies, uncoupled labels)`` and the trees inside a
+    configuration in the block order they already arrive in.
+
+    This replaces the ``(extent, degeneracies, tree)`` rule. It is strictly finer: a
+    configuration's bands share an extent *and* a shape by construction, whereas equal
+    extents may carry different shapes — ``(1, 2, 3)`` and ``(3, 2, 1)`` are both six
+    rows tall. Both keys are functions of *this side's* ordered legs, so what the old
+    rule bought is unchanged: the two operands of a composition still agree band for
+    band, and a configuration landing in one contiguous stripe is what lets the block
+    cut read a whole rectangle of the grid with one slice.
     """
     s = TensorStructure(GRID_LEGS)
     layout = map_layout(s)
@@ -140,12 +155,55 @@ def test_band_order_is_block_order_sorted_by_extent():
             position = {tree: i for i, tree in enumerate(trees)}
             assert [tree for tree, _, _ in bands] != []
             assert {tree for tree, _, _ in bands} == set(position)
-            extents = [extent for _, _, extent in bands]
-            assert extents == sorted(extents)
-            shaped = [(_degeneracies(s, axes, tree), position[tree]) for tree, _, _ in bands]
-            for (dims, p), (next_dims, next_p) in zip(shaped, shaped[1:], strict=False):
-                if dims == next_dims:
-                    assert p < next_p  # a tie keeps block order
+
+            # one configuration at a time, and each in one uninterrupted run
+            configs = [tree.uncoupled for tree, _, _ in bands]
+            assert len(set(configs)) == len({tuple(g) for g in configs})
+            runs = [u for i, u in enumerate(configs) if i == 0 or configs[i - 1] != u]
+            assert len(runs) == len(set(runs))
+
+            # configurations ordered by (degeneracies, labels); trees by block order
+            keyed = [(_degeneracies(s, axes, tree), tree.uncoupled) for tree, _, _ in bands]
+            assert keyed == sorted(keyed)
+            for (dims, u), (next_dims, next_u) in zip(keyed, keyed[1:], strict=False):
+                assert (dims, u) <= (next_dims, next_u)
+            for (tree, _, _), (nxt, _, _) in zip(bands, bands[1:], strict=False):
+                if tree.uncoupled == nxt.uncoupled:
+                    assert position[tree] < position[nxt]  # inside a configuration
+
+            # a band's extent is its configuration's, so one configuration is one shape
+            for tree, _, extent in bands:
+                assert extent == math.prod(_degeneracies(s, axes, tree))
+
+
+def test_the_tree_table_is_degeneracy_independent():
+    """One entry serves every bond dimension: the key excludes the degeneracies.
+
+    The same irreps and the same leg pattern at ``{SU2Sector(j): 2}`` and at
+    ``{SU2Sector(j): j + 1}`` are one cache entry and one table — which is what makes a
+    structure-keyed table survive an optimization that moves the degeneracies at every
+    bond. TensorKit keys ``sectorstructure`` on sector content alone and frostspin keys
+    its structural table on irrep labels; this is the same statement, asserted.
+    """
+    irreps = [SU2Sector(j) for j in range(4)]
+    flat = GradedSpace.new(SU2, {a: 2 for a in irreps})
+    ragged = GradedSpace.new(SU2, {a: a.two_j + 1 for a in irreps})
+    pattern = (OUT, OUT, IN, IN)
+    a, b = (
+        TensorStructure(tuple(Leg(space, side) for side in pattern)) for space in (flat, ragged)
+    )
+    assert a != b  # the structures differ, and only in their degeneracies
+    assert tree_structure(a) is tree_structure(b)
+
+    table = tree_structure(a)
+    assert table  # the fixture is not empty
+    for _, out_configs, in_configs in table:
+        for configs in (out_configs, in_configs):
+            assert [u for u, _ in configs] == sorted(u for u, _ in configs)
+            assert all(trees for _, trees in configs)
+            assert all(t.uncoupled == u for u, trees in configs for t in trees)
+    # 1,967 structural entries at SU(2) rank 6 either way; here, the same count
+    assert a.num_blocks == b.num_blocks
 
 
 # --- grid completeness ----------------------------------------------------------

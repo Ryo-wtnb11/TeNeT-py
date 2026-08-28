@@ -14,7 +14,7 @@ import sys
 
 import numpy as np
 import pytest
-from helpers import NoBendProvider
+from helpers import NoBendProvider, count_backend_calls
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
@@ -386,3 +386,29 @@ def test_provider_identity_separates_plans_and_results():
     d2 = tenet.tensordot(a2, b2, axes).to_dense()
     assert d1.shape == d2.shape
     assert not np.allclose(d1, d2)
+
+
+# --- the contraction is one matmul per coupled sector -------------------------------
+
+
+def test_a_matching_contraction_is_one_matmul_per_coupled_sector_and_no_gather(monkeypatch):
+    """The storage claim, counted: when the partition already matches, nothing is fused.
+
+    Both operands are already partitioned the way the contraction wants them, so each
+    lowering is the tensor's own ``data`` handed back and the whole operation is one
+    ``matmul`` per shared coupled sector. No ``empty``, no ``concatenate`` and no
+    ``stack``: those are the gather that holding per-fusion-tree blocks used to force
+    around every contraction, and there is no longer anything to gather.
+    """
+    a = SymmetricTensor.random((Leg(V_SU2, OUT), Leg(V_SU2, OUT), Leg(V_SU2, IN)), seed=0)
+    b = SymmetricTensor.random((Leg(V_SU2, OUT), Leg(V_SU2, IN), Leg(V_SU2, IN)), seed=1)
+    tenet.tensordot(a, b, axes=([2], [0]))  # warm every structural cache
+
+    calls: list[str] = []
+    with count_backend_calls(monkeypatch, lambda name, args, kwargs: calls.append(name)):
+        out = tenet.tensordot(a, b, axes=([2], [0]))
+
+    shared = set(map_layout(a.structure).sectors) & set(map_layout(b.structure).sectors)
+    assert calls.count("matmul") == len(shared) > 0
+    assert not [name for name in calls if name in {"empty", "concatenate", "stack"}]
+    assert out.structure.num_blocks > len(shared)  # the block count is not what was paid

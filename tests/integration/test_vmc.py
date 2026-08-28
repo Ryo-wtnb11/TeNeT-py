@@ -44,10 +44,10 @@ def model(provider):
 # --- 1. pytree round-trip --------------------------------------------------------
 
 
-def test_leaves_are_the_blocks_in_block_order_and_round_trip(model):
+def test_leaves_are_the_sector_matrices_and_round_trip(model):
     mps, _ = model
     leaves, treedef = jax.tree_util.tree_flatten(mps)
-    want = [b for t in mps for b in t.blocks]
+    want = [m for t in mps for m in t.data]
     assert len(leaves) == len(want)
     assert all(a is b for a, b in zip(leaves, want, strict=True))
     for t in mps:

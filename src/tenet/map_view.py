@@ -1,9 +1,11 @@
-"""The coupled-sector matrix lowering ``T ≃ ⊕_c B_c ⊗ id_c`` and its inverse.
+"""The coupled-sector matrix lowering ``T ≃ ⊕_c B_c ⊗ id_c`` -- the storage, and its cut.
 
-A temporary lowering: public-axis-ordered reduced blocks in, one dense matrix
-per coupled sector out, exactly invertible. Nothing about the public axis order
-changes and nothing is cached in storage — [to_matrices][tenet.to_matrices] allocates
-temporaries and hands them back.
+The matrices are not a temporary: a [SymmetricTensor][tenet.SymmetricTensor] *is* one
+dense matrix per coupled sector, and this module is where their layout is decided.
+[to_matrices][tenet.to_matrices] hands the stored arrays back keyed by sector,
+[from_matrices][tenet.from_matrices] wraps a set of them as a tensor, and
+[assemble][tenet.map_view.assemble] / [views][tenet.map_view.views] are the two halves of
+the boundary a caller crosses when it speaks in fusion-tree blocks instead.
 
 Conventions fixed here once, because the truncation code has to invert them:
 
@@ -18,22 +20,33 @@ Conventions fixed here once, because the truncation code has to invert them:
 * **Bands are indexed by trees, not by external sectors.** For SU(2) two
   distinct output trees can carry identical external sectors, and they occupy
   two distinct row bands.
-* **Band order is ``(extent, degeneracies, tree)``**, never a fresh enumeration of
-  its own, so two tensors whose OUT (resp. IN) legs agree as ordered legs get
-  *identical* row (resp. column) orderings. Composition is then a plain matmul.
-  Sorting by extent first is what makes every set of equally-tall row bands a
-  contiguous stripe of ``B_c``, which is what
-  [from_matrices][tenet.from_matrices] reads back a rectangle at a time; ties fall
-  back to the block order the trees already arrive in.
+* **Band order is configuration order**: the bands are laid out one *irrep
+  configuration* -- one choice of uncoupled irrep per leg on that side -- at a time,
+  configurations ordered by ``(degeneracies, uncoupled labels)`` and the trees inside a
+  configuration in the order they already arrive in. So the row index is
+  ``offset(configuration) + i_tree * extent + i_degeneracy``, the structural axis slow
+  and the degeneracy axis fast, which is the order both TensorKit and frostspin use.
+  The order is a pure function of *this side's* ordered legs, never a fresh enumeration
+  of its own, so two tensors whose OUT (resp. IN) legs agree as ordered legs get
+  *identical* row (resp. column) orderings and composition is a plain matmul. Grouping
+  by configuration is what makes a run of bands share an extent *and* a shape, which
+  merely equal extents do not: ``(1, 2, 3)`` and ``(3, 2, 1)`` are both six rows tall
+  and are two different cell shapes.
 * **No ``sqrt(qdim)`` is folded into ``B_c``.** The norm identity is
   ``‖T‖² = Σ_c qdim(c)·‖B_c‖²_F`` — i.e. [tenet.norm][] regrouped — and
   folding the weight in would silently change the convention ``norm`` and
   ``to_dense`` already agree on.
 
+The structural half of that layout -- which configurations exist and how many trees each
+carries -- is [tree_structure][tenet.map_view.tree_structure], cached on the structure with its
+*degeneracies stripped*, so one entry serves every bond dimension. The offsets and
+extents are [map_layout][tenet.map_layout]'s and are keyed on the full structure. That is
+TensorKit's ``sectorstructure``/``degeneracystructure`` split, and frostspin's.
+
 The ``(output tree, input tree)`` grid of a coupled sector is *complete*
 (``_block_order`` pairs the two sides' trees by cross product), so every cell of
 ``B_c`` is written exactly once and none is left zero. That completeness admits
-two assemblies, and [to_matrices][tenet.to_matrices] chooses between them on the
+two assemblies, and [assemble][tenet.map_view.assemble] chooses between them on the
 blocks' **backend**, never on their shapes:
 
 * On an **immutable** backend -- JAX -- ``B_c`` is built by pure concatenation:
@@ -45,7 +58,7 @@ blocks' **backend**, never on their shapes:
   axes only subdivides strides, so it is always a view, and the assignment is one
   strided copy per block. The concatenating path costs three passes (materialise
   the transposed view, join the row band, join the sector), and on a
-  bandwidth-bound block geometry that is most of what a contraction costs.
+  bandwidth-bound block geometry that is most of what an assembly costs.
 
 The two produce bit-identical matrices -- the mutable path writes exactly the
 cells the concatenating path would place, in the same layout -- and the tests run
@@ -53,24 +66,18 @@ them against each other on every provider. The split is over array *mutability*,
 a property of the backend resolved once per call by ``ar.infer_backend``; it is
 not a size heuristic and it never branches on a traced value.
 
-[from_matrices][tenet.from_matrices] inverts the lowering, and the grid gives it a
-cheaper walk than cell by cell. Group the row bands by extent and the column bands
-by extent; because the bands are *ordered* by extent, every ``(row extent, column
-extent)`` pair is one contiguous rectangle of ``B_c``, and splitting that
-rectangle's two axes into ``(rows, extent, columns, extent)`` and swapping the two
-middle axes exposes every cell of it as a view -- two array calls for the whole
-rectangle instead of two per cell. The count is then the number of distinct extent
-pairs in the layout: 7 rather than 9,145 on an SU(2) rank-6 tensor at equal
-degeneracies, 308 rather than 9,145 at ragged ones. Where a rectangle's bands also
-agree on their *individual* degeneracies the split runs once for the rectangle and a
-cell is a plain index; where they do not, the cell is reshaped as it is taken.
+[views][tenet.map_view.views] cuts the matrices back into blocks, and the grid gives it a
+cheaper walk than cell by cell. Group the row bands by degeneracies and the column bands
+likewise; because the bands are laid out configuration by configuration, every such pair
+is one contiguous rectangle of ``B_c``, and splitting that rectangle's two axes into
+``(rows, extent, columns, extent)``, swapping the two middle axes and splitting the
+extents into the cell's own axes exposes every cell of it as a view -- three array calls
+for the whole rectangle instead of two per cell. Every cell of a rectangle has the same
+shape by construction, so no cell is ever reshaped on its own.
 
 Blocks move only through ``ar.do("transpose"/"reshape"/"concatenate"/"empty")``
 plus basic slicing; there is no ``to_dense`` and no *symmetry provider* branching in
-this module. The one place a NumPy method is spelled directly is the per-cell reshape
-of a rectangle whose cells do not share a shape: it is the operation the dispatch
-would have reached, it runs once per *cell* where everything else here runs once per
-rectangle, and the gate has already established that the arrays are NumPy's.
+this module.
 """
 
 import math
@@ -85,7 +92,7 @@ from tenet.cache import plan_cache
 from tenet.fusion_tree import FusionTree
 from tenet.leg import Leg
 from tenet.space import GradedSpace, ProductSpace
-from tenet.structure import FusionBlockKey, TensorStructure
+from tenet.structure import FusionBlockKey, TensorStructure, _pattern
 from tenet.symmetry.base import Sector
 
 if TYPE_CHECKING:
@@ -99,6 +106,7 @@ __all__ = [
     "from_matrices",
     "map_layout",
     "to_matrices",
+    "tree_structure",
 ]
 
 Band = tuple[Sector, FusionTree, int, int]
@@ -124,6 +132,8 @@ class MapLayout:
     grid : tuple
         Per coupled sector, block indices in row-major (row band × column band)
         order.
+    shapes : tuple of (int, int)
+        The ``(rows, columns)`` shape of each ``B_c``, aligned with ``sectors``.
 
     Notes
     -----
@@ -140,6 +150,8 @@ class MapLayout:
     cols: tuple[Band, ...]
     grid: tuple[tuple[Sector, tuple[tuple[int, ...], ...]], ...]
     """Per coupled sector, block indices in row-major (row band × column band) order."""
+    shapes: tuple[tuple[int, int], ...]
+    """The shape of each ``B_c``, aligned with ``sectors``."""
 
     def row_bands(self, c: Sector) -> tuple[tuple[FusionTree, int, int], ...]:
         """``(output tree, offset, extent)`` for ``c``, in row order.
@@ -184,10 +196,7 @@ class MapLayout:
         tuple of int
             The ``(rows, columns)`` shape of ``B_c``.
         """
-        return (
-            sum(extent for _, _, extent in self.row_bands(c)),
-            sum(extent for _, _, extent in self.col_bands(c)),
-        )
+        return self.shapes[self.sectors.index(c)]
 
 
 def _layout_cost(layout: MapLayout) -> int:
@@ -225,24 +234,23 @@ def map_layout(structure: TensorStructure) -> MapLayout:
     (2, 2)
     """
     out_axes, in_axes = structure.out_axes, structure.in_axes
-    # dict insertion order == block_order order, which is sorted: the row bands
-    # come out in tree order for free, and so do the column bands within the
-    # first row band (which, the grid being complete, already lists them all).
-    row_trees: dict[Sector, dict[FusionTree, None]] = {}
-    col_trees: dict[Sector, dict[FusionTree, None]] = {}
-    for key in structure.block_order:
-        row_trees.setdefault(key.coupled, {})[key.output_tree] = None
-        col_trees.setdefault(key.coupled, {})[key.input_tree] = None
-
-    sectors = tuple(sorted(row_trees))
+    table = tree_structure(structure)
+    sectors = tuple(c for c, _, _ in table)
     rows: list[Band] = []
     cols: list[Band] = []
+    shapes: list[tuple[int, int]] = []
     grid: list[tuple[Sector, tuple[tuple[int, ...], ...]]] = []
-    for c in sectors:
-        rbands = _bands(structure, out_axes, c, row_trees[c])
-        cbands = _bands(structure, in_axes, c, col_trees[c])
+    for c, out_configs, in_configs in table:
+        rbands = _bands(structure, out_axes, c, out_configs)
+        cbands = _bands(structure, in_axes, c, in_configs)
         rows.extend(rbands)
         cols.extend(cbands)
+        shapes.append(
+            (
+                sum(extent for _, _, _, extent in rbands),
+                sum(extent for _, _, _, extent in cbands),
+            )
+        )
         grid.append(
             (
                 c,
@@ -263,7 +271,82 @@ def map_layout(structure: TensorStructure) -> MapLayout:
             f"{structure.num_blocks} blocks; block_order is not a per-sector cross product"
         )
     return MapLayout(
-        structure, (*out_axes, *in_axes), sectors, tuple(rows), tuple(cols), tuple(grid)
+        structure,
+        (*out_axes, *in_axes),
+        sectors,
+        tuple(rows),
+        tuple(cols),
+        tuple(grid),
+        tuple(shapes),
+    )
+
+
+Config = tuple[tuple[Sector, ...], tuple[FusionTree, ...]]
+"""One irrep configuration: its uncoupled labels in that side's public axis order, and
+the fusion trees carrying them -- the structural multiplicity of the configuration."""
+
+
+@plan_cache(cost=lambda table: sum(len(t) for _, o, i in table for _, t in (*o, *i)))
+def tree_structure(
+    structure: TensorStructure,
+) -> tuple[tuple[Sector, tuple[Config, ...], tuple[Config, ...]], ...]:
+    """Per coupled sector, each side's irrep configurations and the trees in each.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure to tabulate.
+
+    Returns
+    -------
+    tuple
+        ``(coupled sector, output configurations, input configurations)`` per coupled
+        sector, sorted by sector; each configuration is
+        [Config][tenet.map_view.Config], sorted by its uncoupled labels, and its trees
+        arrive in ``block_order``'s own order.
+
+    Notes
+    -----
+    **Degeneracy-independent, deliberately.** The key is ``_pattern(structure)`` -- the
+    same legs with every degeneracy 1 -- so one entry serves every bond dimension a
+    sweep passes through, which is the only way a structure-keyed cache survives an
+    optimization that moves the degeneracies at every bond. What lives here is the part
+    of the layout that a degeneracy cannot change: which configurations exist and how
+    many trees each carries. The offsets and extents, which a degeneracy does change,
+    are [map_layout][tenet.map_layout]'s and are keyed on the full structure.
+
+    That split is not ours: TensorKit keys its ``sectorstructure`` on sector content
+    alone and its ``degeneracystructure`` per space, and frostspin keys its structural
+    table on irrep labels with the degeneracies stripped. The measurement agrees --
+    the structural count is 1,967 at SU(2) rank 6 whether the degeneracies are ``2`` or
+    ``j+1``.
+    """
+    if (pattern := _pattern(structure)) is not structure:
+        return tree_structure(pattern)
+    # dict insertion order == block_order order, which is sorted: the trees of a
+    # configuration come out in block order for free, and so do the column trees within
+    # the first row tree (which, the grid being complete, already lists them all).
+    out_trees: dict[Sector, dict[tuple[Sector, ...], dict[FusionTree, None]]] = {}
+    in_trees: dict[Sector, dict[tuple[Sector, ...], dict[FusionTree, None]]] = {}
+    for key in structure.block_order:
+        ot, it = key.output_tree, key.input_tree
+        out_trees.setdefault(key.coupled, {}).setdefault(ot.uncoupled, {})[ot] = None
+        in_trees.setdefault(key.coupled, {}).setdefault(it.uncoupled, {})[it] = None
+    return tuple((c, _configs(out_trees[c]), _configs(in_trees[c])) for c in sorted(out_trees))
+
+
+def _configs(trees: Mapping[tuple[Sector, ...], Mapping[FusionTree, None]]) -> tuple[Config, ...]:
+    """One side's configurations, sorted by their uncoupled labels."""
+    return tuple((u, tuple(trees[u])) for u in sorted(trees))
+
+
+def _dims(
+    structure: TensorStructure, axes: tuple[int, ...], uncoupled: tuple[Sector, ...]
+) -> tuple[int, ...]:
+    """One configuration's degeneracy per axis, in that side's public order."""
+    return tuple(
+        structure.legs[ax].degeneracy(structure.legs[ax].space_sector(u))
+        for ax, u in zip(axes, uncoupled, strict=True)
     )
 
 
@@ -271,30 +354,31 @@ def _degeneracies(
     structure: TensorStructure, axes: tuple[int, ...], tree: FusionTree
 ) -> tuple[int, ...]:
     """One tree's degeneracy per axis, in that side's public order."""
-    return tuple(
-        structure.legs[ax].degeneracy(structure.legs[ax].space_sector(u))
-        for ax, u in zip(axes, tree.uncoupled, strict=True)
-    )
+    return _dims(structure, axes, tree.uncoupled)
 
 
 def _bands(
-    structure: TensorStructure, axes: tuple[int, ...], c: Sector, trees: Mapping[FusionTree, None]
+    structure: TensorStructure, axes: tuple[int, ...], c: Sector, configs: tuple[Config, ...]
 ) -> tuple[Band, ...]:
-    """Lay one side's trees out contiguously; extent is ``Π`` of its degeneracies.
+    """Lay one side's trees out contiguously, configuration by configuration.
 
-    Ordered by ``(extent, degeneracies)`` with the incoming tree order as the tie
-    break, so equally-tall bands -- and, inside those, identically-shaped ones --
-    occupy one contiguous stripe. That is a function of this side's ordered legs
-    alone, which is what composition needs: the two operands compute the same order
-    for the side they share.
+    Ordered by ``(degeneracies, uncoupled labels)`` over the configurations, with the
+    trees of a configuration in the order they already arrive in. A configuration's
+    bands therefore share an extent *and* a shape by construction, which merely equal
+    extents do not -- ``(1, 2, 3)`` and ``(3, 2, 1)`` are both six rows tall and are
+    two different cell shapes. That is a function of this side's ordered legs alone,
+    which is what composition needs: two tensors whose OUT (resp. IN) legs agree as
+    ordered legs compute the same row (resp. column) ordering, so composing them is a
+    plain matmul.
     """
-    dims = {tree: _degeneracies(structure, axes, tree) for tree in trees}
+    dims = {u: _dims(structure, axes, u) for u, _ in configs}
     bands: list[Band] = []
     offset = 0
-    for tree in sorted(trees, key=lambda t: (math.prod(dims[t]), dims[t])):
-        extent = math.prod(dims[tree])
-        bands.append((c, tree, offset, extent))
-        offset += extent
+    for u, trees in sorted(configs, key=lambda cfg: (dims[cfg[0]], cfg[0])):
+        extent = math.prod(dims[u])
+        for tree in trees:
+            bands.append((c, tree, offset, extent))
+            offset += extent
     return tuple(bands)
 
 
@@ -343,7 +427,7 @@ def _tables(
     )
 
 
-Rect = tuple[int, int, int, int, int, int, tuple[int, ...] | None, tuple[int, ...]]
+Rect = tuple[int, int, int, int, int, int, tuple[int, ...], tuple[int, ...]]
 """``(row offset, rows, row extent, column offset, columns, column extent, split, cells)``."""
 
 
@@ -359,10 +443,9 @@ def _rects(structure: TensorStructure) -> tuple[tuple[Sector, tuple[Rect, ...]],
     Returns
     -------
     tuple
-        Per coupled sector, one [Rect][tenet.map_view.Rect] per ``(row extent, column
-        extent)`` pair: where the rectangle starts, how many bands it spans each way,
-        the shape its cells split into when they share one (``None`` when they do not),
-        and the block indices of its cells in row-major order.
+        Per coupled sector, one [Rect][tenet.map_view.Rect] per pair of stripes: where
+        the rectangle starts, how many bands it spans each way, the shape its cells
+        split into, and the block indices of its cells in row-major order.
 
     Notes
     -----
@@ -371,9 +454,11 @@ def _rects(structure: TensorStructure) -> tuple[tuple[Sector, tuple[Rect, ...]],
     tensor of that structure, and rebuilding it inside the assembly would cost what it
     saves. It holds indices and extents, never a value and never an array.
 
-    The rectangles are contiguous only because ``_bands`` orders the bands by extent;
-    the two facts are one design, and separating them would leave this walking a
-    scattered set of rows, which no slice can express.
+    The rectangles are contiguous only because ``_bands`` lays the bands out
+    configuration by configuration; the two facts are one design, and separating them
+    would leave this walking a scattered set of rows, which no slice can express. Every
+    band of a stripe carries the same degeneracies, so every cell of a rectangle has the
+    same shape and the split is always defined.
     """
     layout = map_layout(structure)
     cells = dict(layout.grid)
@@ -389,15 +474,15 @@ def _rects(structure: TensorStructure) -> tuple[tuple[Sector, tuple[Rect, ...]],
                     (
                         ro,
                         len(ri),
-                        dr,
+                        math.prod(sr),
                         co,
                         len(ci),
-                        dc,
-                        None if sr is None or sc is None else (len(ri), len(ci), *sr, *sc),
+                        math.prod(sc),
+                        (len(ri), len(ci), *sr, *sc),
                         tuple(grid[i][j] for i in ri for j in ci),
                     )
-                    for ro, ri, dr, sr in rows
-                    for co, ci, dc, sc in cols
+                    for ro, ri, sr in rows
+                    for co, ci, sc in cols
                 ),
             )
         )
@@ -408,22 +493,24 @@ def _stripes(
     structure: TensorStructure,
     axes: tuple[int, ...],
     bands: tuple[tuple[FusionTree, int, int], ...],
-) -> tuple[tuple[int, tuple[int, ...], int, tuple[int, ...] | None], ...]:
-    """One side's bands run-grouped by extent: ``(offset, band indices, extent, shape)``.
+) -> tuple[tuple[int, tuple[int, ...], tuple[int, ...]], ...]:
+    """One side's bands run-grouped by degeneracies: ``(offset, band indices, shape)``.
 
-    ``shape`` is the degeneracy tuple the stripe's bands share, or ``None`` where they
-    only share its product -- ``(1, 2, 3)`` and ``(3, 2, 1)`` are both six rows tall and
-    are one stripe, but a cell of the first does not have the shape of a cell of the
-    second.
+    A run is one or more whole configurations laid side by side, so its bands agree on
+    their *individual* degeneracies and not merely on the product: a cell of the stripe
+    always has the stripe's shape. Adjacent configurations that happen to share a shape
+    -- every configuration, at uniform degeneracies -- merge into one run, which is what
+    keeps the rectangle count at the number of distinct shapes rather than at the number
+    of configurations.
     """
-    stripes: list[tuple[int, tuple[int, ...], int, tuple[int, ...] | None]] = []
-    for i, (tree, offset, extent) in enumerate(bands):
+    stripes: list[tuple[int, tuple[int, ...], tuple[int, ...]]] = []
+    for i, (tree, offset, _) in enumerate(bands):
         dims = _degeneracies(structure, axes, tree)
-        if stripes and stripes[-1][2] == extent:
-            start, members, _, shape = stripes[-1]
-            stripes[-1] = (start, (*members, i), extent, shape if shape == dims else None)
+        if stripes and stripes[-1][2] == dims:
+            start, members, shape = stripes[-1]
+            stripes[-1] = (start, (*members, i), shape)
         else:
-            stripes.append((offset, (i,), extent, dims))
+            stripes.append((offset, (i,), dims))
     return tuple(stripes)
 
 
@@ -432,7 +519,7 @@ _MUTABLE = frozenset({"numpy", "torch"})
 
 
 def _concatenated(
-    t: "SymmetricTensor",
+    blocks: tuple[Any, ...],
     layout: MapLayout,
     bands: tuple[
         tuple[tuple[tuple[FusionTree, int, int], ...], tuple[tuple[FusionTree, int, int], ...]],
@@ -440,15 +527,15 @@ def _concatenated(
     ],
     order: tuple[int, ...],
     permuted: bool,
-) -> dict[Sector, Any]:
+) -> tuple[Any, ...]:
     """Assemble by pure concatenation -- the immutable-backend path, and the reference.
 
     Parameters
     ----------
-    t : SymmetricTensor
-        The tensor to lower.
+    blocks : tuple of array
+        The reduced blocks, in ``block_order``.
     layout : MapLayout
-        Its layout, already looked up.
+        Their layout, already looked up.
     bands : tuple
         The per-sector band tables from [_tables][tenet.map_view._tables].
     order : tuple of int
@@ -458,30 +545,225 @@ def _concatenated(
 
     Returns
     -------
-    dict of Sector to array
-        One matrix per coupled sector.
+    tuple of array
+        One matrix per coupled sector, in ``layout.sectors`` order.
     """
-    if not t.blocks:  # no block, hence no backend to resolve against and nothing to move
-        return {}
+    if not blocks:  # no block, hence no backend to resolve against and nothing to move
+        return ()
 
     # resolved once, called once per block: see tenet.backend
-    transpose = lib_fn(t.backend, "transpose")
-    reshape = lib_fn(t.backend, "reshape")
-    concatenate = lib_fn(t.backend, "concatenate")
+    backend = ar.infer_backend(blocks[0])
+    transpose = lib_fn(backend, "transpose")
+    reshape = lib_fn(backend, "reshape")
+    concatenate = lib_fn(backend, "concatenate")
 
-    mats: dict[Sector, Any] = {}
-    for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
+    mats: list[Any] = []
+    for (_, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
         rows = []
         for (_, _, dr), indices in zip(rbands, cells, strict=True):
             parts = []
             for i, (_, _, dc) in zip(indices, cbands, strict=True):
-                block = t.blocks[i]
+                block = blocks[i]
                 if permuted:
                     block = transpose(block, order)
                 parts.append(reshape(block, (dr, dc)))
             rows.append(parts[0] if len(parts) == 1 else concatenate(parts, axis=1))
-        mats[c] = rows[0] if len(rows) == 1 else concatenate(rows, axis=0)
-    return mats
+        mats.append(rows[0] if len(rows) == 1 else concatenate(rows, axis=0))
+    return tuple(mats)
+
+
+def gather(
+    structure: TensorStructure, blocks: tuple[Any, ...]
+) -> tuple[tuple[Any, ...] | None, tuple[Any, ...]]:
+    """[assemble][tenet.map_view.assemble], plus the blocks of the result where they are free.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure the blocks belong to.
+    blocks : tuple of array
+        One reduced block per key of ``structure.block_order``, in public axis order.
+
+    Returns
+    -------
+    mats : tuple of array or None
+        One matrix per coupled sector, in ``map_layout(structure).sectors`` order, or
+        ``None`` where the gather is deferred -- see
+        [data][tenet.SymmetricTensor.data] for which backend defers and why.
+    views : tuple of array
+        The blocks of the result: views **into** ``mats`` where they were gathered, and
+        the given blocks themselves where they were not.
+
+    Notes
+    -----
+    The in-place assembly reshapes each block's *destination* slice to write through it,
+    so it has already built every block of the result as a view into the matrix it is
+    writing -- the second half of what ``views`` would later recompute. Handing them back
+    turns a tensor built from blocks and then read as blocks from two passes over the
+    grid into one, which is the shape of every plan applier: it is given blocks and its
+    result is read as blocks. The concatenating path builds no such destination and
+    returns ``None``.
+
+    These are the same views ``views`` cuts -- the same elements of the same buffer with
+    the same strides -- so a tensor's blocks do not depend on which door it came in
+    through. The tests assert that against the ``views`` walk, block for block.
+    """
+    if not blocks:  # no block, hence no matrix and no backend to ask about either
+        return (), ()
+    if ar.infer_backend(blocks[0]) not in _MUTABLE:
+        # Nothing to gather *now*. The blocks handed in are the blocks of the result,
+        # and on an immutable backend that is the whole of what ``blocks`` promises:
+        # there is no memory to alias, so "a view into the storage" and "the same
+        # values" are the same statement. Building the matrices here would be pure
+        # concatenation -- under a JAX trace, one graph node per block with a ``pad`` in
+        # its backward pass -- for a tensor that may never be asked for one. See
+        # [data][tenet.SymmetricTensor.data].
+        return None, blocks
+
+    layout = map_layout(structure)
+    bands, shapes = _tables(structure)
+    order = layout.axes_order
+    identity = tuple(range(structure.ndim))
+    permuted = order != identity
+
+    ref = blocks[0]
+    backend = ar.infer_backend(ref)
+    dtype = ar.to_backend_dtype(ar.get_dtype_name(ref), like=ref)
+    transpose = lib_fn(backend, "transpose")
+    inverse = tuple(sorted(identity, key=order.__getitem__))
+    cut: list[Any] = [None] * structure.num_blocks
+    mats: list[Any] = []
+    for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
+        out = ar.do("empty", layout.shape(c), dtype=dtype, like=ref)
+        for (_, ro, dr), indices in zip(rbands, cells, strict=True):
+            for i, (_, co, dc) in zip(indices, cbands, strict=True):
+                block = blocks[i]
+                if permuted:
+                    block = transpose(block, order)
+                # The *destination* is reshaped, never the source. Splitting the
+                # slice's two axes into the block's only subdivides strides, so this
+                # ``.reshape`` is a view on NumPy and on PyTorch alike (asserted with
+                # ``shares_memory`` in the tests) and the write lands in ``out``.
+                # Reshaping the source instead is the copy this path exists to avoid.
+                dest = out[ro : ro + dr, co : co + dc].reshape(shapes[i])
+                dest[...] = block
+                cut[i] = transpose(dest, inverse) if permuted else dest
+        mats.append(out)
+    return tuple(mats), tuple(cut)
+
+
+def assemble(structure: TensorStructure, blocks: tuple[Any, ...]) -> tuple[Any, ...]:
+    """The reduced blocks of ``structure`` gathered into its coupled-sector matrices.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure the blocks belong to.
+    blocks : tuple of array
+        One reduced block per key of ``structure.block_order``, in public axis order.
+
+    Returns
+    -------
+    tuple of array
+        One matrix per coupled sector, in ``map_layout(structure).sectors`` order --
+        the storage a [SymmetricTensor][tenet.SymmetricTensor] holds.
+
+    Notes
+    -----
+    The trust boundary's other half: a caller who hands the constructor per-fusion-tree
+    blocks gets them gathered here, once, and every later operation reads the matrices.
+    Which of the two assemblies runs is decided on the blocks' **backend** and never on
+    their shapes -- see the module docstring. [gather][tenet.map_view.gather] is this
+    with the result's own blocks kept as well, and the gather itself deferred where it is
+    not free; that is what the constructor takes, and this is what forces it.
+    """
+    layout = map_layout(structure)
+    bands, _ = _tables(structure)
+    order = layout.axes_order
+    mats, _ = gather(structure, blocks)
+    if mats is not None:
+        return mats
+    return _concatenated(blocks, layout, bands, order, order != tuple(range(structure.ndim)))
+
+
+def views(structure: TensorStructure, data: tuple[Any, ...]) -> tuple[Any, ...]:
+    """The coupled-sector matrices of ``structure`` cut back into reduced blocks.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure the matrices belong to.
+    data : tuple of array
+        One matrix per coupled sector, in ``map_layout(structure).sectors`` order.
+
+    Returns
+    -------
+    tuple of array
+        One block per key of ``structure.block_order``, in public axis order. Every one
+        is a **view** into its matrix on either path; nothing is copied and nothing is
+        allocated but the tuple.
+
+    Notes
+    -----
+    The inverse of [assemble][tenet.map_view.assemble], and what
+    [blocks][tenet.SymmetricTensor.blocks] answers with.
+
+    On NumPy the grid is walked a rectangle at a time -- see the module docstring for
+    the cut -- so the number of array calls is the number of distinct cell shapes rather
+    than the number of blocks. Every other backend takes the cell-by-cell walk, on the
+    same gate and for the same reason the plan applier does: whether trading Python
+    iterations for array operations pays is a property of the backend and not of the
+    size of the work, and it has been measured only on NumPy. The two walks take the
+    same views of the same matrices, so they agree bit for bit.
+    """
+    if not data:  # no coupled sector, hence no block
+        return ()
+
+    layout = map_layout(structure)
+    bands, shapes = _tables(structure)
+    order = layout.axes_order
+    identity = tuple(range(structure.ndim))
+    inverse = tuple(sorted(identity, key=order.__getitem__))
+    permuted = order != identity
+
+    backend = ar.infer_backend(data[0])
+    reshape = lib_fn(backend, "reshape")
+    transpose = lib_fn(backend, "transpose")
+
+    blocks: list[Any] = [None] * structure.num_blocks
+    if backend == "numpy":
+        # axis 2 + inverse[a] of a split rectangle is public axis a
+        public = (0, 1, *(2 + inverse[a] for a in range(structure.ndim)))
+        for mat, (_, rects) in zip(data, _rects(structure), strict=True):
+            for ro, nr, dr, co, nc, dc, split, indices in rects:
+                if len(indices) == 1:
+                    # a rectangle of one cell has nothing to group -- splitting it and
+                    # swapping its axes would build the cell the plain slice already is
+                    i = indices[0]
+                    piece = reshape(mat[ro : ro + dr, co : co + dc], shapes[i])
+                    blocks[i] = transpose(piece, inverse) if permuted else piece
+                    continue
+                cut = reshape(mat[ro : ro + nr * dr, co : co + nc * dc], (nr, dr, nc, dc))
+                cut = reshape(transpose(cut, (0, 2, 1, 3)), split)
+                if permuted:
+                    cut = transpose(cut, public)
+                cursor = 0
+                for row in cut:
+                    for cell in row:
+                        blocks[indices[cursor]] = cell
+                        cursor += 1
+        return tuple(blocks)
+
+    for mat, ((_, cells), (rbands, cbands)) in zip(
+        data, zip(layout.grid, bands, strict=True), strict=True
+    ):
+        for (_, ro, dr), indices in zip(rbands, cells, strict=True):
+            for i, (_, co, dc) in zip(indices, cbands, strict=True):
+                # basic slicing, not a dispatched call: every backend spells a
+                # contiguous 2-D slice the same way (as in ops.fusion._unapply)
+                piece = reshape(mat[ro : ro + dr, co : co + dc], shapes[i])
+                blocks[i] = transpose(piece, inverse) if permuted else piece
+    return tuple(blocks)
 
 
 def to_matrices(t: "SymmetricTensor") -> dict[Sector, Any]:
@@ -509,33 +791,13 @@ def to_matrices(t: "SymmetricTensor") -> dict[Sector, Any]:
     [U1Sector(charge=0), U1Sector(charge=1)]
     >>> mats[U1Sector(0)].shape
     (2, 2)
-    """
-    layout = map_layout(t.structure)
-    bands, shapes = _tables(t.structure)
-    order = layout.axes_order
-    permuted = order != tuple(range(t.ndim))
-    if not t.blocks or ar.infer_backend(t.blocks[0]) not in _MUTABLE:
-        return _concatenated(t, layout, bands, order, permuted)
 
-    ref = t.blocks[0]
-    dtype = ar.to_backend_dtype(ar.get_dtype_name(ref), like=ref)
-    transpose = lib_fn(t.backend, "transpose")
-    mats: dict[Sector, Any] = {}
-    for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
-        out = ar.do("empty", layout.shape(c), dtype=dtype, like=ref)
-        for (_, ro, dr), indices in zip(rbands, cells, strict=True):
-            for i, (_, co, dc) in zip(indices, cbands, strict=True):
-                block = t.blocks[i]
-                if permuted:
-                    block = transpose(block, order)
-                # The *destination* is reshaped, never the source. Splitting the
-                # slice's two axes into the block's only subdivides strides, so this
-                # ``.reshape`` is a view on NumPy and on PyTorch alike (asserted with
-                # ``shares_memory`` in the tests) and the write lands in ``out``.
-                # Reshaping the source instead is the copy this path exists to avoid.
-                out[ro : ro + dr, co : co + dc].reshape(shapes[i])[...] = block
-        mats[c] = out
-    return mats
+    Notes
+    -----
+    The tensor's own storage, keyed by sector rather than positionally: the matrices are
+    the arrays ``t`` holds, not copies of them, so writing into one writes into ``t``.
+    """
+    return dict(zip(map_layout(t.structure).sectors, t.data, strict=True))
 
 
 @plan_cache(cost=len)
@@ -575,6 +837,35 @@ def _real(coeff: complex) -> Any:
     return coeff.real if getattr(coeff, "imag", 0) == 0 else coeff
 
 
+@plan_cache(cost=lambda terms: len(terms) if terms else 1)
+def _normalized(
+    terms: tuple[tuple[int, int, complex], ...],
+) -> tuple[tuple[int, int, complex], ...] | None:
+    """``terms`` with every zero-imaginary coefficient made real, or ``None`` if one is not.
+
+    Parameters
+    ----------
+    terms : tuple of (int, int, complex)
+        ``(source block, target block, coefficient)``.
+
+    Returns
+    -------
+    tuple of (int, int, complex) or None
+        The same terms with real coefficients where the imaginary part is zero, so that a
+        real tensor stays real; ``None`` where a coefficient is genuinely complex and
+        [lower_plan][tenet.map_view.lower_plan] therefore declines.
+
+    Notes
+    -----
+    Cached with the plan, not recomputed per call: it is one pass over the terms, and
+    ``lower_plan`` is called twice per contraction on plans whose terms number in the
+    hundreds of thousands. On the belief-propagation workload that pass alone was 10% of
+    the run.
+    """
+    out = tuple((src, dst, _real(coeff)) for src, dst, coeff in terms)
+    return None if any(isinstance(coeff, complex) for _, _, coeff in out) else out
+
+
 def scaled(block: Any, coeff: Any) -> Any:
     """``block * coeff`` as a temporary, in one named place.
 
@@ -585,6 +876,52 @@ def scaled(block: Any, coeff: Any) -> Any:
     countable -- the operator form is invisible to an ``autoray`` spy.
     """
     return block * coeff
+
+
+@plan_cache(cost=lambda _: 1)
+def is_identity_plan(
+    structure: TensorStructure,
+    perm: tuple[int, ...],
+    terms: tuple[tuple[int, int, complex], ...],
+) -> bool:
+    """Whether the plan asks for nothing: every block back where it was, unscaled.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure the plan builds.
+    perm : tuple of int
+        The plan's single per-block axis permutation.
+    terms : tuple of (int, int, complex)
+        ``(source block, target block, coefficient)``.
+
+    Returns
+    -------
+    bool
+        True when ``perm`` is the identity and ``terms`` is the identity map with unit
+        coefficients, so applying the plan would rebuild the tensor it read.
+
+    Notes
+    -----
+    Not a micro-optimization: a contraction whose axes need no bend composes a restore
+    that *is* the identity, and it is one term per block. On an SU(2) rank-8
+    intermediate that is 613,468 terms walked to hand back the tensor they were read
+    from, measured at 0.4 s of a 0.47 s ``tensordot``. The predicate costs one pass over
+    the terms and is cached with them, so it is paid once per distinct plan against a
+    saving paid on every call.
+
+    It lives here rather than beside the plan appliers because both of them ask it: the
+    applier to hand its tensor straight back, and [lower_plan][tenet.map_view.lower_plan]
+    to hand the tensor's own coupled-sector matrices straight back.
+    """
+    if perm != tuple(range(len(perm))) or len(terms) != structure.num_blocks:
+        return False
+    # every block once, in place, unscaled -- the destination set is checked too, so a
+    # plan that repeats one block and drops another cannot pass for the identity
+    return (
+        all(src == dst and coeff == 1 for src, dst, coeff in terms)
+        and len({dst for _, dst, _ in terms}) == structure.num_blocks
+    )
 
 
 def lower_plan(
@@ -615,16 +952,23 @@ def lower_plan(
 
     Notes
     -----
-    The fusion of "apply the plan" and "lower the result".
-    Applying a plan writes one array per term -- a transposed view, materialised by the
-    scalar multiply when the coefficient is not 1 -- and lowering then copies every one
-    of them into its sector matrix, so a coefficient-carrying block crosses memory twice
-    for one pass' worth of movement. Composing the plan's permutation with
-    ``axes_order`` gives the one transpose that takes a *source* block straight to
-    matrix form, and the scalar rides in the ``out=`` of that same pass: one pass per
-    term, coefficient or not. YASTN fuses the same two steps for the same reason, its
-    meta carrying order and destination slot together (its NumPy backend's
-    ``transpose_and_merge``).
+    The fusion of "apply the plan" and "lower the result", and the one place the two
+    happen at once. Applying a plan on its own writes one array per term -- a transposed
+    view, materialised by the scalar multiply when the coefficient is not 1 -- and
+    lowering then copies every one of them into its sector matrix, so a block crosses
+    memory twice for one pass' worth of movement. Composing the plan's permutation with
+    ``axes_order`` gives the one transpose that takes a *source* block straight to matrix
+    form. YASTN fuses the same two steps for the same reason, its meta carrying order and
+    destination slot together (its NumPy backend's ``transpose_and_merge``).
+
+    The terms are not walked one at a time. On NumPy they go through
+    [batch_plan][tenet.ops.batch.batch_plan] -- the grouping ``apply_plan`` already used,
+    by destination shape and then by multiplicity -- so a whole bucket is gathered,
+    scaled and summed as array operations and only its result is written into the
+    destination matrix. That is what makes the Python work proportional to the buckets
+    rather than to the terms: 2,457 dispatches for 296,953 terms on a rank-8 SU(2) bend.
+    What the grouping declines is the tail, and it keeps the term walk, with one
+    transposed view per distinct source rather than one per term.
 
     ``None`` is returned where the route does not apply: no blocks, an immutable backend
     (which has no ``out=``, and whose ``to_matrices`` concatenates), or a genuinely
@@ -647,11 +991,36 @@ def lower_plan(
     >>> all(got[c].tobytes() == want[c].tobytes() for c in want)
     True
     """
-    if not t.blocks or ar.infer_backend(t.blocks[0]) not in _MUTABLE:
+    # ``t.backend`` and not ``ar.infer_backend(t.data[0])``: on an immutable backend the
+    # matrices are not built until something asks for one, and declining the route is not
+    # asking. Reading the backend off ``data`` would gather every block of the source --
+    # under a trace, a graph node each -- to discover that this function cannot use them.
+    if not t.structure.num_blocks or t.backend not in _MUTABLE:
         return None
-    normalized = tuple((src, dst, _real(coeff)) for src, dst, coeff in terms)
-    if any(isinstance(coeff, complex) for _, _, coeff in normalized):
+    # ``out=`` is what makes this one pass, and torch refuses it under autograd
+    # ("functions with out=... arguments don't support automatic differentiation").
+    # A watched tensor is not mutable in the sense ``_MUTABLE`` means, so the route
+    # declines and the ordinary applier -- which builds a temporary per term, and
+    # which is what torch always took before -- runs instead.
+    if getattr(t._first_block(), "requires_grad", False):
         return None
+    if structure == t.structure and is_identity_plan(structure, perm, terms):
+        # the plan rebuilds what it reads, and the tensor already holds the matrices
+        return to_matrices(t)
+    normalized = _normalized(terms)
+    if normalized is None:
+        return None
+    # the same grouping ``apply_plan`` batches with, on the same backend gate, and the
+    # same reason: the trade of Python iterations for array operations has been measured
+    # only on NumPy. Here the group's result is written straight into the destination
+    # matrix, so the blocks the applier would have built never exist.
+    from tenet.ops.batch import batch_plan, cast_coefficients
+
+    groups, loose = (
+        batch_plan(structure, perm, normalized)
+        if ar.infer_backend(t.data[0]) == "numpy"
+        else ((), normalized)
+    )
 
     layout = map_layout(structure)
     _, shapes = _tables(structure)
@@ -659,19 +1028,46 @@ def lower_plan(
     order = tuple(perm[i] for i in layout.axes_order)
     permuted = order != tuple(range(len(order)))
 
-    ref = t.blocks[0]
+    ref = t.data[0]
+    # read once: ``blocks`` is a property, and asking it per term is a per-term
+    # attribute lookup on a loop that runs half a million times in a BP sweep
+    blocks = t.blocks
     dtype = ar.to_backend_dtype(ar.get_dtype_name(ref), like=ref)
-    mats = {c: ar.do("empty", layout.shape(c), dtype=dtype, like=ref) for c in layout.sectors}
+    mats = {
+        c: ar.do("empty", shape, dtype=dtype, like=ref)
+        for c, shape in zip(layout.sectors, layout.shapes, strict=True)
+    }
 
     transpose = lib_fn(t.backend, "transpose")
     multiply = lib_fn(t.backend, "multiply")
     add = lib_fn(t.backend, "add")
 
     written: set[int] = set()
-    for src, dst, coeff in normalized:
-        block = t.blocks[src]
-        if permuted:
-            block = transpose(block, order)
+    for srcs, buckets in groups:
+        stacked = ar.do("stack", tuple(blocks[s] for s in srcs))
+        stacked = ar.do("transpose", stacked, (0, *(ax + 1 for ax in order)))
+        for take, coeff, width, dsts in buckets:
+            rows = ar.do("multiply", stacked[take], cast_coefficients(coeff, stacked))
+            rows = ar.do("reshape", rows, (len(dsts), width, *ar.shape(rows)[1:]))
+            acc = rows[:, 0]
+            for i in range(1, width):
+                acc = ar.do("add", acc, rows[:, i])
+            for p, dst in enumerate(dsts):
+                written.add(dst)
+                c, ro, dr, co, dc = slots[dst]
+                mats[c][ro : ro + dr, co : co + dc].reshape(shapes[dst])[...] = acc[p]
+
+    # one transpose per distinct source, not per term -- ``order`` is per-plan and only
+    # the coefficient is per-term, so terms sharing a source would otherwise recompute a
+    # byte-identical view (the rule ``ops.repartition._looped`` follows for the same
+    # reason: 2.87 terms per source at SU(2), exactly 1.00 at U(1))
+    moved = (
+        {src: transpose(blocks[src], order) for src in {s for s, _, _ in loose}}
+        if permuted
+        else blocks
+    )
+    for src, dst, coeff in loose:
+        block = moved[src]
         c, ro, dr, co, dc = slots[dst]
         # the *destination* is reshaped, never the source -- see ``to_matrices``
         dest = mats[c][ro : ro + dr, co : co + dc].reshape(shapes[dst])
@@ -735,87 +1131,24 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
 
     Notes
     -----
-    Every block comes back as a **view** into its coupled-sector matrix on either
-    path; nothing is copied and nothing is allocated but the tuple.
-
-    On NumPy the grid is walked a rectangle at a time -- see the module docstring for
-    the cut -- so the number of array calls is the number of distinct
-    ``(row extent, column extent)`` pairs rather than the number of blocks, while the
-    per-cell work drops to taking a view of an array that is already the right shape,
-    or reshaping one that is not. Every other backend takes the cell-by-cell walk, on
-    the same gate and for the same reason the plan applier does: whether trading Python
-    iterations for array operations pays is a property of the backend and not of the size of the
-    work, and it has been measured only on NumPy. The two walks take the same views of
-    the same matrices, so they agree bit for bit.
+    Zero-copy, and now trivially so: the matrices *are* the storage, so this checks them
+    against the layout and hands them to the tensor. Nothing is allocated but the tuple,
+    and the blocks are cut out of them only if someone asks for
+    [blocks][tenet.SymmetricTensor.blocks].
 
     The refusals above are the whole check, and they are deliberately spelled over the
     *matrices* rather than over the blocks that come out of them. The matrices are the
-    untrusted input; the blocks are views this function itself cuts to the shapes
-    ``structure`` dictates, so re-reading those shapes back off them would be one pass
-    per block -- 613,468 of them on a rank-8 SU(2) intermediate, a fifth of the
-    contraction that builds it -- to confirm the reshape that just happened. One touch
-    per coupled sector says the same thing (#328).
+    untrusted input; the blocks are views cut to the shapes ``structure`` dictates, so
+    re-reading those shapes back off them would be one pass per block -- 613,468 of them
+    on a rank-8 SU(2) intermediate, a fifth of the contraction that builds it -- to
+    confirm the reshape that has not even happened yet. One touch per coupled sector says
+    the same thing (#328).
     """
-    from tenet.tensor import _unchecked
+    from tenet.tensor import SymmetricTensor
 
     layout = map_layout(structure)
     _check(layout, mats)
-
-    bands, shapes = _tables(structure)
-    order = layout.axes_order
-    identity = tuple(range(structure.ndim))
-    inverse = tuple(sorted(identity, key=order.__getitem__))
-    permuted = order != identity
-    if not mats:  # no coupled sector, hence no block: `_check` has already agreed
-        return _unchecked(structure, ())
-
-    backend = ar.infer_backend(next(iter(mats.values())))
-    reshape = lib_fn(backend, "reshape")
-    transpose = lib_fn(backend, "transpose")
-
-    blocks: list[Any] = [None] * structure.num_blocks
-    if backend == "numpy":
-        # axis 2 + inverse[a] of a split rectangle is public axis a
-        public = (0, 1, *(2 + inverse[a] for a in range(structure.ndim)))
-        for c, rects in _rects(structure):
-            mat = mats[c]
-            for ro, nr, dr, co, nc, dc, split, indices in rects:
-                if len(indices) == 1:
-                    # a rectangle of one cell has nothing to group -- splitting it and
-                    # swapping its axes would build the cell the plain slice already is
-                    i = indices[0]
-                    piece = reshape(mat[ro : ro + dr, co : co + dc], shapes[i])
-                    blocks[i] = transpose(piece, inverse) if permuted else piece
-                    continue
-                cut = reshape(mat[ro : ro + nr * dr, co : co + nc * dc], (nr, dr, nc, dc))
-                cut = transpose(cut, (0, 2, 1, 3))
-                cursor = 0
-                if split is not None:
-                    cut = reshape(cut, split)
-                    if permuted:
-                        cut = transpose(cut, public)
-                    for row in cut:
-                        for cell in row:
-                            blocks[indices[cursor]] = cell
-                            cursor += 1
-                else:
-                    for row in cut:
-                        for cell in row:
-                            i = indices[cursor]
-                            cursor += 1
-                            piece = cell.reshape(shapes[i])
-                            blocks[i] = piece.transpose(inverse) if permuted else piece
-        return _unchecked(structure, tuple(blocks))
-
-    for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
-        mat = mats[c]
-        for (_, ro, dr), indices in zip(rbands, cells, strict=True):
-            for i, (_, co, dc) in zip(indices, cbands, strict=True):
-                # basic slicing, not a dispatched call: every backend spells a
-                # contiguous 2-D slice the same way (as in ops.fusion._unapply)
-                piece = reshape(mat[ro : ro + dr, co : co + dc], shapes[i])
-                blocks[i] = transpose(piece, inverse) if permuted else piece
-    return _unchecked(structure, tuple(blocks))
+    return SymmetricTensor.from_data(structure, tuple(mats[c] for c in layout.sectors))
 
 
 @dataclass(frozen=True, slots=True)

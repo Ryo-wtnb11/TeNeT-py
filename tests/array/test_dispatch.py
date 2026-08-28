@@ -11,6 +11,7 @@ import pytest
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet.map_view import map_layout
 from tenet.symmetry import SU2, U1, SU2Sector, U1Sector
 
 SINGLET, HALF, ONE = SU2Sector(0), SU2Sector(1), SU2Sector(2)
@@ -214,11 +215,11 @@ def test_import_tenet_does_not_import_jax_or_torch():
 # --- get_params / set_params / copy ---------------------------------------------
 
 
-def test_get_params_is_the_blocks():
+def test_get_params_is_the_sector_matrices():
     t = su2()
-    assert t.get_params() is t.blocks
+    assert t.get_params() is t.data
     assert isinstance(t.get_params(), tuple)
-    assert len(t.get_params()) == len(t.structure.block_order)
+    assert len(t.get_params()) == len(map_layout(t.structure).sectors)
 
 
 def test_set_params_round_trip_returns_new_equal_tensor():
@@ -237,16 +238,17 @@ def test_set_params_scales_and_leaves_original_untouched():
     assert all(np.array_equal(a, b) for a, b in zip(t.blocks, before, strict=True))
 
 
-def test_set_params_wrong_block_count_raises():
+def test_set_params_wrong_count_raises():
     t = su2()
-    with pytest.raises(ValueError, match="expected .* blocks"):
+    with pytest.raises(ValueError, match="argument"):
         t.set_params(t.get_params()[:-1])
 
 
-def test_set_params_wrong_block_shape_raises():
+def test_set_params_wrong_shape_raises():
+    """The parameters are matrices, so the refusal is ``from_matrices``'s shape check."""
     t = su2()
-    bad = (np.zeros((1, 1, 1, 1)), *t.get_params()[1:])
-    with pytest.raises(ValueError, match=r"block 0 has shape .* expected"):
+    bad = (np.zeros((1, 1)), *t.get_params()[1:])
+    with pytest.raises(ValueError, match=r"has shape .* expected"):
         t.set_params(bad)
 
 

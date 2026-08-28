@@ -763,7 +763,11 @@ def test_grad_of_four_operands_matches_central_differences():
         for k in (0, block.size - 1):
             shifted = []
             for sign in (+1, -1):
-                blocks = [np.array(x, copy=True) for x in a.blocks]
+                # a block is a live view into its coupled-sector matrix, so this needs a
+                # copy that is both real (writing into it must not reach ``a``) and
+                # C-contiguous (``reshape(-1)`` on a non-contiguous copy hands back
+                # another copy, and the write below vanishes into it)
+                blocks = [np.array(x, order="C", copy=True) for x in a.blocks]
                 blocks[i].reshape(-1)[k] += sign * h
                 shifted.append(float(loss(SymmetricTensor(a.structure, tuple(blocks)))))
             fd = (shifted[0] - shifted[1]) / (2 * h)

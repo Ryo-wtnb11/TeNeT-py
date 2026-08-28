@@ -229,9 +229,9 @@ def test_each_step_reads_the_previous_step_s_matrices(name):
         products.append(out)
         return out
 
-    def watch_lower(t, structure, perm, terms):
+    def watch_lower(t, *args, **kwargs):
         reads.append(t)
-        return real_lower(t, structure, perm, terms)
+        return real_lower(t, *args, **kwargs)
 
     ct.compose_lowered, ct.lower_plan = watch_compose, watch_lower
     try:

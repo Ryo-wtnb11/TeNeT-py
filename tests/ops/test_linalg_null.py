@@ -364,7 +364,7 @@ def test_gradient_of_a_projector_objective_matches_central_differences(name):
             def shifted(delta, i=i, idx=idx):
                 blocks = [np.array(b, copy=True) for b in t.blocks]
                 blocks[i][idx] += delta
-                return float(projector_objective(t.set_params(blocks), w))
+                return float(projector_objective(SymmetricTensor(t.structure, blocks), w))
 
             fd = (shifted(h) - shifted(-h)) / (2 * h)
             assert abs(fd - float(np.asarray(g.blocks[i])[idx])) < 1e-6
@@ -450,9 +450,9 @@ def test_gradient_of_a_real_objective_through_a_complex_null_space():
         for idx in np.ndindex(block.shape):
             blocks = [np.array(b, copy=True) for b in t.blocks]
             blocks[i][idx] += h
-            up = float(scalar(t.set_params(blocks)))
+            up = float(scalar(SymmetricTensor(t.structure, blocks)))
             blocks[i][idx] -= 2 * h
-            down = float(scalar(t.set_params(blocks)))
+            down = float(scalar(SymmetricTensor(t.structure, blocks)))
             assert abs((up - down) / (2 * h) - float(np.asarray(g.blocks[i])[idx].real)) < 1e-6
 
 
