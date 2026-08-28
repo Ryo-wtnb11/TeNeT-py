@@ -21,7 +21,7 @@ import tenet
 import tenet.map_view as map_view_module
 import tenet.ops.contraction as contraction_module
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-from tenet.map_view import lower_plan, map_layout, to_matrices
+from tenet.map_view import from_matrices, lower_plan, map_layout, to_matrices
 from tenet.ops.permutation import permutation_plan
 from tenet.ops.repartition import repartition, repartition_plan
 from tenet.symmetry import (
@@ -226,16 +226,23 @@ def test_lower_writes_one_pass_per_term_and_matches_the_old_route(
     from tenet.ops.linalg import _lower
 
     t = SymmetricTensor.random(legs, seed=3)
-    _, _, terms = _plan(t, outputs, inputs)
-    counts = _count_ar_do(monkeypatch, lambda: _lower(t, (outputs, inputs)))
+    structure, _, terms = _plan(t, outputs, inputs)
+    m, bond, mats = _lower(t, (outputs, inputs))
 
-    assert counts.get(("transpose", False), 0) == len(terms)
+    # one transposed source view per term. What is left over is ``from_matrices``'
+    # walk back onto the matrices -- per rectangle of the grid, never per block -- and
+    # it is measured rather than predicted, each under its own patch so that neither
+    # count sees the other's calls.
+    with pytest.MonkeyPatch.context() as patch:
+        walk = _count_ar_do(patch, lambda: from_matrices(structure, mats))
+    with pytest.MonkeyPatch.context() as patch:
+        counts = _count_ar_do(patch, lambda: _lower(t, (outputs, inputs)))
+    assert counts.get(("transpose", False), 0) - walk.get(("transpose", False), 0) == len(terms)
     assert counts.get(("multiply", False), 0) == 0
     assert counts.get(("add", False), 0) == 0
     assert ("concatenate", False) not in counts
     # the only ``reshape`` left is ``from_matrices``'' view back onto the matrices, which
     # is where the tensor beside them now comes from and moves no element
-    m, bond, mats = _lower(t, (outputs, inputs))
     assert all(any(np.shares_memory(block, mat) for mat in mats.values()) for block in m.blocks)
     want = to_matrices(repartition(t, outputs, inputs))
     assert sorted(mats) == sorted(want)

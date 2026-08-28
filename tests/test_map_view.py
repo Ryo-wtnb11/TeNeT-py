@@ -9,7 +9,7 @@ import pytest
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-from tenet.map_view import from_matrices, map_layout, to_matrices
+from tenet.map_view import _degeneracies, from_matrices, map_layout, to_matrices
 from tenet.structure import FusionBlockKey, TensorStructure
 from tenet.symmetry import SU2, U1, SU2Sector, Trivial, TrivialSector, U1Sector
 
@@ -120,18 +120,32 @@ def test_bands_tile_their_axis_contiguously(legs):
             assert offset == total
 
 
-def test_band_order_is_block_order_restricted():
-    """Derived, never invented — this is what makes #30's matmul re-indexing-free."""
+def test_band_order_is_block_order_sorted_by_extent():
+    """Derived, never invented — this is what makes #30's matmul re-indexing-free.
+
+    The trees are ``block_order``'s and nothing else; what the layout adds is the
+    order, ``(extent, degeneracies)`` with ``block_order`` as the tie break. Both keys
+    are functions of *this side's* ordered legs, so the two operands of a composition
+    still agree band for band — and equal extents landing together is what lets
+    ``from_matrices`` read a whole rectangle of the grid with one slice.
+    """
     s = TensorStructure(GRID_LEGS)
     layout = map_layout(s)
     for c in layout.sectors:
         keys = [k for k in s.block_order if k.coupled == c]
-        assert [tree for tree, _, _ in layout.row_bands(c)] == list(
-            dict.fromkeys(k.output_tree for k in keys)
-        )
-        assert [tree for tree, _, _ in layout.col_bands(c)] == list(
-            dict.fromkeys(k.input_tree for k in keys)
-        )
+        for bands, trees, axes in (
+            (layout.row_bands(c), dict.fromkeys(k.output_tree for k in keys), s.out_axes),
+            (layout.col_bands(c), dict.fromkeys(k.input_tree for k in keys), s.in_axes),
+        ):
+            position = {tree: i for i, tree in enumerate(trees)}
+            assert [tree for tree, _, _ in bands] != []
+            assert {tree for tree, _, _ in bands} == set(position)
+            extents = [extent for _, _, extent in bands]
+            assert extents == sorted(extents)
+            shaped = [(_degeneracies(s, axes, tree), position[tree]) for tree, _, _ in bands]
+            for (dims, p), (next_dims, next_p) in zip(shaped, shaped[1:], strict=False):
+                if dims == next_dims:
+                    assert p < next_p  # a tie keeps block order
 
 
 # --- grid completeness ----------------------------------------------------------
