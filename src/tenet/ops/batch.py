@@ -20,12 +20,12 @@ one: bucketing by *multiplicity* as well as by shape makes every bucket a rectan
 rectangle is summed by indexing and adding, which every backend spells the same way.
 """
 
-from functools import cache
 from typing import Any
 
 import autoray as ar
 import numpy as np
 
+from tenet.cache import plan_cache
 from tenet.structure import TensorStructure
 
 __all__ = ["batch_plan", "cast_coefficients"]
@@ -76,7 +76,7 @@ def cast_coefficients(coeff: np.ndarray, block: Any) -> Any:
     return ar.do("array", coeff.astype(dtype, copy=False), like=block)
 
 
-@cache
+@plan_cache(cost=lambda r: sum(len(t) for _, bs in r[0] for t, _, _, _ in bs) + len(r[1]))
 def batch_plan(
     structure: TensorStructure,
     perm: tuple[int, ...],

@@ -70,6 +70,7 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
+from tenet.cache import plan_cache
 from tenet.leg import IN, OUT, Leg
 from tenet.map_view import check_square, lower_plan, to_matrices
 from tenet.ops.basic import _check_same_structure
@@ -250,10 +251,10 @@ class ContractionPlan:
     new_structure: TensorStructure
 
 
-# Simplification: unbounded `cache`, matching every other plan cache (see structure.py's
-# note). The ceiling is a workload that generates genuinely new structures per call
-# — data-dependent truncation inside a loop, which docs/design.md already places outside
-# JIT; the upgrade path is `lru_cache(maxsize=...)`.
+# Simplification: unbounded `cache`, and deliberately so where `_restore_plan` below is
+# bounded — this plan holds axis tuples and `new_structure`, no block indices and no
+# coefficients (see the class docstring), so an entry is a hundred bytes whatever the
+# bond dimension. `tenet.cache` says which caches that argument does not cover.
 @cache
 def contraction_plan(a: TensorStructure, b: TensorStructure, axes: Axes) -> ContractionPlan:
     """Plan ``tensordot(a, b, axes)``. Cached: repeat calls return one object.
@@ -656,7 +657,7 @@ def einsum_chain(
     return acc.realized("einsum_chain")  # ty: ignore[unresolved-attribute]
 
 
-@cache
+@plan_cache(cost=lambda result: len(result[2]))
 def _restore_plan(
     structure: TensorStructure,
     outputs: tuple[int, ...],
@@ -686,9 +687,17 @@ def _restore_plan(
 
     Notes
     -----
-    Cached like every other plan, and on the same key shape. ``repartition_plan`` is
-    asked for the restore even when nothing crosses — with an empty crossing list its
-    body is a single ``permutation_plan``, which is what the chain needs anyway.
+    Cached on the same key shape as every other plan, but *cost-bounded* (see
+    ``tenet.cache``): unlike ``repartition_plan``, whose entry is a shell sharing the
+    pattern cache's terms, composing the restore with ``transposes`` builds a term tuple
+    this entry owns, keyed on degeneracies that tuple does not read. One measured entry
+    for an SU(2) three-sector rank-8 intermediate holds 59,696 terms (9.3 MB), a wider
+    one 613,468 (95.7 MB), and an unbounded cache kept one such entry per bond dimension
+    for the life of the process.
+
+    ``repartition_plan`` is asked for the restore even when nothing crosses -- with an
+    empty crossing list its body is a single ``permutation_plan``, which is what the
+    chain needs anyway.
     """
     plan = repartition_plan(structure, outputs, inputs)
     new_structure, perm, terms = plan.new_structure, plan.perm, plan.terms

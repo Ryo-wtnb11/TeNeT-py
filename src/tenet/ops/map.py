@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 import numpy as np
 
+from tenet.cache import plan_cache
 from tenet.leg import IN, OUT, Leg
 from tenet.map_view import as_map, check_square, from_matrices, map_layout, to_matrices
 from tenet.ops.embed import embed
@@ -494,7 +495,7 @@ class AdjointPlan:
     sources: tuple[int, ...]
 
 
-@cache
+@plan_cache(cost=lambda plan: len(plan.sources))
 def adjoint_plan(structure: TensorStructure) -> AdjointPlan:
     """The dagger plan for ``structure``. Cached: repeat calls return one object."""
     flipped = tuple(replace(leg, side=IN if leg.side is OUT else OUT) for leg in structure.legs)

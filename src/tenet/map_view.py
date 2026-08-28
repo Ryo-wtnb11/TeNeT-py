@@ -76,12 +76,12 @@ rectangle, and the gate has already established that the arrays are NumPy's.
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from functools import cache
 from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
 from tenet.backend import lib_fn
+from tenet.cache import plan_cache
 from tenet.fusion_tree import FusionTree
 from tenet.leg import Leg
 from tenet.space import GradedSpace, ProductSpace
@@ -190,7 +190,16 @@ class MapLayout:
         )
 
 
-@cache
+def _layout_cost(layout: MapLayout) -> int:
+    """One band, and one grid cell, per term -- the tables' size in ``tenet.cache`` units."""
+    return (
+        len(layout.rows)
+        + len(layout.cols)
+        + sum(len(cells) * len(cells[0]) for _, cells in layout.grid if cells)
+    )
+
+
+@plan_cache(cost=_layout_cost)
 def map_layout(structure: TensorStructure) -> MapLayout:
     """The lowering plan for ``structure``. Cached: repeat calls return one object.
 
@@ -289,7 +298,7 @@ def _bands(
     return tuple(bands)
 
 
-@cache
+@plan_cache(cost=lambda t: sum(len(r) + len(c) for r, c in t[0]) + len(t[1]))
 def _tables(
     structure: TensorStructure,
 ) -> tuple[
@@ -338,7 +347,7 @@ Rect = tuple[int, int, int, int, int, int, tuple[int, ...] | None, tuple[int, ..
 """``(row offset, rows, row extent, column offset, columns, column extent, split, cells)``."""
 
 
-@cache
+@plan_cache(cost=lambda rects: sum(len(rs) for _, rs in rects))
 def _rects(structure: TensorStructure) -> tuple[tuple[Sector, tuple[Rect, ...]], ...]:
     """Each coupled sector's grid, cut into rectangles of equally sized cells.
 
@@ -529,7 +538,7 @@ def to_matrices(t: "SymmetricTensor") -> dict[Sector, Any]:
     return mats
 
 
-@cache
+@plan_cache(cost=len)
 def _slots(structure: TensorStructure) -> tuple[tuple[Sector, int, int, int, int], ...]:
     """Per block of ``block_order``, the cell it occupies: ``(c, row, rows, col, cols)``.
 
