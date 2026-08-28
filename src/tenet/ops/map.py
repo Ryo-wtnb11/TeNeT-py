@@ -48,6 +48,7 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 import numpy as np
 
+from tenet.cache import plan_cache
 from tenet.leg import IN, OUT, Leg
 from tenet.map_view import as_map, check_square, from_matrices, map_layout, to_matrices
 from tenet.ops.embed import embed
@@ -494,7 +495,7 @@ class AdjointPlan:
     sources: tuple[int, ...]
 
 
-@cache
+@plan_cache(cost=lambda plan: len(plan.sources))
 def adjoint_plan(structure: TensorStructure) -> AdjointPlan:
     """The dagger plan for ``structure``. Cached: repeat calls return one object."""
     flipped = tuple(replace(leg, side=IN if leg.side is OUT else OUT) for leg in structure.legs)
@@ -548,10 +549,12 @@ def adjoint(t: "SymmetricTensor") -> "SymmetricTensor":
     # Simplification: a provider with complex Clebsch-Gordan coefficients would need the
     # same capability gate ``ops.basic.conj`` already flags — one ``requires(provider,
     # DaggerData)`` line, once DaggerData grows content. Not a second speculative protocol.
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
     plan = adjoint_plan(t.structure)
-    return SymmetricTensor(
+    # ``conj`` moves no axis and the legs keep their spaces, so the block the plan
+    # names for each key of ``plan.new_structure`` already has that key's shape (#328)
+    return _unchecked(
         plan.new_structure, tuple(ar.do("conj", t.blocks[src]) for src in plan.sources)
     )
 

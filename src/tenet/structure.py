@@ -30,6 +30,7 @@ from dataclasses import replace as _replace
 from functools import cache
 from itertools import product
 
+from tenet.cache import plan_cache
 from tenet.fusion_tree import FusionTree, coupled_sectors, fusion_trees
 from tenet.leg import OUT, Leg
 from tenet.space import GradedSpace
@@ -343,8 +344,10 @@ class TensorStructure(_HashMemo):
 
 
 # --- derived values: module-level caches keyed on the (frozen, hashable) structure ---
-# Simplification: unbounded caches, deliberately — structures are small, few and long-lived,
-# and sharing across equal structures is the point. Swap for lru_cache if that changes.
+# Simplification: unbounded caches, deliberately — every one below except
+# ``_block_shape_table`` is either keyed on ``_pattern`` (so a growing bond adds no
+# entry) or holds two small tuples. ``tenet.cache`` states that distinction once, and
+# bounds ``_block_shape_table``, which is the one here that reads the degeneracies.
 #
 # Which key each one takes is load-bearing (#248). A ``GradedSpace`` hashes its
 # degeneracies, so a structure whose bond degeneracies moved is a new key even though its
@@ -430,7 +433,7 @@ def _axis_sectors_table(s: TensorStructure) -> tuple[tuple[Sector, ...], ...]:
     return tuple(row(k) for k in _block_order(s))
 
 
-@cache
+@plan_cache(cost=len)
 def _block_shape_table(s: TensorStructure) -> tuple[tuple[int, ...], ...]:
     """Block shapes in public axis order for every key, aligned with ``block_order``."""
     return tuple(

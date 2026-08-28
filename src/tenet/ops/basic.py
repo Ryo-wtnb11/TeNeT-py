@@ -112,10 +112,12 @@ def add(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
     >>> bool(tenet.allclose(tenet.add(a, b), a + b))
     True
     """
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
     _check_same_structure(a, b, "add")
-    return SymmetricTensor(
+    # elementwise over blocks already validated against this very structure: shapes are
+    # preserved and one backend call fixes one output dtype for all of them (#328)
+    return _unchecked(
         a.structure, tuple(ar.do("add", x, y) for x, y in zip(a.blocks, b.blocks, strict=True))
     )
 
@@ -150,10 +152,10 @@ def subtract(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
     >>> round(float(tenet.norm(tenet.subtract(a, a))), 6)
     0.0
     """
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
     _check_same_structure(a, b, "subtract")
-    return SymmetricTensor(
+    return _unchecked(
         a.structure, tuple(ar.do("subtract", x, y) for x, y in zip(a.blocks, b.blocks, strict=True))
     )
 
@@ -192,10 +194,12 @@ def multiply(t: "SymmetricTensor", s: Any) -> "SymmetricTensor":
     >>> bool(tenet.allclose(tenet.multiply(a, 2.0), a + a))
     True
     """
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
     s = _scalar(s, t, "multiply")
-    return SymmetricTensor(t.structure, tuple(b * s for b in t.blocks))
+    # ``_scalar`` has already refused anything that could broadcast a block to a new
+    # shape, so ``t``'s validated shapes carry over unchanged (#328)
+    return _unchecked(t.structure, tuple(b * s for b in t.blocks))
 
 
 def divide(t: "SymmetricTensor", s: Any) -> "SymmetricTensor":
@@ -229,10 +233,10 @@ def divide(t: "SymmetricTensor", s: Any) -> "SymmetricTensor":
     >>> bool(tenet.allclose(tenet.divide(a, 2.0), 0.5 * a))
     True
     """
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
     s = _scalar(s, t, "divide")
-    return SymmetricTensor(t.structure, tuple(b / s for b in t.blocks))
+    return _unchecked(t.structure, tuple(b / s for b in t.blocks))
 
 
 def negative(t: "SymmetricTensor") -> "SymmetricTensor":
@@ -258,9 +262,9 @@ def negative(t: "SymmetricTensor") -> "SymmetricTensor":
     >>> round(float(tenet.norm(tenet.negative(a) + a)), 6)
     0.0
     """
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
-    return SymmetricTensor(t.structure, tuple(-b for b in t.blocks))
+    return _unchecked(t.structure, tuple(-b for b in t.blocks))
 
 
 def conj(t: "SymmetricTensor") -> "SymmetricTensor":
@@ -301,9 +305,9 @@ def conj(t: "SymmetricTensor") -> "SymmetricTensor":
     # ``requires(provider, DaggerData)`` line once DaggerData grows content (M24a made it
     # the named marker for exactly this gap; it stays contentless until a counterexample
     # provider exists).
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
-    return SymmetricTensor(t.structure, tuple(ar.do("conj", b) for b in t.blocks))
+    return _unchecked(t.structure, tuple(ar.do("conj", b) for b in t.blocks))
 
 
 def norm(t: "SymmetricTensor") -> Any:

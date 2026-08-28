@@ -41,13 +41,13 @@ import math
 import string
 from collections.abc import Sequence
 from dataclasses import dataclass
-from functools import cache
 from itertools import product
 from typing import TYPE_CHECKING, Any, Protocol
 
 import autoray as ar
 import numpy as np
 
+from tenet.cache import plan_cache
 from tenet.fusion_tree import FusionTree
 from tenet.leg import Leg
 from tenet.structure import TensorStructure
@@ -207,7 +207,17 @@ def _check_capabilities(structure: TensorStructure) -> None:
             break
 
 
-@cache
+def _dense_cost(plan: DensePlan) -> int:
+    """The plan's Clebsch-Gordan bytes in ``tenet.cache`` units (156 bytes per term).
+
+    ``cgts`` are views into ``matrix``, so only ``matrix`` and ``adjoint`` are counted.
+    This is the one cost function whose values are floats rather than Python tuples,
+    which is why it converts through bytes instead of counting entries.
+    """
+    return sum(cell.matrix.nbytes + cell.adjoint.nbytes for cell in plan.cells) // 156
+
+
+@plan_cache(cost=_dense_cost)
 def dense_plan(structure: TensorStructure) -> DensePlan:
     """The dense grid of ``structure``: cells, offsets and NumPy CG tensors.
 
@@ -217,11 +227,6 @@ def dense_plan(structure: TensorStructure) -> DensePlan:
     and with it the gauge — is already in the key.
 
     """
-    # Simplification: unbounded ``functools.cache``, as every other plan cache. The
-    # ceiling is larger here than for the array-free plans — a plan holds
-    # ``Σ_cells K·Π d_i`` floats, i.e. every CG tensor of the structure at once —
-    # so swap in ``lru_cache(maxsize=...)`` if a workload ever densifies many
-    # distinct large SU(2) structures.
     _check_capabilities(structure)
     provider = structure.provider
     legs = structure.legs

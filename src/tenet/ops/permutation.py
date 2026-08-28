@@ -262,7 +262,7 @@ def _apply(t: "SymmetricTensor", plan: PermutationPlan, what: str) -> "Symmetric
 
     ``what`` names the caller in the one error message this can raise.
     """
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
     # one transpose per *distinct source*, not per term (#123): ``plan.axes`` is per-plan
     # and only the coefficient is per-term, so every term sharing a source used to
@@ -288,7 +288,10 @@ def _apply(t: "SymmetricTensor", plan: PermutationPlan, what: str) -> "Symmetric
             f"{what}: the plan fills {len(blocks)} of {n} target blocks — "
             f"{t.provider.name}.permute_tree dropped terms"
         )
-    return SymmetricTensor(plan.new_structure, tuple(blocks[i] for i in range(n)))
+    # every block was written under a key of ``plan.new_structure``, from a source
+    # block of ``t`` transposed by the plan's own axes: the shapes are the plan's
+    # statement, not a fact to rediscover (#328)
+    return _unchecked(plan.new_structure, tuple(blocks[i] for i in range(n)))
 
 
 # ---------------------------------------------------------------------------

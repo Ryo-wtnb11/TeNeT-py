@@ -83,12 +83,12 @@ this module.
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from functools import cache
 from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
 from tenet.backend import lib_fn
+from tenet.cache import plan_cache
 from tenet.fusion_tree import FusionTree
 from tenet.leg import Leg
 from tenet.space import GradedSpace, ProductSpace
@@ -199,7 +199,16 @@ class MapLayout:
         return self.shapes[self.sectors.index(c)]
 
 
-@cache
+def _layout_cost(layout: MapLayout) -> int:
+    """One band, and one grid cell, per term -- the tables' size in ``tenet.cache`` units."""
+    return (
+        len(layout.rows)
+        + len(layout.cols)
+        + sum(len(cells) * len(cells[0]) for _, cells in layout.grid if cells)
+    )
+
+
+@plan_cache(cost=_layout_cost)
 def map_layout(structure: TensorStructure) -> MapLayout:
     """The lowering plan for ``structure``. Cached: repeat calls return one object.
 
@@ -277,7 +286,7 @@ Config = tuple[tuple[Sector, ...], tuple[FusionTree, ...]]
 the fusion trees carrying them -- the structural multiplicity of the configuration."""
 
 
-@cache
+@plan_cache(cost=lambda table: sum(len(t) for _, o, i in table for _, t in (*o, *i)))
 def tree_structure(
     structure: TensorStructure,
 ) -> tuple[tuple[Sector, tuple[Config, ...], tuple[Config, ...]], ...]:
@@ -373,7 +382,7 @@ def _bands(
     return tuple(bands)
 
 
-@cache
+@plan_cache(cost=lambda t: sum(len(r) + len(c) for r, c in t[0]) + len(t[1]))
 def _tables(
     structure: TensorStructure,
 ) -> tuple[
@@ -422,7 +431,7 @@ Rect = tuple[int, int, int, int, int, int, tuple[int, ...], tuple[int, ...]]
 """``(row offset, rows, row extent, column offset, columns, column extent, split, cells)``."""
 
 
-@cache
+@plan_cache(cost=lambda rects: sum(len(rs) for _, rs in rects))
 def _rects(structure: TensorStructure) -> tuple[tuple[Sector, tuple[Rect, ...]], ...]:
     """Each coupled sector's grid, cut into rectangles of equally sized cells.
 
@@ -772,7 +781,7 @@ def to_matrices(t: "SymmetricTensor") -> dict[Sector, Any]:
     return dict(zip(map_layout(t.structure).sectors, t.data, strict=True))
 
 
-@cache
+@plan_cache(cost=len)
 def _slots(structure: TensorStructure) -> tuple[tuple[Sector, int, int, int, int], ...]:
     """Per block of ``block_order``, the cell it occupies: ``(c, row, rows, col, cols)``.
 
@@ -821,7 +830,7 @@ def scaled(block: Any, coeff: Any) -> Any:
     return block * coeff
 
 
-@cache
+@plan_cache(cost=lambda _: 1)
 def is_identity_plan(
     structure: TensorStructure,
     perm: tuple[int, ...],
@@ -1009,8 +1018,8 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
     Raises
     ------
     ValueError
-        If a sector is missing, unknown, or its matrix has the wrong shape
-        (invariant 11).
+        If a sector is missing, unknown, its matrix has the wrong shape
+        (invariant 11), or the matrices do not share one dtype.
 
     Examples
     --------
@@ -1024,10 +1033,18 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
 
     Notes
     -----
-    Zero-copy, and now trivially so: the matrices *are* the storage, so this checks
-    them against the layout and hands them to the tensor. Nothing is allocated but the
-    tuple, and the blocks are cut out of them only if someone asks for
+    Zero-copy, and now trivially so: the matrices *are* the storage, so this checks them
+    against the layout and hands them to the tensor. Nothing is allocated but the tuple,
+    and the blocks are cut out of them only if someone asks for
     [blocks][tenet.SymmetricTensor.blocks].
+
+    The refusals above are the whole check, and they are deliberately spelled over the
+    *matrices* rather than over the blocks that come out of them. The matrices are the
+    untrusted input; the blocks are views cut to the shapes ``structure`` dictates, so
+    re-reading those shapes back off them would be one pass per block -- 613,468 of them
+    on a rank-8 SU(2) intermediate, a fifth of the contraction that builds it -- to
+    confirm the reshape that has not even happened yet. One touch per coupled sector says
+    the same thing (#328).
     """
     from tenet.tensor import SymmetricTensor
 
@@ -1377,3 +1394,11 @@ def _check(layout: MapLayout, mats: Mapping[Sector, Any]) -> None:
                 f"from_matrices: matrix for sector {c!r} has shape {got}, "
                 f"expected {layout.shape(c)}"
             )
+    # The dtype half of the tensor constructor's check, moved to where it belongs: every
+    # block is a view of one of these matrices, so one touch per coupled sector decides
+    # what one touch per block used to (#328).
+    dtypes = {mats[c].dtype for c in layout.sectors}
+    if len(dtypes) > 1:
+        raise ValueError(
+            f"from_matrices: matrices must share one dtype, got {sorted(map(str, dtypes))}"
+        )
