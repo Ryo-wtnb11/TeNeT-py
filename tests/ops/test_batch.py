@@ -87,8 +87,27 @@ RANKS = [2, 5, 8]
 
 
 def tensor(provider: str, shape: str, rank: int, dtype=None) -> SymmetricTensor:
-    """A rank-``rank`` tensor with sides interleaved, so every split needs a real bend."""
+    """A rank-``rank`` tensor with sides interleaved, so every split needs a real bend.
+
+    At rank 8 the space is thinned to two sectors. That is a CI-budget trim and it is
+    measured rather than guessed: three sectors give 23,872 blocks and 363,232 terms,
+    two give 323 and 1,205, and the plan that the grid rows spend their time *building*
+    goes from 5.9 s to 52 ms. Degeneracy is not the knob -- block count, term count,
+    multiplicities and group count are functions of the sectors alone, so thinning the
+    degeneracies instead leaves the cost where it was.
+
+    Two sectors still carry what rank 8 is here for: more than one internal bond, and
+    buckets wide enough to batch. The full three-sector case is not lost -- it is
+    :func:`test_the_rank_8_su2_case_is_the_one_the_issue_measures`, which pins the
+    fixture the issue measured, once rather than across the grid.
+
+    The suite's CI job runs at 26 minutes against a 30 minute cap on ``main`` (#320);
+    this module went over it.
+    """
     space = SPACES[provider][SHAPES.index(shape)]
+    if rank == 8:
+        keep = [a for a, _ in space.sectors][:2]
+        space = GradedSpace.new(space.provider, {a: space.degeneracy(a) for a in keep})
     legs = tuple(Leg(space, OUT if i % 2 == 0 else IN) for i in range(rank))
     kwargs = {} if dtype is None else {"dtype": dtype}
     return SymmetricTensor.random(legs, seed=3 + rank, **kwargs)
@@ -158,8 +177,15 @@ def test_the_bending_plans_really_carry_non_unit_coefficients(provider):
 
 
 def test_the_rank_8_su2_case_is_the_one_the_issue_measures():
-    """Batching only matters where the buckets are large; assert this fixture has them."""
-    t = tensor("su2", "uniform", 8)
+    """Batching only matters where the buckets are large; assert this fixture has them.
+
+    Built here rather than through :func:`tensor`, which thins rank 8 to two sectors for
+    the grid's sake. This is the one place the issue's own three-sector fixture runs, so
+    it is the one place the term count it reports is asserted.
+    """
+    space = SPACES["su2"][0]
+    legs = tuple(Leg(space, OUT if i % 2 == 0 else IN) for i in range(8))
+    t = SymmetricTensor.random(legs, seed=11)
     structure, perm, terms = bend_plan_of(t)
     groups, loose = batch_plan(structure, perm, terms)
     assert len(terms) > 5000
@@ -246,10 +272,17 @@ def test_the_dispatch_count_is_the_grouping_s_and_not_the_term_count_s(ops, rank
 
 
 def test_the_dispatch_count_barely_moves_when_the_term_count_multiplies(ops):
-    """Rank 5 to rank 8 multiplies the terms; the buckets, and so the ops, do not follow."""
+    """Rank 5 to rank 8 multiplies the terms; the buckets, and so the ops, do not follow.
+
+    Both ranks are built here on the full three-sector space rather than through
+    :func:`tensor`, which thins rank 8 for the grid's sake: the whole claim is a *ratio*
+    between the two term counts, so both sides have to come from one space.
+    """
+    space = SPACES["su2"][0]
     counts = {}
     for rank in (5, 8):
-        t = tensor("su2", "uniform", rank)
+        legs = tuple(Leg(space, OUT if i % 2 == 0 else IN) for i in range(rank))
+        t = SymmetricTensor.random(legs, seed=3 + rank)
         structure, perm, terms = bend_plan_of(t)
         batch_plan(structure, perm, terms)
         ops.clear()
