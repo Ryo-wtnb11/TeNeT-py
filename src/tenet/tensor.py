@@ -183,6 +183,15 @@ class SymmetricTensor:
         block's axes and permuted back into public axis order. Nothing is copied, and
         writing into a block writes into the tensor. The cut is memoized, so a caller
         that reads ``blocks`` in a loop pays for it once.
+
+        **A block is a live view and is usually not C-contiguous.** Two consequences for
+        a caller that wants a block of its own. ``numpy.array(block, copy=True)`` and
+        ``numpy.ascontiguousarray(block)`` are both the wrong tool: the first defaults to
+        order ``"K"`` and keeps the block's layout, so ``.reshape(-1)`` on the result
+        hands back another copy and a write into it is lost; the second does not copy at
+        all when the block already happens to be contiguous, so a write into it reaches
+        this tensor. ``numpy.array(block, order="C", copy=True)`` is the one that is both
+        a copy and flat.
         """
         if self._views is None:
             from tenet.map_view import views

@@ -464,18 +464,7 @@ class _Pending:
         )
 
     def realized(self, caller: str) -> "SymmetricTensor":
-        """Apply the plan and hand back the tensor.
-
-        Through [apply_plan][tenet.ops.repartition.apply_plan] and not through
-        [lower_plan][tenet.map_view.lower_plan], although the latter would write the
-        result's coupled-sector matrices in one pass and save the gather the constructor
-        then does. It was tried and it is slower: ``apply_plan`` batches a shape bucket
-        into one array operation where ``lower_plan`` walks a term at a time, and on the
-        SU(2) plans this reaches that batching is worth more than the pass it costs --
-        1.50 ms against 5.76 ms on a rank-5 repartition, and 195.9 against 182.7 ms per
-        belief-propagation iteration. The pass is what a matrix-to-matrix recoupling
-        removes, not what a different applier does.
-        """
+        """Apply the plan and hand back the tensor."""
         return apply_plan(self.source, self.structure, self.perm, self.terms, caller)
 
 

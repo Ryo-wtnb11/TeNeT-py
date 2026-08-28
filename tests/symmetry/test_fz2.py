@@ -376,6 +376,14 @@ def test_norm_conj_and_dtype(p):
     difference of a couple of ulp and not a fact about fZ2. The exactness that is a
     statement about the provider -- the blocks themselves -- is asserted above, in
     ``test_transpose_composes``, with ``assert_array_equal``.
+
+    **Do not tighten this back to ``==``.** It held before the tensor stored its
+    coupled-sector matrices, and it held by accident: a transposed block was then a
+    strided view of the *source* block's own buffer, so NumPy's reduction visited the
+    same addresses in the same order and returned the same bits. The blocks are now views
+    into a matrix, so a transpose changes which buffer the reduction walks and in what
+    order. Restoring bit-equality would mean pinning a reduction order to the tensor's
+    history, which nothing in the library promises and no other test wants.
     """
     t = mixed_tensor()
     a, b = float(tenet.norm(t.transpose(p))), float(tenet.norm(t))

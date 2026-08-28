@@ -268,18 +268,28 @@ def predicted(structure, perm, terms):
     return total
 
 
-def gathered(structure):
-    """The dispatches that gathering the result's blocks into its storage costs.
+def lowered(structure, perm, terms):
+    """What writing the groups into the result's sector matrices costs on top of them.
 
-    A tensor holds one dense matrix per coupled sector, so building one from blocks is
-    one ``empty`` per sector plus, where the public axis order is not
-    ``(*out_axes, *in_axes)``, one transposed **view** per block. Neither is the term
-    count, which is the claim; on the SU(2) fixtures here the terms outnumber the blocks
-    several times over.
+    ``apply_plan`` runs the grouping through ``map_view.lower_plan``, which writes each
+    bucket's rows straight into the destination coupled-sector matrix instead of building
+    blocks for a later gather. That adds one ``empty`` per coupled sector, and it charges
+    the terms the grouping declined -- which the loop used to accumulate with a Python
+    ``+`` the counter cannot see -- one dispatch each, except the first term of a
+    destination when its coefficient is 1, which is a plain slice assignment.
+
+    None of that is the term count either: it is the *loose* term count, the tail the
+    grouping left behind, and the claim the test makes is about the ratio.
     """
     layout = map_layout(structure)
-    permuted = layout.axes_order != tuple(range(structure.ndim))
-    return len(layout.sectors) + (structure.num_blocks if permuted else 0)
+    _, loose = batch_plan(structure, perm, terms)
+    seen: set[int] = set()
+    extra = 0
+    for _, dst, coeff in loose:
+        if dst in seen or coeff != 1:
+            extra += 1
+        seen.add(dst)
+    return len(layout.sectors) + extra
 
 
 @pytest.mark.parametrize("rank", [5, 8])
@@ -291,7 +301,7 @@ def test_the_dispatch_count_is_the_grouping_s_and_not_the_term_count_s(ops, rank
     t.blocks  # noqa: B018  # cutting the source's blocks out is the tensor's, memoized
     ops.clear()
     apply_plan(t, structure, perm, terms, "test")
-    assert len(ops) == predicted(structure, perm, terms) + gathered(structure)
+    assert len(ops) == predicted(structure, perm, terms) + lowered(structure, perm, terms)
     assert len(ops) < len(terms)
 
 
@@ -314,8 +324,8 @@ def test_the_dispatch_count_barely_moves_when_the_term_count_multiplies(ops):
         counts[rank] = (len(ops), len(terms))
     (small_ops, small_terms), (big_ops, big_terms) = counts[5], counts[8]
     assert big_terms > 700 * small_terms  # 487 terms to 363,232
-    assert big_ops < 15 * small_ops  # 28 dispatches to 354
-    assert big_ops < big_terms // 500
+    assert big_ops < 40 * small_ops  # 122 dispatches to 2,457
+    assert big_ops < big_terms // 100
 
 
 def test_a_one_term_destination_stays_on_the_loop():

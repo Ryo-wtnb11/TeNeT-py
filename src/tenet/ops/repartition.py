@@ -56,7 +56,7 @@ import autoray as ar
 
 from tenet.backend import lib_fn
 from tenet.leg import IN, OUT, Leg, Side
-from tenet.map_view import is_identity_plan, scaled
+from tenet.map_view import from_matrices, is_identity_plan, lower_plan, scaled
 from tenet.ops.batch import batch_plan, cast_coefficients
 from tenet.ops.permutation import permutation_plan
 from tenet.space import GradedSpace
@@ -617,28 +617,34 @@ def apply_plan(
     Notes
     -----
     Every term shares the plan's single ``perm``, so the whole plan is one transpose per
-    source followed by a scatter-add, and on NumPy — see [_batches][tenet.ops.repartition._batches]
-    for why only there — terms whose destination has the same shape, hence whose source
-    has the same shape, stack and run as array operations instead of Python iterations.
-    The buckets are few: a rank-8 SU(2) intermediate with 74,800 blocks and 447,752 terms
-    has 1 bucket at uniform degeneracies and ~4,000 at the most ragged ones.
-    [batch_plan][tenet.ops.batch.batch_plan] holds the index arrays, keyed on the plan, so
-    the grouping is paid once per distinct plan rather than once per call.
+    source followed by a scatter-add, and terms whose destination has the same shape,
+    hence whose source has the same shape, stack and run as array operations instead of
+    Python iterations. The buckets are few: a rank-8 SU(2) intermediate with 74,800
+    blocks and 447,752 terms has 1 bucket at uniform degeneracies and ~4,000 at the most
+    ragged ones. [batch_plan][tenet.ops.batch.batch_plan] holds the index arrays, keyed on
+    the plan, so the grouping is paid once per distinct plan rather than once per call.
+
+    **The grouping runs through [lower_plan][tenet.map_view.lower_plan] where it can**,
+    which writes each bucket's rows straight into the result's coupled-sector matrices.
+    The tensor holds those matrices, so the blocks this would otherwise build -- and the
+    gather that would then copy every one of them into a matrix -- never exist: one pass
+    where there were two. It declines on an immutable backend and on a genuinely complex
+    coefficient, and there the loop below builds blocks and the constructor gathers them.
 
     A bucket too small to repay the array-operation overhead — an Abelian plan is one term
     per destination, so nothing to fuse and pure loss — stays on
     [_looped][tenet.ops.repartition._looped], which is also the reference the batched path
     is tested against, term for term and bit for bit, and which runs the whole plan on
-    every other backend.
-
-    A term with coefficient 1 on the looped path leaves its transposed **view** in place
-    and moves no element at all; the first consumer that needs contiguity pays for it,
-    which on the contraction path is the sector-matrix assembly.
+    every other backend (see [_batches][tenet.ops.repartition._batches]).
     """
     from tenet.tensor import _unchecked
 
     if structure == t.structure and is_identity_plan(structure, perm, terms):
         return t  # the plan rebuilds what it reads; tensors are immutable, so hand it back
+
+    mats = lower_plan(t, structure, perm, terms)
+    if mats is not None:
+        return from_matrices(structure, mats)
 
     groups, loose = batch_plan(structure, perm, terms) if _batches(t) else ((), terms)
 

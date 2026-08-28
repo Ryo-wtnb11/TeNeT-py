@@ -818,6 +818,35 @@ def _real(coeff: complex) -> Any:
     return coeff.real if getattr(coeff, "imag", 0) == 0 else coeff
 
 
+@plan_cache(cost=lambda terms: len(terms) if terms else 1)
+def _normalized(
+    terms: tuple[tuple[int, int, complex], ...],
+) -> tuple[tuple[int, int, complex], ...] | None:
+    """``terms`` with every zero-imaginary coefficient made real, or ``None`` if one is not.
+
+    Parameters
+    ----------
+    terms : tuple of (int, int, complex)
+        ``(source block, target block, coefficient)``.
+
+    Returns
+    -------
+    tuple of (int, int, complex) or None
+        The same terms with real coefficients where the imaginary part is zero, so that a
+        real tensor stays real; ``None`` where a coefficient is genuinely complex and
+        [lower_plan][tenet.map_view.lower_plan] therefore declines.
+
+    Notes
+    -----
+    Cached with the plan, not recomputed per call: it is one pass over the terms, and
+    ``lower_plan`` is called twice per contraction on plans whose terms number in the
+    hundreds of thousands. On the belief-propagation workload that pass alone was 10% of
+    the run.
+    """
+    out = tuple((src, dst, _real(coeff)) for src, dst, coeff in terms)
+    return None if any(isinstance(coeff, complex) for _, _, coeff in out) else out
+
+
 def scaled(block: Any, coeff: Any) -> Any:
     """``block * coeff`` as a temporary, in one named place.
 
@@ -904,16 +933,23 @@ def lower_plan(
 
     Notes
     -----
-    The fusion of "apply the plan" and "lower the result".
-    Applying a plan writes one array per term -- a transposed view, materialised by the
-    scalar multiply when the coefficient is not 1 -- and lowering then copies every one
-    of them into its sector matrix, so a coefficient-carrying block crosses memory twice
-    for one pass' worth of movement. Composing the plan's permutation with
-    ``axes_order`` gives the one transpose that takes a *source* block straight to
-    matrix form, and the scalar rides in the ``out=`` of that same pass: one pass per
-    term, coefficient or not. YASTN fuses the same two steps for the same reason, its
-    meta carrying order and destination slot together (its NumPy backend's
-    ``transpose_and_merge``).
+    The fusion of "apply the plan" and "lower the result", and the one place the two
+    happen at once. Applying a plan on its own writes one array per term -- a transposed
+    view, materialised by the scalar multiply when the coefficient is not 1 -- and
+    lowering then copies every one of them into its sector matrix, so a block crosses
+    memory twice for one pass' worth of movement. Composing the plan's permutation with
+    ``axes_order`` gives the one transpose that takes a *source* block straight to matrix
+    form. YASTN fuses the same two steps for the same reason, its meta carrying order and
+    destination slot together (its NumPy backend's ``transpose_and_merge``).
+
+    The terms are not walked one at a time. On NumPy they go through
+    [batch_plan][tenet.ops.batch.batch_plan] -- the grouping ``apply_plan`` already used,
+    by destination shape and then by multiplicity -- so a whole bucket is gathered,
+    scaled and summed as array operations and only its result is written into the
+    destination matrix. That is what makes the Python work proportional to the buckets
+    rather than to the terms: 2,457 dispatches for 296,953 terms on a rank-8 SU(2) bend.
+    What the grouping declines is the tail, and it keeps the term walk, with one
+    transposed view per distinct source rather than one per term.
 
     ``None`` is returned where the route does not apply: no blocks, an immutable backend
     (which has no ``out=``, and whose ``to_matrices`` concatenates), or a genuinely
@@ -941,9 +977,20 @@ def lower_plan(
         return to_matrices(t)
     if not t.data or ar.infer_backend(t.data[0]) not in _MUTABLE:
         return None
-    normalized = tuple((src, dst, _real(coeff)) for src, dst, coeff in terms)
-    if any(isinstance(coeff, complex) for _, _, coeff in normalized):
+    normalized = _normalized(terms)
+    if normalized is None:
         return None
+    # the same grouping ``apply_plan`` batches with, on the same backend gate, and the
+    # same reason: the trade of Python iterations for array operations has been measured
+    # only on NumPy. Here the group's result is written straight into the destination
+    # matrix, so the blocks the applier would have built never exist.
+    from tenet.ops.batch import batch_plan, cast_coefficients
+
+    groups, loose = (
+        batch_plan(structure, perm, normalized)
+        if ar.infer_backend(t.data[0]) == "numpy"
+        else ((), normalized)
+    )
 
     layout = map_layout(structure)
     _, shapes = _tables(structure)
@@ -966,10 +1013,31 @@ def lower_plan(
     add = lib_fn(t.backend, "add")
 
     written: set[int] = set()
-    for src, dst, coeff in normalized:
-        block = blocks[src]
-        if permuted:
-            block = transpose(block, order)
+    for srcs, buckets in groups:
+        stacked = ar.do("stack", tuple(blocks[s] for s in srcs))
+        stacked = ar.do("transpose", stacked, (0, *(ax + 1 for ax in order)))
+        for take, coeff, width, dsts in buckets:
+            rows = ar.do("multiply", stacked[take], cast_coefficients(coeff, stacked))
+            rows = ar.do("reshape", rows, (len(dsts), width, *ar.shape(rows)[1:]))
+            acc = rows[:, 0]
+            for i in range(1, width):
+                acc = ar.do("add", acc, rows[:, i])
+            for p, dst in enumerate(dsts):
+                written.add(dst)
+                c, ro, dr, co, dc = slots[dst]
+                mats[c][ro : ro + dr, co : co + dc].reshape(shapes[dst])[...] = acc[p]
+
+    # one transpose per distinct source, not per term -- ``order`` is per-plan and only
+    # the coefficient is per-term, so terms sharing a source would otherwise recompute a
+    # byte-identical view (the rule ``ops.repartition._looped`` follows for the same
+    # reason: 2.87 terms per source at SU(2), exactly 1.00 at U(1))
+    moved = (
+        {src: transpose(blocks[src], order) for src in {s for s, _, _ in loose}}
+        if permuted
+        else blocks
+    )
+    for src, dst, coeff in loose:
+        block = moved[src]
         c, ro, dr, co, dc = slots[dst]
         # the *destination* is reshaped, never the source -- see ``to_matrices``
         dest = mats[c][ro : ro + dr, co : co + dc].reshape(shapes[dst])
