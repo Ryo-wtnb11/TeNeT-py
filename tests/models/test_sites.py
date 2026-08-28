@@ -11,15 +11,43 @@ import pathlib
 import numpy as np
 import pytest
 
-from tenet.models import Site, hard_core_boson, spin_half, spinful_fermion, spinless_fermion
-from tenet.network import MPO, local_op
-from tenet.symmetry import SU2, Z2, FZ2Sector, SU2Sector, Trivial, U1Sector
+from tenet import GradedSpace
+from tenet.models import (
+    Site,
+    hard_core_boson,
+    hubbard,
+    spin_half,
+    spinful_fermion,
+    spinless_fermion,
+)
+from tenet.network import MPO, MPS, dmrg_, local_op
+from tenet.symmetry import (
+    SU2,
+    U1,
+    Z2,
+    FZ2Sector,
+    ProductProvider,
+    ProductSector,
+    SU2Sector,
+    Trivial,
+    U1Sector,
+    fZ2,
+)
+
+#: The spin-SU(2) grading of the spinful site: parity, particle number, total spin.
+FUS = ProductProvider((fZ2, U1, SU2))
+
+
+def fus(parity: int, charge: int, two_j: int) -> ProductSector:
+    return ProductSector((FZ2Sector(parity), U1Sector(charge), SU2Sector(two_j)))
+
 
 SITES = {
     "spin_half u1": spin_half(),
     "spin_half su2": spin_half(SU2),
     "spinless_fermion": spinless_fermion(),
     "spinful_fermion": spinful_fermion(),
+    "spinful_fermion su2": spinful_fermion(FUS),
     "hard_core_boson u1": hard_core_boson(),
     "hard_core_boson trivial": hard_core_boson(Trivial),
 }
@@ -29,7 +57,9 @@ def matrix(site: Site, name: str) -> np.ndarray:
     """The operator's dense matrix, read back off the built tensor."""
     op = site.ops[name]
     dense = np.asarray(op.to_dense())
-    return dense[:, :, 0] if op.ndim == 3 else np.reshape(dense, (site.phys.dim**2,) * 2)
+    if op.ndim == 3:
+        return dense[:, :, 0]
+    return np.reshape(dense, (site.phys.dim ** (op.ndim // 2),) * 2)
 
 
 # --- the acceptance criterion: built through local_op, refusals attached ---------------
@@ -275,3 +305,150 @@ def test_the_spinless_fermion_call_shape_matches_its_dense_oracle():
         c = _kron_chain(n, 2, {i: parity for i in range(m + 1)} | {m + 1: site.matrices["c"]})
         want = want - (cd @ c + (cd @ c).T)
     assert np.allclose(np.asarray(h.to_dense()), want)
+
+
+# --- the spin-SU(2) spinful site -------------------------------------------------------
+
+
+def test_the_su2_spinful_space_is_four_states_in_three_multiplets():
+    """``dim`` counts states, ``reduced_dim`` multiplets, and the order is the graded one."""
+    phys = spinful_fermion(FUS).phys
+    assert (phys.dim, phys.reduced_dim) == (4, 3)
+    # Empty and doubly occupied are even spin singlets, the singly occupied states one
+    # odd j = 1/2 doublet -- the same even-before-odd basis (|0>, |ud>, |u>, |d>) the
+    # fZ2 site is written in, which is why its matrices carry over.
+    assert phys.sectors == ((fus(0, 0, 0), 1), (fus(0, 2, 0), 1), (fus(1, 1, 1), 1))
+
+
+def test_the_su2_spinful_site_ships_only_invariant_operators():
+    """No ``c_up``, and not by preference: neither of ``local_op``'s forms can hold it."""
+    site, fz2 = spinful_fermion(FUS), spinful_fermion()
+    assert sorted(site.ops) == ["S.S", "hop", "n", "n_up n_dn"]
+    assert sorted(site.matrices) == ["S.S", "hop", "n", "n_up n_dn"]
+    assert not {"c_up", "c+_up", "c_dn", "c+_dn", "n_up", "n_dn"} & set(site.ops)
+    # The charge-leg form puts the emitted sector on a D=1 *dense* leg, and the sector
+    # c_up emits is the j = 1/2 doublet, of dense dimension 2.
+    with pytest.raises(ValueError):
+        local_op(fz2.matrices["c_up"], phys=site.phys, charge=fus(1, -1, 1))
+    # ... and c_up is no scalar either, so the invariant form refuses it too.
+    with pytest.raises(ValueError):
+        local_op(fz2.matrices["c_up"], phys=site.phys)
+    # n_up alone is not invariant; only the sum and the product of the two are.
+    with pytest.raises(ValueError):
+        local_op(fz2.matrices["n_up"], phys=site.phys)
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [U1, ProductProvider((U1, fZ2)), ProductProvider((fZ2, SU2, U1))],
+    ids=["u1", "u1 x fZ2", "wrong order"],
+)
+def test_a_spinful_grading_that_is_not_shipped_is_refused_by_name(provider):
+    """The factors must be exactly ``(fZ2, U1, SU2)`` in that order."""
+    with pytest.raises(ValueError, match="fZ2"):
+        spinful_fermion(provider)
+    with pytest.raises(ValueError, match=type(provider).__name__):
+        spinful_fermion(provider)
+
+
+def test_the_diagonal_matrices_are_the_fz2_ones_unchanged():
+    """Both bases are even before odd, so ``n`` and ``n_up n_dn`` are the same arrays."""
+    su2, fz2 = spinful_fermion(FUS), spinful_fermion()
+    for name in ("n", "n_up n_dn"):
+        assert np.array_equal(su2.matrices[name], fz2.matrices[name])
+        assert np.allclose(matrix(su2, name), fz2.matrices[name])
+
+
+def test_the_hop_operator_densifies_to_the_jordan_wigner_kron_expression():
+    """The dense oracle: ``sum_sigma (c+_i Z (x) c_j + h.c.)``, written out here."""
+    su2, fz2 = spinful_fermion(FUS), spinful_fermion()
+    parity = np.diag([1.0, 1.0, -1.0, -1.0])
+    fwd = sum(
+        np.kron(fz2.matrices[f"c+_{s}"] @ parity, fz2.matrices[f"c_{s}"]) for s in ("up", "dn")
+    )
+    assert np.allclose(matrix(su2, "hop"), fwd + fwd.T)
+
+
+def test_the_spin_exchange_is_the_spin_half_one_on_the_singly_occupied_block():
+    """``S.S`` acts on the doublet and annihilates the singlets, so its 1-1 block is spin-1/2."""
+    su2 = spinful_fermion(FUS)
+    ss = matrix(su2, "S.S")
+    singly = [4 * a + b for a in (2, 3) for b in (2, 3)]  # |u>, |d> of the graded basis
+    block = ss[np.ix_(singly, singly)]
+    assert np.allclose(np.linalg.eigvalsh(block), [-0.75, 0.25, 0.25, 0.25])
+    assert np.allclose(ss[:, 0], 0.0)  # |0>|0> carries no spin
+
+
+# --- the decisive one: the Hubbard chain, both gradings --------------------------------
+
+HUBBARD_N, HUBBARD_T, HUBBARD_U = 4, 1.0, 4.0
+
+
+def _su2_hubbard(n: int, t: float, u: float) -> MPO:
+    """The Hubbard chain on the SU(2) site: one invariant operator per bond.
+
+    The on-site ``U`` term rides along on the bonds rather than entering on its own,
+    because a term operator is rank 3 or rank 2*k* with *k* >= 2 and this physical space
+    admits no rank-3 form of anything: ``from_terms`` is Abelian-only on the charge leg,
+    and ``irrep_dim > 1`` here. Site ``i``'s ``n_up n_dn`` is therefore split over the
+    bonds it belongs to -- whole at the two ends, half and half in the bulk.
+    """
+    site = spinful_fermion(FUS)
+    eye, nn = np.eye(4), site.matrices["n_up n_dn"]
+    terms = []
+    for i in range(n - 1):
+        left, right = (1.0 if i == 0 else 0.5), (1.0 if i == n - 2 else 0.5)
+        bond = -t * site.matrices["hop"] + u * (left * np.kron(nn, eye) + right * np.kron(eye, nn))
+        terms.append((1.0, [(local_op(bond, phys=site.phys), (i, i + 1))]))
+    return MPO.from_terms(n, terms)
+
+
+def _half_filled_singlet_energy(n: int, t: float, u: float) -> float:
+    """The same chain on the ``fZ2`` site, diagonalized densely at half filling, ``S^z = 0``.
+
+    The oracle is a dense diagonalization rather than a second DMRG run because ``fZ2``
+    conserves the parity alone: a run on that grading cannot be held to ``n`` electrons,
+    and its ground state is at some other filling. Restricting the dense Hamiltonian by
+    the two diagonal charges is what fixes the sector the SU(2) seed picks structurally.
+    """
+    fz2 = spinful_fermion()
+    dense = np.asarray(hubbard(n, t=t, U=u).to_dense())
+    n_tot = sum(_kron_chain(n, 4, {m: fz2.matrices["n"]}) for m in range(n))
+    sz = (fz2.matrices["n_up"] - fz2.matrices["n_dn"]) / 2
+    sz_tot = sum(_kron_chain(n, 4, {m: sz}) for m in range(n))
+    keep = (np.abs(np.diag(n_tot) - n) < 1e-9) & (np.abs(np.diag(sz_tot)) < 1e-9)
+    return float(np.linalg.eigvalsh(dense[np.ix_(keep, keep)])[0])
+
+
+@pytest.fixture(scope="module")
+def su2_hubbard_run():
+    """One DMRG run on the product-graded chain, shared by the two tests that read it."""
+    n = HUBBARD_N
+    site = spinful_fermion(FUS)
+    # D=1 boundaries carry the target sector: the left bond is the vacuum and the right
+    # one the total charge, so the seed is half filling in the total-spin-zero channel
+    # and the sweeps never leave it. The interior offers a couple of copies of every
+    # sector a chain of this length can reach; multiplicities the ground state needs grow
+    # under the sweeps and ones it does not are truncated away.
+    empty = GradedSpace.new(FUS, {fus(0, 0, 0): 1})
+    full = GradedSpace.new(FUS, {fus(0, n, 0): 1})
+    mid = GradedSpace.new(
+        FUS,
+        {fus(0, q, 0): 2 for q in range(0, 2 * n + 1, 2)}
+        | {fus(0, q, 2): 1 for q in range(2, 2 * n, 2)}
+        | {fus(1, q, 1): 2 for q in range(1, 2 * n, 2)},
+    )
+    psi = MPS.random(site.phys, [empty] + [mid] * (n - 1) + [full], seed=0)
+    return dmrg_(psi, _su2_hubbard(n, HUBBARD_T, HUBBARD_U), chi=32)
+
+
+def test_the_su2_hubbard_chain_reaches_the_fz2_chains_ground_state_energy(su2_hubbard_run):
+    """The acceptance criterion: same model, same number, one grading finer than the other."""
+    want = _half_filled_singlet_energy(HUBBARD_N, HUBBARD_T, HUBBARD_U)
+    assert abs(su2_hubbard_run.energy - want) < 1e-8
+
+
+def test_the_su2_hubbard_bond_is_multiplet_compressed(su2_hubbard_run):
+    """``dim`` counts dense states, ``reduced_dim`` multiplets; the gap is what SU(2) buys."""
+    mid = su2_hubbard_run.psi[HUBBARD_N // 2].legs[0].space
+    assert mid.reduced_dim < mid.dim
