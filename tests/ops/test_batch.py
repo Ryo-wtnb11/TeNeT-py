@@ -23,7 +23,7 @@ import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.ops.batch import MIN_BATCH_ROWS, batch_plan
 from tenet.ops.permutation import permutation_plan
-from tenet.ops.repartition import _looped, apply_plan, repartition_plan
+from tenet.ops.repartition import _batches, _looped, apply_plan, repartition_plan
 from tenet.symmetry import (
     SU2,
     U1,
@@ -307,15 +307,26 @@ def test_a_one_term_destination_stays_on_the_loop():
 
 
 @pytest.mark.parametrize("provider", ["u1", "su2"])
-def test_jax_batched_equals_jax_looped(provider):
-    """JAX runs the same formulation — no NumPy-only segment-sum primitive anywhere.
+def test_jax_takes_the_loop_and_gets_the_same_numbers(provider):
+    """JAX is outside the gate, and its result is the looped one to the bit.
+
+    [_batches][tenet.ops.repartition._batches] carries the measurement: batching costs
+    JAX 1.1x to 2.8x where it saves NumPy 1.4x to 3.3x, because an array library's
+    per-call overhead is large enough that the loop was never the cost. The formulation
+    is not the reason -- nothing in [batch_plan][tenet.ops.batch.batch_plan] needs a
+    NumPy-only primitive, and this test is what would catch it if it did.
 
     The PyTorch row of this is in ``tests/backends/test_torch.py``, which is the one
     module allowed to import torch.
     """
     pytest.importorskip("jax")
     t = tensor(provider, "ragged", 5).to_backend("jax")
-    got = assert_bit_identical(t, *bend_plan_of(t))
+    structure, perm, terms = bend_plan_of(t)
+    # su2's bending plan has buckets to batch; u1's is one term per destination and has
+    # none, which is the Abelian case the loop would have kept anyway
+    assert bool(batch_plan(structure, perm, terms)[0]) is (provider == "su2")
+    assert not _batches(t)  # and the backend gate declines it either way
+    got = assert_bit_identical(t, structure, perm, terms)
     assert got.backend == "jax"
 
 

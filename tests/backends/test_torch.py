@@ -963,15 +963,19 @@ def test_only_this_module_imports_torch():
 
 
 @pytest.mark.parametrize("provider", ["u1", "su2"])
-def test_the_batched_plan_applier_matches_the_loop_on_torch(provider):
-    """Batching a plan by block shape is one formulation, not a NumPy fast path.
+def test_torch_takes_the_loop_and_gets_the_same_numbers(provider):
+    """Torch is outside the batching gate, and its result is the looped one to the bit.
 
-    The JAX and NumPy rows are in ``tests/ops/test_batch.py``; this is the third
-    backend, and the criterion is the same — the batched execution of a plan equals
-    the term-by-term one to the bit.
+    [_batches][tenet.ops.repartition._batches] admits NumPy only, and Torch is out for
+    want of a measurement rather than for a measured loss — this is the module where
+    that measurement would be made. Until it is, the claim under test is the one every
+    backend owes: the plan's execution equals the term-by-term one.
     """
     from ops.test_batch import assert_bit_identical, bend_plan_of, tensor
 
+    from tenet.ops.repartition import _batches
+
     t = tensor(provider, "ragged", 5).to_backend("torch")
+    assert not _batches(t)
     got = assert_bit_identical(t, *bend_plan_of(t))
     assert got.backend == "torch"

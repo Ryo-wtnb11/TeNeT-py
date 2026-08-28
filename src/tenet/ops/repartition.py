@@ -535,6 +535,40 @@ def _looped(
     return blocks
 
 
+def _batches(t: "SymmetricTensor") -> bool:
+    """Whether this tensor's backend is one the batched path has been measured to help.
+
+    Batching trades Python iterations for array operations, and whether that trade pays
+    is a property of the *backend*, not of the plan: NumPy's per-call overhead is small
+    enough that a few hundred terms already lose to it, while an array library's is an
+    order of magnitude larger, so the loop it replaces was never the cost and the stack
+    and the gather it adds are graph nodes with backward passes of their own. Measured on
+    an SU(2) bending plan, batched over looped:
+
+    ======  ======  ==============  ============
+    terms   NumPy   JAX eager       JAX traced
+    ======  ======  ==============  ============
+    270     0.72    2.16            1.69
+    467     0.42    1.68            2.02
+    4076    0.41    1.09            1.33
+    4041    --      1.11            0.87
+    74272   0.30    --              --
+    ======  ======  ==============  ============
+
+    So the gate is the backend and not a term count: JAX's loss is not monotone in the
+    term count -- the two four-thousand-term plans above disagree in *direction* -- so a
+    threshold would be a number with nothing behind it. Block shapes, bucket
+    multiplicities and the backward pass of the gather all enter, and none of them is
+    read off the term count.
+
+    PyTorch takes the loop because it has not been measured, not because it has been
+    measured to lose; ``tests/backends/test_torch.py`` is where that measurement would go.
+
+    A tensor with no blocks has no backend to ask about, and no terms to batch either.
+    """
+    return bool(t.blocks) and t.backend == "numpy"
+
+
 def apply_plan(
     t: "SymmetricTensor",
     structure: TensorStructure,
@@ -571,17 +605,19 @@ def apply_plan(
     Notes
     -----
     Every term shares the plan's single ``perm``, so the whole plan is one transpose per
-    source followed by a scatter-add. Terms whose destination has the same shape — hence
-    whose source has the same shape — stack and run as array operations instead of Python
-    iterations, and the buckets are few: a rank-8 SU(2) intermediate with 74,800 blocks
-    and 447,752 terms has 1 bucket at uniform degeneracies and ~4,000 at the most ragged
-    ones. [batch_plan][tenet.ops.batch.batch_plan] holds the index arrays, keyed on the
-    plan, so the grouping is paid once per distinct plan rather than once per call.
+    source followed by a scatter-add, and on NumPy — see [_batches][tenet.ops.repartition._batches]
+    for why only there — terms whose destination has the same shape, hence whose source
+    has the same shape, stack and run as array operations instead of Python iterations.
+    The buckets are few: a rank-8 SU(2) intermediate with 74,800 blocks and 447,752 terms
+    has 1 bucket at uniform degeneracies and ~4,000 at the most ragged ones.
+    [batch_plan][tenet.ops.batch.batch_plan] holds the index arrays, keyed on the plan, so
+    the grouping is paid once per distinct plan rather than once per call.
 
     A bucket too small to repay the array-operation overhead — an Abelian plan is one term
     per destination, so nothing to fuse and pure loss — stays on
     [_looped][tenet.ops.repartition._looped], which is also the reference the batched path
-    is tested against, term for term and bit for bit.
+    is tested against, term for term and bit for bit, and which runs the whole plan on
+    every other backend.
 
     A term with coefficient 1 on the looped path leaves its transposed **view** in place
     and moves no element at all; the first consumer that needs contiguity pays for it,
@@ -589,7 +625,7 @@ def apply_plan(
     """
     from tenet.tensor import SymmetricTensor
 
-    groups, loose = batch_plan(structure, perm, terms)
+    groups, loose = batch_plan(structure, perm, terms) if _batches(t) else ((), terms)
 
     blocks: dict[int, Any] = {}
     for srcs, buckets in groups:
