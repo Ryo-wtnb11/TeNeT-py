@@ -32,6 +32,7 @@ from helpers import NoBendProvider, supersign
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet.ops import contraction
 from tenet.symmetry import (
     SU2,
     U1,
@@ -418,6 +419,18 @@ def test_no_cotengra_and_no_top_level_opt_einsum_anywhere_in_src():
 # --- the path itself -----------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _cold_path_cache():
+    """``einsum`` caches the path per ``(equation, shapes, strategy)`` (#317).
+
+    Every test that counts searches, or fakes one, needs a cold cache to see its own
+    call — and must not leave a fake path behind for the next test to hit.
+    """
+    contraction._path.cache_clear()
+    yield
+    contraction._path.cache_clear()
+
+
 def recorded_paths(monkeypatch):
     """``(paths, shapes)`` recorded from every ``contract_path`` call."""
     import opt_einsum as oe
@@ -440,7 +453,12 @@ def test_the_path_is_deterministic_in_one_process(monkeypatch, optimize):
     paths, _ = recorded_paths(monkeypatch)
     equation, legs = chain(PROVIDERS["su2"][0], 5)
     tensors = build(equation, legs, seed=3)
-    results = [tenet.einsum(equation, *tensors, optimize=optimize) for _ in range(3)]
+    # cleared per call: the question is whether the *search* is deterministic, and the
+    # path cache would otherwise answer the second and third calls without searching
+    results = []
+    for _ in range(3):
+        contraction._path.cache_clear()
+        results.append(tenet.einsum(equation, *tensors, optimize=optimize))
     assert len(paths) == 3 and paths[0] == paths[1] == paths[2]
     assert all(tenet.allclose(results[0], other, atol=1e-12) for other in results[1:])
 
@@ -473,6 +491,8 @@ def test_an_explicit_path_is_used_verbatim(monkeypatch):
     explicit = [(1, 2), (0, 2), (0, 1)]
     got = tenet.einsum(equation, *tensors, optimize=explicit)
     assert paths == [explicit]
+    # an explicit path is already a path: it never reaches the cache (#317)
+    assert contraction._path.cache_info().misses == 0
     assert tenet.allclose(got, tenet.einsum(equation, *tensors), atol=1e-10)
 
 
@@ -515,6 +535,76 @@ def test_a_cotengra_optimizer_is_accepted_as_it_is():
     np.testing.assert_allclose(
         got.to_dense(), dense_fold(tensors, equation, graded=False), atol=1e-10
     )
+
+
+# --- the path cache (#317) ------------------------------------------------------------
+
+
+@pytest.mark.parametrize("provider_id", [*PROVIDERS, "product"])
+@pytest.mark.parametrize("n", [3, 4, 6])
+def test_the_cached_path_gives_bit_identical_results(provider_id, n):
+    """A cached path is the path the search returned, so the second call is not merely
+    close to the first: it is the same blocks. Run graded for fZ2 and the product
+    provider, where the contraction order carries Koszul signs."""
+    if provider_id in ("fz2", "product"):
+        equation, tensors, optimize = graded_network(provider_id, n, braided=True)
+    else:
+        equation, legs = chain(PROVIDERS[provider_id][0], n)
+        tensors, optimize = build(equation, legs, seed=3), "auto"
+    cold = tenet.einsum(equation, *tensors, optimize=optimize)  # the fixture cleared it
+    warm = tenet.einsum(equation, *tensors, optimize=optimize)
+    assert cold.structure == warm.structure
+    for one, other in zip(cold.blocks, warm.blocks, strict=True):
+        np.testing.assert_array_equal(one, other)
+
+
+def test_the_path_is_searched_once_for_repeated_calls(monkeypatch):
+    """The defect of #317, stated structurally: the search must not run per call.
+
+    No wall clock — the assertion is on the number of searches, which is what the
+    timing measured.
+    """
+    paths, _ = recorded_paths(monkeypatch)
+    equation, legs = chain(PROVIDERS["su2"][0], 5)
+    tensors = build(equation, legs, seed=3)
+    for _ in range(5):
+        tenet.einsum(equation, *tensors)
+    assert len(paths) == 1
+    assert contraction._path.cache_info() == (4, 1, None, 1)  # hits, misses, maxsize, size
+
+
+def test_the_cache_is_keyed_on_the_shapes_too():
+    """Same equation, different operands: two searches, not one shared path."""
+    equation, legs = chain(PROVIDERS["su2"][0], 4)
+    tenet.einsum(equation, *build(equation, legs, seed=3))
+    other, other_legs = chain(PROVIDERS["u1"][0], 4)
+    assert other == equation
+    tenet.einsum(equation, *build(equation, other_legs, seed=3))
+    assert contraction._path.cache_info().misses == 2
+
+
+def test_a_path_optimizer_object_is_consulted_every_call():
+    """A ``PathOptimizer`` may be stateful and deliberately non-deterministic
+    (cotengra's are), so it is never cached — the docstring promises it reaches
+    ``opt_einsum`` unchanged."""
+    import opt_einsum as oe
+
+    class Counting(oe.paths.PathOptimizer):
+        def __init__(self):
+            self.calls = 0
+
+        def __call__(self, inputs, output, size_dict, memory_limit=None):
+            self.calls += 1
+            return oe.paths.greedy(inputs, output, size_dict, memory_limit)
+
+    equation, legs = chain(PROVIDERS["su2"][0], 4)
+    tensors = build(equation, legs, seed=3)
+    optimizer = Counting()
+    first = tenet.einsum(equation, *tensors, optimize=optimizer)
+    second = tenet.einsum(equation, *tensors, optimize=optimizer)
+    assert optimizer.calls == 2
+    assert contraction._path.cache_info().misses == 0
+    assert tenet.allclose(first, second, atol=1e-12)
 
 
 # --- a provider without ClebschGordanData ---------------------------------------------------------

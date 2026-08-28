@@ -189,6 +189,12 @@ operands' physical shapes, and `optimize` is handed to it unchanged — a strate
 an explicit path, or any `opt_einsum.paths.PathOptimizer` (cotengra's optimizers are
 such objects).
 
+A *strategy name* is a pure request for a search, so the path it produces is cached on
+`(equation, shapes, name)` and a repeated call re-uses it: on an eight-operand SU(2)
+chain the search is a third of the call. An explicit path is already a path, and a
+`PathOptimizer` object may be stateful and deliberately non-deterministic, so both are
+consulted on every call.
+
 What it never changes is the mathematics: every step of the path is the same two-operand
 contraction, shared labels contract in a deterministic order, and the final transpose is
 a real categorical permutation. The path depends on static structure only, so under
