@@ -370,13 +370,15 @@ def fuse(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
     >>> bool(tenet.allclose(tenet.unfuse(f, 0, t.legs[:2]), t))
     True
     """
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
     plan = fusion_plan(t.structure, tuple(axes))
     blocks = t.blocks
     for step in plan.steps:
         blocks = _apply(step, blocks)
-    return SymmetricTensor(plan.structure, blocks)
+    # each step writes one block per key of the next structure in the chain, the last
+    # of them ``plan.structure``'s own (#328)
+    return _unchecked(plan.structure, blocks)
 
 
 def unfuse(t: "SymmetricTensor", axis: int, legs: Sequence[Leg]) -> "SymmetricTensor":
@@ -428,7 +430,7 @@ def unfuse(t: "SymmetricTensor", axis: int, legs: Sequence[Leg]) -> "SymmetricTe
     publicly consecutive; fusing publicly non-adjacent axes is not invertible
     without the history this deliberately does not keep.
     """
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
     legs = tuple(legs)
     if not 0 <= axis < t.ndim:
@@ -450,14 +452,14 @@ def unfuse(t: "SymmetricTensor", axis: int, legs: Sequence[Leg]) -> "SymmetricTe
             )
     _check_reproduces(fused_leg(legs), t.legs[axis], axis)
     if len(legs) == 1:
-        return SymmetricTensor(t.structure, t.blocks)
+        return _unchecked(t.structure, t.blocks)
 
     unfused = TensorStructure((*t.legs[:axis], *legs, *t.legs[axis + 1 :]))
     plan = fusion_plan(unfused, tuple(range(axis, axis + len(legs))))
     blocks = t.blocks
     for step in reversed(plan.steps):
         blocks = _unapply(step, blocks)
-    return SymmetricTensor(unfused, blocks)
+    return _unchecked(unfused, blocks)
 
 
 def _check_reproduces(got: Leg, want: Leg, axis: int) -> None:

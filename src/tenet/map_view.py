@@ -711,8 +711,8 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
     Raises
     ------
     ValueError
-        If a sector is missing, unknown, or its matrix has the wrong shape
-        (invariant 11).
+        If a sector is missing, unknown, its matrix has the wrong shape
+        (invariant 11), or the matrices do not share one dtype.
 
     Examples
     --------
@@ -738,8 +738,16 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
     iterations for array operations pays is a property of the backend and not of the size of the
     work, and it has been measured only on NumPy. The two walks take the same views of
     the same matrices, so they agree bit for bit.
+
+    The refusals above are the whole check, and they are deliberately spelled over the
+    *matrices* rather than over the blocks that come out of them. The matrices are the
+    untrusted input; the blocks are views this function itself cuts to the shapes
+    ``structure`` dictates, so re-reading those shapes back off them would be one pass
+    per block -- 613,468 of them on a rank-8 SU(2) intermediate, a fifth of the
+    contraction that builds it -- to confirm the reshape that just happened. One touch
+    per coupled sector says the same thing (#328).
     """
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
     layout = map_layout(structure)
     _check(layout, mats)
@@ -750,7 +758,7 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
     inverse = tuple(sorted(identity, key=order.__getitem__))
     permuted = order != identity
     if not mats:  # no coupled sector, hence no block: `_check` has already agreed
-        return SymmetricTensor(structure, ())
+        return _unchecked(structure, ())
 
     backend = ar.infer_backend(next(iter(mats.values())))
     reshape = lib_fn(backend, "reshape")
@@ -788,7 +796,7 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
                             cursor += 1
                             piece = cell.reshape(shapes[i])
                             blocks[i] = piece.transpose(inverse) if permuted else piece
-        return SymmetricTensor(structure, tuple(blocks))
+        return _unchecked(structure, tuple(blocks))
 
     for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
         mat = mats[c]
@@ -798,7 +806,7 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
                 # contiguous 2-D slice the same way (as in ops.fusion._unapply)
                 piece = reshape(mat[ro : ro + dr, co : co + dc], shapes[i])
                 blocks[i] = transpose(piece, inverse) if permuted else piece
-    return SymmetricTensor(structure, tuple(blocks))
+    return _unchecked(structure, tuple(blocks))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1142,3 +1150,11 @@ def _check(layout: MapLayout, mats: Mapping[Sector, Any]) -> None:
                 f"from_matrices: matrix for sector {c!r} has shape {got}, "
                 f"expected {layout.shape(c)}"
             )
+    # The dtype half of the tensor constructor's check, moved to where it belongs: every
+    # block is a view of one of these matrices, so one touch per coupled sector decides
+    # what one touch per block used to (#328).
+    dtypes = {mats[c].dtype for c in layout.sectors}
+    if len(dtypes) > 1:
+        raise ValueError(
+            f"from_matrices: matrices must share one dtype, got {sorted(map(str, dtypes))}"
+        )
