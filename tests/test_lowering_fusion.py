@@ -131,6 +131,8 @@ def test_the_fused_lowering_writes_once_per_term_and_multiplies_nowhere_standalo
     """
     t = SymmetricTensor.random(legs, seed=1)
     structure, perm, terms = _plan(t, outputs, inputs)
+    t.blocks  # noqa: B018  # cutting the source's blocks out of its matrices is the
+    # tensor's own memoized work, not the plan's; the plan is what is being counted
     counts = _count_ar_do(monkeypatch, lambda: lower_plan(t, structure, perm, terms))
 
     assert not [name for name, _ in counts if name in {"reshape", "concatenate"}]

@@ -297,7 +297,8 @@ def to_dense(t: "SymmetricTensor") -> Array:
     plan = dense_plan(t.structure)
     if not t.blocks:
         return np.zeros(plan.shape, dtype=np.float64)
-    ref = t.blocks[0]
+    blocks = t.blocks  # read once: it is a property, not a field
+    ref = blocks[0]
     cells = plan.cell_map()
 
     def build(sectors: tuple[Sector, ...], index: tuple[int, ...]) -> Array:
@@ -308,7 +309,7 @@ def to_dense(t: "SymmetricTensor") -> Array:
         acc = None
         for i, cgt in zip(cell.block_indices, cell.cgts, strict=True):
             g = ar.do("array", cgt, like=ref)  # backend + dtype policy in one call
-            full = ar.do("einsum", plan.subscripts, t.blocks[i], g)
+            full = ar.do("einsum", plan.subscripts, blocks[i], g)
             full = ar.do("reshape", full, cell.shape)
             acc = full if acc is None else acc + full
         return acc

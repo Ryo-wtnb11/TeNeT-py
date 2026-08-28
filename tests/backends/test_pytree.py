@@ -111,11 +111,12 @@ def test_double_import_is_a_no_op():
 # --- flatten / treedef ----------------------------------------------------------
 
 
-def test_leaves_are_the_block_objects_themselves():
+def test_leaves_are_the_sector_matrix_objects_themselves():
+    """The leaves are the tensor's storage: one matrix per coupled sector, no copies."""
     t = jt(SU2_LEGS, 0)
     leaves = jax.tree.leaves(t)
-    assert len(leaves) == len(t.blocks)
-    assert all(a is b for a, b in zip(leaves, t.blocks, strict=True))
+    assert len(leaves) == len(t.data) <= len(t.blocks)
+    assert all(a is b for a, b in zip(leaves, t.data, strict=True))
 
 
 def test_treedef_aux_is_the_structure_and_sentinel_path_does_not_raise():
@@ -151,22 +152,22 @@ def test_unflatten_accepts_zero_d_leaves():
     t = jt(SU2_LEGS, 6)
     got = jax.tree.map(lambda b: b.sum(), t)
     assert got.structure is t.structure
-    assert all(b.ndim == 0 for b in got.blocks)
+    assert all(m.ndim == 0 for m in got.data)
 
 
 def test_unflatten_accepts_python_float_leaves():
     t = jt(SU2_LEGS, 7)
     got = jax.tree.map(lambda b: 0.0, t)
     assert got.structure is t.structure
-    assert got.blocks == (0.0,) * len(t.blocks)
+    assert got.data == (0.0,) * len(t.data)
 
 
 def test_unflatten_accepts_stacked_leaves():
     ts = [jt(SU2_LEGS, s) for s in (8, 9, 10)]
     got = jax.tree.map(lambda *bs: jnp.stack(bs), *ts)
     assert got.structure is ts[0].structure
-    for i, block in enumerate(got.blocks):
-        assert block.shape == (3, *ts[0].blocks[i].shape)
+    for i, mat in enumerate(got.data):
+        assert mat.shape == (3, *ts[0].data[i].shape)
 
 
 @pytest.mark.parametrize(
@@ -325,9 +326,9 @@ def test_vmap_tensor_valued(batch):
     ts, batched = batch
     got = jax.vmap(lambda t: tenet.transpose(t, (0, 2, 1)))(batched)
     want = [tenet.transpose(t, (0, 2, 1)) for t in ts]
-    for i, block in enumerate(got.blocks):
+    for i, mat in enumerate(got.data):
         np.testing.assert_allclose(
-            np.asarray(block), np.stack([np.asarray(w.blocks[i]) for w in want]), atol=1e-12
+            np.asarray(mat), np.stack([np.asarray(w.data[i]) for w in want]), atol=1e-12
         )
 
 
@@ -335,7 +336,7 @@ def test_the_stacked_object_is_not_a_valid_tensor(batch):
     """Honest framing: it is a transport container for vmap, nothing else."""
     _, batched = batch
     with pytest.raises(ValueError, match="shape"):
-        SymmetricTensor(batched.structure, batched.blocks)
+        SymmetricTensor(batched.structure, batched.data)
 
 
 def test_traced_shapes_inside_vmap_are_unbatched(batch):
@@ -361,7 +362,7 @@ def test_jit_of_grad_and_vmap_of_grad(batch):
         np.testing.assert_allclose(np.asarray(a), np.asarray(b), atol=1e-12)
 
     vmapped = jax.vmap(jax.grad(sq_norm))(batched)
-    for i, block in enumerate(vmapped.blocks):
+    for i, mat in enumerate(vmapped.data):
         np.testing.assert_allclose(
-            np.asarray(block), np.stack([np.asarray(p.blocks[i]) for p in plain]), atol=1e-12
+            np.asarray(mat), np.stack([np.asarray(p.data[i]) for p in plain]), atol=1e-12
         )

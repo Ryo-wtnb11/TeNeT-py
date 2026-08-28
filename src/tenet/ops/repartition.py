@@ -56,7 +56,7 @@ import autoray as ar
 
 from tenet.backend import lib_fn
 from tenet.leg import IN, OUT, Leg, Side
-from tenet.map_view import scaled
+from tenet.map_view import is_identity_plan, scaled
 from tenet.ops.batch import batch_plan, cast_coefficients
 from tenet.ops.permutation import permutation_plan
 from tenet.space import GradedSpace
@@ -237,7 +237,8 @@ def bend(t: "SymmetricTensor", axis: int) -> "SymmetricTensor":
     sources = {s for s, _, _ in plan.terms}
     # a blockless tensor has no backend to resolve against, and no source to move either
     transpose = lib_fn(t.backend, "transpose") if sources else None
-    moved = {src: transpose(t.blocks[src], perm) for src in sources} if transpose else {}
+    blocks = t.blocks  # read once: it is a property, not a field
+    moved = {src: transpose(blocks[src], perm) for src in sources} if transpose else {}
 
     blocks: dict[int, Any] = {}
     for src, dst, coeff in plan.terms:
@@ -532,7 +533,8 @@ def _looped(
     if not terms:  # a blockless tensor has no backend to resolve against either
         return blocks
     transpose = lib_fn(t.backend, "transpose")
-    moved = {src: transpose(t.blocks[src], perm) for src in {s for s, _, _ in terms}}
+    source = t.blocks  # read once: it is a property, not a field
+    moved = {src: transpose(source[src], perm) for src in {s for s, _, _ in terms}}
     for src, dst, coeff in terms:
         contrib = moved[src]
         if coeff != 1:
@@ -574,48 +576,6 @@ def _batches(t: "SymmetricTensor") -> bool:
     A tensor with no blocks has no backend to ask about, and no terms to batch either.
     """
     return bool(t.blocks) and t.backend == "numpy"
-
-
-@cache
-def _is_identity(
-    structure: TensorStructure,
-    perm: tuple[int, ...],
-    terms: tuple[tuple[int, int, complex], ...],
-) -> bool:
-    """Whether the plan asks for nothing: every block back where it was, unscaled.
-
-    Parameters
-    ----------
-    structure : TensorStructure
-        The structure the plan builds.
-    perm : tuple of int
-        The plan's single per-block axis permutation.
-    terms : tuple of (int, int, complex)
-        ``(source block, target block, coefficient)``.
-
-    Returns
-    -------
-    bool
-        True when ``perm`` is the identity and ``terms`` is the identity map with unit
-        coefficients, so applying the plan would rebuild the tensor it read.
-
-    Notes
-    -----
-    Not a micro-optimization: a contraction whose axes need no bend composes a restore
-    that *is* the identity, and it is one term per block. On an SU(2) rank-8
-    intermediate that is 613,468 terms walked to hand back the tensor they were read
-    from, measured at 0.4 s of a 0.47 s ``tensordot``. The predicate costs one pass over
-    the terms and is cached with them, so it is paid once per distinct plan against a
-    saving paid on every call.
-    """
-    if perm != tuple(range(len(perm))) or len(terms) != structure.num_blocks:
-        return False
-    # every block once, in place, unscaled -- the destination set is checked too, so a
-    # plan that repeats one block and drops another cannot pass for the identity
-    return (
-        all(src == dst and coeff == 1 for src, dst, coeff in terms)
-        and len({dst for _, dst, _ in terms}) == structure.num_blocks
-    )
 
 
 def apply_plan(
@@ -674,14 +634,15 @@ def apply_plan(
     """
     from tenet.tensor import SymmetricTensor
 
-    if structure == t.structure and _is_identity(structure, perm, terms):
+    if structure == t.structure and is_identity_plan(structure, perm, terms):
         return t  # the plan rebuilds what it reads; tensors are immutable, so hand it back
 
     groups, loose = batch_plan(structure, perm, terms) if _batches(t) else ((), terms)
 
+    source = t.blocks if groups else ()  # read once: it is a property, not a field
     blocks: dict[int, Any] = {}
     for srcs, buckets in groups:
-        stacked = ar.do("stack", tuple(t.blocks[s] for s in srcs))
+        stacked = ar.do("stack", tuple(source[s] for s in srcs))
         stacked = ar.do("transpose", stacked, (0, *(ax + 1 for ax in perm)))
         for take, coeff, width, dsts in buckets:
             rows = ar.do("multiply", stacked[take], cast_coefficients(coeff, stacked))

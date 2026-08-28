@@ -23,7 +23,7 @@ import pytest
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
-from tenet.map_view import map_layout
+from tenet.map_view import assemble, map_layout
 from tenet.symmetry import SU2, U1, FZ2Sector, SU2Sector, U1Sector, fZ2
 
 # --- the four providers, each as an assembled two-site H_eff ---------------------------
@@ -216,12 +216,19 @@ def _recording_do(monkeypatch):
 def _via_matrices(m):
     """The lazy implementation the instrument must be able to tell apart.
 
-    Same numbers, reached by concatenating each coupled-sector matrix and reading its
-    diagonal — i.e. by allocating the full width of the map.
+    Same numbers, reached by gathering the map into its coupled-sector matrices and
+    reading the diagonal of one — i.e. by allocating the full width of the map.
+
+    ``assemble``, not ``to_matrices``: the map already *holds* its coupled-sector
+    matrices, so asking for them allocates nothing and would make a control that
+    measures nothing. Re-gathering them from the blocks is the full-width allocation
+    this route exists to avoid, spelled out.
     """
     structure = TensorStructure(tuple(m.codomain))
+    layout = map_layout(m.structure)
     unit = m.structure.provider.unit
-    flat = np.diagonal(np.asarray(tenet.to_matrices(m)[unit]))
+    mats = assemble(m.structure, m.blocks)
+    flat = np.diagonal(np.asarray(mats[layout.sectors.index(unit)]))
     assert len(flat) == map_layout(m.structure).shape(unit)[0]
     blocks, off = [], 0
     for key in structure.block_order:
@@ -236,8 +243,10 @@ def test_no_full_width_intermediate_is_allocated(monkeypatch):
     """Instrumented on the allocation itself, with the full-width route as the control."""
     m = heff(*CASES["hubbard"])
     want = tenet.map_diagonal(m)
-    budget = max(int(np.prod(b.shape)) for b in want.blocks)
-    widest = max(int(np.prod(b.shape)) for b in m.blocks)
+    # the budget is the *result's* own storage -- one coupled-sector matrix of the
+    # diagonal -- not the map's, which is the full width this route exists to avoid
+    budget = max(int(np.prod(mat.shape)) for mat in want.data)
+    widest = max(int(np.prod(mat.shape)) for mat in m.data)
     assert widest > budget  # narrower is a real statement on this fixture
 
     seen = _recording_do(monkeypatch)
@@ -248,6 +257,7 @@ def test_no_full_width_intermediate_is_allocated(monkeypatch):
         np.testing.assert_allclose(np.asarray(a), np.asarray(b))
 
     seen.clear()
+    m.blocks  # noqa: B018  # cutting the blocks out is not the control's allocation
     control = _via_matrices(m)  # the positive control: one full-width matrix per sector
     assert max(seen) > budget
     for a, b in zip(control, want.blocks, strict=True):

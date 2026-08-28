@@ -171,7 +171,7 @@ def block_ref(*tensors: "SymmetricTensor") -> Any:
     Returns
     -------
     array
-        ``tensors[i].blocks[0]`` for the first ``i`` that carries a block, and a
+        ``tensors[i].data[0]`` for the first ``i`` that carries a block, and a
         NumPy ``float64`` scalar when none of them does.
 
     Notes
@@ -183,8 +183,8 @@ def block_ref(*tensors: "SymmetricTensor") -> Any:
     ``float64`` only when every operand is block-less and there is nothing else to ask.
     """
     for t in tensors:
-        if t.blocks:
-            return t.blocks[0]
+        if t.data:
+            return t.data[0]
     return np.zeros((), dtype=np.float64)
 
 

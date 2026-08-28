@@ -22,11 +22,12 @@ from helpers import count_backend_calls
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet.map_view import is_identity_plan as _is_identity
+from tenet.map_view import map_layout
 from tenet.ops.batch import MIN_BATCH_ROWS, batch_plan
 from tenet.ops.permutation import permutation_plan
 from tenet.ops.repartition import (
     _batches,
-    _is_identity,
     _looped,
     apply_plan,
     repartition_plan,
@@ -267,15 +268,31 @@ def predicted(structure, perm, terms):
     return total
 
 
+def gathered(structure):
+    """The dispatches that gathering the result's blocks into its storage costs.
+
+    A tensor holds one dense matrix per coupled sector, so building one from blocks is
+    one ``empty`` per sector plus, where the public axis order is not
+    ``(*out_axes, *in_axes)``, one transposed **view** per block. Neither is the term
+    count, which is the claim; on the SU(2) fixtures here the terms outnumber the blocks
+    several times over.
+    """
+    layout = map_layout(structure)
+    permuted = layout.axes_order != tuple(range(structure.ndim))
+    return len(layout.sectors) + (structure.num_blocks if permuted else 0)
+
+
 @pytest.mark.parametrize("rank", [5, 8])
 def test_the_dispatch_count_is_the_grouping_s_and_not_the_term_count_s(ops, rank):
     """The scaling claim, structurally: the count is exactly the grouping's formula."""
     t = tensor("su2", "uniform", rank)
     structure, perm, terms = bend_plan_of(t)
     batch_plan(structure, perm, terms)  # plan side; not part of the dispatch count
+    t.blocks  # noqa: B018  # cutting the source's blocks out is the tensor's, memoized
     ops.clear()
     apply_plan(t, structure, perm, terms, "test")
-    assert len(ops) == predicted(structure, perm, terms)
+    assert len(ops) == predicted(structure, perm, terms) + gathered(structure)
+    assert len(ops) < len(terms)
 
 
 def test_the_dispatch_count_barely_moves_when_the_term_count_multiplies(ops):

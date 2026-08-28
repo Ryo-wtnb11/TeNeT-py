@@ -980,18 +980,36 @@ Logically, the tensor associates
 FusionBlockKey  →  Array
 ```
 
-Physically, however, the blocks are stored as an ordered tuple
+Physically, the tensor stores one dense matrix per coupled sector
 
 ```python
-blocks: tuple[Array, ...]
+data: tuple[Array, ...]        # one B_c per coupled sector, in map_layout order
 ```
 
-whose order is fixed by `structure.block_order`. The keys live in the
-structural metadata; the tuple contains only backend arrays. This keeps the
-numerical data a clean parameter tree (for `get_params`/`set_params` and
-optional JAX PyTree registration): the leaves are exactly the blocks, and no
-dict ordering or key hashing enters the dynamic data. A `Mapping`-style view
-(`T.block(key)`) is derived, not primary.
+and the blocks are the public *view* of that storage:
+
+```python
+blocks: tuple[Array, ...]      # ordered by structure.block_order; views into data
+```
+
+`blocks[i]` belongs to `block_order[i]`, as it always has. The block is a
+two-dimensional slice of its coupled-sector matrix, reshaped into the block's
+axes and permuted into public axis order, which is a view on every backend the
+library reaches — JAX included, since it needs only a slice and a reshape and
+never an arbitrary stride.
+
+The storage is the matrices because every categorical operation is already
+defined on them: composition is one matmul per coupled sector, `svd`/`qr`/`eigh`
+one call per sector. Holding the blocks instead meant gathering them into
+matrices and cutting them back out around every operation, and that round trip
+was most of what a contraction cost.
+
+The keys live in the structural metadata; both tuples contain only backend
+arrays. This keeps the numerical data a clean parameter tree (for
+`get_params`/`set_params` and optional JAX PyTree registration): the leaves are
+the sector matrices — a handful of large arrays rather than tens of thousands of
+small ones — and no dict ordering or key hashing enters the dynamic data. A
+`Mapping`-style view (`T.block(key)`) is derived, not primary.
 
 ---
 
@@ -7579,7 +7597,9 @@ Coupled-sector matrices are retained as the canonical lowering for composition a
 ## 8. Numerical leaves are backend-native arrays
 
 NumPy, JAX, and PyTorch should see ordinary arrays at the numerical
-boundary. Structural metadata is immutable, hashable, and array-free — F/R
+boundary. The tensor holds a tuple of per-coupled-sector arrays; `blocks` is the
+public view of it, one reduced block per key of `structure.block_order`.
+Structural metadata is immutable, hashable, and array-free — F/R
 and other coefficient arrays never live in structural fields. All three are
 enforced, not asserted: `tests/backends/test_torch.py` walks every public op on
 torch blocks (see "What 'PyTorch backend' means, exactly").

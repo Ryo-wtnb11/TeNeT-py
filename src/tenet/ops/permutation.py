@@ -269,8 +269,9 @@ def _apply(t: "SymmetricTensor", plan: PermutationPlan, what: str) -> "Symmetric
     # recompute a byte-identical array. #74's batched alternative -- stack a shape bucket,
     # transpose once, slice back out -- was prototyped and measured slower on every axis
     # (see #123 for the table and the refusal).
+    blocks = t.blocks  # read once: it is a property, not a field
     moved = {
-        src: ar.do("transpose", t.blocks[src], plan.axes) for src in {s for s, _, _ in plan.terms}
+        src: ar.do("transpose", blocks[src], plan.axes) for src in {s for s, _, _ in plan.terms}
     }
 
     blocks: dict[int, Any] = {}

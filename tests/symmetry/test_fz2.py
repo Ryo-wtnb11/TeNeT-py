@@ -366,8 +366,20 @@ def test_composition_is_exact(p):
 
 @pytest.mark.parametrize("p", ALL_PERMS)
 def test_norm_conj_and_dtype(p):
+    """A transpose moves no element: the norm is invariant, the blocks exactly permuted.
+
+    The norm is compared to the last bits and not to the last bit. Its reduction runs
+    over the blocks, and a block is a view into its coupled-sector matrix, so the memory
+    layout NumPy sums a block in is the *transposed* tensor's layout and not the
+    original's. Every element is the same element and every partial sum is the same
+    partial sum; only their order differs, which for a Frobenius norm is a rounding
+    difference of a couple of ulp and not a fact about fZ2. The exactness that is a
+    statement about the provider -- the blocks themselves -- is asserted above, in
+    ``test_transpose_composes``, with ``assert_array_equal``.
+    """
     t = mixed_tensor()
-    assert tenet.norm(t.transpose(p)) == tenet.norm(t)
+    a, b = float(tenet.norm(t.transpose(p))), float(tenet.norm(t))
+    assert a == pytest.approx(b, rel=1e-15)
     assert t.transpose(p).conj() == t.conj().transpose(p)
     assert t.dtype == np.float64
     assert t.transpose(p).dtype == np.float64
