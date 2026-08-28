@@ -576,6 +576,48 @@ def _batches(t: "SymmetricTensor") -> bool:
     return bool(t.blocks) and t.backend == "numpy"
 
 
+@cache
+def _is_identity(
+    structure: TensorStructure,
+    perm: tuple[int, ...],
+    terms: tuple[tuple[int, int, complex], ...],
+) -> bool:
+    """Whether the plan asks for nothing: every block back where it was, unscaled.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure the plan builds.
+    perm : tuple of int
+        The plan's single per-block axis permutation.
+    terms : tuple of (int, int, complex)
+        ``(source block, target block, coefficient)``.
+
+    Returns
+    -------
+    bool
+        True when ``perm`` is the identity and ``terms`` is the identity map with unit
+        coefficients, so applying the plan would rebuild the tensor it read.
+
+    Notes
+    -----
+    Not a micro-optimization: a contraction whose axes need no bend composes a restore
+    that *is* the identity, and it is one term per block. On an SU(2) rank-8
+    intermediate that is 613,468 terms walked to hand back the tensor they were read
+    from, measured at 0.4 s of a 0.47 s ``tensordot``. The predicate costs one pass over
+    the terms and is cached with them, so it is paid once per distinct plan against a
+    saving paid on every call.
+    """
+    if perm != tuple(range(len(perm))) or len(terms) != structure.num_blocks:
+        return False
+    # every block once, in place, unscaled -- the destination set is checked too, so a
+    # plan that repeats one block and drops another cannot pass for the identity
+    return (
+        all(src == dst and coeff == 1 for src, dst, coeff in terms)
+        and len({dst for _, dst, _ in terms}) == structure.num_blocks
+    )
+
+
 def apply_plan(
     t: "SymmetricTensor",
     structure: TensorStructure,
@@ -631,6 +673,9 @@ def apply_plan(
     which on the contraction path is the sector-matrix assembly.
     """
     from tenet.tensor import SymmetricTensor
+
+    if structure == t.structure and _is_identity(structure, perm, terms):
+        return t  # the plan rebuilds what it reads; tensors are immutable, so hand it back
 
     groups, loose = batch_plan(structure, perm, terms) if _batches(t) else ((), terms)
 

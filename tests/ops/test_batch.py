@@ -24,7 +24,13 @@ import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.ops.batch import MIN_BATCH_ROWS, batch_plan
 from tenet.ops.permutation import permutation_plan
-from tenet.ops.repartition import _batches, _looped, apply_plan, repartition_plan
+from tenet.ops.repartition import (
+    _batches,
+    _is_identity,
+    _looped,
+    apply_plan,
+    repartition_plan,
+)
 from tenet.symmetry import (
     SU2,
     U1,
@@ -336,3 +342,46 @@ def test_the_public_operation_is_unchanged():
     t = tensor("u1", "ragged", 4)
     r = tenet.repartition(t, (0, 2), (1, 3))
     np.testing.assert_allclose(r.to_dense(), np.transpose(t.to_dense(), (0, 2, 1, 3)), atol=1e-12)
+
+
+# --- the plan that asks for nothing ------------------------------------------------
+
+
+def test_a_contraction_that_bends_nothing_restores_with_the_identity(ops):
+    """The restore of an unbent contraction is one term per block, all of them in place.
+
+    It is not a rare shape: any ``tensordot`` whose contracted axes already sit on the
+    right sides composes it. Walking it rebuilds the tensor it read -- 613,468 terms on
+    an SU(2) rank-8 intermediate -- so ``apply_plan`` hands the source straight back,
+    and the dispatch count for the whole restore is zero.
+    """
+    t = tensor("su2", "uniform", 5)
+    structure, perm, terms = bend_plan_of(t)
+    assert not _is_identity(structure, perm, terms)  # a real bend is not the identity
+
+    bent = apply_plan(t, structure, perm, terms, "test")
+    back = repartition_plan(bent.structure, t.structure.out_axes, t.structure.in_axes)
+    assert _is_identity(*_plan_args(back)) is (back.new_structure == bent.structure)
+
+    in_place = tuple((i, i, 1) for i in range(bent.structure.num_blocks))
+    identity = (bent.structure, tuple(range(bent.ndim)), in_place)
+    assert _is_identity(*identity)
+    ops.clear()
+    assert apply_plan(bent, *identity, "test") is bent
+    assert ops == []
+
+
+def _plan_args(plan):
+    return plan.new_structure, plan.perm, plan.terms
+
+
+def test_the_identity_is_not_claimed_for_a_plan_that_drops_or_repeats_a_block():
+    """``len(terms) == num_blocks`` is not enough: the destinations have to be all of them."""
+    t = tensor("u1", "ragged", 3)
+    n = t.structure.num_blocks
+    assert n > 2
+    repeated = (*((i, i, 1) for i in range(n - 2)), (n - 2, n - 2, 1), (n - 2, n - 2, 1))
+    assert len(repeated) == n
+    assert not _is_identity(t.structure, tuple(range(t.ndim)), repeated)
+    scaled_term = (*((i, i, 1) for i in range(n - 1)), (n - 1, n - 1, 2))
+    assert not _is_identity(t.structure, tuple(range(t.ndim)), scaled_term)
