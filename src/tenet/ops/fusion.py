@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 
 from tenet.backend import lib_fn
+from tenet.cache import plan_cache
 from tenet.fusion_tree import FusionTree
 from tenet.leg import OUT, Leg, Side
 from tenet.space import GradedSpace
@@ -186,7 +187,7 @@ class FusionPlan:
     steps: tuple[FusionStep, ...]
 
 
-@cache
+@plan_cache(cost=lambda p: sum(len(t) for step in p.steps for t in step.targets))
 def fusion_plan(s: TensorStructure, axes: tuple[int, ...]) -> FusionPlan:
     """Plan fusing ``axes`` of ``s``. Cached on the (frozen, array-free) structure."""
     axes, _ = _check_axes(s, axes)

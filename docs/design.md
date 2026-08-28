@@ -1950,6 +1950,24 @@ This is especially important in:
 
 The categorical planning cost should therefore be amortizable.
 
+Amortizable is not the same as retained forever. A cache keyed on a whole
+`TensorStructure` has the bond degeneracies in its key, so a loop over growing
+bond dimension adds an entry per bond dimension and never drops one, and the
+plan values are large: one restore plan for an SU(2) rank-8 intermediate holds
+of the order of 10^5 to 10^6 `(source, target, coefficient)` terms.
+
+Two rules follow, and `src/tenet/cache.py` states which cache is which:
+
+- A plan whose value reads only the legs' sectors, sides and duals is cached on
+  the *sector pattern* — the same structure with every degeneracy 1 — so a
+  growing bond adds no entry at all. This is the preferred fix, and where a plan
+  admits it there is nothing left to bound.
+- A plan whose value reads the degeneracies is cached with a bound on
+  accumulated cost rather than on entry count, evicting least-recently-used;
+  entry counts do not bound memory when entry sizes span four orders of
+  magnitude. A single value larger than the whole budget is returned but not
+  retained.
+
 ---
 
 # JAX
