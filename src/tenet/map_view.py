@@ -734,9 +734,8 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
     ``(row extent, column extent)`` pairs rather than the number of blocks, while the
     per-cell work drops to taking a view of an array that is already the right shape,
     or reshaping one that is not. Every other backend takes the cell-by-cell walk, on
-    the same gate and for the same reason as
-    [_batches][tenet.ops.repartition._batches]: whether trading Python iterations for
-    array operations pays is a property of the backend and not of the size of the
+    the same gate and for the same reason the plan applier does: whether trading Python
+    iterations for array operations pays is a property of the backend and not of the size of the
     work, and it has been measured only on NumPy. The two walks take the same views of
     the same matrices, so they agree bit for bit.
     """
