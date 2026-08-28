@@ -40,8 +40,10 @@ from its B-symbols. A provider that supplies none of that does not
 implement ``BendingCoefficients`` and is refused loudly rather than handed a
 plausible tensor with the wrong norm.
 
-No NumPy and no ``to_dense`` here (invariants 8/9): plans are array-free
-metadata and blocks move only through ``ar.do("transpose", ...)``.
+No ``to_dense`` here (invariant 9), and no NumPy in a ``TensorStructure`` (invariant 8):
+the plans themselves stay array-free metadata. The index arrays that batch a plan's terms
+into array operations are NumPy, but they are a cached side table keyed on the plan, never
+a structural field, and they carry no numerical value — only which block goes where.
 """
 
 import operator
@@ -54,6 +56,7 @@ import autoray as ar
 
 from tenet.leg import IN, OUT, Leg, Side
 from tenet.map_view import scaled
+from tenet.ops.batch import batch_plan, cast_coefficients
 from tenet.ops.permutation import permutation_plan
 from tenet.space import GradedSpace
 from tenet.structure import TensorStructure, _pattern
@@ -486,6 +489,52 @@ def repartition(
     return apply_plan(t, plan.new_structure, plan.perm, plan.terms, "repartition")
 
 
+def _looped(
+    t: "SymmetricTensor",
+    perm: tuple[int, ...],
+    terms: tuple[tuple[int, int, complex], ...],
+    blocks: dict[int, Any],
+) -> dict[int, Any]:
+    """Accumulate ``terms`` into ``blocks``, one term at a time.
+
+    The plan's original execution, kept whole: it runs the buckets batching would lose
+    money on, and it is what [apply_plan][tenet.ops.repartition.apply_plan]'s batched path
+    is checked against.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor the plan reads.
+    perm : tuple of int
+        The plan's single per-block axis permutation.
+    terms : tuple of (int, int, complex)
+        ``(source block, target block, coefficient)``.
+    blocks : dict of int to array
+        Destination index to block; accumulated into, and returned.
+
+    Returns
+    -------
+    dict of int to array
+        ``blocks``, with every term of ``terms`` added in.
+
+    Notes
+    -----
+    One transpose per *distinct source*, not per term: ``perm`` is per-plan and only the
+    coefficient is per-term, so terms sharing a source would otherwise recompute a
+    byte-identical array — 2.87 terms per source at SU(2) ``chi=6`` against exactly 1.00
+    at U(1), the multi-term expansion being what a non-Abelian provider's coefficients
+    produce and an Abelian one never does.
+    """
+    moved = {src: ar.do("transpose", t.blocks[src], perm) for src in {s for s, _, _ in terms}}
+    for src, dst, coeff in terms:
+        contrib = moved[src]
+        if coeff != 1:
+            # keep a real coefficient real, so a real tensor stays real
+            contrib = scaled(contrib, coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)
+        blocks[dst] = contrib if dst not in blocks else blocks[dst] + contrib
+    return blocks
+
+
 def apply_plan(
     t: "SymmetricTensor",
     structure: TensorStructure,
@@ -521,28 +570,40 @@ def apply_plan(
 
     Notes
     -----
-    One transpose per *distinct source*, not per term: ``perm`` is per-plan and only the
-    coefficient is per-term, so terms sharing a source would otherwise recompute a
-    byte-identical array — 2.87 terms per source at SU(2) ``chi=6`` against exactly 1.00
-    at U(1), the multi-term expansion being what a non-Abelian provider's coefficients
-    produce and an Abelian one never does. Batching instead (stack a shape bucket,
-    transpose once, slice back out) is slower on every axis.
+    Every term shares the plan's single ``perm``, so the whole plan is one transpose per
+    source followed by a scatter-add. Terms whose destination has the same shape — hence
+    whose source has the same shape — stack and run as array operations instead of Python
+    iterations, and the buckets are few: a rank-8 SU(2) intermediate with 74,800 blocks
+    and 447,752 terms has 1 bucket at uniform degeneracies and ~4,000 at the most ragged
+    ones. [batch_plan][tenet.ops.batch.batch_plan] holds the index arrays, keyed on the
+    plan, so the grouping is paid once per distinct plan rather than once per call.
 
-    A term with coefficient 1 leaves its transposed **view** in place and moves no
-    element at all; the first consumer that needs contiguity pays for it, which on the
-    contraction path is the sector-matrix assembly.
+    A bucket too small to repay the array-operation overhead — an Abelian plan is one term
+    per destination, so nothing to fuse and pure loss — stays on
+    [_looped][tenet.ops.repartition._looped], which is also the reference the batched path
+    is tested against, term for term and bit for bit.
+
+    A term with coefficient 1 on the looped path leaves its transposed **view** in place
+    and moves no element at all; the first consumer that needs contiguity pays for it,
+    which on the contraction path is the sector-matrix assembly.
     """
     from tenet.tensor import SymmetricTensor
 
-    moved = {src: ar.do("transpose", t.blocks[src], perm) for src in {s for s, _, _ in terms}}
+    groups, loose = batch_plan(structure, perm, terms)
 
     blocks: dict[int, Any] = {}
-    for src, dst, coeff in terms:
-        contrib = moved[src]
-        if coeff != 1:
-            # keep a real coefficient real, so a real tensor stays real
-            contrib = scaled(contrib, coeff.real if getattr(coeff, "imag", 0) == 0 else coeff)
-        blocks[dst] = contrib if dst not in blocks else blocks[dst] + contrib
+    for srcs, buckets in groups:
+        stacked = ar.do("stack", tuple(t.blocks[s] for s in srcs))
+        stacked = ar.do("transpose", stacked, (0, *(ax + 1 for ax in perm)))
+        for take, coeff, width, dsts in buckets:
+            rows = ar.do("multiply", stacked[take], cast_coefficients(coeff, stacked))
+            rows = ar.do("reshape", rows, (len(dsts), width, *ar.shape(rows)[1:]))
+            acc = rows[:, 0]
+            for i in range(1, width):
+                acc = ar.do("add", acc, rows[:, i])
+            for p, dst in enumerate(dsts):
+                blocks[dst] = acc[p]
+    _looped(t, perm, loose, blocks)
 
     n = structure.num_blocks
     if len(blocks) != n:

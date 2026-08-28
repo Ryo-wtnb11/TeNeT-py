@@ -957,3 +957,21 @@ def test_only_this_module_imports_torch():
         )
     }
     assert offenders == {"backends/test_torch.py"}
+
+
+# --- the batched plan applier (#316) ----------------------------------------------
+
+
+@pytest.mark.parametrize("provider", ["u1", "su2"])
+def test_the_batched_plan_applier_matches_the_loop_on_torch(provider):
+    """Batching a plan by block shape is one formulation, not a NumPy fast path.
+
+    The JAX and NumPy rows are in ``tests/ops/test_batch.py``; this is the third
+    backend, and the criterion is the same — the batched execution of a plan equals
+    the term-by-term one to the bit.
+    """
+    from ops.test_batch import assert_bit_identical, bend_plan_of, tensor
+
+    t = tensor(provider, "ragged", 5).to_backend("torch")
+    got = assert_bit_identical(t, *bend_plan_of(t))
+    assert got.backend == "torch"
