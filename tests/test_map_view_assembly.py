@@ -11,10 +11,18 @@ not a discarded temporary, which would make every write silently vanish.
 import autoray as ar
 import numpy as np
 import pytest
+from helpers import count_backend_calls
 
 import tenet.map_view as map_view_module
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
-from tenet.map_view import _concatenated, _tables, from_matrices, map_layout, to_matrices
+from tenet.map_view import (
+    _concatenated,
+    _rects,
+    _tables,
+    from_matrices,
+    map_layout,
+    to_matrices,
+)
 from tenet.symmetry import SU2, U1, SU2Sector, Trivial, TrivialSector, U1Sector
 
 ZERO, HALF, ONE = SU2Sector(0), SU2Sector(1), SU2Sector(2)
@@ -22,6 +30,7 @@ V = GradedSpace.new(SU2, {ZERO: 2, HALF: 3, ONE: 2})
 W = GradedSpace.new(SU2, {HALF: 2})
 H = GradedSpace.new(SU2, {HALF: 3})
 TRIV = GradedSpace.new(Trivial, {TrivialSector(): 3})
+RAGGED = GradedSpace.new(SU2, {SU2Sector(j): j + 1 for j in range(4)})
 Q = GradedSpace.new(U1, {U1Sector(-1): 2, U1Sector(0): 3, U1Sector(1): 1})
 
 LEGS = [
@@ -34,6 +43,17 @@ LEGS = [
     pytest.param((Leg(H, OUT), Leg(H, OUT), Leg(H, OUT), Leg(H, IN)), id="su2-two-trees"),
     pytest.param((Leg(W, OUT), Leg(W, OUT)), id="su2-empty-in"),
     pytest.param((Leg(W, IN), Leg(W, IN)), id="su2-empty-out"),
+    # degeneracy 1, 2, 3, 4: equal degeneracies make every grid uniform and leave the
+    # ragged half of the rectangle cut unexercised
+    pytest.param(
+        (Leg(RAGGED, OUT), Leg(RAGGED, OUT), Leg(RAGGED, IN), Leg(RAGGED, IN)),
+        id="su2-ragged",
+    ),
+    # ... and with the sides interleaved, so ``axes_order`` is a real permutation
+    pytest.param(
+        (Leg(RAGGED, OUT), Leg(RAGGED, IN), Leg(RAGGED, OUT), Leg(RAGGED, IN)),
+        id="su2-ragged-permuted",
+    ),
 ]
 
 
@@ -144,3 +164,72 @@ def test_the_concatenating_path_still_only_concatenates(monkeypatch, legs):
     counts = _count_ar_do(monkeypatch, lambda: _reference(t))
     assert "empty" not in counts
     assert "zeros" not in counts
+
+
+# --- the rectangle cut ``from_matrices`` reads back through (#324) --------------------
+
+
+def _extent_pairs(structure) -> int:
+    """Distinct ``(row extent, column extent)`` pairs of the layout, summed over sectors."""
+    layout = map_layout(structure)
+    return sum(
+        len({extent for _, _, extent in layout.row_bands(c)})
+        * len({extent for _, _, extent in layout.col_bands(c)})
+        for c in layout.sectors
+    )
+
+
+@pytest.mark.parametrize("legs", LEGS)
+def test_the_rectangles_are_the_distinct_extent_pairs_and_cover_the_grid(legs):
+    """The cut is the layout's, and it is complete: every block in exactly one cell."""
+    structure = SymmetricTensor.random(legs, seed=8).structure
+    rects = _rects(structure)
+    assert sum(len(r) for _, r in rects) == _extent_pairs(structure)
+    seen = [i for _, rectangles in rects for *_, indices in rectangles for i in indices]
+    assert sorted(seen) == list(range(structure.num_blocks))
+
+
+@pytest.mark.parametrize("shape", ["uniform", "ragged"])
+def test_the_dispatch_count_is_the_extent_pairs_and_not_the_block_count(monkeypatch, shape):
+    """The scaling claim: ``from_matrices`` dispatches per rectangle, never per block.
+
+    The analogue of
+    ``tests/ops/test_batch.py::test_the_dispatch_count_is_the_grouping_s_and_not_the_term_count_s``.
+    A rectangle costs at most four calls -- split the slice, swap the middle axes, and
+    where its cells share a shape, split them and permute them into public axis order --
+    so the bound is that times the number of distinct extent pairs. It is the *ragged*
+    fixture that makes the claim non-trivial: at equal degeneracies every grid is one
+    rectangle and any grouping at all would pass.
+    """
+    space = V if shape == "uniform" else RAGGED
+    legs = (Leg(space, OUT), Leg(space, OUT), Leg(space, OUT), Leg(space, IN), Leg(space, IN))
+    t = SymmetricTensor.random(legs, seed=9)
+    mats = to_matrices(t)
+    _rects(t.structure)  # the cut is structural; not part of the dispatch count
+
+    calls: list[str] = []
+    with count_backend_calls(monkeypatch, lambda name, args, kwargs: calls.append(name)):
+        back = from_matrices(t.structure, mats)
+
+    pairs = _extent_pairs(t.structure)
+    assert len(calls) <= 4 * pairs
+    assert pairs * 4 < t.structure.num_blocks  # and the block count is the loser
+    for a, b in zip(t.blocks, back.blocks, strict=True):
+        assert np.array_equal(a, b)
+
+
+@pytest.mark.parametrize("legs", LEGS)
+def test_jax_takes_the_cell_walk_and_gets_the_same_numbers(legs):
+    """JAX is outside the gate, and its blocks are the NumPy ones to the bit.
+
+    Mirrors ``tests/ops/test_batch.py::test_jax_takes_the_loop_and_gets_the_same_numbers``.
+    Nothing in the rectangle cut needs a NumPy-only primitive -- this is the test that
+    would catch it if it did -- but whether trading Python iterations for array calls
+    pays is a property of the backend, so only NumPy has been measured.
+    """
+    pytest.importorskip("jax")
+    t = SymmetricTensor.random(legs, seed=10)
+    back = from_matrices(t.structure, to_matrices(t.to_backend("jax")))
+    assert back.backend == "jax"
+    for a, b in zip(t.blocks, back.blocks, strict=True):
+        assert np.array_equal(a, np.asarray(b))

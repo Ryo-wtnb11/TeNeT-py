@@ -18,9 +18,13 @@ Conventions fixed here once, because the truncation code has to invert them:
 * **Bands are indexed by trees, not by external sectors.** For SU(2) two
   distinct output trees can carry identical external sectors, and they occupy
   two distinct row bands.
-* **Band order is ``block_order`` restricted**, never a fresh enumeration, so two
-  tensors whose OUT (resp. IN) legs agree as ordered legs get *identical* row
-  (resp. column) orderings. Composition is then a plain matmul.
+* **Band order is ``(extent, degeneracies, tree)``**, never a fresh enumeration of
+  its own, so two tensors whose OUT (resp. IN) legs agree as ordered legs get
+  *identical* row (resp. column) orderings. Composition is then a plain matmul.
+  Sorting by extent first is what makes every set of equally-tall row bands a
+  contiguous stripe of ``B_c``, which is what
+  [from_matrices][tenet.from_matrices] reads back a rectangle at a time; ties fall
+  back to the block order the trees already arrive in.
 * **No ``sqrt(qdim)`` is folded into ``B_c``.** The norm identity is
   ``‖T‖² = Σ_c qdim(c)·‖B_c‖²_F`` — i.e. [tenet.norm][] regrouped — and
   folding the weight in would silently change the convention ``norm`` and
@@ -49,11 +53,27 @@ them against each other on every provider. The split is over array *mutability*,
 a property of the backend resolved once per call by ``ar.infer_backend``; it is
 not a size heuristic and it never branches on a traced value.
 
+[from_matrices][tenet.from_matrices] inverts the lowering, and the grid gives it a
+cheaper walk than cell by cell. Group the row bands by extent and the column bands
+by extent; because the bands are *ordered* by extent, every ``(row extent, column
+extent)`` pair is one contiguous rectangle of ``B_c``, and splitting that
+rectangle's two axes into ``(rows, extent, columns, extent)`` and swapping the two
+middle axes exposes every cell of it as a view -- two array calls for the whole
+rectangle instead of two per cell. The count is then the number of distinct extent
+pairs in the layout: 7 rather than 9,145 on an SU(2) rank-6 tensor at equal
+degeneracies, 308 rather than 9,145 at ragged ones. Where a rectangle's bands also
+agree on their *individual* degeneracies the split runs once for the rectangle and a
+cell is a plain index; where they do not, the cell is reshaped as it is taken.
+
 Blocks move only through ``ar.do("transpose"/"reshape"/"concatenate"/"empty")``
-plus basic slicing; there is no NumPy call, no ``to_dense`` and no *symmetry
-provider* branching in this module.
+plus basic slicing; there is no ``to_dense`` and no *symmetry provider* branching in
+this module. The one place a NumPy method is spelled directly is the per-cell reshape
+of a rectangle whose cells do not share a shape: it is the operation the dispatch
+would have reached, it runs once per *cell* where everything else here runs once per
+rectangle, and the gate has already established that the arrays are NumPy's.
 """
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
@@ -238,17 +258,32 @@ def map_layout(structure: TensorStructure) -> MapLayout:
     )
 
 
+def _degeneracies(
+    structure: TensorStructure, axes: tuple[int, ...], tree: FusionTree
+) -> tuple[int, ...]:
+    """One tree's degeneracy per axis, in that side's public order."""
+    return tuple(
+        structure.legs[ax].degeneracy(structure.legs[ax].space_sector(u))
+        for ax, u in zip(axes, tree.uncoupled, strict=True)
+    )
+
+
 def _bands(
     structure: TensorStructure, axes: tuple[int, ...], c: Sector, trees: Mapping[FusionTree, None]
 ) -> tuple[Band, ...]:
-    """Lay one side's trees out contiguously; extent is ``Π`` of its degeneracies."""
+    """Lay one side's trees out contiguously; extent is ``Π`` of its degeneracies.
+
+    Ordered by ``(extent, degeneracies)`` with the incoming tree order as the tie
+    break, so equally-tall bands -- and, inside those, identically-shaped ones --
+    occupy one contiguous stripe. That is a function of this side's ordered legs
+    alone, which is what composition needs: the two operands compute the same order
+    for the side they share.
+    """
+    dims = {tree: _degeneracies(structure, axes, tree) for tree in trees}
     bands: list[Band] = []
     offset = 0
-    for tree in trees:
-        extent = 1
-        for ax, u in zip(axes, tree.uncoupled, strict=True):
-            leg = structure.legs[ax]
-            extent *= leg.degeneracy(leg.space_sector(u))
+    for tree in sorted(trees, key=lambda t: (math.prod(dims[t]), dims[t])):
+        extent = math.prod(dims[tree])
         bands.append((c, tree, offset, extent))
         offset += extent
     return tuple(bands)
@@ -297,6 +332,90 @@ def _tables(
         tuple((layout.row_bands(c), layout.col_bands(c)) for c in layout.sectors),
         tuple(tuple(structure.block_shape(key)[a] for a in order) for key in structure.block_order),
     )
+
+
+Rect = tuple[int, int, int, int, int, int, tuple[int, ...] | None, tuple[int, ...]]
+"""``(row offset, rows, row extent, column offset, columns, column extent, split, cells)``."""
+
+
+@cache
+def _rects(structure: TensorStructure) -> tuple[tuple[Sector, tuple[Rect, ...]], ...]:
+    """Each coupled sector's grid, cut into rectangles of equally sized cells.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure to cut up.
+
+    Returns
+    -------
+    tuple
+        Per coupled sector, one [Rect][tenet.map_view.Rect] per ``(row extent, column
+        extent)`` pair: where the rectangle starts, how many bands it spans each way,
+        the shape its cells split into when they share one (``None`` when they do not),
+        and the block indices of its cells in row-major order.
+
+    Notes
+    -----
+    A pure function of ``structure``, cached beside [map_layout][tenet.map_layout] for
+    the reason [_tables][tenet.map_view._tables] is: the cut is the same for every
+    tensor of that structure, and rebuilding it inside the assembly would cost what it
+    saves. It holds indices and extents, never a value and never an array.
+
+    The rectangles are contiguous only because ``_bands`` orders the bands by extent;
+    the two facts are one design, and separating them would leave this walking a
+    scattered set of rows, which no slice can express.
+    """
+    layout = map_layout(structure)
+    cells = dict(layout.grid)
+    out: list[tuple[Sector, tuple[Rect, ...]]] = []
+    for c in layout.sectors:
+        rows = _stripes(structure, structure.out_axes, layout.row_bands(c))
+        cols = _stripes(structure, structure.in_axes, layout.col_bands(c))
+        grid = cells[c]
+        out.append(
+            (
+                c,
+                tuple(
+                    (
+                        ro,
+                        len(ri),
+                        dr,
+                        co,
+                        len(ci),
+                        dc,
+                        None if sr is None or sc is None else (len(ri), len(ci), *sr, *sc),
+                        tuple(grid[i][j] for i in ri for j in ci),
+                    )
+                    for ro, ri, dr, sr in rows
+                    for co, ci, dc, sc in cols
+                ),
+            )
+        )
+    return tuple(out)
+
+
+def _stripes(
+    structure: TensorStructure,
+    axes: tuple[int, ...],
+    bands: tuple[tuple[FusionTree, int, int], ...],
+) -> tuple[tuple[int, tuple[int, ...], int, tuple[int, ...] | None], ...]:
+    """One side's bands run-grouped by extent: ``(offset, band indices, extent, shape)``.
+
+    ``shape`` is the degeneracy tuple the stripe's bands share, or ``None`` where they
+    only share its product -- ``(1, 2, 3)`` and ``(3, 2, 1)`` are both six rows tall and
+    are one stripe, but a cell of the first does not have the shape of a cell of the
+    second.
+    """
+    stripes: list[tuple[int, tuple[int, ...], int, tuple[int, ...] | None]] = []
+    for i, (tree, offset, extent) in enumerate(bands):
+        dims = _degeneracies(structure, axes, tree)
+        if stripes and stripes[-1][2] == extent:
+            start, members, _, shape = stripes[-1]
+            stripes[-1] = (start, (*members, i), extent, shape if shape == dims else None)
+        else:
+            stripes.append((offset, (i,), extent, dims))
+    return tuple(stripes)
 
 
 _MUTABLE = frozenset({"numpy", "torch"})
@@ -604,6 +723,22 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
     >>> t = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=0)
     >>> from_matrices(t.structure, to_matrices(t)) == t
     True
+
+    Notes
+    -----
+    Every block comes back as a **view** into its coupled-sector matrix on either
+    path; nothing is copied and nothing is allocated but the tuple.
+
+    On NumPy the grid is walked a rectangle at a time -- see the module docstring for
+    the cut -- so the number of array calls is the number of distinct
+    ``(row extent, column extent)`` pairs rather than the number of blocks, while the
+    per-cell work drops to taking a view of an array that is already the right shape,
+    or reshaping one that is not. Every other backend takes the cell-by-cell walk, on
+    the same gate and for the same reason as
+    [_batches][tenet.ops.repartition._batches]: whether trading Python iterations for
+    array operations pays is a property of the backend and not of the size of the
+    work, and it has been measured only on NumPy. The two walks take the same views of
+    the same matrices, so they agree bit for bit.
     """
     from tenet.tensor import SymmetricTensor
 
@@ -623,6 +758,39 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
     transpose = lib_fn(backend, "transpose")
 
     blocks: list[Any] = [None] * structure.num_blocks
+    if backend == "numpy":
+        # axis 2 + inverse[a] of a split rectangle is public axis a
+        public = (0, 1, *(2 + inverse[a] for a in range(structure.ndim)))
+        for c, rects in _rects(structure):
+            mat = mats[c]
+            for ro, nr, dr, co, nc, dc, split, indices in rects:
+                if len(indices) == 1:
+                    # a rectangle of one cell has nothing to group -- splitting it and
+                    # swapping its axes would build the cell the plain slice already is
+                    i = indices[0]
+                    piece = reshape(mat[ro : ro + dr, co : co + dc], shapes[i])
+                    blocks[i] = transpose(piece, inverse) if permuted else piece
+                    continue
+                cut = reshape(mat[ro : ro + nr * dr, co : co + nc * dc], (nr, dr, nc, dc))
+                cut = transpose(cut, (0, 2, 1, 3))
+                cursor = 0
+                if split is not None:
+                    cut = reshape(cut, split)
+                    if permuted:
+                        cut = transpose(cut, public)
+                    for row in cut:
+                        for cell in row:
+                            blocks[indices[cursor]] = cell
+                            cursor += 1
+                else:
+                    for row in cut:
+                        for cell in row:
+                            i = indices[cursor]
+                            cursor += 1
+                            piece = cell.reshape(shapes[i])
+                            blocks[i] = piece.transpose(inverse) if permuted else piece
+        return SymmetricTensor(structure, tuple(blocks))
+
     for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
         mat = mats[c]
         for (_, ro, dr), indices in zip(rbands, cells, strict=True):
