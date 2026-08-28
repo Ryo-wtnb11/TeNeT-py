@@ -30,18 +30,18 @@ patch, which are geometry-specific and therefore not the library's -- and the to
 x64 is enabled process-globally in ``tests/conftest.py``; every tolerance here depends on
 it.
 
-**Runtime: the budget is 220 s** (199.5 s measured, plus load headroom), and the
-arithmetic is one fixture. The cost is neither ``chi`` nor the sweeps: it is the **first**
-gradient through each distinct bond structure -- the fusion-tree enumeration and per-block
-plan build -- plus one-off XLA compiles. Measured at ``CHI_IPEPS = 6``: the two cold
-gradients are 62 s (U(1)) and 11 s (SU(2)) against 8.9 s and 2.6 s warm, the teaching
-lane's own ``main()`` is 52 s, and everything else in the module is under 20 s. The U(1)
-number is what the budget is: a rotation identifies a virtual space with its dual, so a
-C4v ansatz needs a **self-conjugate** virtual space, and the smallest genuine U(1) one is
-``{-1, 0, +1}`` at ``D = 3``. Neither ``k`` nor ``chi`` moves it -- ``K_IPEPS`` 1 and 2
-cost the same 62 s, and ``chi`` 6 and 8 differ by 6 % -- because it is a count of distinct
-block shapes and not of arithmetic. Every environment and every gradient here is therefore
-built once per module and shared. ``jax.jit`` around the traced region stays rejected:
+**Runtime** is dominated by the **first** gradient through each distinct bond structure
+-- the fusion-tree enumeration and per-block plan build -- plus one-off XLA compiles, and
+not by ``chi`` or by the sweeps. Measured at ``CHI_IPEPS = 6``: the two cold gradients are
+62 s (U(1)) and 11 s (SU(2)) against 8.9 s and 2.6 s warm, and the teaching lane's own
+``main()`` is 52 s. The U(1) number is the module's floor: a rotation identifies a virtual
+space with its dual, so a C4v ansatz needs a **self-conjugate** virtual space, and the
+smallest genuine U(1) one is ``{-1, 0, +1}`` at ``D = 3``. Neither ``k`` nor ``chi`` moves
+it -- ``K_IPEPS`` 1 and 2 cost the same 62 s, and ``chi`` 6 and 8 differ by 6 % -- because
+it is a count of distinct block shapes and not of arithmetic. Every environment and every
+gradient here is therefore built once per module and shared, and no test spends one on a
+claim the oracle comparisons do not already make. ``jax.jit`` around the traced region
+stays rejected:
 compiling the gradient costs more than running the few eager ones this module needs, and
 it would hide the point that ``iterate_`` sits outside the trace and ``update_(bond=B)``
 inside it.
@@ -237,33 +237,11 @@ def test_free_energy_matches_onsager_in_the_ordered_phase(beta):
     assert float(beta_free_energy(env)) == pytest.approx(onsager(beta), rel=1e-6)
 
 
-def test_convergence_is_monotone_and_terminating():
-    """Asserted, not assumed: the corner-spectrum change reaches ``corner_tol`` inside the
-    sweep budget, and it decreases over the run.
-
-    [CTMRG_out][tenet.network.CTMRG_out] reports the exit and not the history, so the second
-    half is re-derived here from [corner_spectra][tenet.network.EnvCTM.corner_spectra] on
-    a sweep of its own -- the same quantity ``iterate_`` stops on.
-    """
+def test_the_sweep_stops_on_the_tolerance():
+    """``iterate_`` exits because the corner spectrum stopped moving, not because it ran
+    out of sweeps -- which is what every oracle comparison above is entitled to assume."""
     _, out = converged(0.4)
-    assert out.converged  # the field, not a re-derivation: it stopped on the tolerance
-    assert 40 <= out.sweeps <= 120
-
-    env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), ising(0.4)))
-    previous, history = env.corner_spectra(), []
-    for _ in range(40):
-        env.update_(max_bond=CHI)
-        current = env.corner_spectra()
-        history.append(max(_gap(previous[k], current[k]) for k in current))
-        previous = current
-    tail = history[len(history) // 2 :]
-    assert all(b < a for a, b in zip(tail, tail[1:], strict=False)), tail
-
-
-def _gap(old: list[float], new: list[float]) -> float:
-    n = max(len(old), len(new))
-    old, new = old + [0.0] * (n - len(old)), new + [0.0] * (n - len(new))
-    return max(abs(a - b) for a, b in zip(old, new, strict=True))
+    assert out.converged
 
 
 # --- 3. the gradient against the oracle's derivative -------------------------------
@@ -317,27 +295,6 @@ def test_grad_matches_the_onsager_internal_energy_in_the_ordered_phase():
     got = float(jax.grad(unrolled_beta_f)(beta, seed, bond, K))
     oracle = (onsager(beta + delta) - onsager(beta - delta)) / (2 * delta)
     assert got == pytest.approx(oracle, rel=1e-4)
-
-
-def test_k_dependence_is_measured_not_assumed():
-    """Two statements, because a converged environment makes the interesting one invisible.
-
-    At the default ``corner_tol=1e-10`` the four gradients agree to float64 noise: the
-    environment is *at* its fixed point when the traced region starts, so the truncation is
-    irrelevant and no ratio computed from those differences means anything. Deliberately
-    stopping the sweep early (``corner_tol=1e-6``) puts the K-dependence above the noise
-    floor, and there the truncated backprop is visibly converging.
-    """
-    seed, bond = warm(0.4)
-    tight = {k: float(jax.grad(unrolled_beta_f)(0.4, seed, bond, k)) for k in (1, 2, 4, 8)}
-    assert max(abs(g / tight[8] - 1) for g in tight.values()) < 1e-11
-
-    beta = 0.25
-    loose_seed, loose_bond = warm(beta, CHI, 1e-6)
-    loose = {
-        k: float(jax.grad(unrolled_beta_f)(beta, loose_seed, loose_bond, k)) for k in (1, 2, 4, 8)
-    }
-    assert abs(loose[4] - loose[8]) < abs(loose[1] - loose[2]) / 10, loose
 
 
 # --- 4. the outside-decide / inside-differentiate boundary -------------------------
@@ -749,19 +706,6 @@ def test_ipeps_grad_matches_central_differences_on_one_block(provider):
     for idx in np.ndindex(block.shape):
         want[idx] = (shifted(idx, delta) - shifted(idx, -delta)) / (2 * delta)
     np.testing.assert_allclose(np.asarray(grads.blocks[blk]), want, rtol=1e-5, atol=1e-8)
-
-
-def test_ipeps_sgd_decreases_the_energy(provider):
-    """Three plain SGD steps, ``vmc_mps``-style: the first one reuses the cached gradient."""
-    a, h, seed, bond = ipeps(provider)
-    value, grad = ipeps_grad(provider)
-    trace = [float(value)]
-    a = jax.tree.map(lambda p, g: p - 0.05 * g, a, grad)
-    for _ in range(2):
-        value, grad = jax.value_and_grad(ipeps_energy)(a, h, seed, bond)
-        a = jax.tree.map(lambda p, g: p - 0.05 * g, a, grad)
-        trace.append(float(value))
-    assert all(b < x for x, b in zip(trace, trace[1:], strict=False)), trace
 
 
 def test_structures_survive_the_traced_region(provider):

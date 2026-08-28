@@ -52,6 +52,11 @@ dev = [
     # Coverage measurement for the CI badge (#145). No threshold gate: the number is
     # reported, not enforced.
     "pytest-cov>=6.0",
+    # The suite is CPU-bound and embarrassingly parallel across modules. `--dist
+    # loadfile` keeps a module on one worker, which the expensive modules rely on:
+    # they converge an environment once and share it across their tests, and a
+    # per-test split would re-pay every cold plan build.
+    "pytest-xdist>=3.6",
     "quimb>=1.11",
     "ruff>=0.8",
     # NOT a core dependency: autoray's NumPy `linalg.expm` is `scipy.linalg.expm`, so
@@ -83,3 +88,10 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The suite is CPU-bound and its modules are independent, so it runs on one worker
+# per core. `loadfile` is the part that matters: the expensive modules converge an
+# environment or build a plan once and share it across their own tests, and the
+# default per-test distribution would re-pay every one of those cold builds on a
+# different worker. Measured 741 s -> 358 s on four workers, whose floor is now the
+# slowest single module.
+addopts = "-n auto --dist loadfile"
