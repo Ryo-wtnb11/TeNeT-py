@@ -498,7 +498,10 @@ def test_fusion_module_touches_no_numpy_no_cgc_no_to_dense():
     assert ".cgc" not in body
     assert "to_dense" not in body
     assert "if provider ==" not in body
-    assert "ar.do(" in body
+    # both spellings: ``ar.do(name, ...)`` and the once-resolved ``lib_fn(backend, name)``
+    assert "lib_fn(" in body
     allowed = {'"transpose"', '"reshape"', '"concatenate"'}
     for chunk in body.split("ar.do(")[1:]:
         assert chunk.split(",")[0].strip() in allowed
+    for chunk in body.split("lib_fn(")[1:]:
+        assert chunk.split(",")[1].split(")")[0].strip() in allowed

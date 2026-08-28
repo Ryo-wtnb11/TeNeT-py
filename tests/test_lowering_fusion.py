@@ -13,9 +13,9 @@ none of them changes shapes. The counting tests then pin the mechanism: one writ
 term, no standalone elementwise multiply, and every source read through a view.
 """
 
-import autoray as ar
 import numpy as np
 import pytest
+from helpers import count_backend_calls
 
 import tenet
 import tenet.map_view as map_view_module
@@ -75,17 +75,15 @@ def _plan(t, outputs, inputs):
 
 
 def _count_ar_do(monkeypatch, fn):
-    """``(name, "out" in kwargs)`` for every ``ar.do`` ``fn()`` reaches, counted."""
+    """``(name, "out" in kwargs)`` for every backend call ``fn()`` reaches, counted."""
     counts: dict[tuple[str, bool], int] = {}
-    real = ar.do
 
-    def spy(name, *args, **kwargs):
+    def record(name, args, kwargs):
         key = (name, "out" in kwargs)
         counts[key] = counts.get(key, 0) + 1
-        return real(name, *args, **kwargs)
 
-    monkeypatch.setattr(map_view_module.ar, "do", spy)
-    fn()
+    with count_backend_calls(monkeypatch, record):
+        fn()
     return counts
 
 

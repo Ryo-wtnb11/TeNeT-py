@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
+from tenet.backend import lib_fn
 from tenet.fusion_tree import FusionTree
 from tenet.leg import OUT, Leg, Side
 from tenet.space import GradedSpace
@@ -281,15 +282,22 @@ def _merged(shape: tuple[int, ...], axis: int) -> tuple[int, ...]:
 
 def _apply(step: FusionStep, blocks: tuple[Any, ...]) -> tuple[Any, ...]:
     identity = tuple(range(len(step.perm)))
+    if not blocks:
+        return ()
+    # resolved once, called once per block: see tenet.backend
+    backend = ar.infer_backend(blocks[0])
+    transpose = lib_fn(backend, "transpose")
+    reshape = lib_fn(backend, "reshape")
+    concatenate = lib_fn(backend, "concatenate")
     out = []
     for chunks in step.targets:
         parts = []
         for i, shape in chunks:
             block = blocks[i]
             if step.perm != identity:
-                block = ar.do("transpose", block, step.perm)
-            parts.append(ar.do("reshape", block, _merged(shape, step.axis)))
-        out.append(parts[0] if len(parts) == 1 else ar.do("concatenate", parts, axis=step.axis))
+                block = transpose(block, step.perm)
+            parts.append(reshape(block, _merged(shape, step.axis)))
+        out.append(parts[0] if len(parts) == 1 else concatenate(parts, axis=step.axis))
     return tuple(out)
 
 
@@ -297,6 +305,11 @@ def _unapply(step: FusionStep, blocks: tuple[Any, ...]) -> tuple[Any, ...]:
     """Invert ``_apply``: slice each chunk back out and undo the merge."""
     identity = tuple(range(len(step.perm)))
     inverse = tuple(sorted(range(len(step.perm)), key=step.perm.__getitem__))
+    if not blocks:
+        return ()
+    backend = ar.infer_backend(blocks[0])
+    reshape = lib_fn(backend, "reshape")
+    transpose = lib_fn(backend, "transpose")
     out: list[Any] = [None] * sum(len(chunks) for chunks in step.targets)
     for block, chunks in zip(blocks, step.targets, strict=True):
         offset = 0
@@ -305,8 +318,8 @@ def _unapply(step: FusionStep, blocks: tuple[Any, ...]) -> tuple[Any, ...]:
             # Simplification: basic slicing, not an ar.do — every backend spells a
             # contiguous slice the same way, and autoray has no split wrapper.
             piece = block[(slice(None),) * step.axis + (slice(offset, offset + extent),)]
-            piece = ar.do("reshape", piece, shape)
-            out[i] = piece if step.perm == identity else ar.do("transpose", piece, inverse)
+            piece = reshape(piece, shape)
+            out[i] = piece if step.perm == identity else transpose(piece, inverse)
             offset += extent
     return tuple(out)
 

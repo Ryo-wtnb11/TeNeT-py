@@ -6,6 +6,7 @@ issue #39 and promoted here unchanged when #51 needed the same oracle for
 ``transpose``, so the two suites must weigh it on the same scale.
 """
 
+import contextlib
 import dataclasses
 import math
 import os
@@ -319,3 +320,41 @@ class NoBendProvider:
 
     def permute_tree(self, tree, perm):
         return self.base.permute_tree(tree, perm)
+
+
+@contextlib.contextmanager
+def count_backend_calls(monkeypatch, record):
+    """Make ``record(name, args, kwargs)`` see every backend call the code under test makes.
+
+    There are two routes to a backend function and a counter has to watch both: ``ar.do``,
+    and [lib_fn][tenet.backend.lib_fn], which resolves the function once so a loop over
+    blocks does not pay autoray's dispatch per block. ``lib_fn`` is cached, so its cache is
+    cleared around the patch -- a function resolved before it would reach the backend
+    without passing through ``record``.
+    """
+    import autoray as ar
+
+    from tenet.backend import lib_fn
+
+    real_do, real_get = ar.do, ar.get_lib_fn
+
+    def do(name, *args, **kwargs):
+        record(name, args, kwargs)
+        return real_do(name, *args, **kwargs)
+
+    def get_lib_fn(backend, name):
+        fn = real_get(backend, name)
+
+        def counting(*args, **kwargs):
+            record(name, args, kwargs)
+            return fn(*args, **kwargs)
+
+        return counting
+
+    monkeypatch.setattr(ar, "do", do)
+    monkeypatch.setattr(ar, "get_lib_fn", get_lib_fn)
+    lib_fn.cache_clear()
+    try:
+        yield
+    finally:
+        lib_fn.cache_clear()  # drop the counting wrappers this installed

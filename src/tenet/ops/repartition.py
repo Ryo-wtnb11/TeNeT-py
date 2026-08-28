@@ -54,6 +54,7 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
+from tenet.backend import lib_fn
 from tenet.leg import IN, OUT, Leg, Side
 from tenet.map_view import scaled
 from tenet.ops.batch import batch_plan, cast_coefficients
@@ -233,7 +234,10 @@ def bend(t: "SymmetricTensor", axis: int) -> "SymmetricTensor":
     # to recompute a byte-identical array. #74's batched alternative -- stack a shape
     # bucket, transpose once, slice back out -- was prototyped and measured slower on
     # every axis (see #123); this is the lever that was actually in the loop.
-    moved = {src: ar.do("transpose", t.blocks[src], perm) for src in {s for s, _, _ in plan.terms}}
+    sources = {s for s, _, _ in plan.terms}
+    # a blockless tensor has no backend to resolve against, and no source to move either
+    transpose = lib_fn(t.backend, "transpose") if sources else None
+    moved = {src: transpose(t.blocks[src], perm) for src in sources} if transpose else {}
 
     blocks: dict[int, Any] = {}
     for src, dst, coeff in plan.terms:
@@ -525,7 +529,10 @@ def _looped(
     at U(1), the multi-term expansion being what a non-Abelian provider's coefficients
     produce and an Abelian one never does.
     """
-    moved = {src: ar.do("transpose", t.blocks[src], perm) for src in {s for s, _, _ in terms}}
+    if not terms:  # a blockless tensor has no backend to resolve against either
+        return blocks
+    transpose = lib_fn(t.backend, "transpose")
+    moved = {src: transpose(t.blocks[src], perm) for src in {s for s, _, _ in terms}}
     for src, dst, coeff in terms:
         contrib = moved[src]
         if coeff != 1:

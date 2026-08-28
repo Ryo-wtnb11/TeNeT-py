@@ -18,6 +18,7 @@ reassociated sum pass.
 import autoray as ar
 import numpy as np
 import pytest
+from helpers import count_backend_calls
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
@@ -233,16 +234,16 @@ def test_a_complex_coefficient_still_complexifies_a_real_tensor():
 
 @pytest.fixture
 def ops(monkeypatch):
-    """Count what ``apply_plan`` dispatches through ``autoray``."""
+    """Count the array operations ``apply_plan`` issues.
+
+    Both routes to a backend are counted: ``ar.do``, and the function
+    [lib_fn][tenet.backend.lib_fn] resolved once and called per block. The second is
+    why the cache is cleared around the patch -- a function resolved before the patch
+    would call the backend without passing through the counter.
+    """
     counted: list[str] = []
-    real = ar.do
-
-    def do(name, *args, **kwargs):
-        counted.append(name)
-        return real(name, *args, **kwargs)
-
-    monkeypatch.setattr(ar, "do", do)
-    return counted
+    with count_backend_calls(monkeypatch, lambda name, args, kwargs: counted.append(name)):
+        yield counted
 
 
 def predicted(structure, perm, terms):
