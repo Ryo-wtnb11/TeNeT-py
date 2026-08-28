@@ -12,13 +12,12 @@ a rotation acts on at all: SU(2) ``{0, 1}`` and U(1) ``{-1, 0, +1}``. That is wh
 C4v ansatz on this lane, and its two-site energy is :data:`ENERGY_BASELINE`.
 
 **Runtime** is the two cold gradients -- the fusion-tree enumeration and per-block plan
-build behind the first backward pass through each distinct bond structure, plus one-off
-XLA compiles -- and nothing else. Measured at ``CHI_IPEPS = 6``: 62 s (U(1)) and 11 s
-(SU(2)) against 8.9 s and 2.6 s warm. Neither ``k`` nor ``chi`` moves those numbers --
-``K_IPEPS`` 1 and 2 cost the same 62 s, and ``chi`` 6 and 8 differ by 6 % -- because they
-count distinct block shapes and not arithmetic. The environment and the gradient are
-therefore built once per provider and shared by every test below. This module is split
-from ``test_ctmrg.py`` for that reason as well: the two halves share no fixture, and
+build behind the first backward pass through each distinct bond structure, plus the one
+XLA compilation of the traced region. Neither ``k`` nor ``chi`` moves those numbers --
+``K_IPEPS`` 1 and 2 cost the same, and ``chi`` 6 and 8 differ by 6 % -- because they count
+distinct block shapes and not arithmetic. The environment and the gradient are therefore
+built once per provider and shared by every test below. This module is split from
+``test_ctmrg.py`` for that reason as well: the two halves share no fixture, and
 ``--dist loadfile`` can only put whole files on separate workers.
 
 x64 is enabled process-globally in ``tests/conftest.py``; every tolerance here depends on
@@ -183,7 +182,7 @@ def ipeps(provider: str):
     return _ENVS[key]
 
 
-def ipeps_energy(a, h, seed, bond, k=K_IPEPS):
+def _ipeps_energy(a, h, seed, bond, k=K_IPEPS):
     """``<h>`` after ``k`` fixed-bond moves at the current ``a`` -- the function
     differentiated."""
     env = EnvCTMc4v(Peps(SquareLattice(dims=(1, 1)), a), init=None)
@@ -191,6 +190,21 @@ def ipeps_energy(a, h, seed, bond, k=K_IPEPS):
     for _ in range(k):
         env.update_(bond=bond)
     return energy(env, h)
+
+
+#: The traced region, compiled. ``bond`` and ``k`` are static: the first is the frozen
+#: bond the move projects onto, decided outside, and the second is a Python loop count.
+#:
+#: The bond is what makes this legal at all -- ``update_(bond=B)`` reads no singular value
+#: to decide a truncation, so the region has no data-dependent shape and
+#: ``test_ctmrg.py::test_deciding_a_bond_is_refused_under_jit`` is the other half of that
+#: statement. Compiling it is worth doing: a double-layer backward pass dispatched eagerly
+#: is thousands of one-primitive XLA programs, each compiled on its own, and the whole
+#: point of a fixed bond is that one program serves every call. Measured on the cold
+#: gradient, 72.4 s -> 24.6 s (U(1)) and 46.8 s -> 7.7 s (SU(2)), with the value unmoved
+#: to 3e-17. The finite-difference test below gets it for free: eighteen shifted
+#: evaluations differ only in what is *in* the blocks, so they reuse the one compilation.
+ipeps_energy = jax.jit(_ipeps_energy, static_argnums=(3, 4))
 
 
 def ipeps_grad(provider: str):
