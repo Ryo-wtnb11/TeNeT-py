@@ -964,10 +964,27 @@ def inner(a: "SymmetricTensor", b: "SymmetricTensor") -> Any:
 def _parse(equation: str, operands: tuple["SymmetricTensor", ...]) -> tuple[list[str], str]:
     """``(terms, output)`` for an equation over any number of operands, or a loud refusal.
 
+    The operands enter only through their ranks, so this is ``_parsed`` on
+    ``(equation, ndims)`` with the terms handed back as a fresh mutable list.
+    """
+    terms, out = _parsed(equation, tuple(t.ndim for t in operands))
+    return list(terms), out
+
+
+# Simplification: unbounded `cache`, matching every other plan cache in the module. An
+# equation is written into a caller's source, not generated per call, so the key space is
+# bounded by the program; the upgrade path if one is ever generated is `lru_cache(maxsize=)`.
+@cache
+def _parsed(equation: str, ndims: tuple[int, ...]) -> tuple[tuple[str, ...], str]:
+    """``_parse``'s body, keyed on everything it reads, returning only immutables.
+
+    ``_contract_path`` re-parses once per pairwise step, so an n-operand ``einsum``
+    parses n times; the parse is ~10% of an eight-operand call's cumulative time.
+
     Every refusal below is a categorical statement, not a parser limitation, and
     each one names what to write instead.
     """
-    if not operands:
+    if not ndims:
         raise ValueError(
             f"einsum: equation {equation!r} was given no operands; einsum takes one or more "
             "tensors after the equation, as in tenet.einsum('abc,cde->abde', A, B)"
@@ -986,16 +1003,16 @@ def _parse(equation: str, operands: tuple["SymmetricTensor", ...]) -> tuple[list
                 f"einsum: label {label!r} in equation {equation!r} is not an ASCII letter; "
                 "labels are single letters a-z / A-Z, one per axis"
             )
-    if len(terms) != len(operands):
+    if len(terms) != len(ndims):
         raise ValueError(
             f"einsum: equation {equation!r} has {len(terms)} comma-separated term(s) but "
-            f"{len(operands)} operand(s) were given; there is exactly one term per operand"
+            f"{len(ndims)} operand(s) were given; there is exactly one term per operand"
         )
-    for k, (term, t) in enumerate(zip(terms, operands, strict=True)):
-        if len(term) != t.ndim:
+    for k, (term, ndim) in enumerate(zip(terms, ndims, strict=True)):
+        if len(term) != ndim:
             raise ValueError(
                 f"einsum: term {term!r} labels {len(term)} axes but operand {k} is "
-                f"{t.ndim}-dimensional; every axis gets exactly one label"
+                f"{ndim}-dimensional; every axis gets exactly one label"
             )
     counts = Counter(lhs.replace(",", ""))
     over = [label for label, n in counts.items() if n > 2]
@@ -1046,7 +1063,7 @@ def _parse(equation: str, operands: tuple["SymmetricTensor", ...]) -> tuple[list
                 "with the all-ones vector, which is not equivariant and has no categorical "
                 "meaning (invariant 11); keep the label, or contract it against another tensor"
             )
-    return terms, out
+    return tuple(terms), out
 
 
 def _plan_shape(t: "SymmetricTensor") -> tuple[int, ...]:
@@ -1132,7 +1149,9 @@ def einsum(
     physical [shape][tenet.SymmetricTensor.shape]\\ s, and ``optimize`` is handed
     to it unchanged: a strategy name, an explicit path, or any
     ``opt_einsum.paths.PathOptimizer`` — cotengra's optimizers are such objects
-    and work here without ``cotengra`` being imported. Every step of the path is
+    and work here without ``cotengra`` being imported. A strategy *name* asks for a
+    search, so its path is cached on ``(equation, shapes, name)``; a path and a
+    ``PathOptimizer`` are consulted on every call. Every step of the path is
     then this same two-operand call, so the mathematics is unchanged; the path is
     chosen from static structure only, and is therefore baked in at trace time
     under ``jax.jit`` like every other structural decision.
@@ -1170,11 +1189,36 @@ def einsum(
     )
 
 
-# Simplification: no path cache. Path finding for a ten-tensor network is microseconds
-# against block work measured in milliseconds, and the key would have to include
-# `optimize`, which may be a stateful, deliberately non-deterministic optimizer.
-# The ceiling is a hot loop over a large network re-planned every call; the upgrade
-# path is a @cache keyed on (equation, shapes, optimize) restricted to `str`.
+# Simplification: unbounded `cache`, matching every other plan cache in the module; the
+# upgrade path if a caller ever generates equations per call is `lru_cache(maxsize=)`.
+@cache
+def _path(
+    equation: str, shapes: tuple[tuple[int, ...], ...], optimize: str
+) -> tuple[tuple[int, ...], ...]:
+    """The pairwise order ``opt_einsum`` chooses, for a named strategy.
+
+    Path search is not free against a graded tensor's block work, which is what
+    a dense estimate gets wrong: blocks are small and numerous, so the search
+    measured 0.05 ms against 0.20 ms of block work and ``opt_einsum.contract_path``
+    was 29% of a six-operand ``einsum`` by cumulative time.
+
+    Only a strategy *name* is cached, which is what makes this invisible: an
+    explicit path is already a path, and a ``PathOptimizer`` object may be stateful
+    and deliberately non-deterministic (cotengra's are), so both keep going to
+    ``opt_einsum`` on every call, as the docstring's "handed to ``opt_einsum``
+    unchanged" promises. The key is complete — nothing but the equation, the
+    operands' plan shapes and the strategy reaches the search.
+    """
+    import opt_einsum as oe
+
+    # `opt_einsum` types `optimize` as a Literal union of strategy names; a plain `str`
+    # is exactly what a caller passes, and validating it here would duplicate the
+    # refusal `contract_path` already raises for an unknown name.
+    strategy: Any = optimize
+    path, _ = oe.contract_path(equation, *shapes, shapes=True, optimize=strategy)
+    return tuple(path)
+
+
 def _contract_path(
     terms: list[str], out: str, operands: tuple["SymmetricTensor", ...], optimize: Any
 ) -> "SymmetricTensor":
@@ -1203,14 +1247,19 @@ def _contract_path(
     # not adjacent; the upgrade path is a sign correction computed from the skipped
     # operands' parities, which is M9's categorical path planning and needs new
     # mathematics rather than a scheduler.
-    import opt_einsum as oe
+    equation = f"{','.join(terms)}->{out}"
+    shapes = tuple(_plan_shape(t) for t in operands)
+    if isinstance(optimize, str):
+        # A hit skips `oe.contract_path` outright rather than re-entering it with the
+        # cached path: re-entry only re-validates the path against the same equation and
+        # the same shapes that produced it, and the loop below rejects a non-pair step
+        # itself. Skipping it is 0.21 -> 0.18 ms at three operands and 0.80 -> 0.74 ms
+        # at six: at the low end it is more of the win than the search is.
+        path = _path(equation, shapes, optimize)
+    else:
+        import opt_einsum as oe
 
-    path, _ = oe.contract_path(
-        f"{','.join(terms)}->{out}",
-        *(_plan_shape(t) for t in operands),
-        shapes=True,
-        optimize=optimize,
-    )
+        path, _ = oe.contract_path(equation, *shapes, shapes=True, optimize=optimize)
     terms, tensors = list(terms), list(operands)
     # `rank` is each entry's position in the equation as the *caller* wrote it, which
     # `opt_einsum`'s bookkeeping (pop both, append the result) does not preserve. It
