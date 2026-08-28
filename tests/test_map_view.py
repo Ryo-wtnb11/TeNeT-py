@@ -307,6 +307,25 @@ def test_from_matrices_rejects_an_unknown_sector():
     assert repr(alien) in str(e.value)
 
 
+def test_from_matrices_rejects_matrices_of_mixed_dtype():
+    """The dtype refusal lives here, on the untrusted input, not on the blocks (#328)."""
+    t = SymmetricTensor.random(GRID_LEGS, seed=11)
+    mats = to_matrices(t)
+    c = next(iter(mats))
+    mats[c] = mats[c].astype(np.complex128)
+    assert len(mats) > 1
+    with pytest.raises(ValueError, match="from_matrices: matrices must share one dtype"):
+        from_matrices(t.structure, mats)
+
+
+def test_from_matrices_still_produces_a_tensor_the_checked_constructor_accepts():
+    t = SymmetricTensor.random(SU2_LEGS, seed=12)
+    back = from_matrices(t.structure, to_matrices(t))
+    shapes = back.structure.block_shapes
+    assert all(tuple(b.shape) == s for b, s in zip(back.blocks, shapes, strict=True))
+    assert SymmetricTensor(back.structure, back.blocks) == back  # the trust boundary, re-run
+
+
 # --- backend agnosticism --------------------------------------------------------
 
 

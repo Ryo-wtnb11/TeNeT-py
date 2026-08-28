@@ -7,6 +7,7 @@ from math import sqrt
 import numpy as np
 import pytest
 
+import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
 from tenet.symmetry import SU2, U1, CapabilityError, SU2Sector, Trivial, TrivialSector, U1Sector
 
@@ -90,6 +91,44 @@ def test_mixed_dtypes_raise():
     blocks[0] = blocks[0].astype(np.float64)
     with pytest.raises(ValueError, match="share one dtype"):
         SymmetricTensor.from_blocks(legs, keyed(legs, blocks))
+
+
+# --- the unvalidated internal path (#328) ---------------------------------------
+
+
+def test_the_unvalidated_constructor_is_not_public():
+    import tenet.tensor
+
+    assert "_unchecked" not in tenet.tensor.__all__
+    assert not hasattr(tenet, "_unchecked")
+    assert not any(name.endswith("unchecked") for name in dir(tenet))
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        lambda a, b: tenet.tensordot(a, b, ((1,), (0,))),
+        lambda a, b: tenet.transpose(a, (1, 0)),
+        lambda a, b: tenet.add(a, a),
+        lambda a, b: tenet.adjoint(a),
+        lambda a, b: tenet.fuse(
+            SymmetricTensor.random((Leg(V, OUT), Leg(V, OUT), Leg(V, IN)), seed=2), (0, 1)
+        ),
+        lambda a, b: tenet.bend(SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=3), 1),
+    ],
+)
+def test_the_fast_path_and_the_checked_path_agree_on_a_real_result(op):
+    """Why skipping validation is safe: the blocks really do have the checked shapes."""
+    legs = (Leg(V, OUT), Leg(V, IN))
+    a = SymmetricTensor.random(legs, seed=0)
+    b = SymmetricTensor.random((Leg(V, OUT), Leg(V, IN)), seed=1)
+    got = op(a, b)
+    shapes = got.structure.block_shapes
+    assert len(got.blocks) == len(shapes)
+    assert all(tuple(x.shape) == s for x, s in zip(got.blocks, shapes, strict=True))
+    # the trust boundary, re-run over what the internal path produced: it accepts
+    again = SymmetricTensor(got.structure, got.blocks)
+    assert again == got
 
 
 def test_block_view_is_identity_and_items_round_trip():

@@ -549,10 +549,12 @@ def adjoint(t: "SymmetricTensor") -> "SymmetricTensor":
     # Simplification: a provider with complex Clebsch-Gordan coefficients would need the
     # same capability gate ``ops.basic.conj`` already flags — one ``requires(provider,
     # DaggerData)`` line, once DaggerData grows content. Not a second speculative protocol.
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
     plan = adjoint_plan(t.structure)
-    return SymmetricTensor(
+    # ``conj`` moves no axis and the legs keep their spaces, so the block the plan
+    # names for each key of ``plan.new_structure`` already has that key's shape (#328)
+    return _unchecked(
         plan.new_structure, tuple(ar.do("conj", t.blocks[src]) for src in plan.sources)
     )
 

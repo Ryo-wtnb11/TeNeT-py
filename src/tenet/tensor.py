@@ -1063,3 +1063,64 @@ class SymmetricTensor:
         from tenet.ops.dense import from_dense
 
         return from_dense(dense, legs, atol=atol)
+
+
+def _unchecked(structure: TensorStructure, blocks: tuple[Array, ...]) -> SymmetricTensor:
+    """Assemble a tensor **without** running ``__post_init__``'s checks.
+
+    Private to ``tenet.ops`` and ``tenet.map_view``, and deliberately not
+    exported: it is the one construction path that trusts its caller.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure the blocks were computed against.
+    blocks : tuple of array
+        One block per key of ``structure.block_order``, already a ``tuple``,
+        each of shape ``structure.block_shapes[i]``, all of one dtype. Nothing
+        here checks any of that.
+
+    Returns
+    -------
+    SymmetricTensor
+        The tensor, byte for byte what the ordinary constructor would have
+        built from the same arguments.
+
+    Notes
+    -----
+    ``__post_init__`` is the trust boundary -- it is what makes
+    ``SymmetricTensor(structure, blocks)`` safe to hand arbitrary arrays to, and
+    it stays exactly as it is. But a caller that *derived* its blocks from
+    ``structure``'s own tables is not untrusted input; it is us, re-checking our
+    own arithmetic once per block. On a rank-8 SU(2) intermediate of 613,468
+    blocks that re-check is a fifth of the contraction it sits in. So the
+    boundary stops being crossed internally rather than being weakened, and the
+    check is never conditioned on how the interpreter was started -- ``python -O``
+    would switch off the boundary too, which is the copy of the check that
+    matters.
+
+    Use this only where the shapes provably came from the same ``structure``:
+    a plan applier writing one block per key of the structure the plan was built
+    from, or an elementwise map over an already-validated tensor's blocks. A
+    caller that lets a *user* function decide a block's shape, or that assumes
+    two structures enumerate their keys in the same order, is not such a place
+    and must keep the ordinary constructor.
+
+    **The dtype check goes too, and is not offered as a separate entry point.**
+    It is the cheaper of the two -- one pass building ``{block.dtype for block in
+    blocks}`` against the shape loop's tuple comparison per block, about 7.5 ms
+    against 27 ms at 613,468 blocks -- but it is cheaper by a constant, not by a
+    shape: it is still one touch per block. It *is* separable, though, and where
+    it is still wanted it separates in a better direction than a second
+    constructor would give it. ``map_view.from_matrices`` takes user matrices and
+    hands out blocks that are views into them, so a dtype disagreement there is a
+    real refusal and a shape disagreement is not; it keeps the dtype check and
+    spells it over the *matrices*, one touch per coupled sector instead of one per
+    block. That is the general shape of the answer -- check the untrusted thing,
+    which is never the block list -- and it is why no trusted caller needs a
+    dtype-only door into this function.
+    """
+    t = object.__new__(SymmetricTensor)
+    object.__setattr__(t, "structure", structure)
+    object.__setattr__(t, "blocks", blocks)
+    return t
