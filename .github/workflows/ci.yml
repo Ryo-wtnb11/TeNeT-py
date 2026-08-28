@@ -16,8 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     # `uv run pytest` is the whole job: everything else -- both syncs, the doctests,
     # the torch subset and the docs build -- totals 45 s measured. The suite runs on
-    # four xdist workers (see `addopts`), which measured 741 s -> 358 s locally; the
-    # runner is ~2x slower still, so warm runs land near 12 min and 30 is the cap.
+    # xdist workers (see `addopts`), which measured 517 s -> 139 s locally; the
+    # runner is ~2x slower still, so warm runs land well inside 10 min; 30 is the cap
+    # a cold cache and a slow runner still have to fit in.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7

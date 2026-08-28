@@ -92,6 +92,6 @@ testpaths = ["tests"]
 # per core. `loadfile` is the part that matters: the expensive modules converge an
 # environment or build a plan once and share it across their own tests, and the
 # default per-test distribution would re-pay every one of those cold builds on a
-# different worker. Measured 741 s -> 358 s on four workers, whose floor is now the
-# slowest single module.
+# different worker. The floor is therefore the slowest single *file*, which is what
+# splitting the CTMRG lane in two was for: 517 s serial -> 208 s -> 139 s.
 addopts = "-n auto --dist loadfile"
