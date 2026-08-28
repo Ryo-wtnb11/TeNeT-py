@@ -214,7 +214,7 @@ def bend(t: "SymmetricTensor", axis: int) -> "SymmetricTensor":
     >>> b.legs[-1].side, b.legs[-1].dual
     (<Side.IN: 'in'>, True)
     """
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
     if not 0 <= axis < t.ndim:
         raise ValueError(f"bend: axis {axis} is out of range for a {t.ndim}-axis tensor")
@@ -253,7 +253,10 @@ def bend(t: "SymmetricTensor", axis: int) -> "SymmetricTensor":
             f"bend: the plan fills {len(blocks)} of {n} target blocks — "
             f"{t.provider.name}'s bending coefficients dropped terms"
         )
-    return SymmetricTensor(plan.new_structure, tuple(blocks[i] for i in range(n)))
+    # one block per key of ``plan.new_structure``, each a transposed source block of
+    # ``t`` under the plan's own permutation: the plan is the statement that the
+    # shapes are right, so the ordinary constructor would only re-derive it (#328)
+    return _unchecked(plan.new_structure, tuple(blocks[i] for i in range(n)))
 
 
 def _validated(
@@ -672,7 +675,7 @@ def apply_plan(
     and moves no element at all; the first consumer that needs contiguity pays for it,
     which on the contraction path is the sector-matrix assembly.
     """
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import _unchecked
 
     if structure == t.structure and _is_identity(structure, perm, terms):
         return t  # the plan rebuilds what it reads; tensors are immutable, so hand it back
@@ -699,7 +702,10 @@ def apply_plan(
             f"{caller}: the plan fills {len(blocks)} of {n} target blocks — "
             f"{t.provider.name}'s coefficients dropped terms"
         )
-    return SymmetricTensor(structure, tuple(blocks[i] for i in range(n)))
+    # ``structure`` is the structure the plan was built against and every ``dst`` is
+    # an index into its ``block_order``; the batched and looped walks both write the
+    # shape that structure's own tables dictate (#328)
+    return _unchecked(structure, tuple(blocks[i] for i in range(n)))
 
 
 def _flip_refuse(structure: TensorStructure) -> None:
