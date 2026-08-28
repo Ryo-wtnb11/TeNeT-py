@@ -146,7 +146,7 @@ def test_provider_name_field_round_trips(tmp_path):
 @pytest.mark.parametrize("dtype", [np.float64, np.complex128, np.int64])
 def test_dtypes_round_trip_exactly(dtype, tmp_path):
     t = tensor("su2")
-    t = t.set_params([(b * 10).astype(dtype) for b in t.blocks])
+    t = t.set_params([(m * 10).astype(dtype) for m in t.get_params()])
     tenet.save(t, tmp_path / "t.npz")
     loaded = tenet.load(tmp_path / "t.npz")
     for a, b in zip(loaded.blocks, t.blocks, strict=True):

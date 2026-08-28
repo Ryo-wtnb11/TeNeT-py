@@ -205,7 +205,7 @@ def test_the_result_is_a_plain_frozen_symmetric_tensor(legs):
         assert dataclasses.is_dataclass(t)
         assert isinstance(t.blocks, tuple)
         with pytest.raises(dataclasses.FrozenInstanceError):
-            t.data = ()
+            t._data = ()
 
 
 def test_the_result_is_still_a_jax_pytree():

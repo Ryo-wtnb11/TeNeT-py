@@ -574,7 +574,7 @@ def _concatenated(
 
 def gather(
     structure: TensorStructure, blocks: tuple[Any, ...]
-) -> tuple[tuple[Any, ...], tuple[Any, ...] | None]:
+) -> tuple[tuple[Any, ...] | None, tuple[Any, ...]]:
     """[assemble][tenet.map_view.assemble], plus the blocks of the result where they are free.
 
     Parameters
@@ -586,11 +586,13 @@ def gather(
 
     Returns
     -------
-    mats : tuple of array
-        One matrix per coupled sector, in ``map_layout(structure).sectors`` order.
-    views : tuple of array or None
-        The same blocks as views **into** ``mats``, or ``None`` where this route did not
-        produce them and [views][tenet.map_view.views] has to cut them.
+    mats : tuple of array or None
+        One matrix per coupled sector, in ``map_layout(structure).sectors`` order, or
+        ``None`` where the gather is deferred -- see
+        [data][tenet.SymmetricTensor.data] for which backend defers and why.
+    views : tuple of array
+        The blocks of the result: views **into** ``mats`` where they were gathered, and
+        the given blocks themselves where they were not.
 
     Notes
     -----
@@ -606,13 +608,23 @@ def gather(
     the same strides -- so a tensor's blocks do not depend on which door it came in
     through. The tests assert that against the ``views`` walk, block for block.
     """
+    if not blocks:  # no block, hence no matrix and no backend to ask about either
+        return (), ()
+    if ar.infer_backend(blocks[0]) not in _MUTABLE:
+        # Nothing to gather *now*. The blocks handed in are the blocks of the result,
+        # and on an immutable backend that is the whole of what ``blocks`` promises:
+        # there is no memory to alias, so "a view into the storage" and "the same
+        # values" are the same statement. Building the matrices here would be pure
+        # concatenation -- under a JAX trace, one graph node per block with a ``pad`` in
+        # its backward pass -- for a tensor that may never be asked for one. See
+        # [data][tenet.SymmetricTensor.data].
+        return None, blocks
+
     layout = map_layout(structure)
     bands, shapes = _tables(structure)
     order = layout.axes_order
     identity = tuple(range(structure.ndim))
     permuted = order != identity
-    if not blocks or ar.infer_backend(blocks[0]) not in _MUTABLE:
-        return _concatenated(blocks, layout, bands, order, permuted), None
 
     ref = blocks[0]
     backend = ar.infer_backend(ref)
@@ -662,9 +674,16 @@ def assemble(structure: TensorStructure, blocks: tuple[Any, ...]) -> tuple[Any, 
     blocks gets them gathered here, once, and every later operation reads the matrices.
     Which of the two assemblies runs is decided on the blocks' **backend** and never on
     their shapes -- see the module docstring. [gather][tenet.map_view.gather] is this
-    with the result's own blocks kept as well, which is what the constructor takes.
+    with the result's own blocks kept as well, and the gather itself deferred where it is
+    not free; that is what the constructor takes, and this is what forces it.
     """
-    return gather(structure, blocks)[0]
+    layout = map_layout(structure)
+    bands, _ = _tables(structure)
+    order = layout.axes_order
+    mats, _ = gather(structure, blocks)
+    if mats is not None:
+        return mats
+    return _concatenated(blocks, layout, bands, order, order != tuple(range(structure.ndim)))
 
 
 def views(structure: TensorStructure, data: tuple[Any, ...]) -> tuple[Any, ...]:
@@ -972,11 +991,22 @@ def lower_plan(
     >>> all(got[c].tobytes() == want[c].tobytes() for c in want)
     True
     """
+    # ``t.backend`` and not ``ar.infer_backend(t.data[0])``: on an immutable backend the
+    # matrices are not built until something asks for one, and declining the route is not
+    # asking. Reading the backend off ``data`` would gather every block of the source --
+    # under a trace, a graph node each -- to discover that this function cannot use them.
+    if not t.structure.num_blocks or t.backend not in _MUTABLE:
+        return None
+    # ``out=`` is what makes this one pass, and torch refuses it under autograd
+    # ("functions with out=... arguments don't support automatic differentiation").
+    # A watched tensor is not mutable in the sense ``_MUTABLE`` means, so the route
+    # declines and the ordinary applier -- which builds a temporary per term, and
+    # which is what torch always took before -- runs instead.
+    if getattr(t._first_block(), "requires_grad", False):
+        return None
     if structure == t.structure and is_identity_plan(structure, perm, terms):
         # the plan rebuilds what it reads, and the tensor already holds the matrices
         return to_matrices(t)
-    if not t.data or ar.infer_backend(t.data[0]) not in _MUTABLE:
-        return None
     normalized = _normalized(terms)
     if normalized is None:
         return None

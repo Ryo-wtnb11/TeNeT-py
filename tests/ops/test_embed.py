@@ -464,7 +464,7 @@ def test_gradient_matches_central_finite_differences(name):
             def shifted(delta, i=i, idx=idx):
                 blocks = list(np.array(b, copy=True) for b in t.blocks)
                 blocks[i][idx] += delta
-                return float(scalar(t.set_params(blocks)))
+                return float(scalar(SymmetricTensor(t.structure, blocks)))
 
             fd = (shifted(h) - shifted(-h)) / (2 * h)
             assert abs(fd - float(np.asarray(g.blocks[i])[idx])) < 1e-6
@@ -815,7 +815,7 @@ def test_restrict_gradient_matches_central_finite_differences(name):
             def shifted(delta, i=i, idx=idx):
                 blocks = [np.array(b, copy=True) for b in u.blocks]
                 blocks[i][idx] += delta
-                return float(scalar(u.set_params(blocks)))
+                return float(scalar(SymmetricTensor(u.structure, blocks)))
 
             fd = (shifted(h) - shifted(-h)) / (2 * h)
             assert abs(fd - float(np.asarray(g.blocks[i])[idx])) < 1e-6
@@ -1273,7 +1273,7 @@ def test_direct_sum_gradients_match_central_finite_differences_in_each_operand(n
                 def shifted(delta, i=i, idx=idx, operand=operand, frozen=frozen, pair=pair):
                     blocks = [np.array(b, copy=True) for b in operand.blocks]
                     blocks[i][idx] += delta
-                    return float(pair(operand.set_params(blocks), frozen))
+                    return float(pair(SymmetricTensor(operand.structure, blocks), frozen))
 
                 fd = (shifted(h) - shifted(-h)) / (2 * h)
                 assert abs(fd - float(np.asarray(g.blocks[i])[idx])) < 1e-6

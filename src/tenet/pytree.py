@@ -67,7 +67,7 @@ def _unflatten(structure: TensorStructure, data: object) -> SymmetricTensor:
     # ``data`` is whatever iterable the tree library hands back (see docstring);
     # it is deliberately typed ``object`` and left unvalidated here, so the
     # checker cannot see it is iterable.
-    object.__setattr__(t, "data", tuple(data))  # ty: ignore[invalid-argument-type]
+    object.__setattr__(t, "_data", tuple(data))  # ty: ignore[invalid-argument-type]
     object.__setattr__(t, "_views", None)
     return t
 

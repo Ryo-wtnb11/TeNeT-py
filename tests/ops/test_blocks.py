@@ -360,7 +360,7 @@ def test_negative_entries_give_the_backend_nan_before_and_after_ad_install():
     blocks = [np.array(b, copy=True) for b in t.blocks]
     blocks[0] = blocks[0].copy()
     blocks[0].flat[0] = -1.0
-    t = t.set_params(blocks)
+    t = SymmetricTensor(t.structure, blocks)
 
     def check():
         out = tenet.block_sqrt(t)

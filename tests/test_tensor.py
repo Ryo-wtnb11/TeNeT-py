@@ -67,11 +67,12 @@ def test_frozen_hashable_structure_tuple_blocks():
     assert isinstance(t.data, tuple)
     hash(t.structure)
     with pytest.raises(dataclasses.FrozenInstanceError):
-        t.data = ()
-    # ``blocks`` is a derived view, so it is read-only for the plainer reason that a
-    # property without a setter is
-    with pytest.raises((AttributeError, TypeError)):
-        t.blocks = ()
+        t._data = ()
+    # ``blocks`` and ``data`` are derived views, so they are read-only for the plainer
+    # reason that a property without a setter is
+    for name in ("blocks", "data"):
+        with pytest.raises((AttributeError, TypeError)):
+            setattr(t, name, ())
 
 
 def test_wrong_block_count_raises():

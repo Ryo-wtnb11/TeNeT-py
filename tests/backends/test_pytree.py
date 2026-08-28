@@ -300,9 +300,10 @@ def test_grad_matches_finite_differences_u1_through_transpose():
 
 def test_grad_through_set_params_agrees_with_the_pytree_route():
     t = jt(SU2_LEGS, 22)
-    via_params = jax.grad(lambda blocks: sq_norm(t.set_params(blocks)))(t.blocks)
+    # the parameters are the coupled-sector matrices, which are also the pytree leaves
+    via_params = jax.grad(lambda params: sq_norm(t.set_params(params)))(t.get_params())
     via_pytree = jax.grad(sq_norm)(t)
-    for a, b in zip(via_params, via_pytree.blocks, strict=True):
+    for a, b in zip(via_params, via_pytree.data, strict=True):
         np.testing.assert_allclose(np.asarray(a), np.asarray(b), atol=1e-12)
 
 
@@ -366,3 +367,73 @@ def test_jit_of_grad_and_vmap_of_grad(batch):
         np.testing.assert_allclose(
             np.asarray(mat), np.stack([np.asarray(p.data[i]) for p in plain]), atol=1e-12
         )
+
+
+# --- what the storage costs a traced graph ------------------------------------------
+# The same decision the leaves above record, seen from the other end. A block is a slice
+# of a coupled-sector matrix; on NumPy that slice is a view and free, but a traced slice
+# is a graph node whose backward pass is a ``pad``. So what an operation reads decides
+# what it costs under ``jax.jit``, and these two facts are structural -- they are about
+# the program, not about a machine or a duration.
+
+
+def _primitives(fn, *args):
+    """Every primitive a traced ``fn`` issues, counted, closed sub-jaxprs included."""
+    counts: dict[str, int] = {}
+
+    def walk(j):
+        for eqn in j.eqns:
+            name = str(eqn.primitive)
+            counts[name] = counts.get(name, 0) + 1
+            for param in eqn.params.values():
+                for sub in param if isinstance(param, (list, tuple)) else (param,):
+                    inner = getattr(sub, "jaxpr", None)
+                    if inner is not None:
+                        walk(getattr(inner, "jaxpr", inner))
+
+    walk(jax.make_jaxpr(fn)(*args).jaxpr)
+    return counts
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        pytest.param(tenet.conj, id="conj"),
+        pytest.param(tenet.negative, id="negative"),
+        pytest.param(tenet.adjoint, id="adjoint"),
+        pytest.param(lambda t: tenet.add(t, t), id="add"),
+        pytest.param(lambda t: tenet.multiply(t, 2.0), id="multiply"),
+    ],
+)
+def test_a_matrix_native_op_cuts_no_block_into_the_graph(op):
+    """An operation defined on the coupled-sector matrices slices nothing at all.
+
+    Not a bound with a constant in it: *zero*. Each of these is one backend call per
+    coupled sector over ``data``, so no block is ever cut and the traced program carries
+    no slice and no concatenate on their account -- however many blocks the tensor has.
+    """
+    t = jt(U1_LEGS4, 12)
+    assert t.structure.num_blocks > len(t.data)  # the fixture has blocks to cut
+    counts = _primitives(op, t)
+    assert counts.get("slice", 0) == 0
+    assert counts.get("concatenate", 0) == 0
+
+
+def test_an_op_that_reads_blocks_does_not_also_gather_them_back():
+    """A block-in, block-out operation gathers nothing: on JAX the matrices wait.
+
+    ``transpose`` is handed blocks and produces blocks, so it pays the cut its operand
+    needs -- that is what a slice is for -- and then nothing more, because on an
+    immutable backend the result's matrices are not built until something asks for one.
+    A ``concatenate`` here would be that gather, one per band, for a tensor whose blocks
+    are what the caller went on to read.
+    """
+    t = jt(U1_LEGS4, 13)
+
+    def fn(x):
+        moved = tenet.transpose(x, (0, 3, 2, 1))
+        return sum(jnp.sum(b) for b in moved.blocks)
+
+    counts = _primitives(fn, t)
+    assert counts.get("slice", 0) > 0  # the operand is matrix-backed, so it is cut
+    assert counts.get("concatenate", 0) == 0
