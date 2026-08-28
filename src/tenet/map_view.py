@@ -61,6 +61,7 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
+from tenet.backend import lib_fn
 from tenet.fusion_tree import FusionTree
 from tenet.leg import Leg
 from tenet.space import GradedSpace, ProductSpace
@@ -332,6 +333,14 @@ def _concatenated(
     dict of Sector to array
         One matrix per coupled sector.
     """
+    if not t.blocks:  # no block, hence no backend to resolve against and nothing to move
+        return {}
+
+    # resolved once, called once per block: see tenet.backend
+    transpose = lib_fn(t.backend, "transpose")
+    reshape = lib_fn(t.backend, "reshape")
+    concatenate = lib_fn(t.backend, "concatenate")
+
     mats: dict[Sector, Any] = {}
     for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
         rows = []
@@ -340,10 +349,10 @@ def _concatenated(
             for i, (_, _, dc) in zip(indices, cbands, strict=True):
                 block = t.blocks[i]
                 if permuted:
-                    block = ar.do("transpose", block, order)
-                parts.append(ar.do("reshape", block, (dr, dc)))
-            rows.append(parts[0] if len(parts) == 1 else ar.do("concatenate", parts, axis=1))
-        mats[c] = rows[0] if len(rows) == 1 else ar.do("concatenate", rows, axis=0)
+                    block = transpose(block, order)
+                parts.append(reshape(block, (dr, dc)))
+            rows.append(parts[0] if len(parts) == 1 else concatenate(parts, axis=1))
+        mats[c] = rows[0] if len(rows) == 1 else concatenate(rows, axis=0)
     return mats
 
 
@@ -382,6 +391,7 @@ def to_matrices(t: "SymmetricTensor") -> dict[Sector, Any]:
 
     ref = t.blocks[0]
     dtype = ar.to_backend_dtype(ar.get_dtype_name(ref), like=ref)
+    transpose = lib_fn(t.backend, "transpose")
     mats: dict[Sector, Any] = {}
     for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
         out = ar.do("empty", layout.shape(c), dtype=dtype, like=ref)
@@ -389,7 +399,7 @@ def to_matrices(t: "SymmetricTensor") -> dict[Sector, Any]:
             for i, (_, co, dc) in zip(indices, cbands, strict=True):
                 block = t.blocks[i]
                 if permuted:
-                    block = ar.do("transpose", block, order)
+                    block = transpose(block, order)
                 # The *destination* is reshaped, never the source. Splitting the
                 # slice's two axes into the block's only subdivides strides, so this
                 # ``.reshape`` is a view on NumPy and on PyTorch alike (asserted with
@@ -525,11 +535,15 @@ def lower_plan(
     dtype = ar.to_backend_dtype(ar.get_dtype_name(ref), like=ref)
     mats = {c: ar.do("empty", layout.shape(c), dtype=dtype, like=ref) for c in layout.sectors}
 
+    transpose = lib_fn(t.backend, "transpose")
+    multiply = lib_fn(t.backend, "multiply")
+    add = lib_fn(t.backend, "add")
+
     written: set[int] = set()
     for src, dst, coeff in normalized:
         block = t.blocks[src]
         if permuted:
-            block = ar.do("transpose", block, order)
+            block = transpose(block, order)
         c, ro, dr, co, dc = slots[dst]
         # the *destination* is reshaped, never the source -- see ``to_matrices``
         dest = mats[c][ro : ro + dr, co : co + dc].reshape(shapes[dst])
@@ -538,9 +552,9 @@ def lower_plan(
             if coeff == 1:
                 dest[...] = block
             else:
-                ar.do("multiply", block, coeff, out=dest)
+                multiply(block, coeff, out=dest)
         elif coeff == 1:
-            ar.do("add", dest, block, out=dest)
+            add(dest, block, out=dest)
         else:
             # a second source summing into one destination *with* a coefficient is the
             # one term that still needs a temporary: ``out=`` scales or accumulates, not
@@ -548,7 +562,7 @@ def lower_plan(
             # also why ordering the group so a coefficient-carrying term writes first buys
             # nothing: such a group's terms *all* carry coefficients, so the first write
             # already scales through its ``out=`` and every later one still needs this.
-            ar.do("add", dest, scaled(block, coeff), out=dest)
+            add(dest, scaled(block, coeff), out=dest)
 
     if len(written) != structure.num_blocks:
         raise ValueError(
@@ -601,15 +615,22 @@ def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "Sy
     identity = tuple(range(structure.ndim))
     inverse = tuple(sorted(identity, key=order.__getitem__))
     permuted = order != identity
+    if not mats:  # no coupled sector, hence no block: `_check` has already agreed
+        return SymmetricTensor(structure, ())
+
+    backend = ar.infer_backend(next(iter(mats.values())))
+    reshape = lib_fn(backend, "reshape")
+    transpose = lib_fn(backend, "transpose")
+
     blocks: list[Any] = [None] * structure.num_blocks
     for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
         mat = mats[c]
         for (_, ro, dr), indices in zip(rbands, cells, strict=True):
             for i, (_, co, dc) in zip(indices, cbands, strict=True):
-                # basic slicing, not an ar.do: every backend spells a contiguous
-                # 2-D slice the same way (as in ops.fusion._unapply)
-                piece = ar.do("reshape", mat[ro : ro + dr, co : co + dc], shapes[i])
-                blocks[i] = ar.do("transpose", piece, inverse) if permuted else piece
+                # basic slicing, not a dispatched call: every backend spells a
+                # contiguous 2-D slice the same way (as in ops.fusion._unapply)
+                piece = reshape(mat[ro : ro + dr, co : co + dc], shapes[i])
+                blocks[i] = transpose(piece, inverse) if permuted else piece
     return SymmetricTensor(structure, tuple(blocks))
 
 

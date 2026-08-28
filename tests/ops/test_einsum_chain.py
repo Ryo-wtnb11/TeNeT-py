@@ -20,6 +20,7 @@ is asserted as such.
 
 import numpy as np
 import pytest
+from helpers import count_backend_calls
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
@@ -115,7 +116,6 @@ class Spy:
 @pytest.fixture
 def spy(monkeypatch):
     """Count through ``ar.do`` *and* through the operator form ``ar.do`` cannot see."""
-    import autoray as ar
 
     import tenet.map_view as mv
     import tenet.ops.permutation as pm
@@ -123,31 +123,30 @@ def spy(monkeypatch):
 
     rp = __import__("sys").modules["tenet.ops.repartition"]
     counts = Spy()
-    real_do, real_scaled, real_apply = ar.do, mv.scaled, rp.apply_plan
+    real_scaled, real_apply = mv.scaled, rp.apply_plan
 
     def scaled(block, coeff):
         counts.own_pass += block.size
         counts.terms += 1
         return real_scaled(block, coeff)
 
-    def do(name, *args, **kwargs):
+    def record(name, args, kwargs):
         if name == "multiply" and "out" in kwargs and len(args) == 2:
             counts.rides_a_write += args[0].size
             counts.terms += 1
         elif name in {"empty", "zeros"}:
             counts.empty += 1
-        return real_do(name, *args, **kwargs)
 
     def apply_plan(*args, **kwargs):
         counts.applied += 1
         return real_apply(*args, **kwargs)
 
-    monkeypatch.setattr(ar, "do", do)
     for module in (mv, pm, rp):
         monkeypatch.setattr(module, "scaled", scaled)
     monkeypatch.setattr(rp, "apply_plan", apply_plan)
     monkeypatch.setattr(ct, "apply_plan", apply_plan)
-    return counts
+    with count_backend_calls(monkeypatch, record):
+        yield counts
 
 
 @pytest.mark.parametrize("name", PROVIDERS)
