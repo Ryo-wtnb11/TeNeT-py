@@ -52,7 +52,9 @@ tests/           pytest tests, mirroring src/tenet/ structure
 8. Numerical leaves are backend-native arrays: the tensor holds
    `data: tuple[Array, ...]`, one dense matrix per coupled sector, and
    `blocks: tuple[Array, ...]` ordered by `structure.block_order` is the public
-   view of it. `TensorStructure` is immutable, hashable, and array-free — F/R and other coefficient arrays never go in
+   view of it. Every operation reads `data`; `blocks` is for interop and for
+   reading a tensor apart, and reading it cuts every block out of the matrices.
+   `TensorStructure` is immutable, hashable, and array-free — F/R and other coefficient arrays never go in
    structural fields. Do not subclass `numpy.ndarray` / `jax.Array` /
    `torch.Tensor`.
 9. No implicit densification. Dense expansion only via explicit `to_dense()`.

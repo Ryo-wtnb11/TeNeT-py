@@ -71,7 +71,7 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 
 from tenet.leg import IN, OUT, Leg
-from tenet.map_view import check_square, lower_plan, to_matrices
+from tenet.map_view import check_square, lower_plan, map_layout, to_matrices
 from tenet.ops.basic import _check_same_structure
 from tenet.ops.map import block_ref, compose_lowered, identity
 from tenet.ops.permutation import permutation_plan, transpose, twist
@@ -976,18 +976,25 @@ def inner(a: "SymmetricTensor", b: "SymmetricTensor") -> Any:
 
     Returns the backend's own scalar, so the whole function stays traceable and
     differentiable, as [norm][tenet.norm] is.
+
+    **Summed per coupled sector**, for the reason [norm][tenet.norm] is: the weight is
+    the coupled sector's, a sector's matrix is exactly its blocks laid side by side, and
+    the two structures share a layout because they share a structure -- so cell ``i`` of
+    ``a``'s matrix pairs with cell ``i`` of ``b``'s wherever the block walk paired them.
+    Cutting either operand's blocks out to spell the same sum is a pass over both
+    tensors in front of a reduction that was going to read every element anyway.
     """
     provider = a.provider
     requires(provider, QuantumDimensionData)
     _check_same_structure(a, b, "inner")
-    if not a.blocks:
+    if not a.data:
         return 0.0
     # No float(): concretizing here makes `inner` unusable under jit/grad/vmap.
     return sum(
         # requires() above; raise-based check does not narrow
-        provider.qdim(key.coupled)  # ty: ignore[unresolved-attribute]
+        provider.qdim(c)  # ty: ignore[unresolved-attribute]
         * ar.do("sum", ar.do("conj", x) * y)
-        for (key, x), y in zip(a.items(), b.blocks, strict=True)
+        for c, x, y in zip(map_layout(a.structure).sectors, a.data, b.data, strict=True)
     )
 
 

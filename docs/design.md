@@ -7617,6 +7617,15 @@ Coupled-sector matrices are retained as the canonical lowering for composition a
 NumPy, JAX, and PyTorch should see ordinary arrays at the numerical
 boundary. The tensor holds a tuple of per-coupled-sector arrays; `blocks` is the
 public view of it, one reduced block per key of `structure.block_order`.
+**Every operation reads `data`; `blocks` is for interop and for reading a tensor
+apart.** Reading `blocks` cuts every block of the tensor out of its matrices —
+cheap on NumPy, a graph node with a backward pass on a traced backend, and never
+free — so an operation that is defined per coupled sector (`norm`, `inner`, the
+elementwise maps) reduces over the matrices, and one that is defined per plan
+term reaches its source through a single slice of the source's own matrix. This
+is pinned by a count, not by a comment: `tests/test_map_view.py` asserts *zero*
+cuts across the hot operations, and `tests/backends/test_pytree.py` asserts zero
+`slice` primitives in the traced graph of the matrix-native ones.
 Structural metadata is immutable, hashable, and array-free — F/R
 and other coefficient arrays never live in structural fields. All three are
 enforced, not asserted: `tests/backends/test_torch.py` walks every public op on

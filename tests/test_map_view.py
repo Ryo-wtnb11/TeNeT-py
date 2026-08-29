@@ -425,3 +425,60 @@ def test_map_view_has_no_numpy_no_to_dense_and_no_provider_branching():
     assert "to_dense(" not in src
     assert "if provider ==" not in src
     assert "isinstance(provider" not in src
+
+
+# --- the storage is what the hot path reads -------------------------------------
+
+
+def _blocks_reads(fn):
+    """How many times ``fn()`` makes a tensor cut its blocks out of its matrices."""
+    original = SymmetricTensor.blocks
+    reads = 0
+
+    def probe(self):
+        nonlocal reads
+        reads += self._views is None  # a memoized cut is not a cut
+        return original.fget(self)
+
+    SymmetricTensor.blocks = property(probe)
+    try:
+        fn()
+    finally:
+        SymmetricTensor.blocks = original
+    return reads
+
+
+def _matrix_backed(t):
+    """``(structure, matrices)`` -- ``from_matrices`` of these holds no cut."""
+    return t.structure, to_matrices(t)
+
+
+@pytest.mark.parametrize(
+    "legs", [pytest.param(U1_LEGS, id="u1"), pytest.param(GRID_LEGS, id="su2-grid")]
+)
+def test_the_hot_operations_never_cut_a_block(legs):
+    """The storage contract, as a count: *zero*, not a bound with a constant in it.
+
+    ``data`` is the storage and ``blocks`` is the interop view of it, so an operation
+    that reads ``blocks`` cuts every block of its operand out of the matrices before it
+    starts -- free-ish on NumPy, a graph node with a backward pass on a traced backend,
+    and never free. Each operation below is defined per coupled sector or per plan term,
+    and a term reaches its source through one slice of the source's own matrix, so none
+    of them has any reason to ask.
+    """
+    # matrix-backed operands, which is what every intermediate of a chain is: a tensor
+    # built from blocks keeps the cut its constructor already made, and would hide the
+    # question by answering ``blocks`` out of that memo
+    a = from_matrices(*_matrix_backed(SymmetricTensor.random(legs, seed=21)))
+    b = from_matrices(*_matrix_backed(SymmetricTensor.random(legs, seed=22)))
+    assert a._views is None and b._views is None
+
+    def hot():
+        tenet.norm(a)
+        tenet.inner(a, b)
+        tenet.transpose(a, (a.ndim - 1, *range(a.ndim - 1)))
+        tenet.repartition(a, tuple(range(a.ndim - 1)), (a.ndim - 1,))
+        tenet.tensordot(a, b, axes=((1,), (0,)))
+        tenet.linalg.svd(a)
+
+    assert _blocks_reads(hot) == 0
