@@ -12,8 +12,10 @@ import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, TensorStructure
 from tenet.cache import DEFAULT_BUDGET, _PlanCache, budget, plan_cache
 from tenet.map_view import map_layout
-from tenet.ops.contraction import _restore_plan
+from tenet.ops.contraction import _pattern_restore_plan, _restore_plan
+from tenet.ops.map import _pattern_adjoint_plan, adjoint_plan
 from tenet.ops.repartition import _pattern_repartition_plan, repartition_plan
+from tenet.structure import _block_shape_table
 from tenet.symmetry import SU2, SU2Sector
 
 
@@ -138,23 +140,24 @@ def structure(chi: int) -> TensorStructure:
 
 
 def test_a_hit_a_miss_and_a_post_eviction_recompute_agree():
-    args = (structure(2), (0, 1, 2), (3,), ((1, 0, 2, 3),))
-    fresh = _restore_plan.__wrapped__(*args)
-    miss = _restore_plan(*args)
-    hit = _restore_plan(*args)
+    """On ``_block_shape_table``: the smallest cache that genuinely reads degeneracies."""
+    args = (structure(2),)
+    fresh = _block_shape_table.__wrapped__(*args)
+    miss = _block_shape_table(*args)
+    hit = _block_shape_table(*args)
     assert hit is miss
     assert miss == fresh
 
-    kept = _restore_plan.budget
+    kept = _block_shape_table.budget
     try:
-        _restore_plan.cache_clear()
-        _restore_plan.budget = 1  # every plan here is oversized: nothing is retained
-        again = _restore_plan(*args)
+        _block_shape_table.cache_clear()
+        _block_shape_table.budget = 1  # every table here is oversized: nothing is retained
+        again = _block_shape_table(*args)
     finally:
-        _restore_plan.budget = kept
-        _restore_plan.cache_clear()
+        _block_shape_table.budget = kept
+        _block_shape_table.cache_clear()
     assert again is not miss
-    assert again == miss, "a recompute after eviction returned a different plan"
+    assert again == miss, "a recompute after eviction returned a different table"
 
 
 def test_map_layout_survives_a_round_trip_through_eviction():
@@ -177,7 +180,7 @@ def test_bounding_does_not_change_what_a_tensordot_computes():
     b = SymmetricTensor.random(structure(2).legs, seed=1)
     reference = tenet.tensordot(a, b, ((2, 3), (0, 1)))
 
-    kept = {c: c.budget for c in (map_layout, _restore_plan)}
+    kept = {c: c.budget for c in (map_layout, _block_shape_table)}
     try:
         for c in kept:
             c.budget = 0  # nothing whatever is retained
@@ -195,7 +198,7 @@ def test_bounding_does_not_change_what_a_tensordot_computes():
 def test_a_pattern_cache_is_not_bounded_and_a_growing_bond_adds_no_entry_to_it():
     """The design: block indices read sectors, not degeneracies (``tenet.cache``)."""
     assert not isinstance(_pattern_repartition_plan, _PlanCache)
-    assert isinstance(_restore_plan, _PlanCache)
+    assert isinstance(map_layout, _PlanCache), "offsets and extents read the degeneracies"
 
     _pattern_repartition_plan.cache_clear()
     repartition_plan.cache_clear()
@@ -213,3 +216,31 @@ def test_the_outer_plan_shells_share_the_pattern_entry_terms():
     plans = [repartition_plan(structure(chi), (0, 1, 2), (3,)) for chi in (1, 2, 3)]
     assert len({id(p.terms) for p in plans}) == 1
     assert len({p.new_structure for p in plans}) == 3
+
+
+def test_the_restore_plan_shells_share_the_pattern_entry_terms():
+    """``_restore_plan`` composes terms, and a composed term reads no degeneracy."""
+    args = ((0, 1, 2), (3,), ((1, 0, 2, 3),))
+    _pattern_restore_plan.cache_clear()
+    plans = [_restore_plan(structure(chi), *args) for chi in (1, 2, 3)]
+    assert len({id(terms) for _, _, terms in plans}) == 1
+    assert len({id(perm) for _, perm, _ in plans}) == 1
+    assert len({s for s, _, _ in plans}) == 3
+    assert _pattern_restore_plan.cache_info().currsize == 1
+
+
+def test_the_restore_plan_shares_its_terms_through_a_bend_too():
+    """The bending case: a leg crossing sides is where a degeneracy could enter, and does not."""
+    plans = [_restore_plan(structure(chi), (0,), (1, 2, 3), ()) for chi in (1, 2, 3)]
+    assert len({id(terms) for _, _, terms in plans}) == 1
+    assert len({s.legs[1].side for s, _, _ in plans}) == 1
+    assert plans[0][0].legs[1].side is IN, "this case must actually bend a leg"
+
+
+def test_the_adjoint_plan_shells_share_the_pattern_entry_sources():
+    """``sources`` is a permutation of ``block_order``, which reads no degeneracy."""
+    _pattern_adjoint_plan.cache_clear()
+    plans = [adjoint_plan(structure(chi)) for chi in (1, 2, 3)]
+    assert len({id(p.sources) for p in plans}) == 1
+    assert len({p.new_structure for p in plans}) == 3
+    assert _pattern_adjoint_plan.cache_info().currsize == 1
