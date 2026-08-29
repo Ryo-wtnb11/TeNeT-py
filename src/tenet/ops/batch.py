@@ -20,15 +20,17 @@ one: bucketing by *multiplicity* as well as by shape makes every bucket a rectan
 rectangle is summed by indexing and adding, which every backend spells the same way.
 """
 
+from functools import cache
 from typing import Any
 
 import autoray as ar
 import numpy as np
 
 from tenet.cache import plan_cache
+from tenet.map_view import Rect, _pools, _rects
 from tenet.structure import TensorStructure
 
-__all__ = ["batch_plan", "cast_coefficients"]
+__all__ = ["batch_plan", "cast_coefficients", "coefficient_dtype", "recouple_plan"]
 
 
 MIN_BATCH_ROWS = 4
@@ -67,13 +69,39 @@ def cast_coefficients(coeff: np.ndarray, block: Any) -> Any:
     array
         ``coeff`` as a backend-native array of the promoted dtype.
     """
-    dtype = np.dtype(ar.get_dtype_name(block))
+    dtype = coefficient_dtype(coeff.dtype, ar.get_dtype_name(block))
+    return ar.do("array", coeff.astype(dtype, copy=False), like=block)
+
+
+@cache
+def coefficient_dtype(coeff: np.dtype, name: str) -> np.dtype:
+    """The dtype [cast_coefficients][tenet.ops.batch.cast_coefficients] casts to.
+
+    Parameters
+    ----------
+    coeff : numpy.dtype
+        The coefficient column's own dtype.
+    name : str
+        The block dtype's autoray name.
+
+    Returns
+    -------
+    numpy.dtype
+        What the column has to be in for the multiply to promote the way a per-term
+        Python scalar would.
+
+    Notes
+    -----
+    Split out and cached because the answer depends on two dtypes and nothing else,
+    while the caller asks it once per bucket: a recoupling of an SU(2) rank-6 bend at
+    ragged degeneracies has 2,773 of them, and the ``np.result_type`` walk behind it
+    costs more than the cast it decides.
+    """
+    dtype = np.dtype(name)
     if dtype.kind in "fc":
         real = np.empty(0, dtype=dtype).real.dtype
-        dtype = real if coeff.dtype.kind == "f" else np.result_type(real, np.complex64)
-    else:
-        dtype = np.result_type(dtype, coeff.dtype)
-    return ar.do("array", coeff.astype(dtype, copy=False), like=block)
+        return real if coeff.kind == "f" else np.result_type(real, np.complex64)
+    return np.result_type(dtype, coeff)
 
 
 @plan_cache(cost=lambda r: sum(len(t) for _, bs in r[0] for t, _, _, _ in bs) + len(r[1]))
@@ -172,3 +200,96 @@ def batch_plan(
         start = stop
 
     return tuple(groups), tuple(loose)
+
+
+Bucket = tuple[int, Any, Any, int, int]
+"""``(pool, source rows, coefficients or None, terms per cell, cells)``."""
+
+
+@plan_cache(
+    cost=lambda plan: 1 if plan is None else sum(len(b[1]) for _, _, bs, _ in plan for b in bs)
+)
+def recouple_plan(
+    source: TensorStructure,
+    structure: TensorStructure,
+    perm: tuple[int, ...],
+    terms: tuple[tuple[int, int, complex], ...],
+) -> tuple[tuple[int, Rect, tuple[Bucket, ...], Any], ...] | None:
+    """``(perm, terms)`` regrouped so that one destination *rectangle* is built at a time.
+
+    Parameters
+    ----------
+    source : TensorStructure
+        The structure the plan reads; supplies the pools the gathers index.
+    structure : TensorStructure
+        The plan's ``new_structure``.
+    perm : tuple of int
+        The plan's single per-block axis permutation.
+    terms : tuple of (int, int, complex)
+        ``(source block, target block, coefficient)``.
+
+    Returns
+    -------
+    tuple or None
+        Per destination rectangle, ``(sector, rectangle, buckets, reorder)``: the
+        [Bucket][tenet.map_view.Bucket]s that build its cells and the index array that
+        puts their results back into cell order, or ``None`` where that is already the
+        order. ``None`` for the whole plan where some target block receives no term at
+        all -- the caller's fill check is then the one that reports it.
+
+    Notes
+    -----
+    [batch_plan][tenet.ops.batch.batch_plan] groups by destination *shape*; this groups
+    by destination *rectangle*, which is finer and is what makes the write side one
+    strided store per rectangle instead of one reshape and one store per block. Within a
+    rectangle the cells are grouped by multiplicity for the reason ``batch_plan`` gives
+    -- a rectangle of equal multiplicities needs no padding and no segment-sum primitive
+    -- and the groups are concatenated and reordered back, which is two array calls
+    against the alternative of padding the sum with zeros and losing bit-identity.
+
+    A destination's terms keep their plan order, and each is accumulated in that order,
+    so the arithmetic is the loop's arithmetic and not merely close to it.
+    """
+    _, rows, pool_of = _pools(source)
+    by_dst: dict[int, list[tuple[int, complex]]] = {}
+    for src, dst, coeff in terms:
+        by_dst.setdefault(dst, []).append((src, coeff))
+
+    plan: list[tuple[int, Rect, tuple[Bucket, ...], Any]] = []
+    for si, (_, rects) in enumerate(_rects(structure)):
+        for rect in rects:
+            cells = rect[7]
+            widths: dict[int, list[int]] = {}
+            for p, block in enumerate(cells):
+                got = by_dst.get(block)
+                if got is None:
+                    return None  # a target block no term reaches; the caller says so
+                widths.setdefault(len(got), []).append(p)
+
+            buckets: list[Bucket] = []
+            places: list[int] = []
+            for width in sorted(widths):
+                at = widths[width]
+                places.extend(at)
+                flat = [term for p in at for term in by_dst[cells[p]]]
+                coeff = np.array([c for _, c in flat])
+                if not coeff.imag.any():
+                    coeff = coeff.real
+                buckets.append(
+                    (
+                        pool_of[flat[0][0]],
+                        np.fromiter((rows[s] for s, _ in flat), np.intp, len(flat)),
+                        None if (coeff == 1).all() else coeff.reshape((-1, *(1,) * len(perm))),
+                        width,
+                        len(at),
+                    )
+                )
+            plan.append(
+                (
+                    si,
+                    rect,
+                    tuple(buckets),
+                    None if len(buckets) == 1 else np.argsort(np.array(places), kind="stable"),
+                )
+            )
+    return tuple(plan)

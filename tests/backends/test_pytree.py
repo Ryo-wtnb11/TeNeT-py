@@ -14,6 +14,7 @@ import pytest
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
+from tenet.map_view import _rects
 from tenet.symmetry import SU2, U1, SU2Sector, U1Sector
 
 jax = pytest.importorskip("jax")
@@ -26,12 +27,20 @@ V = GradedSpace.new(SU2, {HALF: 2, ONE: 1})
 W = GradedSpace.new(SU2, {HALF: 1})
 V_BIG = GradedSpace.new(SU2, {HALF: 3, ONE: 1})  # differs from V only in a degeneracy
 Q = GradedSpace.new(U1, {U1Sector(0): 1, U1Sector(1): 2})
+# equal degeneracies, so a coupled sector's bands merge into one rectangle and the
+# rectangle count falls below the block count -- which is what the slice test needs
+QFLAT = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 2})
+# three charges, two of them sharing a degeneracy: some bands merge and some do not,
+# so the grid has fewer rectangles than blocks without collapsing to one each
+QMIXED = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1, U1Sector(2): 2})
 
 # 3 legs, two qdim-distinct coupled sectors: the qdim weight in `norm` is visible
 SU2_LEGS = (Leg(V, OUT), Leg(W, OUT), Leg(V, IN))
 SU2_LEGS_BIG = (Leg(V_BIG, OUT), Leg(W, OUT), Leg(V_BIG, IN))
 SU2_LEGS4 = (Leg(V, OUT), Leg(W, OUT), Leg(V, IN), Leg(W, IN))
 U1_LEGS4 = (Leg(Q, OUT), Leg(Q, OUT), Leg(Q, IN), Leg(Q, IN))
+U1_LEGS4_FLAT = (Leg(QFLAT, OUT), Leg(QFLAT, OUT), Leg(QFLAT, IN), Leg(QFLAT, IN))
+U1_LEGS4_MIXED = (Leg(QMIXED, OUT), Leg(QMIXED, OUT), Leg(QMIXED, IN), Leg(QMIXED, IN))
 # SU(2) is case A: only the OUT/IN interleaving may change, since a within-side
 # reorder is a braid and needs PermutationCoefficients (M4). U(1) is case B and
 # takes the within-side swap, so the coefficient path is exercised too.
@@ -419,21 +428,34 @@ def test_a_matrix_native_op_cuts_no_block_into_the_graph(op):
     assert counts.get("concatenate", 0) == 0
 
 
-def test_an_op_that_reads_blocks_does_not_also_gather_them_back():
-    """A block-in, block-out operation gathers nothing: on JAX the matrices wait.
+def _moved(legs, perm, seed):
+    """``transpose``'s primitives, with the result read as matrices rather than blocks."""
+    t = jt(legs, seed)
+    return t, _primitives(lambda x: sum(jnp.sum(m) for m in tenet.transpose(x, perm).data), t)
 
-    ``transpose`` is handed blocks and produces blocks, so it pays the cut its operand
-    needs -- that is what a slice is for -- and then nothing more, because on an
-    immutable backend the result's matrices are not built until something asks for one.
-    A ``concatenate`` here would be that gather, one per band, for a tensor whose blocks
-    are what the caller went on to read.
+
+def test_a_recoupling_reads_the_storage_whole_where_the_grid_is_one_rectangle():
+    """``transpose`` is matrix in, matrix out, so at equal degeneracies it slices nothing.
+
+    A coupled sector's bands merge into one rectangle when they carry the same
+    degeneracies, and that rectangle *is* the whole matrix. So the recoupling reads its
+    operand exactly as it is stored: **zero** slices, where reading the blocks would have
+    been one slice per block with a ``pad`` behind each in the backward pass.
     """
-    t = jt(U1_LEGS4, 13)
+    t, counts = _moved(U1_LEGS4_FLAT, (0, 3, 2, 1), 13)
+    assert t.structure.num_blocks > len(t.data)  # the fixture has blocks to cut
+    assert counts.get("slice", 0) == 0
 
-    def fn(x):
-        moved = tenet.transpose(x, (0, 3, 2, 1))
-        return sum(jnp.sum(b) for b in moved.blocks)
 
-    counts = _primitives(fn, t)
-    assert counts.get("slice", 0) > 0  # the operand is matrix-backed, so it is cut
-    assert counts.get("concatenate", 0) == 0
+def test_a_recoupling_slices_once_per_rectangle_and_never_once_per_block():
+    """Ragged degeneracies split the grid, and then the bound is the rectangle count.
+
+    One slice per rectangle, and fewer where a rectangle happens to be the whole matrix
+    and the trace elides it. The bound is the grid's own size and not a number measured
+    once, and the fixture has more blocks than rectangles -- so a slice that started
+    being cut per block would break this however many blocks the tensor has.
+    """
+    t, counts = _moved(U1_LEGS4_MIXED, (1, 0, 3, 2), 13)
+    rectangles = sum(len(rects) for _, rects in _rects(t.structure))
+    assert t.structure.num_blocks > rectangles
+    assert 0 < counts.get("slice", 0) <= rectangles

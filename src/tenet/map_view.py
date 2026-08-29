@@ -75,9 +75,19 @@ extents into the cell's own axes exposes every cell of it as a view -- three arr
 for the whole rectangle instead of two per cell. Every cell of a rectangle has the same
 shape by construction, so no cell is ever reshaped on its own.
 
-Blocks move only through ``ar.do("transpose"/"reshape"/"concatenate"/"empty")``
-plus basic slicing; there is no ``to_dense`` and no *symmetry provider* branching in
-this module.
+That same rectangle is what a **recoupling** reads and writes.
+[lower_plan][tenet.map_view.lower_plan] applies a plan's ``(perm, terms)`` and lowers the
+result at once, and it does it without a block: [_pooled][tenet.map_view._pooled] reads
+the source as one contiguous batch per block shape, one gather per multiplicity bucket
+picks a destination rectangle's cells out of it, and the rectangle is stored in one
+strided write. The Python work is therefore proportional to the rectangles -- an SU(2)
+rank-6 bend at uniform degeneracies has four of them against 9,145 blocks -- and on an
+immutable backend so is the traced graph, where reading a block would be a slice with a
+``pad`` behind it in the backward pass.
+
+Blocks move only through ``ar.do("transpose"/"reshape"/"concatenate"/"empty"/"stack"/
+"multiply"/"add")`` plus basic slicing; there is no ``to_dense`` and no *symmetry
+provider* branching in this module.
 """
 
 import math
@@ -516,6 +526,243 @@ def _stripes(
 
 _MUTABLE = frozenset({"numpy", "torch"})
 """Backends whose arrays accept an in-place write; every other one concatenates."""
+
+
+Pool = tuple[tuple[int, ...], tuple[tuple[int, Rect], ...], tuple[int, ...]]
+"""``(cell shape, the (sector, rectangle) pairs it holds, their cells in row order)``."""
+
+
+@plan_cache(cost=lambda pooled: len(pooled[1]))
+def _pools(
+    structure: TensorStructure,
+) -> tuple[tuple[Pool, ...], tuple[int, ...], tuple[int, ...]]:
+    """The blocks of ``structure`` grouped by shape into contiguous batches.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure to group.
+
+    Returns
+    -------
+    pools : tuple of Pool
+        One pool per distinct block shape: the rectangles whose cells it holds, in grid
+        order, and those cells' block indices in the order they occupy its rows.
+    rows : tuple of int
+        Per block, the row it occupies in its pool.
+    pool_of : tuple of int
+        Per block, which pool that is.
+
+    Notes
+    -----
+    The batch a plan gathers from. A pool holds every block of one shape, so a plan can
+    index it with one array of row numbers, and its rows run **rectangle by rectangle**
+    so that a whole rectangle of it is a contiguous slice -- which is what lets an
+    immutable backend build it by concatenating rectangles rather than by cutting each
+    block out on its own. Every cell of a rectangle has the same shape by construction
+    (see [_rects][tenet.map_view._rects]), so a rectangle belongs to one pool entire.
+
+    A pure function of ``structure``, cached beside [map_layout][tenet.map_layout] for
+    the reason [_tables][tenet.map_view._tables] is.
+    """
+    shapes = structure.block_shapes
+    order: dict[tuple[int, ...], tuple[list[tuple[int, Rect]], list[int]]] = {}
+    rows = [0] * structure.num_blocks
+    for si, (_, rects) in enumerate(_rects(structure)):
+        for rect in rects:
+            cells = rect[7]
+            members, held = order.setdefault(shapes[cells[0]], ([], []))
+            members.append((si, rect))
+            for block in cells:
+                rows[block] = len(held)
+                held.append(block)
+    pools = tuple((shape, tuple(members), tuple(held)) for shape, (members, held) in order.items())
+    pool_of = [0] * structure.num_blocks
+    for i, (_, _, held) in enumerate(pools):
+        for block in held:
+            pool_of[block] = i
+    return pools, tuple(rows), tuple(pool_of)
+
+
+def _pooled(t: "SymmetricTensor", pools: tuple[Pool, ...]) -> tuple[Any, ...]:
+    """``t``'s blocks as one contiguous batch per pool of [_pools][tenet.map_view._pools].
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor to read.
+    pools : tuple of Pool
+        ``_pools(t.structure)[0]``, already looked up.
+
+    Returns
+    -------
+    tuple of array
+        One ``(cells, *shape)`` array per pool, its rows in pool order.
+
+    Notes
+    -----
+    Two routes to the same array, split on backend mutability exactly as the assembly is.
+    A mutable backend's blocks are views it already holds, so stacking them is one array
+    call and a Python index per block. An immutable backend holds none: cutting one out
+    is a slice, and under a JAX trace a slice is a graph node with a ``pad`` behind it in
+    the backward pass, so the pool is read off the *rectangles* instead -- a handful of
+    calls each and none per block. That is the whole of what makes a recoupling
+    matrix-native there: nothing downstream of this ever sees a lone block.
+    """
+    if t.backend in _MUTABLE:
+        blocks = t.blocks
+        stack = lib_fn(t.backend, "stack")
+        return tuple(stack(tuple(blocks[i] for i in held)) for _, _, held in pools)
+
+    data = t.data
+    structure = t.structure
+    order = map_layout(structure).axes_order
+    identity = tuple(range(structure.ndim))
+    inverse = tuple(sorted(identity, key=order.__getitem__))
+    public = (0, 1, *(2 + inverse[a] for a in range(structure.ndim)))
+    permuted = order != identity
+
+    backend = ar.infer_backend(data[0])
+    reshape = lib_fn(backend, "reshape")
+    transpose = lib_fn(backend, "transpose")
+    concatenate = lib_fn(backend, "concatenate")
+
+    out: list[Any] = []
+    for shape, members, _ in pools:
+        parts = []
+        for si, (ro, nr, dr, co, nc, dc, split, _) in members:
+            # the rectangle walk ``views`` takes on NumPy, stopped one step short: the
+            # cells are left stacked instead of being handed out one at a time
+            mat = data[si]
+            if (ro, co, nr * dr, nc * dc) != (0, 0, *ar.shape(mat)):
+                mat = mat[ro : ro + nr * dr, co : co + nc * dc]
+            cut = reshape(mat, (nr, dr, nc, dc))
+            cut = reshape(transpose(cut, (0, 2, 1, 3)), split)
+            parts.append(reshape(transpose(cut, public) if permuted else cut, (nr * nc, *shape)))
+        out.append(parts[0] if len(parts) == 1 else concatenate(parts, axis=0))
+    return tuple(out)
+
+
+def _recoupled(
+    t: "SymmetricTensor",
+    structure: TensorStructure,
+    perm: tuple[int, ...],
+    terms: tuple[tuple[int, int, complex], ...],
+) -> dict[Sector, Any] | None:
+    """The plan applied rectangle by rectangle, straight into the destination matrices.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor the plan reads.
+    structure : TensorStructure
+        The plan's ``new_structure``.
+    perm : tuple of int
+        The plan's single per-block axis permutation.
+    terms : tuple of (int, int, complex)
+        ``(source block, target block, coefficient)``, already normalized.
+
+    Returns
+    -------
+    dict of Sector to array or None
+        One matrix per coupled sector; ``None`` where the plan leaves a target block
+        empty and the caller's fill check has to report it.
+
+    Notes
+    -----
+    Matrix in, matrix out, with no block cut on either side. The source becomes a pool
+    per shape ([_pooled][tenet.map_view._pooled]), one gather per bucket reads it, and
+    the result of a whole rectangle is stored at once -- so the Python work is
+    proportional to the rectangles, of which an SU(2) rank-6 bend at uniform
+    degeneracies has four against 9,145 blocks and at ragged ones 2,012.
+
+    The same code serves both mutability classes, because only the last step differs: a
+    mutable backend stores each rectangle into a preallocated matrix, an immutable one
+    concatenates the rectangles it has built. This is the third place that split appears,
+    and it is the same split for the same reason as in the assembly.
+    """
+    from tenet.ops.batch import coefficient_dtype, recouple_plan
+
+    plan = recouple_plan(t.structure, structure, perm, terms)
+    if plan is None:
+        return None
+
+    pools, _, _ = _pools(t.structure)
+    batches = _pooled(t, pools)
+
+    layout = map_layout(structure)
+    identity = tuple(range(structure.ndim))
+    order = layout.axes_order
+    permuted = order != identity
+    sideways = (0, *(1 + o for o in order))
+
+    ref = t._first_block()
+    backend = ar.infer_backend(ref)
+    # resolved once and called per rectangle: autoray's own dispatch costs more than the
+    # array call it forwards to when the arrays are a few hundred elements each
+    reshape = lib_fn(backend, "reshape")
+    transpose = lib_fn(backend, "transpose")
+    concatenate = lib_fn(backend, "concatenate")
+    multiply = lib_fn(backend, "multiply")
+    add = lib_fn(backend, "add")
+    array = lib_fn(backend, "array")
+    name = ar.get_dtype_name(ref)
+    # ``perm`` is per plan, so the whole pool turns once and every gather off it lands
+    # in destination axis order already
+    moved = (
+        batches
+        if perm == identity
+        else tuple(transpose(b, (0, *(1 + ax for ax in perm))) for b in batches)
+    )
+
+    mutable = backend in _MUTABLE
+    mats: list[Any] = []
+    if mutable:
+        dtype = ar.to_backend_dtype(name, like=ref)
+        mats = [ar.do("empty", shape, dtype=dtype, like=ref) for shape in layout.shapes]
+    pieces: list[list[tuple[int, Any]]] = [[] for _ in layout.sectors]
+
+    for si, (ro, nr, dr, co, nc, dc, _, _), buckets, reorder in plan:
+        parts = []
+        for pool, take, coeff, width, cells in buckets:
+            got = moved[pool][take]
+            if coeff is not None:
+                cast = coeff.astype(coefficient_dtype(coeff.dtype, name), copy=False)
+                got = multiply(got, array(cast))
+            if width > 1:
+                got = reshape(got, (cells, width, *got.shape[1:]))
+                acc = got[:, 0]
+                for k in range(1, width):
+                    acc = add(acc, got[:, k])
+                got = acc
+            parts.append(got)
+        arr = parts[0] if len(parts) == 1 else concatenate(parts, axis=0)
+        if reorder is not None:
+            arr = arr[reorder]
+        if permuted:
+            arr = transpose(arr, sideways)
+        arr = transpose(reshape(arr, (nr, nc, dr, dc)), (0, 2, 1, 3))
+        if mutable:
+            # the *destination* is reshaped, never the source -- see ``gather``
+            mats[si][ro : ro + nr * dr, co : co + nc * dc].reshape(nr, dr, nc, dc)[...] = arr
+            continue
+        pieces[si].append((ro, reshape(arr, (nr * dr, nc * dc))))
+
+    # the rectangles tile the grid and arrive in row-stripe order, so joining a stripe's
+    # rectangles across and then the stripes down rebuilds the matrix with no gap
+    for held in pieces if not mutable else ():
+        bands: list[Any] = []
+        run: list[Any] = []
+        at = held[0][0]
+        for ro, piece in held:
+            if ro != at:
+                bands.append(run[0] if len(run) == 1 else concatenate(run, axis=1))
+                at, run = ro, []
+            run.append(piece)
+        bands.append(run[0] if len(run) == 1 else concatenate(run, axis=1))
+        mats.append(bands[0] if len(bands) == 1 else concatenate(bands, axis=0))
+
+    return dict(zip(layout.sectors, mats, strict=True))
 
 
 def _concatenated(
@@ -961,21 +1208,20 @@ def lower_plan(
     form. YASTN fuses the same two steps for the same reason, its meta carrying order and
     destination slot together (its NumPy backend's ``transpose_and_merge``).
 
-    The terms are not walked one at a time. On NumPy they go through
-    [batch_plan][tenet.ops.batch.batch_plan] -- the grouping ``apply_plan`` already used,
-    by destination shape and then by multiplicity -- so a whole bucket is gathered,
-    scaled and summed as array operations and only its result is written into the
-    destination matrix. That is what makes the Python work proportional to the buckets
-    rather than to the terms: 2,457 dispatches for 296,953 terms on a rank-8 SU(2) bend.
-    What the grouping declines is the tail, and it keeps the term walk, with one
-    transposed view per distinct source rather than one per term.
+    The terms are not walked one at a time, and no block is cut out on its own either:
+    [_recoupled][tenet.map_view._recoupled] reads the source as one batch per block shape
+    and writes the destination one rectangle at a time, so the Python work is
+    proportional to the rectangles of the grid. That is what makes the route available
+    on an immutable backend as well as on a mutable one -- with the matrices as storage,
+    what an operation *reads* is its cost under a trace, and a block read there is a
+    slice with a ``pad`` behind it in the backward pass.
 
-    ``None`` is returned where the route does not apply: no blocks, an immutable backend
-    (which has no ``out=``, and whose ``to_matrices`` concatenates), or a genuinely
-    complex coefficient, which would have to promote the destination's dtype.
-    Simplification: every provider shipped here has real permutation and bending
-    coefficients, so the promotion case is left to the ordinary route rather than given
-    a dtype rule of its own.
+    ``None`` is returned where the route does not apply: no blocks, a torch tensor under
+    autograd (no in-place write), a genuinely complex coefficient, which would have to
+    promote the destination's dtype, or a plan that leaves a target block empty, which is
+    the caller's error to report. Simplification: every provider shipped here has real
+    permutation and bending coefficients, so the promotion case is left to the ordinary
+    route rather than given a dtype rule of its own.
 
     Examples
     --------
@@ -991,17 +1237,13 @@ def lower_plan(
     >>> all(got[c].tobytes() == want[c].tobytes() for c in want)
     True
     """
-    # ``t.backend`` and not ``ar.infer_backend(t.data[0])``: on an immutable backend the
-    # matrices are not built until something asks for one, and declining the route is not
-    # asking. Reading the backend off ``data`` would gather every block of the source --
-    # under a trace, a graph node each -- to discover that this function cannot use them.
-    if not t.structure.num_blocks or t.backend not in _MUTABLE:
+    if not t.structure.num_blocks:
         return None
-    # ``out=`` is what makes this one pass, and torch refuses it under autograd
-    # ("functions with out=... arguments don't support automatic differentiation").
-    # A watched tensor is not mutable in the sense ``_MUTABLE`` means, so the route
-    # declines and the ordinary applier -- which builds a temporary per term, and
-    # which is what torch always took before -- runs instead.
+    # ``out=`` is what makes the mutable route below one pass, and torch refuses it under
+    # autograd ("functions with out=... arguments don't support automatic
+    # differentiation"). A watched tensor is not mutable in the sense ``_MUTABLE`` means,
+    # so the route declines and the ordinary applier -- which builds a temporary per term,
+    # and which is what torch always took before -- runs instead.
     if getattr(t._first_block(), "requires_grad", False):
         return None
     if structure == t.structure and is_identity_plan(structure, perm, terms):
@@ -1010,90 +1252,7 @@ def lower_plan(
     normalized = _normalized(terms)
     if normalized is None:
         return None
-    # the same grouping ``apply_plan`` batches with, on the same backend gate, and the
-    # same reason: the trade of Python iterations for array operations has been measured
-    # only on NumPy. Here the group's result is written straight into the destination
-    # matrix, so the blocks the applier would have built never exist.
-    from tenet.ops.batch import batch_plan, cast_coefficients
-
-    groups, loose = (
-        batch_plan(structure, perm, normalized)
-        if ar.infer_backend(t.data[0]) == "numpy"
-        else ((), normalized)
-    )
-
-    layout = map_layout(structure)
-    _, shapes = _tables(structure)
-    slots = _slots(structure)
-    order = tuple(perm[i] for i in layout.axes_order)
-    permuted = order != tuple(range(len(order)))
-
-    ref = t.data[0]
-    # read once: ``blocks`` is a property, and asking it per term is a per-term
-    # attribute lookup on a loop that runs half a million times in a BP sweep
-    blocks = t.blocks
-    dtype = ar.to_backend_dtype(ar.get_dtype_name(ref), like=ref)
-    mats = {
-        c: ar.do("empty", shape, dtype=dtype, like=ref)
-        for c, shape in zip(layout.sectors, layout.shapes, strict=True)
-    }
-
-    transpose = lib_fn(t.backend, "transpose")
-    multiply = lib_fn(t.backend, "multiply")
-    add = lib_fn(t.backend, "add")
-
-    written: set[int] = set()
-    for srcs, buckets in groups:
-        stacked = ar.do("stack", tuple(blocks[s] for s in srcs))
-        stacked = ar.do("transpose", stacked, (0, *(ax + 1 for ax in order)))
-        for take, coeff, width, dsts in buckets:
-            rows = ar.do("multiply", stacked[take], cast_coefficients(coeff, stacked))
-            rows = ar.do("reshape", rows, (len(dsts), width, *ar.shape(rows)[1:]))
-            acc = rows[:, 0]
-            for i in range(1, width):
-                acc = ar.do("add", acc, rows[:, i])
-            for p, dst in enumerate(dsts):
-                written.add(dst)
-                c, ro, dr, co, dc = slots[dst]
-                mats[c][ro : ro + dr, co : co + dc].reshape(shapes[dst])[...] = acc[p]
-
-    # one transpose per distinct source, not per term -- ``order`` is per-plan and only
-    # the coefficient is per-term, so terms sharing a source would otherwise recompute a
-    # byte-identical view (the rule ``ops.repartition._looped`` follows for the same
-    # reason: 2.87 terms per source at SU(2), exactly 1.00 at U(1))
-    moved = (
-        {src: transpose(blocks[src], order) for src in {s for s, _, _ in loose}}
-        if permuted
-        else blocks
-    )
-    for src, dst, coeff in loose:
-        block = moved[src]
-        c, ro, dr, co, dc = slots[dst]
-        # the *destination* is reshaped, never the source -- see ``to_matrices``
-        dest = mats[c][ro : ro + dr, co : co + dc].reshape(shapes[dst])
-        if dst not in written:
-            written.add(dst)
-            if coeff == 1:
-                dest[...] = block
-            else:
-                multiply(block, coeff, out=dest)
-        elif coeff == 1:
-            add(dest, block, out=dest)
-        else:
-            # a second source summing into one destination *with* a coefficient is the
-            # one term that still needs a temporary: ``out=`` scales or accumulates, not
-            # both. Only a multi-term (non-Abelian) expansion produces these, and that is
-            # also why ordering the group so a coefficient-carrying term writes first buys
-            # nothing: such a group's terms *all* carry coefficients, so the first write
-            # already scales through its ``out=`` and every later one still needs this.
-            add(dest, scaled(block, coeff), out=dest)
-
-    if len(written) != structure.num_blocks:
-        raise ValueError(
-            f"lower_plan: the plan fills {len(written)} of {structure.num_blocks} target "
-            f"blocks -- {t.provider.name}'s coefficients dropped terms"
-        )
-    return mats
+    return _recoupled(t, structure, perm, normalized)
 
 
 def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "SymmetricTensor":

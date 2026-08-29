@@ -82,12 +82,29 @@ def oracle(t):
 
 @pytest.mark.parametrize("legs, seed", [(SU2_LEGS, 7), (U1_LEGS, 8)])
 def test_the_dedup_is_bit_identical_value_and_gradient(legs, seed):
+    """The value to the bit; the gradient to the bit wherever the plan does not sum.
+
+    A destination that takes one term is a relabel: forward and reverse both move each
+    element once, and the two routes agree exactly. A destination that takes several --
+    which is what a non-Abelian expansion produces, and what the test below counts -- is a
+    sum, and the shipped route sums a whole multiplicity bucket with one gather where the
+    oracle sums term by term. The forward association is the same either way, which is why
+    the value is still exact; the reverse of a gather is a scatter-add, and a scatter-add
+    does not promise the term order. Measured at 3 ulps on the SU(2) fixture.
+    """
+    plan = repartition_plan(SymmetricTensor.random(legs, seed=seed).structure, OUTPUTS, INPUTS)
+    sums = len(plan.terms) > len({d for _, d, _ in plan.terms})
+
     t = SymmetricTensor.random(legs, seed=seed).to_backend("jax")
     got_v, got_g = jax.value_and_grad(shipped)(t)
     want_v, want_g = jax.value_and_grad(oracle)(t)
     assert np.asarray(got_v) == np.asarray(want_v)
     for got, want in zip(got_g.blocks, want_g.blocks, strict=True):
-        assert np.array_equal(np.asarray(got), np.asarray(want))
+        got, want = np.asarray(got), np.asarray(want)
+        if sums:
+            np.testing.assert_allclose(got, want, rtol=8 * np.finfo(want.dtype).eps, atol=0)
+        else:
+            assert np.array_equal(got, want)
 
 
 def test_su2_shares_sources_across_terms_and_u1_does_not():

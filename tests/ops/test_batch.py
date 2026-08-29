@@ -18,12 +18,11 @@ reassociated sum pass.
 import autoray as ar
 import numpy as np
 import pytest
-from helpers import count_backend_calls
+from helpers import count_backend_calls, recoupling_dispatches
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor
 from tenet.map_view import is_identity_plan as _is_identity
-from tenet.map_view import map_layout
 from tenet.ops.batch import MIN_BATCH_ROWS, batch_plan
 from tenet.ops.permutation import permutation_plan
 from tenet.ops.repartition import (
@@ -253,43 +252,14 @@ def ops(monkeypatch):
         yield counted
 
 
-def predicted(structure, perm, terms):
+def predicted(t, structure, perm, terms):
     """The dispatch count the grouping alone predicts.
 
-    One ``stack`` and one ``transpose`` per shape group; per multiplicity bucket one
-    ``array`` for the coefficients, one ``multiply``, one ``reshape`` and ``width - 1``
-    ``add``s; one ``transpose`` per distinct source the loop still handles. The term
-    count appears nowhere in it.
+    [recoupling_dispatches][helpers.recoupling_dispatches] spells the formula out; what
+    matters here is that it is written in pools, rectangles and multiplicity buckets, and
+    that neither the block count nor the term count appears in it.
     """
-    groups, loose = batch_plan(structure, perm, terms)
-    total = 2 * len(groups) + len({s for s, _, _ in loose})
-    for _, buckets in groups:
-        total += sum(width + 2 for _, _, width, _ in buckets)
-    return total
-
-
-def lowered(structure, perm, terms):
-    """What writing the groups into the result's sector matrices costs on top of them.
-
-    ``apply_plan`` runs the grouping through ``map_view.lower_plan``, which writes each
-    bucket's rows straight into the destination coupled-sector matrix instead of building
-    blocks for a later gather. That adds one ``empty`` per coupled sector, and it charges
-    the terms the grouping declined -- which the loop used to accumulate with a Python
-    ``+`` the counter cannot see -- one dispatch each, except the first term of a
-    destination when its coefficient is 1, which is a plain slice assignment.
-
-    None of that is the term count either: it is the *loose* term count, the tail the
-    grouping left behind, and the claim the test makes is about the ratio.
-    """
-    layout = map_layout(structure)
-    _, loose = batch_plan(structure, perm, terms)
-    seen: set[int] = set()
-    extra = 0
-    for _, dst, coeff in loose:
-        if dst in seen or coeff != 1:
-            extra += 1
-        seen.add(dst)
-    return len(layout.sectors) + extra
+    return recoupling_dispatches(t.structure, structure, perm, terms)
 
 
 @pytest.mark.parametrize("rank", [5, 8])
@@ -301,7 +271,7 @@ def test_the_dispatch_count_is_the_grouping_s_and_not_the_term_count_s(ops, rank
     t.blocks  # noqa: B018  # cutting the source's blocks out is the tensor's, memoized
     ops.clear()
     apply_plan(t, structure, perm, terms, "test")
-    assert len(ops) == predicted(structure, perm, terms) + lowered(structure, perm, terms)
+    assert len(ops) == predicted(t, structure, perm, terms)
     assert len(ops) < len(terms)
 
 

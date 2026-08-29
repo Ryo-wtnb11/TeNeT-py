@@ -102,11 +102,22 @@ def unfused(aa, fr, fl, w1, w2):
     return _composed("aPQxs,axB->BPQs", t, fl, bend="a")
 
 
+def _is_coefficient(block, other) -> bool:
+    """Whether ``block * other`` is a plan's coefficient pass and not ordinary arithmetic.
+
+    A plan scales a whole bucket at once, so its right operand is the column of
+    coefficients ``cast_coefficients`` builds: one entry per row of the bucket and a
+    trailing 1 for every axis of a block. Nothing else in a contraction has that shape.
+    """
+    shape = tuple(getattr(other, "shape", ()))
+    return len(shape) == len(block.shape) and set(shape[1:]) <= {1}
+
+
 class Spy:
     """Every element a coefficient multiply touches, and every tensor written."""
 
     def __init__(self):
-        self.rides_a_write = 0  # scaled through the ``out=`` of a write already happening
+        self.rides_a_write = 0  # scaled by one array multiply over a whole bucket
         self.own_pass = 0  # scaled into a temporary of its own
         self.terms = 0
         self.empty = 0
@@ -131,7 +142,7 @@ def spy(monkeypatch):
         return real_scaled(block, coeff)
 
     def record(name, args, kwargs):
-        if name == "multiply" and "out" in kwargs and len(args) == 2:
+        if name == "multiply" and len(args) == 2 and _is_coefficient(*args):
             counts.rides_a_write += args[0].size
             counts.terms += 1
         elif name in {"empty", "zeros"}:

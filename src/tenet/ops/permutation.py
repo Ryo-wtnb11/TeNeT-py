@@ -49,7 +49,7 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
-from tenet.map_view import scaled
+from tenet.map_view import from_matrices, lower_plan, scaled
 from tenet.structure import FusionBlockKey, TensorStructure, _pattern
 from tenet.symmetry.base import (
     BraidingData,
@@ -263,6 +263,15 @@ def _apply(t: "SymmetricTensor", plan: PermutationPlan, what: str) -> "Symmetric
     ``what`` names the caller in the one error message this can raise.
     """
     from tenet.tensor import _unchecked
+
+    if t.structure.num_blocks:
+        # matrix to matrix, so that no backend has to see the blocks: on a traced one
+        # reading a block is a slice with a ``pad`` behind it in the backward pass, and
+        # the loop below would read every one of them. The loop stays as the route for
+        # what ``lower_plan`` declines -- a complex coefficient, a watched torch tensor.
+        mats = lower_plan(t, plan.new_structure, plan.axes, plan.terms)
+        if mats is not None:
+            return from_matrices(plan.new_structure, mats)
 
     # one transpose per *distinct source*, not per term (#123): ``plan.axes`` is per-plan
     # and only the coefficient is per-term, so every term sharing a source used to

@@ -6530,6 +6530,17 @@ with M61 Stage D above, and PEPS containers with M79/#277.
   and every gradient test passes unchanged, `tests/backends/` included. Public signatures,
   results and `__all__` are unchanged, no existing test is edited, and no dependency is added.
 
+  **Superseded in mechanism, kept in result.** Once the coupled-sector matrices became the
+  storage, what an operation *reads* became its cost on a traced backend -- a block is a view
+  on NumPy and a slice with a `pad` behind it on JAX -- and a route that declines on an
+  immutable backend leaves that backend cutting every block out. `lower_plan` therefore no
+  longer walks terms into per-block destination slots at all: it reads the source as one
+  batch per block shape, gathers a whole multiplicity bucket at a time and stores the result
+  of a whole *rectangle* of the grid at once. There is no per-block `reshape` and no `out=`
+  left on that path, so the "one pass per term" table above describes the mechanism M70
+  shipped and not the one in the tree; the pass count per element is what survives, and the
+  route now applies to every backend rather than declining on the immutable ones.
+
 - **M71** — shipped: **nothing is materialized between two lowerings**. A contraction chain
   used to write one tensor per step and read it straight back down into the next step's
   sector matrices; step `k`'s restore-repartition (with its final transpose already folded

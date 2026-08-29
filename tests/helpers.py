@@ -19,6 +19,7 @@ from tenet.space import GradedSpace
 
 __all__ = [
     "NoBendProvider",
+    "recoupling_dispatches",
     "check_example_page",
     "dense_compose",
     "dense_repartition",
@@ -358,3 +359,33 @@ def count_backend_calls(monkeypatch, record):
         yield
     finally:
         lib_fn.cache_clear()  # drop the counting wrappers this installed
+
+
+def recoupling_dispatches(source, structure, perm, terms) -> int:
+    """Backend calls ``map_view._recoupled`` issues for this plan, from the plan alone.
+
+    One ``stack`` per pool and one ``transpose`` per pool when the plan permutes; one
+    ``empty`` per coupled sector; and per destination *rectangle* one ``reshape`` and one
+    ``transpose`` to turn its cells back into a strip of the matrix, a second
+    ``transpose`` when the tensor's axes are not already in matrix order, a
+    ``concatenate`` when the rectangle's cells do not all take the same number of terms,
+    and per multiplicity bucket an ``array`` and a ``multiply`` for the coefficients, a
+    ``reshape`` and ``width - 1`` ``add``s.
+
+    Neither the block count nor the term count appears in it, which is the claim the
+    tests that call this make.
+    """
+    from tenet.map_view import _normalized, _pools, map_layout
+    from tenet.ops.batch import recouple_plan
+
+    pools, _, _ = _pools(source)
+    plan = recouple_plan(source, structure, perm, _normalized(terms) or terms)
+    layout = map_layout(structure)
+    identity = tuple(range(len(perm)))
+    total = len(pools) * (2 if perm != identity else 1) + len(layout.sectors)
+    permuted = layout.axes_order != identity
+    for _, _, buckets, _ in plan:
+        total += 2 + permuted + (len(buckets) > 1)
+        for _, _, coeff, width, _ in buckets:
+            total += 2 * (coeff is not None) + (width if width > 1 else 0)
+    return total

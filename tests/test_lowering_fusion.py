@@ -15,7 +15,7 @@ term, no standalone elementwise multiply, and every source read through a view.
 
 import numpy as np
 import pytest
-from helpers import count_backend_calls
+from helpers import count_backend_calls, recoupling_dispatches
 
 import tenet
 import tenet.map_view as map_view_module
@@ -121,13 +121,14 @@ def test_the_ungraded_fixtures_carry_none():
 @pytest.mark.parametrize(
     "legs,outputs,inputs", [p.values for p in CASES], ids=[p.id for p in CASES]
 )
-def test_the_fused_lowering_writes_once_per_term_and_multiplies_nowhere_standalone(
+def test_the_fused_lowering_costs_the_rectangles_and_never_a_block(
     monkeypatch, legs, outputs, inputs
 ):
-    """One transposed view per term, one preallocation per sector, and nothing else.
+    """One preallocation per sector, and every other call charged to a rectangle.
 
-    A standalone elementwise multiply -- one without ``out=`` -- is the extra pass this
-    milestone removes; a ``reshape`` or a ``concatenate`` is the extra pass M69 removed.
+    The count is the plan's own formula -- see
+    [recoupling_dispatches][helpers.recoupling_dispatches] -- so a call that started
+    being made per block, or per term, would break it whatever its name.
     """
     t = SymmetricTensor.random(legs, seed=1)
     structure, perm, terms = _plan(t, outputs, inputs)
@@ -135,16 +136,11 @@ def test_the_fused_lowering_writes_once_per_term_and_multiplies_nowhere_standalo
     # tensor's own memoized work, not the plan's; the plan is what is being counted
     counts = _count_ar_do(monkeypatch, lambda: lower_plan(t, structure, perm, terms))
 
-    assert not [name for name, _ in counts if name in {"reshape", "concatenate"}]
-    # every scaling and every accumulation lands in a destination view
-    assert counts.get(("multiply", False), 0) == 0
-    assert counts.get(("add", False), 0) == 0
     assert counts.get(("empty", False), 0) == len(map_layout(structure).sectors)
-    # one transposed source view per distinct *source*, not per term -- ``order`` is
-    # per-plan and only the coefficient is per-term, so terms sharing a source would
-    # otherwise recompute a byte-identical view. The write itself is a slice assignment
-    # (``dest[...] = block``) or the ``out=`` of the multiply, never a fresh array
-    assert counts.get(("transpose", False), 0) == len({src for src, _, _ in terms})
+    # nothing rides an ``out=`` any more: a bucket is scaled and summed as arrays and
+    # the destination is written by a slice assignment the counter does not see
+    assert not [key for key in counts if key[1]]
+    assert sum(counts.values()) == recoupling_dispatches(t.structure, structure, perm, terms)
 
 
 @pytest.mark.parametrize(
@@ -230,10 +226,10 @@ def test_lower_writes_one_pass_per_term_and_matches_the_old_route(
     from tenet.ops.linalg import _lower
 
     t = SymmetricTensor.random(legs, seed=3)
-    structure, _, terms = _plan(t, outputs, inputs)
+    structure, perm, terms = _plan(t, outputs, inputs)
     m, bond, mats = _lower(t, (outputs, inputs))
 
-    # one transposed source view per distinct source. What is left over is the walk back
+    # the plan's own formula and nothing beyond it. What is left over is the walk back
     # onto the matrices -- per rectangle of the grid, never per block -- and it is
     # measured rather than predicted, each under its own patch so that neither count sees
     # the other's calls.
@@ -241,11 +237,8 @@ def test_lower_writes_one_pass_per_term_and_matches_the_old_route(
         walk = _count_ar_do(patch, lambda: from_matrices(structure, mats))
     with pytest.MonkeyPatch.context() as patch:
         counts = _count_ar_do(patch, lambda: _lower(t, (outputs, inputs)))
-    sources = len({src for src, _, _ in terms})
-    assert counts.get(("transpose", False), 0) - walk.get(("transpose", False), 0) == sources
-    assert counts.get(("multiply", False), 0) == 0
-    assert counts.get(("add", False), 0) == 0
-    assert ("concatenate", False) not in counts
+    dispatches = recoupling_dispatches(t.structure, structure, perm, terms)
+    assert sum(counts.values()) - sum(walk.values()) == dispatches
     # the only ``reshape`` left is ``from_matrices``'' view back onto the matrices, which
     # is where the tensor beside them now comes from and moves no element
     assert all(any(np.shares_memory(block, mat) for mat in mats.values()) for block in m.blocks)
