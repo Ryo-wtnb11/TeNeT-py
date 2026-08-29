@@ -18,7 +18,21 @@ from tenet.map_view import (
     tree_structure,
 )
 from tenet.structure import FusionBlockKey, TensorStructure
-from tenet.symmetry import SU2, U1, SU2Sector, Trivial, TrivialSector, U1Sector
+from tenet.symmetry import (
+    SU2,
+    U1,
+    Z2,
+    FZ2Sector,
+    ProductProvider,
+    ProductSector,
+    SU2Sector,
+    Trivial,
+    TrivialSector,
+    U1Sector,
+    Z2Sector,
+    fZ2,
+)
+from tenet.symmetry.sun import SUNProvider, SUNSector
 
 ZERO, HALF, ONE = SU2Sector(0), SU2Sector(1), SU2Sector(2)
 V = GradedSpace.new(SU2, {ZERO: 2, HALF: 3, ONE: 2})
@@ -37,6 +51,38 @@ U1_LEGS = (Leg(Q, OUT), Leg(Q, IN), Leg(Q, OUT))
 TRIV_LEGS = (Leg(TRIV, OUT), Leg(TRIV, IN))
 ALL_OUT_LEGS = (Leg(W, OUT), Leg(W, OUT))
 ALL_IN_LEGS = (Leg(W, IN), Leg(W, IN))
+
+# One space per symmetry the library ships, for the storage-contract count below. Ragged
+# degeneracies where the symmetry allows them: a uniform one hides the case where the
+# blocks of a coupled sector differ in shape.
+Z2_SPACE = GradedSpace.new(Z2, {Z2Sector(0): 2, Z2Sector(1): 3})
+FZ2_SPACE = GradedSpace.new(fZ2, {FZ2Sector(0): 3, FZ2Sector(1): 2})
+SU3 = SUNProvider(3)
+SU3_SPACE = GradedSpace.new(SU3, {SUNSector((0, 0)): 2, SUNSector((1, 0)): 2})
+PRODUCT = ProductProvider((fZ2, U1, SU2))
+PRODUCT_SPACE = GradedSpace.new(
+    PRODUCT,
+    {
+        ProductSector((FZ2Sector(0), U1Sector(0), SU2Sector(0))): 2,
+        ProductSector((FZ2Sector(1), U1Sector(1), SU2Sector(1))): 2,
+    },
+)
+
+
+def _square(space):
+    """Two OUT legs and two IN legs on one space -- a map with something to contract."""
+    return (Leg(space, OUT), Leg(space, OUT), Leg(space, IN), Leg(space, IN))
+
+
+EVERY_SYMMETRY = [
+    pytest.param(_square(TRIV), id="trivial"),
+    pytest.param(_square(Z2_SPACE), id="z2"),
+    pytest.param(_square(Q), id="u1"),
+    pytest.param(_square(FZ2_SPACE), id="fz2"),
+    pytest.param(_square(V), id="su2"),
+    pytest.param(_square(SU3_SPACE), id="su3"),
+    pytest.param(_square(PRODUCT_SPACE), id="fz2xu1xsu2"),
+]
 
 ROUND_TRIP_LEGS = [
     pytest.param(TRIV_LEGS, id="trivial"),
@@ -480,5 +526,40 @@ def test_the_hot_operations_never_cut_a_block(legs):
         tenet.repartition(a, tuple(range(a.ndim - 1)), (a.ndim - 1,))
         tenet.tensordot(a, b, axes=((1,), (0,)))
         tenet.linalg.svd(a)
+
+    assert _blocks_reads(hot) == 0
+
+
+@pytest.mark.parametrize("legs", EVERY_SYMMETRY)
+def test_the_hot_operations_never_cut_a_block_on_any_symmetry(legs):
+    """The same count, on every symmetry the library ships. Still *zero*.
+
+    Matrix-native is a property of the lowering, not of the provider: ``map_layout``
+    defines ``T ≃ ⊕_c B_c ⊗ id_c`` for whatever the fusion rules are, composition is a
+    matmul per coupled sector on all of them, and the symmetry enters through the
+    coefficients -- F/R symbols, Clebsch-Gordan data, Koszul signs -- which the plan has
+    already folded away by the time anything moves. So a provider that read ``blocks``
+    here would be an operation taking a provider-specific path it does not need, not a
+    symmetry that resists the storage.
+
+    Fermions and product symmetries are in the list because they are where such a path
+    would be: ``fZ2`` carries a sign per crossing and ``ProductProvider`` distributes
+    every coefficient over its factors.
+    """
+    a = from_matrices(*_matrix_backed(SymmetricTensor.random(legs, seed=31)))
+    b = from_matrices(*_matrix_backed(SymmetricTensor.random(legs, seed=32)))
+
+    def hot():
+        tenet.norm(a)
+        tenet.inner(a, b)
+        tenet.transpose(a, (1, 0, 3, 2))
+        tenet.repartition(a, (0,), (1, 2, 3))
+        tenet.tensordot(a, b, axes=((2, 3), (0, 1)))
+        tenet.adjoint(a)
+        tenet.conj(a)
+        a + b
+        a * 2.0
+        tenet.linalg.svd(a)
+        tenet.linalg.qr(a)
 
     assert _blocks_reads(hot) == 0

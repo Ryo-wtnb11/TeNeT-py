@@ -7624,8 +7624,19 @@ free — so an operation that is defined per coupled sector (`norm`, `inner`, th
 elementwise maps) reduces over the matrices, and one that is defined per plan
 term reaches its source through a single slice of the source's own matrix. This
 is pinned by a count, not by a comment: `tests/test_map_view.py` asserts *zero*
-cuts across the hot operations, and `tests/backends/test_pytree.py` asserts zero
-`slice` primitives in the traced graph of the matrix-native ones.
+cuts across the hot operations, on **every symmetry the library ships** —
+trivial, Z2, U(1), fZ2, SU(2), SU(N) and a product of three — and
+`tests/backends/test_pytree.py` asserts zero `slice` primitives in the traced
+graph of the matrix-native ones.
+
+Matrix-native is a property of the lowering rather than of the provider, which is
+why that list is exhaustive and not a sample. `map_layout` defines
+`T ≃ ⊕_c B_c ⊗ id_c` for whatever the fusion rules are; composition is a matmul
+per coupled sector on all of them; and the symmetry enters through the
+coefficients — F/R symbols, Clebsch-Gordan data, Koszul signs — which the plan
+has folded away before anything moves. A provider that read `blocks` there would
+be an operation taking a provider-specific path it does not need, not a symmetry
+that resists the storage.
 Structural metadata is immutable, hashable, and array-free — F/R
 and other coefficient arrays never live in structural fields. All three are
 enforced, not asserted: `tests/backends/test_torch.py` walks every public op on
