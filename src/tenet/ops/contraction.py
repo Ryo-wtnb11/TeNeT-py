@@ -70,7 +70,6 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
-from tenet.cache import plan_cache
 from tenet.leg import IN, OUT, Leg
 from tenet.map_view import check_square, lower_plan, to_matrices
 from tenet.ops.basic import _check_same_structure
@@ -78,7 +77,7 @@ from tenet.ops.map import block_ref, compose_lowered, identity
 from tenet.ops.permutation import permutation_plan, transpose, twist
 from tenet.ops.repartition import _compose as compose_terms
 from tenet.ops.repartition import apply_plan, repartition, repartition_plan, sides_plan
-from tenet.structure import TensorStructure
+from tenet.structure import TensorStructure, _pattern
 from tenet.symmetry.base import (
     BendingCoefficients,
     CapabilityError,
@@ -251,10 +250,10 @@ class ContractionPlan:
     new_structure: TensorStructure
 
 
-# Simplification: unbounded `cache`, and deliberately so where `_restore_plan` below is
-# bounded — this plan holds axis tuples and `new_structure`, no block indices and no
-# coefficients (see the class docstring), so an entry is a hundred bytes whatever the
-# bond dimension. `tenet.cache` says which caches that argument does not cover.
+# Simplification: unbounded `cache` — this plan holds axis tuples and `new_structure`,
+# no block indices and no coefficients (see the class docstring), so an entry is a
+# hundred bytes whatever the bond dimension. `tenet.cache` says which caches that
+# argument does not cover.
 @cache
 def contraction_plan(a: TensorStructure, b: TensorStructure, axes: Axes) -> ContractionPlan:
     """Plan ``tensordot(a, b, axes)``. Cached: repeat calls return one object.
@@ -657,7 +656,7 @@ def einsum_chain(
     return acc.realized("einsum_chain")  # ty: ignore[unresolved-attribute]
 
 
-@plan_cache(cost=lambda result: len(result[2]))
+@cache
 def _restore_plan(
     structure: TensorStructure,
     outputs: tuple[int, ...],
@@ -687,18 +686,40 @@ def _restore_plan(
 
     Notes
     -----
-    Cached on the same key shape as every other plan, but *cost-bounded* (see
-    ``tenet.cache``): unlike ``repartition_plan``, whose entry is a shell sharing the
-    pattern cache's terms, composing the restore with ``transposes`` builds a term tuple
-    this entry owns, keyed on degeneracies that tuple does not read. One measured entry
-    for an SU(2) three-sector rank-8 intermediate holds 59,696 terms (9.3 MB), a wider
-    one 613,468 (95.7 MB), and an unbounded cache kept one such entry per bond dimension
-    for the life of the process.
+    The **body** is cached one level down, on ``_pattern(structure)`` -- the same legs
+    with every degeneracy 1 -- exactly as ``repartition_plan`` and ``permutation_plan``
+    are. ``perm`` and ``terms`` are composed out of those two plans' own ``perm`` and
+    ``terms``, which are block indices, axis positions and coefficients: functions of the
+    legs' sectors, sides and duals, never of their degeneracies. So this entry holds
+    nothing but ``new_structure``, and the term tuple it returns is the pattern entry's
+    own object, shared by every bond dimension.
+
+    That sharing is what removes the growth rather than bounding it. Composing the
+    restore with ``transposes`` builds a term tuple no other plan owns -- one measured
+    SU(2) three-sector rank-8 intermediate holds 59,696 terms (9.3 MB), a wider one
+    613,468 (95.7 MB) -- and while this was keyed on the whole structure a loop over
+    growing bond dimension built and kept one such tuple per bond dimension, all of them
+    equal term for term.
 
     ``repartition_plan`` is asked for the restore even when nothing crosses -- with an
     empty crossing list its body is a single ``permutation_plan``, which is what the
     chain needs anyway.
     """
+    _, perm, terms = _pattern_restore_plan(_pattern(structure), outputs, inputs, transposes)
+    new_structure = repartition_plan(structure, outputs, inputs).new_structure
+    for axes in transposes:
+        new_structure = permutation_plan(new_structure, axes).new_structure
+    return new_structure, perm, terms
+
+
+@cache
+def _pattern_restore_plan(
+    structure: TensorStructure,
+    outputs: tuple[int, ...],
+    inputs: tuple[int, ...],
+    transposes: tuple[tuple[int, ...], ...],
+) -> tuple[TensorStructure, tuple[int, ...], tuple[tuple[int, int, complex], ...]]:
+    """[_restore_plan][tenet.ops.contraction._restore_plan]'s body, degeneracy-free."""
     plan = repartition_plan(structure, outputs, inputs)
     new_structure, perm, terms = plan.new_structure, plan.perm, plan.terms
     for axes in transposes:
