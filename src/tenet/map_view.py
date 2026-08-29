@@ -801,7 +801,7 @@ def to_matrices(t: "SymmetricTensor") -> dict[Sector, Any]:
 
 
 @plan_cache(cost=len)
-def _slots(structure: TensorStructure) -> tuple[tuple[Sector, int, int, int, int], ...]:
+def _slots(structure: TensorStructure) -> tuple[tuple[int, int, int, int, int], ...]:
     """Per block of ``block_order``, the cell it occupies: ``(c, row, rows, col, cols)``.
 
     Parameters
@@ -812,8 +812,9 @@ def _slots(structure: TensorStructure) -> tuple[tuple[Sector, int, int, int, int
     Returns
     -------
     tuple
-        ``(coupled sector, row offset, row extent, column offset, column extent)``
-        indexed by block.
+        ``(sector position, row offset, row extent, column offset, column extent)``
+        indexed by block. The sector is given as its index into
+        ``map_layout(structure).sectors``, which is the order the matrices are held in.
 
     Notes
     -----
@@ -821,14 +822,19 @@ def _slots(structure: TensorStructure) -> tuple[tuple[Sector, int, int, int, int
     *term* -- which knows its destination block, not its position in the grid -- can
     find its slot in one lookup. Cached beside [map_layout][tenet.map_layout] for the
     same reason [_tables][tenet.map_view._tables] is.
+
+    **The sector is a position, not a label.** The tensor holds its matrices as a tuple
+    in that order, so a term reaches its matrix by index; keying on the sector would hash
+    a sector object once per term, which on a bend is one hash per block of both operands
+    and was measurable next to the array work it stands in front of.
     """
     layout = map_layout(structure)
     bands, _ = _tables(structure)
     slots: list[Any] = [None] * structure.num_blocks
-    for (c, cells), (rbands, cbands) in zip(layout.grid, bands, strict=True):
+    for pos, ((_c, cells), (rbands, cbands)) in enumerate(zip(layout.grid, bands, strict=True)):
         for (_, ro, dr), indices in zip(rbands, cells, strict=True):
             for i, (_, co, dc) in zip(indices, cbands, strict=True):
-                slots[i] = (c, ro, dr, co, dc)
+                slots[i] = (pos, ro, dr, co, dc)
     return tuple(slots)
 
 
@@ -961,6 +967,18 @@ def lower_plan(
     form. YASTN fuses the same two steps for the same reason, its meta carrying order and
     destination slot together (its NumPy backend's ``transpose_and_merge``).
 
+    **The source is read out of ``t.data``, never out of ``t.blocks``.** A source cell is
+    one 2-D slice of the source matrix split into the block's axes -- a view, by the same
+    stride argument the assembly uses -- so only the sources a term names are cut, and the
+    cut of the *whole* tensor that ``blocks`` performs never happens. Composing the source
+    layout's ``axes_order`` into the plan's permutation is what makes that possible: the
+    resulting transpose takes a cell of ``t``'s storage straight to the destination's
+    matrix order, and it is the identity whenever the two layouts agree, which is a bend
+    that moves the partition without reordering the legs. Reading ``blocks`` here is what
+    a small tensor cannot afford: an MPS tensor lowers a plan for every operation, and a
+    lowering that starts by cutting every block of its operand pays the assembly the
+    matrices were made storage to remove.
+
     The terms are not walked one at a time. On NumPy they go through
     [batch_plan][tenet.ops.batch.batch_plan] -- the grouping ``apply_plan`` already used,
     by destination shape and then by multiplicity -- so a whole bucket is gathered,
@@ -1026,17 +1044,31 @@ def lower_plan(
     _, shapes = _tables(structure)
     slots = _slots(structure)
     order = tuple(perm[i] for i in layout.axes_order)
-    permuted = order != tuple(range(len(order)))
+
+    source = map_layout(t.structure)
+    _, src_shapes = _tables(t.structure)
+    src_slots = _slots(t.structure)
+    src_mats = t.data
+    # ``order`` reads a block in *public* axis order; a source cell arrives in the source
+    # layout's own, so composing the two is the one transpose that takes a cell of ``t``'s
+    # storage straight to the destination's -- and it is the identity whenever the two
+    # layouts agree, which is most of a bend.
+    src_order = source.axes_order
+    inverse = tuple(sorted(range(len(src_order)), key=src_order.__getitem__))
+    composed = tuple(inverse[a] for a in order)
+    permuted = composed != tuple(range(len(composed)))
 
     ref = t.data[0]
-    # read once: ``blocks`` is a property, and asking it per term is a per-term
-    # attribute lookup on a loop that runs half a million times in a BP sweep
-    blocks = t.blocks
+
+    def cell(s: int) -> Any:
+        """Source block ``s`` as a view into ``t``'s storage, in *source matrix* order."""
+        c, ro, dr, co, dc = src_slots[s]
+        # the mirror of the destination write below, and a view for the same reason:
+        # splitting a 2-D slice's two axes into the block's only subdivides strides
+        return src_mats[c][ro : ro + dr, co : co + dc].reshape(src_shapes[s])
+
     dtype = ar.to_backend_dtype(ar.get_dtype_name(ref), like=ref)
-    mats = {
-        c: ar.do("empty", shape, dtype=dtype, like=ref)
-        for c, shape in zip(layout.sectors, layout.shapes, strict=True)
-    }
+    mats = [ar.do("empty", shape, dtype=dtype, like=ref) for shape in layout.shapes]
 
     transpose = lib_fn(t.backend, "transpose")
     multiply = lib_fn(t.backend, "multiply")
@@ -1044,8 +1076,8 @@ def lower_plan(
 
     written: set[int] = set()
     for srcs, buckets in groups:
-        stacked = ar.do("stack", tuple(blocks[s] for s in srcs))
-        stacked = ar.do("transpose", stacked, (0, *(ax + 1 for ax in order)))
+        stacked = ar.do("stack", tuple(cell(s) for s in srcs))
+        stacked = ar.do("transpose", stacked, (0, *(ax + 1 for ax in composed)))
         for take, coeff, width, dsts in buckets:
             rows = ar.do("multiply", stacked[take], cast_coefficients(coeff, stacked))
             rows = ar.do("reshape", rows, (len(dsts), width, *ar.shape(rows)[1:]))
@@ -1057,15 +1089,14 @@ def lower_plan(
                 c, ro, dr, co, dc = slots[dst]
                 mats[c][ro : ro + dr, co : co + dc].reshape(shapes[dst])[...] = acc[p]
 
-    # one transpose per distinct source, not per term -- ``order`` is per-plan and only
-    # the coefficient is per-term, so terms sharing a source would otherwise recompute a
-    # byte-identical view (the rule ``ops.repartition._looped`` follows for the same
-    # reason: 2.87 terms per source at SU(2), exactly 1.00 at U(1))
-    moved = (
-        {src: transpose(blocks[src], order) for src in {s for s, _, _ in loose}}
-        if permuted
-        else blocks
-    )
+    # one cut and one transpose per distinct source, not per term -- ``composed`` is
+    # per-plan and only the coefficient is per-term, so terms sharing a source would
+    # otherwise recompute a byte-identical view (the rule ``ops.repartition._looped``
+    # follows for the same reason: 2.87 terms per source at SU(2), exactly 1.00 at U(1))
+    moved = {}
+    for src in {s for s, _, _ in loose}:
+        view = cell(src)
+        moved[src] = transpose(view, composed) if permuted else view
     for src, dst, coeff in loose:
         block = moved[src]
         c, ro, dr, co, dc = slots[dst]
@@ -1093,7 +1124,7 @@ def lower_plan(
             f"lower_plan: the plan fills {len(written)} of {structure.num_blocks} target "
             f"blocks -- {t.provider.name}'s coefficients dropped terms"
         )
-    return mats
+    return dict(zip(layout.sectors, mats, strict=True))
 
 
 def from_matrices(structure: TensorStructure, mats: Mapping[Sector, Any]) -> "SymmetricTensor":

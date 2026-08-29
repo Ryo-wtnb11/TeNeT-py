@@ -163,7 +163,8 @@ def test_every_term_reads_a_view_and_writes_into_the_matrix(legs, outputs, input
     for src, dst, _ in terms:
         view = np.transpose(t.blocks[src], order)
         assert np.shares_memory(view, t.blocks[src]), (src, dst)
-        c, ro, dr, co, dc = slots[dst]
+        pos, ro, dr, co, dc = slots[dst]
+        c = layout.sectors[pos]
         dest = mats[c][ro : ro + dr, co : co + dc].reshape(shapes[dst])
         assert np.shares_memory(dest, mats[c]), (src, dst)
 
@@ -274,6 +275,11 @@ def test_the_lowering_dispatches_per_bucket_and_not_per_term():
     grouping declined, never the term count: on this rank-5 SU(2) bend that is two orders
     of magnitude apart. The fixture is SU(2) because an Abelian provider has one term per
     destination and nothing to group.
+
+    The count includes the cut of every source the plan reads, because the lowering does
+    that cut itself now -- one slice of the source's own coupled-sector matrix per source
+    a term names. Priming ``t.blocks`` and counting the rest is the accounting that hid
+    the cost of reading blocks in the first place.
     """
     from tenet.ops.batch import batch_plan
 
@@ -285,14 +291,19 @@ def test_the_lowering_dispatches_per_bucket_and_not_per_term():
     groups, loose = batch_plan(structure, perm, terms)
     assert groups and len(loose) < len(terms)  # the fixture really does group
 
-    t.blocks  # noqa: B018  # the source's own cut, memoized, is not the plan's work
     calls: list[str] = []
     with count_backend_calls(pytest.MonkeyPatch(), lambda name, a, k: calls.append(name)):
         mats = lower_plan(t, structure, perm, terms)
     assert mats is not None
-    assert len(calls) < len(terms) // 3
+    assert len(calls) < len(terms) // 2
     # and the bulk path is what ran: a stack and a matmul-shaped gather per group
     assert calls.count("stack") == len(groups)
+    # the transposes are the whole of the difference and they are counted exactly: one
+    # per group to move its stacked sources out of the source layout's axis order and
+    # into the destination's, one per *distinct* loose source for the same move. That is
+    # 85 for 437 terms and 207 blocks -- the cut this replaced transposed every block of
+    # the tensor, not the sources a term names.
+    assert calls.count("transpose") == len(groups) + len({s for s, _, _ in loose})
 
     # bit for bit what the term walk would have written
     want = to_matrices(repartition(t, (0, 1, 2, 3), (4,)))

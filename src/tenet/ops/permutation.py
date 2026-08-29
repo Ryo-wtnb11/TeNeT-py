@@ -49,7 +49,7 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
-from tenet.map_view import scaled
+from tenet.map_view import from_matrices, lower_plan, scaled
 from tenet.structure import FusionBlockKey, TensorStructure, _pattern
 from tenet.symmetry.base import (
     BraidingData,
@@ -261,8 +261,20 @@ def _apply(t: "SymmetricTensor", plan: PermutationPlan, what: str) -> "Symmetric
     """Move ``t``'s blocks through ``plan``. Shared by ``transpose`` and ``braid``.
 
     ``what`` names the caller in the one error message this can raise.
+
+    A permutation is a plan like any other, so it goes through
+    [lower_plan][tenet.map_view.lower_plan] where that route applies: the source cells
+    are read out of ``t``'s coupled-sector matrices and written straight into the
+    result's, and the blocks this loop would build -- along with the gather that would
+    then copy every one of them back into a matrix -- never exist. The loop below stays
+    as the route for what ``lower_plan`` declines: an immutable backend, a watched torch
+    tensor, a genuinely complex coefficient.
     """
     from tenet.tensor import _unchecked
+
+    mats = lower_plan(t, plan.new_structure, plan.axes, plan.terms)
+    if mats is not None:
+        return from_matrices(plan.new_structure, mats)
 
     # one transpose per *distinct source*, not per term (#123): ``plan.axes`` is per-plan
     # and only the coefficient is per-term, so every term sharing a source used to

@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
+from tenet.map_view import map_layout
 from tenet.symmetry.base import QuantumDimensionData, requires
 
 if TYPE_CHECKING:
@@ -355,16 +356,24 @@ def norm(t: "SymmetricTensor") -> Any:
 
     Returns the backend's own scalar, so the whole function is traceable and
     differentiable.
+
+    **Summed per coupled sector, not per fusion tree.** The weight depends on the
+    coupled sector alone and a sector's matrix is exactly its blocks laid side by side --
+    the grid is complete, so every cell is written once and none is left zero -- which
+    makes ``Σ_τ qdim(c_τ)·‖A_τ‖²`` and ``Σ_c qdim(c)·‖B_c‖²`` the same sum over the same
+    numbers, the identity the map view's own conventions are stated in. Reading blocks
+    to spell it the first way would cut every block of the tensor out of the matrices
+    the reduction is about to run over anyway.
     """
     provider = t.provider
     requires(provider, QuantumDimensionData)
-    if not t.blocks:
+    if not t.data:
         return 0.0
     total = sum(
         # requires() above; raise-based check does not narrow
-        provider.qdim(key.coupled)  # ty: ignore[unresolved-attribute]
-        * ar.do("sum", ar.do("abs", block) ** 2)
-        for key, block in t.items()
+        provider.qdim(c)  # ty: ignore[unresolved-attribute]
+        * ar.do("sum", ar.do("abs", mat) ** 2)
+        for c, mat in zip(map_layout(t.structure).sectors, t.data, strict=True)
     )
     # No float(): concretizing here makes `norm` unusable under jit/grad/vmap.
     # NumPy blocks give a float64 scalar (float-compatible); JAX blocks give a
