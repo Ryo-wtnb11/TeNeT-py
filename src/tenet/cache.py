@@ -8,27 +8,39 @@ plain ``functools.cache``.
 
 **Keyed on a sector pattern.** ``_pattern`` and everything reached through it
 (``_pattern_bend_plan``, ``_pattern_repartition_plan``, ``_pattern_plan``,
-``_pattern_braid_plan``, ``_crossing_signs``, ``_twist_signs``, ``_artin_braid``,
-``permute_braided_tree``, ``symmetric_braiding``, ``properties``, ``_fusion_trees``,
-``_coupled_sectors``, ``_all_trees``, ``_flat``). A block index is a function of the
+``_pattern_braid_plan``, ``_pattern_restore_plan``, ``_pattern_adjoint_plan``,
+``_crossing_signs``, ``_twist_signs``, ``_artin_braid``, ``permute_braided_tree``,
+``symmetric_braiding``, ``properties``, ``_fusion_trees``, ``_coupled_sectors``,
+``_all_trees``, ``_flat``). A block index is a function of the
 legs' sectors, sides and duals -- never of their degeneracies -- so these are keyed on
 the structure with every degeneracy set to 1. Growing a bond adds no entry, and a model
 has finitely many sector patterns. They stay unbounded, and so do the thin outer caches
 (``repartition_plan``, ``bend_plan``, ``permutation_plan``, ``braid_plan``,
-``_block_order``, ``_index_map``, ``_axis_sectors_table``) whose entries are
-``replace(...)`` shells *sharing* the pattern entry's term tuple: bounding a shell would
-evict the shell and leave the terms behind. So does ``contraction_plan``, whose entry is
-axis tuples and one ``TensorStructure``, and so do ``_axes`` and ``fuse_spaces``, whose
-values are counted in sectors rather than in blocks.
+``_restore_plan``, ``adjoint_plan``, ``_block_order``, ``_index_map``,
+``_axis_sectors_table``) whose entries are ``replace(...)`` shells *sharing* the pattern
+entry's term tuple: bounding a shell would evict the shell and leave the terms behind.
+So does ``contraction_plan``, whose entry is axis tuples and one ``TensorStructure``,
+and so do ``_axes`` and ``fuse_spaces``, whose values are counted in sectors rather than
+in blocks.
 
-**Keyed on a whole structure, with a large value.** ``_restore_plan``, ``map_layout``,
-``_tables``, ``_rects``, ``_slots``, ``_block_shape_table``, ``adjoint_plan``,
-``dense_plan``, ``fusion_plan``, ``batch_plan``. Degeneracies are in the key *and* in
-the value, so a loop over growing bond dimension adds one full-size entry per bond
-dimension and never drops one. One measured ``_restore_plan`` value for an SU(2)
+**Keyed on a whole structure, with a large value.** ``map_layout``, ``_tables``,
+``_rects``, ``_slots``, ``_block_shape_table``, ``dense_plan``, ``fusion_plan``,
+``batch_plan``. Degeneracies are in the key *and* in the value -- these hold the offsets,
+extents and block shapes a growing bond dimension is *defined* to move -- so a loop over
+growing bond dimension adds one full-size entry per bond dimension and never drops one.
+These are what ``plan_cache`` bounds.
+
+Which class a cache belongs to is a question about the value, not about its size.
+``_restore_plan`` and ``adjoint_plan`` were bounded here and are not any more. Composing
+a restore with its transposes builds a term tuple no other plan owns -- one measured SU(2)
 three-sector rank-8 intermediate holds 59,696 terms, and wider sector content reaches
-613,468; at 156 bytes per term (measured, ``(int, int, complex)`` tuples) those are 9.3
-MB and 95.7 MB in a single entry. These are what ``plan_cache`` bounds.
+613,468, which at 156 bytes per term (measured, ``(int, int, complex)`` tuples) are 9.3
+MB and 95.7 MB in a single entry -- but every bond dimension composes the *same* tuple,
+so keying the body on the pattern shares one entry and removes the growth instead of
+capping it. ``dense_plan`` is the near miss: its Clebsch-Gordan arrays, which are what
+its cost counts, are equally degeneracy-independent, but they sit in a ``Cell`` beside
+the sector offsets and degeneracies of the dense grid, which are not, so it stays here
+until that dataclass is split.
 
 Notes
 -----
@@ -70,16 +82,14 @@ A term is the unit each cost function counts: one ``(source, target, coefficient
 tuple of a block map, one band or grid cell of a layout, one block row of a table. A
 plan term measures 156 bytes as a Python tuple, which is also the unit ``dense_plan``
 converts its Clebsch-Gordan bytes into, so this default is about 156 MB per cache. The
-bound is per cache and this package decorates ten of them, though only one or two hold
+bound is per cache and this package decorates eight of them, though only one or two hold
 large values in any given workload.
 
 It is sized for the working set of a CTMRG or DMRG sweep: on the order of ten distinct
 plans of 10^4 to 10^5 terms each, i.e. up to ~10^6 terms, which fits whole. A sweep
 therefore evicts nothing and recomputes nothing. What the bound catches is the loop over
-*growing* bond dimension, where every earlier bond's plan is dead and was being kept
-forever: measured on the 59,696-term rank-8 intermediate above, this default retains the
-sixteen most recent and holds flat at 149 MB where the unbounded cache grew without
-limit. Override with the ``TENET_PLAN_CACHE_BUDGET`` environment variable.
+*growing* bond dimension, where every earlier bond's layout is dead and was being kept
+forever. Override with the ``TENET_PLAN_CACHE_BUDGET`` environment variable.
 """
 
 

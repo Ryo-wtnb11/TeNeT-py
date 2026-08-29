@@ -48,11 +48,10 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 import numpy as np
 
-from tenet.cache import plan_cache
 from tenet.leg import IN, OUT, Leg
 from tenet.map_view import as_map, check_square, from_matrices, map_layout, to_matrices
 from tenet.ops.embed import embed
-from tenet.structure import FusionBlockKey, TensorStructure
+from tenet.structure import FusionBlockKey, TensorStructure, _pattern
 
 if TYPE_CHECKING:
     from tenet.tensor import SymmetricTensor
@@ -498,9 +497,30 @@ class AdjointPlan:
     sources: tuple[int, ...]
 
 
-@plan_cache(cost=lambda plan: len(plan.sources))
+@cache
 def adjoint_plan(structure: TensorStructure) -> AdjointPlan:
-    """The dagger plan for ``structure``. Cached: repeat calls return one object."""
+    """The dagger plan for ``structure``. Cached: repeat calls return one object.
+
+    Notes
+    -----
+    The **body** is cached one level down, on ``_pattern(structure)`` -- the same legs
+    with every degeneracy 1 -- as ``permutation_plan`` and ``repartition_plan`` are.
+    ``sources`` is read off ``block_order`` and ``index_of``, both of which are functions
+    of the legs' sectors, sides and duals alone, so this entry holds nothing but
+    ``new_structure`` and shares the pattern entry's ``sources`` tuple. Without the split
+    a sweep that moves a bond's degeneracies rebuilds a permutation of ``num_blocks``
+    that is identical entry for entry, and keeps one copy per bond dimension.
+    """
+    plan = _pattern_adjoint_plan(_pattern(structure))
+    flipped = tuple(replace(leg, side=IN if leg.side is OUT else OUT) for leg in structure.legs)
+    if flipped == plan.new_structure.legs:
+        return plan
+    return replace(plan, new_structure=TensorStructure(flipped))
+
+
+@cache
+def _pattern_adjoint_plan(structure: TensorStructure) -> AdjointPlan:
+    """[adjoint_plan][tenet.adjoint_plan]'s body, on a degeneracy-free structure."""
     flipped = tuple(replace(leg, side=IN if leg.side is OUT else OUT) for leg in structure.legs)
     new_structure = TensorStructure(flipped)
     sources = tuple(
