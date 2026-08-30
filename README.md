@@ -20,15 +20,15 @@ the way an ndarray does. Blocks live in NumPy, JAX or PyTorch arrays through
 ## Install
 
 ```sh
-uv add tenet-py         # or: pip install tenet-py
+uv add tenet-sym         # or: pip install tenet-sym
 ```
 
 The core install pulls `numpy`, `autoray`, `opt-einsum` and `racah-py`, and every
 symmetry works on it. Two optional extras:
 
 ```sh
-uv add "tenet-py[jax]"      # jax>=0.10 — pytrees, jit, grad
-uv add "tenet-py[torch]"    # torch>=2.0 — eager blocks
+uv add "tenet-sym[jax]"      # jax>=0.10 — pytrees, jit, grad
+uv add "tenet-sym[torch]"    # torch>=2.0 — eager blocks
 ```
 
 ## Quickstart
@@ -105,7 +105,7 @@ assert g.legs == t.legs
 If you use TeNeT-py in your research, please cite it:
 
 ```bibtex
-@software{tenet-py,
+@software{tenet-sym,
   author  = {Watanabe, Ryo},
   title   = {{TeNeT-py}: a {Python} library for symmetric tensor networks
              --- a {NumPy}-style {API} on the surface, category theory under

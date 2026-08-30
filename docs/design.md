@@ -2615,7 +2615,7 @@ Only the reduced numerical arrays move.
 
 ## What "PyTorch backend" means, exactly
 
-Install it with the `torch` extra (`pip install tenet-py[torch]`).
+Install it with the `torch` extra (`pip install tenet-sym[torch]`).
 
 Supported and tested (`tests/backends/test_torch.py`, issue #95): every public
 op on torch blocks — arithmetic, `norm`, `transpose` (SU(2) braiding and
@@ -5054,7 +5054,7 @@ The split:
   **Idempotent, and loud without JAX.** Re-importing `tenet.pytree` is a `sys.modules`
   hit and `install()` documents itself idempotent, so repeat calls change nothing — pinned
   by a test that compares the observable registry state across a second and a third call.
-  Without JAX the function raises its own `ImportError` naming `tenet-py[jax]`, so a
+  Without JAX the function raises its own `ImportError` naming `tenet-sym[jax]`, so a
   JAX-less user gets a sentence rather than a traceback out of a submodule; the test blocks
   `jax` with a meta-path finder in a subprocess and asserts the raise came from
   `tenet/__init__.py`. It is written as a re-raise around the submodule imports, *not* as a

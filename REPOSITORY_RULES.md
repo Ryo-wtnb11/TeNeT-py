@@ -32,7 +32,7 @@ Process rules for `TeNeT-py`. Design rules live in `docs/design.md`
 - Type annotations on all public functions and classes.
 - Structural/categorical types are immutable.
 - Dependencies: keep minimal. Core depends on `numpy`, `autoray` and
-  `opt-einsum` only. JAX/PyTorch are optional extras (`tenet-py[jax]`), never
+  `opt-einsum` only. JAX/PyTorch are optional extras (`tenet-sym[jax]`), never
   hard requirements; core never imports them. `src/tenet/network/` is held to the
   same rule plus `quimb` and `opt_einsum`: the driver layer is built on the public
   `tenet` API only, enforced by `tests/network/test_hygiene.py`.
