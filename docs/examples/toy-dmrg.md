@@ -16,7 +16,7 @@ algorithm through the library: [Heisenberg, U(1)](heisenberg.md).
 
 ## Source
 
-[`examples/toy_codes/dmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/dmrg.py)
+[`examples/toy_codes/dmrg.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/toy_codes/dmrg.py)
 
 ```python linenums="1"
 --8<-- "examples/toy_codes/dmrg.py"

@@ -14,7 +14,7 @@ Both are served through the matrix-valued [FMatrixData][tenet.symmetry.FMatrixDa
 ``to_dense`` are total for SU(N).
 
 Coefficients come from ``racah-py``, a core dependency, so this module
-works on a plain ``pip install tenet-py`` — see ``tenet.symmetry._sun_coeff``.
+works on a plain ``pip install symtenet`` — see ``tenet.symmetry._sun_coeff``.
 """
 
 from dataclasses import dataclass

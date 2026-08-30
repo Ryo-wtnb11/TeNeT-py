@@ -3,7 +3,7 @@
 ## Install
 
 ```sh
-uv add tenet-sym         # or: pip install tenet-sym
+uv add symtenet         # or: pip install symtenet
 ```
 
 The core install pulls `numpy`, `autoray`, `opt-einsum` and `racah-py`. Every symmetry
@@ -11,8 +11,8 @@ The core install pulls `numpy`, `autoray`, `opt-einsum` and `racah-py`. Every sy
 extras add backends:
 
 ```sh
-uv add "tenet-sym[jax]"      # jax>=0.10 — pytrees, jit, grad
-uv add "tenet-sym[torch]"    # torch>=2.0 — eager blocks
+uv add "symtenet[jax]"      # jax>=0.10 — pytrees, jit, grad
+uv add "symtenet[torch]"    # torch>=2.0 — eager blocks
 ```
 
 `racah-py` ships abi3-py312 wheels for linux x86_64/aarch64, macOS arm64/x86_64 and

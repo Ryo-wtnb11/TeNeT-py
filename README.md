@@ -1,11 +1,11 @@
-# TeNeT-py
+# symtenet
 
-[![tests](https://github.com/Ryo-wtnb11/TeNeT-py/actions/workflows/ci.yml/badge.svg)](https://github.com/Ryo-wtnb11/TeNeT-py/actions/workflows/ci.yml)
-[![coverage](https://ryo-wtnb11.github.io/TeNeT-py/coverage-badge.svg)](https://github.com/Ryo-wtnb11/TeNeT-py/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/Ryo-wtnb11/TeNeT-py/graph/badge.svg)](https://codecov.io/gh/Ryo-wtnb11/TeNeT-py)
-[![docs](https://img.shields.io/badge/docs-online-blue.svg)](https://ryo-wtnb11.github.io/TeNeT-py/)
-[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/LICENSE)
-[![python](https://img.shields.io/badge/python-%E2%89%A53.12-blue.svg)](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/pyproject.toml)
+[![tests](https://github.com/Ryo-wtnb11/symtenet/actions/workflows/ci.yml/badge.svg)](https://github.com/Ryo-wtnb11/symtenet/actions/workflows/ci.yml)
+[![coverage](https://ryo-wtnb11.github.io/symtenet/coverage-badge.svg)](https://github.com/Ryo-wtnb11/symtenet/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/Ryo-wtnb11/symtenet/graph/badge.svg)](https://codecov.io/gh/Ryo-wtnb11/symtenet)
+[![docs](https://img.shields.io/badge/docs-online-blue.svg)](https://ryo-wtnb11.github.io/symtenet/)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/Ryo-wtnb11/symtenet/blob/main/LICENSE)
+[![python](https://img.shields.io/badge/python-%E2%89%A53.12-blue.svg)](https://github.com/Ryo-wtnb11/symtenet/blob/main/pyproject.toml)
 
 **A Python library for symmetric tensor networks: NumPy-ish API on the surface, category theory under the hood.**
 
@@ -20,15 +20,15 @@ the way an ndarray does. Blocks live in NumPy, JAX or PyTorch arrays through
 ## Install
 
 ```sh
-uv add tenet-sym         # or: pip install tenet-sym
+uv add symtenet         # or: pip install symtenet
 ```
 
 The core install pulls `numpy`, `autoray`, `opt-einsum` and `racah-py`, and every
 symmetry works on it. Two optional extras:
 
 ```sh
-uv add "tenet-sym[jax]"      # jax>=0.10 — pytrees, jit, grad
-uv add "tenet-sym[torch]"    # torch>=2.0 — eager blocks
+uv add "symtenet[jax]"      # jax>=0.10 — pytrees, jit, grad
+uv add "symtenet[torch]"    # torch>=2.0 — eager blocks
 ```
 
 ## Quickstart
@@ -57,7 +57,7 @@ print(out.psi.entanglement_entropy())  # {bond: S}, in nats
 
 The Néel product state's own charges put the run in the `S^z_tot = 0` sector, and the
 site tensors' invariance keeps it there — no projector, no penalty term.
-[Getting started](https://ryo-wtnb11.github.io/TeNeT-py/getting-started/) reads this
+[Getting started](https://ryo-wtnb11.github.io/symtenet/getting-started/) reads this
 example line by line.
 
 With the `jax` extra, the same tensors are JAX pytrees: `jit`, `grad` and `vmap` reach
@@ -92,34 +92,34 @@ assert g.legs == t.legs
 
 ## Docs
 
-- [Getting started](https://ryo-wtnb11.github.io/TeNeT-py/getting-started/) — install and the first example.
-- [User guide](https://ryo-wtnb11.github.io/TeNeT-py/guide/tensors-legs-spaces/) — tensors, symmetries, contraction, Hamiltonians, DMRG, truncation, JAX, files.
-- [Tutorials](https://ryo-wtnb11.github.io/TeNeT-py/tutorials/dmrg/) — DMRG, fermions, SU(2), quantum chemistry, CTMRG, VMC.
-- [Examples](https://ryo-wtnb11.github.io/TeNeT-py/examples/) — runnable files with their committed output.
-- [API reference](https://ryo-wtnb11.github.io/TeNeT-py/api/tenet/) — every public name.
-- [`docs/design.md`](https://ryo-wtnb11.github.io/TeNeT-py/design/) — the categorical model underneath.
-- [`REPOSITORY_RULES.md`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/REPOSITORY_RULES.md) — process rules for contributing.
+- [Getting started](https://ryo-wtnb11.github.io/symtenet/getting-started/) — install and the first example.
+- [User guide](https://ryo-wtnb11.github.io/symtenet/guide/tensors-legs-spaces/) — tensors, symmetries, contraction, Hamiltonians, DMRG, truncation, JAX, files.
+- [Tutorials](https://ryo-wtnb11.github.io/symtenet/tutorials/dmrg/) — DMRG, fermions, SU(2), quantum chemistry, CTMRG, VMC.
+- [Examples](https://ryo-wtnb11.github.io/symtenet/examples/) — runnable files with their committed output.
+- [API reference](https://ryo-wtnb11.github.io/symtenet/api/tenet/) — every public name.
+- [`docs/design.md`](https://ryo-wtnb11.github.io/symtenet/design/) — the categorical model underneath.
+- [`REPOSITORY_RULES.md`](https://github.com/Ryo-wtnb11/symtenet/blob/main/REPOSITORY_RULES.md) — process rules for contributing.
 
 ## Citation
 
-If you use TeNeT-py in your research, please cite it:
+If you use symtenet in your research, please cite it:
 
 ```bibtex
-@software{tenet-sym,
+@software{symtenet,
   author  = {Watanabe, Ryo},
-  title   = {{TeNeT-py}: a {Python} library for symmetric tensor networks
+  title   = {{symtenet}: a {Python} library for symmetric tensor networks
              --- a {NumPy}-style {API} on the surface, category theory under
              the hood},
-  url     = {https://github.com/Ryo-wtnb11/TeNeT-py},
+  url     = {https://github.com/Ryo-wtnb11/symtenet},
   license = {Apache-2.0},
   year    = {2026}
 }
 ```
 
 The same metadata lives in
-[`CITATION.cff`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/CITATION.cff) —
+[`CITATION.cff`](https://github.com/Ryo-wtnb11/symtenet/blob/main/CITATION.cff) —
 GitHub's "Cite this repository" button renders it as BibTeX or APA.
 
 ## License
 
-Apache License 2.0 — see [`LICENSE`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/LICENSE).
+Apache License 2.0 — see [`LICENSE`](https://github.com/Ryo-wtnb11/symtenet/blob/main/LICENSE).

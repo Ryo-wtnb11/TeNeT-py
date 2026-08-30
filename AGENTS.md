@@ -4,7 +4,7 @@ Guide for coding agents (and humans) working in this repository.
 
 ## What this project is
 
-`TeNeT-py`: non-Abelian symmetric tensors with ndarray-style Python APIs and
+`symtenet`: non-Abelian symmetric tensors with ndarray-style Python APIs and
 backend-native numerical execution. **`docs/design.md` is the design document.**
 Read the relevant section of it before implementing anything; it defines the
 architecture, milestones, and invariants. `REPOSITORY_RULES.md` defines

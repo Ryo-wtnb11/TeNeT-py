@@ -1,4 +1,4 @@
-"""GPU benchmark: TeNeT-py (jax-jit, A100) vs symmray (jax-GPU eager, numpy-CPU).
+"""GPU benchmark: symtenet (jax-jit, A100) vs symmray (jax-GPU eager, numpy-CPU).
 
 U(1) rank-4 tensordot, "wide" shape (free legs m=4, contracted legs degeneracy m),
 plus an SU(2) general-path (bending) contraction, GPU vs same-machine CPU.

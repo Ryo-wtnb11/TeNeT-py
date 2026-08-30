@@ -265,7 +265,7 @@ def test_import_error_without_jax_names_extra():
         except ImportError as exc:
             msg = str(exc)
             assert "JAX" in msg, msg
-            assert "tenet-py[jax]" in msg, msg
+            assert "symtenet[jax]" in msg, msg
         else:
             raise AssertionError("tenet.ad imported without jax")
         print("OK")

@@ -1,4 +1,4 @@
-"""TeNeT-py: non-Abelian symmetric tensors with ndarray-style APIs.
+"""symtenet: non-Abelian symmetric tensors with ndarray-style APIs.
 
 [SymmetricTensor][tenet.SymmetricTensor] is the tensor type. Its categorical structure is
 [Leg][tenet.Leg] (``IN``/``OUT``, [Side][tenet.Side]),
@@ -171,7 +171,7 @@ def enable_jax(*, ad: bool = False) -> None:
     except ImportError as exc:
         raise ImportError(
             "tenet.enable_jax() requires JAX, which is an optional dependency. "
-            "Install it with `pip install 'tenet-py[jax]'` or `uv sync --extra jax`. "
+            "Install it with `pip install 'symtenet[jax]'` or `uv sync --extra jax`. "
             "The core library never imports JAX; get_params/set_params work without it."
         ) from exc
 

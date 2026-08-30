@@ -401,7 +401,7 @@ handed to `jax.jit`. `dmrg_` takes the callable; this layer names no accelerator
 supply it and the `jax` extra:
 
 ```python
-import jax                       # pip install "tenet-sym[jax]"
+import jax                       # pip install "symtenet[jax]"
 import tenet
 
 tenet.enable_jax()               # registers SymmetricTensor as a JAX pytree

@@ -1,8 +1,8 @@
-site_name: TeNeT-py
+site_name: symtenet
 site_description: Non-Abelian symmetric tensors with ndarray-style Python APIs and backend-native numerical execution
-site_url: https://ryo-wtnb11.github.io/TeNeT-py/
-repo_url: https://github.com/Ryo-wtnb11/TeNeT-py
-repo_name: Ryo-wtnb11/TeNeT-py
+site_url: https://ryo-wtnb11.github.io/symtenet/
+repo_url: https://github.com/Ryo-wtnb11/symtenet
+repo_name: Ryo-wtnb11/symtenet
 edit_uri: ""
 
 theme:

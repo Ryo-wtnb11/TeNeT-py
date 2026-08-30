@@ -236,7 +236,7 @@ def test_expm_on_numpy_without_scipy_names_pip_install_scipy(monkeypatch):
     """The alternative the maintainer took: no core SciPy, an actionable ImportError.
 
     autoray resolves NumPy's ``linalg.expm`` to ``scipy.linalg.expm``; blocking the
-    import is the only way to see what a bare ``pip install tenet-py`` would see.
+    import is the only way to see what a bare ``pip install symtenet`` would see.
     """
     import autoray as ar
 

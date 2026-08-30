@@ -14,7 +14,7 @@ against nothing but `tenet.add`, `tenet.subtract`, scalar multiply and divide,
 
 ## Source
 
-[`examples/toy_codes/lanczos.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/lanczos.py)
+[`examples/toy_codes/lanczos.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/toy_codes/lanczos.py)
 
 ```python linenums="1"
 --8<-- "examples/toy_codes/lanczos.py"

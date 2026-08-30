@@ -1,6 +1,6 @@
 # Building a Hamiltonian
 
-A Hamiltonian in TeNeT-py is an [MPO][tenet.network.MPO]. You build one from local
+A Hamiltonian in symtenet is an [MPO][tenet.network.MPO]. You build one from local
 operators, and `tenet.models` ships the standard sites so you do not write the same three
 matrices again — or, for the models below, the finished operator.
 

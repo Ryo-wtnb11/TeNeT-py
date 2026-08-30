@@ -1,4 +1,4 @@
-# TeNeT-py
+# symtenet
 
 **Non-Abelian symmetric tensors with ndarray-style Python APIs and backend-native numerical execution.**
 
@@ -33,7 +33,7 @@ with a gauge fingerprint that `load` verifies. The rest of this document is the 
 
 ---
 
-`TeNeT-py` is a pure-Python library for symmetry-aware tensor computation designed to connect non-Abelian tensor algebra with the Python numerical and machine-learning ecosystem.
+`symtenet` is a pure-Python library for symmetry-aware tensor computation designed to connect non-Abelian tensor algebra with the Python numerical and machine-learning ecosystem.
 
 The central design principle is:
 
@@ -118,7 +118,7 @@ TensorMap semantics
 TensorMap-shaped public API
 ```
 
-`TeNeT-py` keeps the former and deliberately avoids requiring the latter.
+`symtenet` keeps the former and deliberately avoids requiring the latter.
 
 ---
 
@@ -153,7 +153,7 @@ Those numerical tensors should ideally be handled by numerical systems that alre
 - tensor contraction;
 - distributed execution.
 
-`TeNeT-py` therefore does not attempt to replace NumPy, JAX, or PyTorch.
+`symtenet` therefore does not attempt to replace NumPy, JAX, or PyTorch.
 
 Instead, it defines the categorical layer required to tell these backends **which numerical operations must be performed and what those operations mean**.
 
@@ -181,7 +181,7 @@ The design is informed by several existing approaches:
 - [YASTN](https://github.com/yastn/yastn) demonstrates an axis-oriented Python tensor API with leg signatures, differentiable backends, and tensor-network operations.
 - [froSTspin](https://github.com/ogauthe/frostspin) provides a useful non-Abelian Python reference that combines per-leg signatures with a matrix-oriented row/column partition.
 
-`TeNeT-py` deliberately does not copy any one of these interfaces.
+`symtenet` deliberately does not copy any one of these interfaces.
 
 Its target is approximately:
 
@@ -512,7 +512,7 @@ At the reduced level it may require:
 - changes of fusion basis;
 - \(B\)-symbols or equivalent bending coefficients.
 
-Therefore `TeNeT-py` keeps both pieces of metadata.
+Therefore `symtenet` keeps both pieces of metadata.
 
 ```text
 side
@@ -524,7 +524,7 @@ dual
 
 This allows the user-facing representation to retain full morphism semantics without forcing input and output legs to occupy contiguous axis ranges.
 
-A source-level comparison against TensorKit.jl (#142) showed the two libraries hold the same data in two spellings: TensorKit's `GradedSpace` carries its degeneracies **and** a `dual::Bool`, while `TeNeT-py`'s `GradedSpace` is dual-free and the flag lives on the `Leg`. The one operation that correspondence had left missing is `tenet.flip_dual(t, axes, inv=)`: it toggles the named legs' `dual` flags and relabels their spaces through `provider.dual`, keeping the tensor the same morphism by paying the Z-isomorphism's scalar `χ_a · θ_a` per flipped leg per fusion tree (the `FSIndicatorData` and `TwistData` capabilities since M24). Because the relabel and the flag toggle cancel inside `Leg.fused_sector`, the block set is unchanged and `flip_dual` is a per-block scalar multiply; `side` never moves — that remains `repartition`'s bend. The rest of TensorKit's space-level surface was reviewed and tiered in the same issue: `fuse(V₁,V₂)`, a subspace predicate, the orthogonal complement `⊖`, the unit-leg family and the bare twist are named follow-ups with triggering criteria, while the Deligne product `⊠` at the space level, `infimum`/`supremum`, the unit/zero-space family and the `CartesianSpace`/`ComplexSpace` analogues are refused — each either already has a `TeNeT-py` spelling one level up (`ProductProvider`, `TrivialProvider`) or has no caller.
+A source-level comparison against TensorKit.jl (#142) showed the two libraries hold the same data in two spellings: TensorKit's `GradedSpace` carries its degeneracies **and** a `dual::Bool`, while `symtenet`'s `GradedSpace` is dual-free and the flag lives on the `Leg`. The one operation that correspondence had left missing is `tenet.flip_dual(t, axes, inv=)`: it toggles the named legs' `dual` flags and relabels their spaces through `provider.dual`, keeping the tensor the same morphism by paying the Z-isomorphism's scalar `χ_a · θ_a` per flipped leg per fusion tree (the `FSIndicatorData` and `TwistData` capabilities since M24). Because the relabel and the flag toggle cancel inside `Leg.fused_sector`, the block set is unchanged and `flip_dual` is a per-block scalar multiply; `side` never moves — that remains `repartition`'s bend. The rest of TensorKit's space-level surface was reviewed and tiered in the same issue: `fuse(V₁,V₂)`, a subspace predicate, the orthogonal complement `⊖`, the unit-leg family and the bare twist are named follow-ups with triggering criteria, while the Deligne product `⊠` at the space level, `infimum`/`supremum`, the unit/zero-space family and the `CartesianSpace`/`ComplexSpace` analogues are refused — each either already has a `symtenet` spelling one level up (`ProductProvider`, `TrivialProvider`) or has no caller.
 
 ---
 
@@ -1827,7 +1827,7 @@ Optimization must remain below the mathematical API.
 
 # No custom ndarray implementation
 
-`TeNeT-py` should not implement:
+`symtenet` should not implement:
 
 ```text
 its own dense ndarray
@@ -2238,7 +2238,7 @@ opt_einsum
 cotengra
 ```
 
-while `TeNeT-py` retains responsibility for actual symmetric execution.
+while `symtenet` retains responsibility for actual symmetric execution.
 
 ```text
 SymmetricTensor network
@@ -2272,7 +2272,7 @@ block layout
 
 A `SymmetricTensor` is usable as the `data` of a `quimb.tensor.Tensor` today, with
 no adapter on either side: the whole integration is the `autoray` registration plus
-the `get_params` / `set_params` protocol. `TeNeT-py` never imports `quimb` or
+the `get_params` / `set_params` protocol. `symtenet` never imports `quimb` or
 `cotengra`; both are test-only dependencies in the dev group.
 
 ```python
@@ -2615,7 +2615,7 @@ Only the reduced numerical arrays move.
 
 ## What "PyTorch backend" means, exactly
 
-Install it with the `torch` extra (`pip install tenet-sym[torch]`).
+Install it with the `torch` extra (`pip install symtenet[torch]`).
 
 Supported and tested (`tests/backends/test_torch.py`, issue #95): every public
 op on torch blocks — arithmetic, `norm`, `transpose` (SU(2) braiding and
@@ -2688,7 +2688,7 @@ call, and `restrict` and `to_symmetry` take it in the same position (#210).
 # Proposed package structure
 
 ```text
-TeNeT-py/
+symtenet/
 │
 ├── src/
 │   └── tenet/
@@ -5054,7 +5054,7 @@ The split:
   **Idempotent, and loud without JAX.** Re-importing `tenet.pytree` is a `sys.modules`
   hit and `install()` documents itself idempotent, so repeat calls change nothing — pinned
   by a test that compares the observable registry state across a second and a third call.
-  Without JAX the function raises its own `ImportError` naming `tenet-sym[jax]`, so a
+  Without JAX the function raises its own `ImportError` naming `symtenet[jax]`, so a
   JAX-less user gets a sentence rather than a traceback out of a submodule; the test blocks
   `jax` with a meta-path finder in a subprocess and asserts the raise came from
   `tenet/__init__.py`. It is written as a re-raise around the submodule imports, *not* as a
@@ -7685,7 +7685,7 @@ If an ndarray expression does not uniquely specify a braid, the API must request
 The intended architecture can be summarized as:
 
 ```text
-                         TeNeT-py
+                         symtenet
                             │
                             ▼
                     SymmetricTensor
@@ -7739,4 +7739,4 @@ The project should therefore be described by three sentences:
 
 > **Backend-native arrays are the execution model.**
 
-This boundary is the main design of `TeNeT-py`.
+This boundary is the main design of `symtenet`.

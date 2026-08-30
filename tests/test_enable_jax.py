@@ -117,7 +117,7 @@ def test_without_jax_it_raises_a_message_naming_the_optional_extra():
             msg = str(exc)
             assert "tenet.enable_jax()" in msg, msg
             assert "JAX" in msg and "optional dependency" in msg, msg
-            assert "tenet-py[jax]" in msg, msg
+            assert "symtenet[jax]" in msg, msg
             assert "get_params/set_params" in msg, msg
             # the ImportError is ours, not a traceback surfacing out of tenet.pytree
             assert exc.__traceback__.tb_next.tb_frame.f_globals["__name__"] == "tenet", msg

@@ -2,7 +2,7 @@
 
 A spin-1/2 Heisenberg chain, $H = \sum_i \mathbf{S}_i \cdot \mathbf{S}_{i+1}$, open boundaries,
 U(1)-graded by $2S^z$. This is
-[`examples/heisenberg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/heisenberg.py)
+[`examples/heisenberg.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/heisenberg.py)
 walked through; the file runs standalone and its output is committed on the [Heisenberg,
 U(1)](../examples/heisenberg.md) page.
 
@@ -80,7 +80,7 @@ The grading falls out of the operators' own charges: `S+` emits $+2$, `S-` emits
 in three blocks. You declared none of it.
 
 If you want to see the same operator with its `W` matrix and grading written out by hand,
-[`examples/heisenberg_walkthrough.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/heisenberg_walkthrough.py)
+[`examples/heisenberg_walkthrough.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/heisenberg_walkthrough.py)
 builds it three ways — `from_w`, `from_entries`, `from_terms` — and lands all three on the
 same twelve digits. Its page is
 [Heisenberg, U(1) walkthrough](../examples/heisenberg-walkthrough.md).
@@ -223,6 +223,6 @@ and [DMRG](../guide/dmrg.md#compile) describe what that changes.
 - [Fermions and the Hubbard model](fermions.md) — the same driver with `fZ2` sites.
 - [SU(2)](su2.md) — the same chain with the non-Abelian grading.
 - [Quantum chemistry](quantum-chemistry.md) — `from_arrays(..., symbolic=True)`.
-- [`examples/toy_codes/dmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/dmrg.py)
+- [`examples/toy_codes/dmrg.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/toy_codes/dmrg.py)
   writes the algorithm out by hand on `tenet`'s tensor layer; its page is
   [Toy DMRG](../examples/toy-dmrg.md).
