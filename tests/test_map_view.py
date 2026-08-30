@@ -3,6 +3,7 @@
 import dataclasses
 import math
 import pathlib
+import re
 
 import autoray as ar
 import numpy as np
@@ -471,6 +472,46 @@ def test_map_view_has_no_numpy_no_to_dense_and_no_provider_branching():
     assert "to_dense(" not in src
     assert "if provider ==" not in src
     assert "isinstance(provider" not in src
+
+
+def _body(path):
+    """``path``'s source with every docstring removed.
+
+    Prose may name a symmetry -- an example is allowed to be about SU(2) -- and the claim
+    below is about the code.
+    """
+    return re.sub(r'"""[\s\S]*?"""', "", path.read_text())
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param(path, id=path.stem)
+        for path in sorted(pathlib.Path(tenet.ops.__file__).parent.glob("*.py"))
+        + [pathlib.Path(tenet.map_view.__file__), pathlib.Path(tenet.structure.__file__)]
+        if path.stem != "__init__"
+    ],
+)
+def test_no_operation_branches_on_which_symmetry_it_has(path):
+    """One code path per operation, whatever the symmetry is.
+
+    A provider reaches the operations through two doors and only two: the coefficients it
+    supplies, which a *plan* has folded into indices and scalars before any array moves,
+    and ``requires(provider, Capability)``, which **refuses** — it says an operation is
+    undefined for that symmetry, and raises. Neither is a branch on identity, and a
+    ``provider != provider`` comparison between two operands is a check that they share a
+    symmetry, not a choice of route.
+
+    So the operations are one implementation each. A module that named a symmetry in its
+    body would either be special-casing what the plan already carries, or building a fast
+    path whose slow twin is the one everybody else gets tested on. Both are how a library
+    acquires a symmetry it silently supports better than the others.
+    """
+    body = _body(path)
+    for pattern in ("if provider ==", "isinstance(provider", "provider.name ==", "if symmetry =="):
+        assert pattern not in body, f"{path.name} branches on the provider: {pattern}"
+    for name in ("SU2", "U1Provider", "FZ2", "Z2Provider", "SUNProvider", "TrivialProvider"):
+        assert not re.search(rf"\b{name}\b", body), f"{path.name} names {name} in its body"
 
 
 # --- the storage is what the hot path reads -------------------------------------

@@ -7637,6 +7637,16 @@ coefficients — F/R symbols, Clebsch-Gordan data, Koszul signs — which the pl
 has folded away before anything moves. A provider that read `blocks` there would
 be an operation taking a provider-specific path it does not need, not a symmetry
 that resists the storage.
+
+There are no such paths, and that is also pinned by a test rather than by
+intent: no module of `tenet.ops`, nor `map_view` or `structure`, names a
+symmetry in its body or branches on which provider it has. A provider reaches
+the operations through exactly two doors — the coefficients it supplies, which a
+plan has folded into indices and scalars before any array moves, and
+`requires(provider, Capability)`, which *refuses* rather than routes. A
+`a.provider != b.provider` comparison is a check that two operands share a
+symmetry, not a choice of implementation. One code path per operation, whatever
+the symmetry is.
 Structural metadata is immutable, hashable, and array-free — F/R
 and other coefficient arrays never live in structural fields. All three are
 enforced, not asserted: `tests/backends/test_torch.py` walks every public op on
