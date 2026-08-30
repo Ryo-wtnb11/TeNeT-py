@@ -385,22 +385,18 @@ HUBBARD_N, HUBBARD_T, HUBBARD_U = 4, 1.0, 4.0
 
 
 def _su2_hubbard(n: int, t: float, u: float) -> MPO:
-    """The Hubbard chain on the SU(2) site: one invariant operator per bond.
+    """The Hubbard chain on the SU(2) site: a hopping bond and an on-site ``U``.
 
-    The on-site ``U`` term rides along on the bonds rather than entering on its own,
-    because a term operator is rank 3 or rank 2*k* with *k* >= 2 and this physical space
-    admits no rank-3 form of anything: ``from_terms`` is Abelian-only on the charge leg,
-    and ``irrep_dim > 1`` here. Site ``i``'s ``n_up n_dn`` is therefore split over the
-    bonds it belongs to -- whole at the two ends, half and half in the bulk.
+    Written the way the model reads -- ``-t`` on each bond, ``u`` on each site. The
+    on-site term is ``local_op``'s invariant form on one site, the rank-2 term operator,
+    which is the only form this physical space admits: ``irrep_dim > 1`` here, so no
+    operator of it has a rank-3 charge-leg form.
     """
     site = spinful_fermion(FUS)
-    eye, nn = np.eye(4), site.matrices["n_up n_dn"]
-    terms = []
-    for i in range(n - 1):
-        left, right = (1.0 if i == 0 else 0.5), (1.0 if i == n - 2 else 0.5)
-        bond = -t * site.matrices["hop"] + u * (left * np.kron(nn, eye) + right * np.kron(eye, nn))
-        terms.append((1.0, [(local_op(bond, phys=site.phys), (i, i + 1))]))
-    return MPO.from_terms(n, terms)
+    hop = local_op(site.matrices["hop"], phys=site.phys)
+    nn = local_op(site.matrices["n_up n_dn"], phys=site.phys)
+    terms = [(-t, [(hop, (i, i + 1))]) for i in range(n - 1)]
+    return MPO.from_terms(n, terms + [(u, [(nn, i)]) for i in range(n)])
 
 
 def _half_filled_singlet_energy(n: int, t: float, u: float) -> float:
@@ -452,3 +448,17 @@ def test_the_su2_hubbard_bond_is_multiplet_compressed(su2_hubbard_run):
     """``dim`` counts dense states, ``reduced_dim`` multiplets; the gap is what SU(2) buys."""
     mid = su2_hubbard_run.psi[HUBBARD_N // 2].legs[0].space
     assert mid.reduced_dim < mid.dim
+
+
+def test_the_su2_hubbard_mpo_is_the_fz2_one_operator_for_operator():
+    """The on-site ``U`` as its own term is the same operator the ``fZ2`` model builds.
+
+    The ``fZ2`` grading has a rank-3 form of ``n_up n_dn`` and this one does not, so the
+    two spellings of the Hubbard chain are independent -- one charge-leg operator per
+    site against one invariant operator per bond plus one per site -- and ``to_dense``
+    is the common exit where they can be compared.
+    """
+    n = HUBBARD_N
+    want = np.asarray(hubbard(n, t=HUBBARD_T, U=HUBBARD_U).to_dense())
+    got = np.asarray(_su2_hubbard(n, HUBBARD_T, HUBBARD_U).to_dense())
+    assert np.abs(got - want).max() < 1e-12

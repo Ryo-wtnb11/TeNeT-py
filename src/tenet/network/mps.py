@@ -994,6 +994,11 @@ def local_op(dense: Any, *, phys: GradedSpace, charge: Sector | None = None) -> 
     splits it with
     ``svd_truncated`` and the MPO bond comes out of that SVD.
 
+    ``k = 1`` is a one-site term, rank 2 and the same ``(d, d)`` shape the charge-leg form
+    takes. It is the form a one-site term takes on **any** grading and the only one it can
+    take where ``irrep_dim > 1``: the charge-leg form emits onto a ``D=1`` dense leg, which
+    a multi-dimensional irrep is not. Where both forms exist they build the same MPO.
+
     Both forms are built at ``from_dense``'s **default** relative ``atol``, so an array
     that does not match what it was declared to be *raises*. The matrices themselves are
     physics and stay in the caller.
@@ -1068,10 +1073,10 @@ def _braids_with_signs(space: GradedSpace) -> bool:
 
 def _check_op(op: SymmetricTensor, phys: GradedSpace | None) -> GradedSpace:
     """Validate one term operator and return the physical space it declares."""
-    if op.ndim != 3 and (op.ndim < 4 or op.ndim % 2):
+    if op.ndim != 3 and (op.ndim < 2 or op.ndim % 2):
         raise ValueError(
             f"a term operator is rank 3 on (phys OUT, phys IN, charge OUT) or rank 2k on "
-            f"(phys OUT)*k then (phys IN)*k for an invariant k-site term (k >= 2), got rank "
+            f"(phys OUT)*k then (phys IN)*k for an invariant k-site term (k >= 1), got rank "
             f"{op.ndim}; build it with tenet.network.local_op"
         )
     got = op.legs[0].space
@@ -1176,6 +1181,11 @@ def _split(op: SymmetricTensor, cutoff: float) -> list[SymmetricTensor]:
     already rank 4, then one site at a time is peeled off by ``svd_truncated``. **The aux
     bonds are never declared**: they come out of the SVD sector by sector, empty sectors
     omitted, which is why nothing here needs a coupling tree or a multiplicity label.
+
+    ``k = 1`` is the gluing with **zero** cuts: the operator comes back as the one rank-4
+    tensor whose two bonds are the ``D=1`` unit legs, which is the identity channel, and
+    that is where a one-site term belongs. No SVD runs and no twist is owed, so a one-site
+    term is not a special case of anything below.
 
     The util legs are ``dual`` because ``_as_w``'s bend makes the *derived* bonds dual, and
     an MPO bond carries one ``dual`` convention — ``V (+) V*`` is not a graded space; on
@@ -3176,7 +3186,11 @@ class MPO:
           bond it runs through is the one the SVD found**, so a non-Abelian term needs no
           coupling tree and no multiplicity label: both live inside the operator's own
           blocks. The sites need not be adjacent -- the derived bond, graded or not, runs
-          through the identities on the sites in between.
+          through the identities on the sites in between. ``k = 1`` is a **one-site
+          term**: no cut is made, so the operator rides the identity channel between two
+          ``D=1`` unit bonds. It is the form an on-site ``U``, a chemical potential or a
+          field takes on every grading, and the only one available where ``irrep_dim > 1``,
+          since the charge-leg form's emitted leg has to be ``D=1`` dense.
 
         A term is a coefficient and a list of ``(operator, sites)`` pairs, with identities
         implied on every untouched site. The sum is assembled **symbolically**, as a

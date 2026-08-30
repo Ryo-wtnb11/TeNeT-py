@@ -97,7 +97,8 @@ class Site:
     ops : Mapping[str, SymmetricTensor]
         Name to **term** operator, in whichever of
         [local_op][tenet.network.local_op]'s two forms the grading admits: rank 3 with a
-        charge leg where the symmetry is Abelian, rank 2*k* invariant where it is not.
+        charge leg where the symmetry is Abelian, rank 2*k* invariant where it is not
+        (``k = 1`` included: a one-site term is invariant too).
         Where it is rank 3 this mapping is exactly what
         [MPO.from_arrays][tenet.network.MPO.from_arrays] calls ``ops``; where it is not,
         ``from_arrays`` cannot express the term at all and
@@ -329,10 +330,9 @@ def spinful_fermion(symmetry: _DualFusionRules = fZ2) -> Site:  # ty: ignore[inv
     one bond, the analogue of ``spin_half(SU2)``'s ``S.S``, and
     [MPO.from_terms][tenet.network.MPO.from_terms] splits it across that bond with an
     SVD. ``n`` and ``n_up n_dn`` arrive in the invariant *one*-site form, rank 2, which
-    is what [expectation_1site][tenet.network.expectation_1site] measures with; a
-    non-Abelian physical space admits no charge-leg form of them, so a ``U`` term
-    reaches a term list as part of a bond operator (``np.kron`` with the identity)
-    rather than on its own.
+    is both what [expectation_1site][tenet.network.expectation_1site] measures with and
+    what a one-site *term* is: a ``U`` term goes into a term list on its own site, and
+    the charge-leg form is not needed for it.
     """
     if symmetry is fZ2:
         return _build(
