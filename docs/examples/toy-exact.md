@@ -16,7 +16,7 @@ reference [Toy TEBD](toy-tebd.md) and [Toy DMRG](toy-dmrg.md) both print against
 
 ## Source
 
-[`examples/toy_codes/exact.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/exact.py)
+[`examples/toy_codes/exact.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/toy_codes/exact.py)
 
 ```python linenums="1"
 --8<-- "examples/toy_codes/exact.py"

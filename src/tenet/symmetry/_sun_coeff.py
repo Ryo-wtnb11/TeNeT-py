@@ -4,7 +4,7 @@ Every array this module returns is read-only and indexed by Dynkin *tuples*, not
 by :class:`~tenet.symmetry.sun.SUNSector`, so the provider stays array-free.
 
 ``racah-py`` is a core dependency: ``tenet.symmetry.sun`` works on a plain
-``pip install tenet-py`` for every ``N``, and the coefficients carry ``racah``'s gauge,
+``pip install symtenet`` for every ``N``, and the coefficients carry ``racah``'s gauge,
 recorded as ``GAUGE`` and verified by :func:`tenet.load`.
 """
 

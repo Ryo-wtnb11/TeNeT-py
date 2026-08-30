@@ -20,7 +20,7 @@ instead is [Heisenberg, U(1) walkthrough](heisenberg-walkthrough.md).
 
 ## Source
 
-[`examples/toy_codes/model.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/model.py)
+[`examples/toy_codes/model.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/toy_codes/model.py)
 
 ```python linenums="1"
 --8<-- "examples/toy_codes/model.py"

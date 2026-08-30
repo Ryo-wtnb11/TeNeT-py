@@ -62,7 +62,7 @@ try:
 except ImportError as exc:  # loud, actionable, names the extra -- as tenet.pytree does
     raise ImportError(
         "tenet.ad requires JAX, which is an optional dependency. "
-        "Install it with `pip install 'tenet-py[jax]'` or `uv sync --extra jax`. "
+        "Install it with `pip install 'symtenet[jax]'` or `uv sync --extra jax`. "
         "The core library never imports JAX; get_params/set_params work without it."
     ) from exc
 

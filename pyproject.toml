@@ -1,5 +1,5 @@
 [project]
-name = "tenet-py"
+name = "symtenet"
 version = "0.1.0"
 description = "Non-Abelian symmetric tensors with ndarray-style Python APIs and backend-native numerical execution"
 readme = "README.md"

@@ -4,14 +4,14 @@ Corner transfer matrix renormalization on a corner-and-edge environment. Two pro
 share one core: the classical 2D Ising partition function, whose free energy per site has
 Onsager's closed form, and a single-site iPEPS whose energy you differentiate.
 
-[`examples/ising2d.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/ising2d.py)
+[`examples/ising2d.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/ising2d.py)
 is the Ising half through the library, on a core install; its output is committed on the
 [2D Ising CTMRG](../examples/ising2d.md) page.
-[`examples/toy_codes/ctmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/ctmrg.py)
+[`examples/toy_codes/ctmrg.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/toy_codes/ctmrg.py)
 writes a C4v CTMRG out on the tensor layer and adds the iPEPS gradient; it needs the
 `jax` extra.
 
-[`examples/ising_thermo.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/ising_thermo.py)
+[`examples/ising_thermo.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/ising_thermo.py)
 differentiates the library lane's contraction twice; its output is on
 [2D Ising thermodynamics by AD](../examples/ising-thermo.md).
 

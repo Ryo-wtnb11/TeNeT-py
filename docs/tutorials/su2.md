@@ -1,7 +1,7 @@
 # SU(2) — the same chain, non-Abelian
 
 The Heisenberg chain of the [DMRG tutorial](dmrg.md), graded by SU(2) instead of U(1).
-This is [`examples/su2_heisenberg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/su2_heisenberg.py),
+This is [`examples/su2_heisenberg.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/su2_heisenberg.py),
 which runs both gradings in one process and prints them side by side; its output is
 committed on the [Heisenberg, SU(2)](../examples/su2-heisenberg.md) page.
 

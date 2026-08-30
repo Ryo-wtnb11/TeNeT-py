@@ -1,4 +1,4 @@
-"""TeNeT-py vs symmray: U(1) pairwise tensordot, CPU.
+"""symtenet vs symmray: U(1) pairwise tensordot, CPU.
 
 Rank-4 tensors, every leg carrying U(1) charges {-1, 0, 1}, two axes contracted
 (numpy's `axes=2` form). Both libraries get identical sector content,

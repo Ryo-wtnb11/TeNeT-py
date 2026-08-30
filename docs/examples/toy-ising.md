@@ -14,7 +14,7 @@ Imported by [Toy CTMRG](toy-ctmrg.md), which prints the comparison.
 
 ## Source
 
-[`examples/toy_codes/ising.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/ising.py)
+[`examples/toy_codes/ising.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/toy_codes/ising.py)
 
 ```python linenums="1"
 --8<-- "examples/toy_codes/ising.py"

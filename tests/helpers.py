@@ -85,7 +85,7 @@ def supersign(legs, p: tuple[int, ...], *, per_side: bool) -> np.ndarray:
 
     ``per_side=False`` counts every inversion of ``p`` (correct when every leg
     lives on one side); ``per_side=True`` counts only inversions between two axes
-    of the same side, which is TeNeT-py's stated convention.
+    of the same side, which is symtenet's stated convention.
     """
     pars = [parity_vector(legs[ax].space) for ax in p]
     sides = [legs[ax].side for ax in p]

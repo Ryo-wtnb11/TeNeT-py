@@ -11,7 +11,7 @@ Two oracles, both written independently of the provider:
   ``FZ2Sector(1)``'s, since ``irrep_dim == 1``). For an output entry indexed by
   ``(n_0, ..., n_{N-1})`` with ``q_j = par_{p[j]}[n_j]`` the sign is
   ``(-1) ** sum(q_j * q_k for j < k if p[j] > p[k])``, optionally restricted to
-  pairs on the same side — that restriction *is* TeNeT-py's convention (public
+  pairs on the same side — that restriction *is* symtenet's convention (public
   axis order across sides is our own ndarray bookkeeping, invariant 3) and the
   interleaved test is what pins it.
 """

@@ -61,7 +61,7 @@ The Ising half through the library: [2D Ising CTMRG](ising2d.md) and
 
 ## Source
 
-[`examples/toy_codes/ctmrg.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/ctmrg.py)
+[`examples/toy_codes/ctmrg.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/toy_codes/ctmrg.py)
 
 ```python linenums="1"
 --8<-- "examples/toy_codes/ctmrg.py"

@@ -2,7 +2,7 @@
 
 A variational energy minimized by gradient descent on the blocks of a symmetric MPS.
 Source:
-[`examples/toy_codes/vmc_mps.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/vmc_mps.py);
+[`examples/toy_codes/vmc_mps.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/toy_codes/vmc_mps.py);
 its output is committed on the [Toy VMC on an MPS](../examples/toy-vmc-mps.md) page.
 
 ```sh

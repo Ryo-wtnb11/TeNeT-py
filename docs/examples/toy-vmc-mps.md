@@ -36,7 +36,7 @@ Explained in the [VMC tutorial](../tutorials/vmc.md).
 
 ## Source
 
-[`examples/toy_codes/vmc_mps.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/vmc_mps.py)
+[`examples/toy_codes/vmc_mps.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/toy_codes/vmc_mps.py)
 
 ```python linenums="1"
 --8<-- "examples/toy_codes/vmc_mps.py"

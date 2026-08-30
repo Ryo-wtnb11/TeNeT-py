@@ -16,7 +16,7 @@ are fixed here:
 * **Our two trees are independent, both in ascending public-axis order.**
   TensorKit reads ``Hom(b₁⊗…⊗b_{N₂}, a₁⊗…⊗a_{N₁}) ≅ Hom(1, a₁⊗…⊗a_{N₁}⊗
   b*_{N₂}⊗…⊗b*₁)`` — the domain **reversed** — and therefore builds its
-  ``repartition`` out of a cyclic index tuple. TeNeT-py deliberately does **not**
+  ``repartition`` out of a cyclic index tuple. symtenet deliberately does **not**
   adopt that planar reading: the pairing of the two trees lives in
   ``FusionBlockKey``, not in a cyclic order. The consequence is that a bend
   appends to the destination tree's *end*, i.e. the moved leg takes the largest

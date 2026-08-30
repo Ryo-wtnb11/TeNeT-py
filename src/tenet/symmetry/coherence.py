@@ -20,7 +20,7 @@ surface, a six-sector budget costs ~0.12 s the first time and ~2 us afterwards, 
 process planning over many distinct leg gradings pays one of those per distinct budget.
 The cost is the underlying coefficients' first evaluation, not this module's arithmetic
 — a second cache here buys nothing, because ``racah`` already serves the repeats
-(TeNeT-py #307).
+(symtenet #307).
 
 Tolerances follow the arithmetic: exact identities (quantum dimensions,
 ``R**2`` for a symmetric provider) are compared exactly; float-folded ones

@@ -21,7 +21,7 @@ Needs SciPy, which is what `tenet.linalg.expm` calls on the NumPy backend.
 
 ## Source
 
-[`examples/toy_codes/tebd.py`](https://github.com/Ryo-wtnb11/TeNeT-py/blob/main/examples/toy_codes/tebd.py)
+[`examples/toy_codes/tebd.py`](https://github.com/Ryo-wtnb11/symtenet/blob/main/examples/toy_codes/tebd.py)
 
 ```python linenums="1"
 --8<-- "examples/toy_codes/tebd.py"

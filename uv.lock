@@ -1311,7 +1311,7 @@ wheels = [
 ]
 
 [[package]]
-name = "tenet-py"
+name = "symtenet"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -1,12 +1,12 @@
 cff-version: 1.2.0
-message: "If you use TeNeT-py in your research, please cite it as below."
-title: "TeNeT-py: a Python library for symmetric tensor networks — a NumPy-style API on the surface, category theory under the hood"
+message: "If you use symtenet in your research, please cite it as below."
+title: "symtenet: a Python library for symmetric tensor networks — a NumPy-style API on the surface, category theory under the hood"
 type: software
 authors:
   - family-names: "Watanabe"
     given-names: "Ryo"
-repository-code: "https://github.com/Ryo-wtnb11/TeNeT-py"
-url: "https://ryo-wtnb11.github.io/TeNeT-py/"
+repository-code: "https://github.com/Ryo-wtnb11/symtenet"
+url: "https://ryo-wtnb11.github.io/symtenet/"
 license: Apache-2.0
 abstract: >-
   A symmetric tensor Python library for tensor networks with Abelian,

@@ -5,7 +5,7 @@ Three oracles, all written without reference to the implementation:
 * ``independent_cgc_entry`` — a plain nested loop over component indices, so the
   ``cgc`` check is not a restatement of the einsum/reshape.
 * ``supersign`` — the dense-side Koszul sign of #39, re-derived here from each
-  axis's parity vector, restricted to pairs on the same side (TeNeT-py's stated
+  axis's parity vector, restricted to pairs on the same side (symtenet's stated
   convention). It reads the fZ2 component of a product sector, which is the only
   thing that makes it a product test rather than a copy of ``test_fz2``.
 * ``u1_shadow`` — a fermionic ``U(1) x fZ2`` tensor re-expressed on a plain
