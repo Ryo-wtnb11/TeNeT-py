@@ -282,12 +282,24 @@ def test_from_terms_refuses_operators_on_different_physical_spaces():
         MPO.from_terms(4, [(1.0, [(op_sz, 0), (wide, 1)])])
 
 
-def test_from_terms_refuses_a_rank_2_operator():
-    """The mistake a user arriving from tenpy makes first: a bare matrix, no charge leg."""
+def test_a_rank_2_operator_is_the_one_site_term_and_agrees_with_the_charge_leg_route():
+    """A bare matrix on one site is ``k = 1`` of the invariant form, not a mistake.
+
+    On an Abelian grading both routes exist, so they are held against each other
+    element-wise: the rank-3 charge-leg form emitting the unit sector and the rank-2
+    invariant form are the same term and must build the same operator.
+    """
+    _, sz, _, _ = example._spin_half()
     legs = (Leg(example.PHYS, OUT), Leg(example.PHYS, IN))
-    bare = SymmetricTensor.from_dense(np.diag([-0.5, 0.5]), legs)
-    with pytest.raises(ValueError, match="rank 3.*got rank 2"):
-        MPO.from_terms(4, [(1.0, [(bare, 0)])])
+    bare = SymmetricTensor.from_dense(sz, legs)
+    assert bare.ndim == 2
+    op_sz, _, _ = _ops()
+    for site in range(4):
+        rank2 = MPO.from_terms(4, [(1.0, [(bare, site)])])
+        rank3 = MPO.from_terms(4, [(1.0, [(op_sz, site)])])
+        want = _kron_oracle(4, [(1.0, [(op_sz, site)])])
+        assert np.abs(np.asarray(rank2.to_dense()) - want).max() < 1e-13
+        assert np.array_equal(np.asarray(rank2.to_dense()), np.asarray(rank3.to_dense()))
 
 
 def test_from_terms_refuses_a_wide_charge_leg():
@@ -994,3 +1006,81 @@ def test_the_hop_sign_is_physical_on_a_ring_and_a_gauge_on_a_chain():
 
     assert np.allclose(spectrum(chain, 1.0), spectrum(chain, -1.0))
     assert not np.allclose(spectrum(ring, 1.0), spectrum(ring, -1.0))
+
+
+# --- #314: the one-site term, k = 1 of the invariant form ----------------------------
+
+# A space with ``irrep_dim > 1`` whose invariant one-site operators are more than a
+# multiple of the identity: ``j = 0`` and ``j = 1``, so a multiplet-diagonal matrix with
+# two distinct entries is invariant and is not proportional to the identity.
+_SU2_MULTI_PHYS = GradedSpace.new(SU2, {SU2Sector(0): 1, SU2Sector(2): 1})
+_SU2_MULTI_FIELD = np.diag([0.25, -0.5, -0.5, -0.5])
+
+
+def _one_site_oracle(n_sites, site, matrix):
+    """``matrix`` on ``site`` and the identity everywhere else, by explicit ``np.kron``."""
+    out = np.array([[1.0]])
+    for k in range(n_sites):
+        out = np.kron(out, matrix if k == site else np.eye(len(matrix)))
+    return out
+
+
+@pytest.mark.parametrize(
+    ("phys", "matrix"),
+    [(SU2_PHYS, 0.7 * np.eye(2)), (_SU2_MULTI_PHYS, _SU2_MULTI_FIELD)],
+    ids=["j=1/2 doublet", "j=0 (+) j=1"],
+)
+@pytest.mark.parametrize("site", range(3))
+def test_a_one_site_term_builds_on_su2_legs_at_every_position(phys, matrix, site):
+    """The hole #314 named: a field, a chemical potential, an on-site ``U`` on SU(2) legs.
+
+    Checked at each position of an open chain because the workaround this replaces spread
+    the operator over the bonds it touched, whole at the two ends and half and half in the
+    bulk, so the boundary is exactly where a wrong answer would show.
+    """
+    op = local_op(matrix, phys=phys)
+    assert op.ndim == 2
+    h = MPO.from_terms(3, [(1.0, [(op, site)])])
+    assert np.abs(np.asarray(h.to_dense()) - _one_site_oracle(3, site, matrix)).max() < 1e-13
+
+
+@pytest.mark.parametrize("site", range(4))
+def test_a_one_site_term_on_fermionic_legs_agrees_with_the_charge_leg_route(site):
+    """The twist bookkeeping, on the grading that can see it.
+
+    ``_split`` pays a twist on the right end of every factor but the last, and a one-site
+    term's single factor is both. The rank-3 route to the same term exists on fZ2, so the
+    two are held against each other **element-wise and exactly**, inside a chain of odd
+    hopping terms whose Jordan-Wigner strings run through the site the term sits on.
+    """
+    n_dense = _A.T @ _A
+    op_cd, op_c = _fermionic_ops()
+    hops = [(1.0, [(op_cd, m), (op_c, m + 1)]) for m in range(3)]
+    hops += [(1.0, [(op_cd, m + 1), (op_c, m)]) for m in range(3)]
+    rank2 = local_op(n_dense, phys=FZ2_PHYS)
+    rank3 = local_op(n_dense, phys=FZ2_PHYS, charge=FZ2Sector(0))
+    assert rank2.ndim == 2
+    built = [
+        np.asarray(MPO.from_terms(4, [*hops, (2.5, [(op, site)])]).to_dense())
+        for op in (rank2, rank3)
+    ]
+    assert np.array_equal(*built)
+
+
+def test_a_one_site_and_a_two_site_term_build_the_hubbard_chain_together():
+    """The real use: ``-t`` on each bond and ``u`` on each site, in one ``from_terms`` call.
+
+    On ``fZ2 x U1 x SU2`` this is the only spelling of the Hubbard model there is -- the
+    charge-leg form needs a ``D=1`` dense emitted leg and the singly-occupied sector is a
+    doublet. The oracle is the explicit Jordan-Wigner ``kron`` the bond-only spelling is
+    already pinned to.
+    """
+    t, u = 1.0, 4.0
+    hop = local_op(_SPINFUL_HOP, phys=_FUS_PHYS)
+    nn = local_op(_NN, phys=_FUS_PHYS)
+    pairs = [(0, 1), (1, 2)]
+    terms = [(t, [(hop, pair)]) for pair in pairs] + [(u, [(nn, m)]) for m in range(3)]
+    want = _hubbard_oracle(pairs, t, 0.0) + u * sum(_one_site_oracle(3, m, _NN) for m in range(3))
+    for cutoff in (1e-13, None):
+        built = np.asarray(MPO.from_terms(3, terms, cutoff=cutoff).to_dense())
+        assert np.abs(built - want).max() < 1e-12
