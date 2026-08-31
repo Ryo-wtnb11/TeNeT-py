@@ -1272,3 +1272,40 @@ def _unchecked(structure: TensorStructure, blocks: tuple[Array, ...]) -> Symmetr
     object.__setattr__(t, "_data", data)
     object.__setattr__(t, "_views", cut)
     return t
+
+
+def _relabelled(t: SymmetricTensor, structure: TensorStructure) -> SymmetricTensor:
+    """``t``'s storage under a different but layout-identical ``structure``.
+
+    Private to ``tenet.ops``, like [_unchecked][tenet.tensor._unchecked], and trusting
+    its caller the same way.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The tensor whose storage is reused. Untouched.
+    structure : TensorStructure
+        A structure with the same ``block_order`` and the same
+        [map_layout][tenet.map_layout] bands as ``t.structure``. Nothing here checks
+        that.
+
+    Returns
+    -------
+    SymmetricTensor
+        The same arrays under ``structure``.
+
+    Notes
+    -----
+    Some operations change only what a leg is *called*: ``tenet.flip_dual`` on a grading
+    whose Frobenius-Schur indicator and twist are both 1 relabels every sector through
+    ``provider.dual`` and moves no element. Routing that through either constructor would
+    make the tensor commit to one of the two forms -- ``from_data`` forces a gather that
+    on an immutable backend is a fresh array per block, ``_unchecked`` forces a cut --
+    for an operation with nothing to compute. Carrying both fields over leaves the
+    tensor in whichever form it already had, so a relabel costs one object.
+    """
+    relabelled = object.__new__(SymmetricTensor)
+    object.__setattr__(relabelled, "structure", structure)
+    object.__setattr__(relabelled, "_data", t._data)
+    object.__setattr__(relabelled, "_views", t._views)
+    return relabelled

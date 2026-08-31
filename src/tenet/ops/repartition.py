@@ -55,9 +55,11 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 
 from tenet.backend import lib_fn
+from tenet.cache import plan_cache
+from tenet.fusion_tree import FusionTree
 from tenet.leg import IN, OUT, Leg, Side
-from tenet.map_view import from_matrices, is_identity_plan, lower_plan, scaled
-from tenet.ops.batch import batch_plan, cast_coefficients
+from tenet.map_view import from_matrices, is_identity_plan, lower_plan, map_layout, scaled
+from tenet.ops.batch import band_scale, batch_plan, cast_coefficients
 from tenet.ops.permutation import permutation_plan
 from tenet.space import GradedSpace
 from tenet.structure import TensorStructure, _pattern
@@ -725,6 +727,130 @@ def _flip_axes(structure: TensorStructure, axes: Any) -> tuple[int, ...]:
     return tuple(resolved)
 
 
+Runs = tuple[tuple[complex, int], ...]
+"""``(coefficient, extent)`` per band of one side of one coupled-sector matrix."""
+
+
+@plan_cache(cost=lambda plan: 1 + sum(len(v) for pair in plan[1] for v in pair if v is not None))
+def _flip_plan(
+    structure: TensorStructure, picked: tuple[int, ...], inv: bool
+) -> tuple[TensorStructure, tuple[tuple[Runs | None, Runs | None], ...]]:
+    """``flip_dual``'s structure and its row/column scalings, one pair per coupled sector.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure to flip.
+    picked : tuple of int
+        The axes whose ``dual`` flag toggles, already resolved and deduplicated.
+    inv : bool
+        Whether the exact inverse is wanted instead.
+
+    Returns
+    -------
+    new_structure : TensorStructure
+        The flipped structure -- each picked leg's space relabelled through
+        ``provider.dual`` and its ``dual`` flag toggled.
+    scales : tuple of (Runs or None, Runs or None)
+        Per coupled sector, in ``map_layout(structure).sectors`` order, the coefficient
+        to scale each row band of ``B_c`` by and the coefficient to scale each column
+        band by, as ``(coefficient, extent)`` runs; ``None`` where that side's
+        coefficients are all 1. Plain Python numbers, never arrays -- the array is
+        [band_scale][tenet.ops.batch.band_scale]'s, cached beside the plan.
+
+    Raises
+    ------
+    RuntimeError
+        If the flipped structure does not lay out identically to the original -- see the
+        Notes, which is the claim this checks rather than assumes.
+
+    Notes
+    -----
+    The flip is a *scaling of the stored matrices*, not a rebuild of them, and that is a
+    derivation rather than an observation. The relabel and the flag toggle cancel inside
+    ``Leg.fused_sector``, so every fusion-tree leaf survives the flip untouched; that
+    fixes ``block_order``, and it fixes the degeneracy each leaf carries, because
+    ``Leg.degeneracy`` reads the relabelled space through the same cancelling pair. Both
+    inputs to [map_layout][tenet.map_layout] -- which configurations exist, and what each
+    one's degeneracies are -- are therefore unchanged, and the flipped structure gets not
+    a permutation of the source's bands but the *same* bands, offsets and extents. The
+    relabel that a U(1) leg's sectors undergo (``{q}`` arriving as ``{-q}``, which
+    ``GradedSpace.new`` then re-sorts) reaches only ``leg.space``, which no part of the
+    layout reads without going back through ``space_sector``. The check above is the
+    proof standing rather than the assumption resting: it costs one tuple comparison per
+    distinct flip and is cached with the plan.
+
+    What is left is one scalar per block, ``chi_a * theta_a`` per flipped leg per tree,
+    and that scalar **factorizes**: a flipped OUT leg reads the block's output tree only
+    and a flipped IN leg its input tree only, so the coefficient of the block at
+    ``(row band, column band)`` is a row coefficient times a column coefficient. A
+    per-block grid of scalars that factorizes is a pair of diagonal scalings, and a
+    diagonal scaling of a matrix is one array operation -- so ``flip_dual`` reads
+    ``data`` and hands back a tensor that still holds matrices, instead of cutting every
+    block out to multiply it by a number (invariant 8).
+    """
+    provider = structure.provider
+    legs = list(structure.legs)
+    for ax in picked:
+        leg = legs[ax]
+        relabelled = GradedSpace.new(
+            provider, tuple((provider.dual(a), m) for a, m in leg.space.sectors)
+        )
+        legs[ax] = replace(leg, space=relabelled, dual=not leg.dual)
+    new_structure = TensorStructure(tuple(legs))
+
+    layout, flipped = map_layout(structure), map_layout(new_structure)
+    if (
+        new_structure.block_order != structure.block_order
+        or flipped.sectors != layout.sectors
+        or flipped.rows != layout.rows
+        or flipped.cols != layout.cols
+    ):
+        raise RuntimeError(
+            f"flip_dual: relabelling axes {picked} moves {provider.name}'s layout, so the "
+            "flip is not a scaling of the coupled-sector matrices; the block route is what "
+            "such a grading would need"
+        )
+
+    # Position of each flipped axis inside its own side's tree.
+    tree_pos = {ax: k for k, ax in enumerate(structure.out_axes)}
+    tree_pos |= {ax: k for k, ax in enumerate(structure.in_axes)}
+    out_picked = tuple(ax for ax in picked if structure.legs[ax].side is OUT)
+    in_picked = tuple(ax for ax in picked if structure.legs[ax].side is IN)
+
+    def coefficient(tree: FusionTree, axes: tuple[int, ...]) -> complex:
+        """One band's scalar: chi * theta per flipped leg of this side, on this tree."""
+        factor: complex = 1.0
+        for ax in axes:
+            leg = structure.legs[ax]
+            # the leaf is invariant under the flip, so old tree and new tree agree.
+            # flip_dual() ran requires(provider, FSIndicatorData/TwistData) before this
+            # plan; chi * theta is the flip scalar, per flipped leg per tree.
+            a = tree.uncoupled[tree_pos[ax]]
+            base = complex(provider.frobenius_schur(a) * provider.twist(a))  # ty: ignore[unresolved-attribute]
+            if leg.side is IN:  # the input tree enters the pairing conjugated
+                base = base.conjugate()
+            if not inv:
+                factor *= base if leg.dual else 1.0
+            else:
+                factor *= 1.0 if leg.dual else base.conjugate()
+        return factor
+
+    def side_runs(axes: tuple[int, ...], bands: tuple[tuple[Any, int, int], ...]) -> Runs | None:
+        """One side's runs, or ``None`` when every coefficient on it is 1."""
+        runs = tuple((coefficient(tree, axes), extent) for tree, _, extent in bands)
+        return None if all(coeff == 1 for coeff, _ in runs) else runs
+
+    scales = tuple(
+        (
+            side_runs(out_picked, layout.row_bands(c)),
+            side_runs(in_picked, layout.col_bands(c)),
+        )
+        for c in layout.sectors
+    )
+    return new_structure, scales
+
+
 def flip_dual(
     t: "SymmetricTensor",
     axes: int | Hashable | Sequence[int | Hashable],
@@ -799,52 +925,30 @@ def flip_dual(
     fermion-parity line), and ``inv=True`` is the exact inverse instead.
 
     Because the relabel and the flag toggle cancel inside ``Leg.fused_sector``,
-    every fusion-tree leaf — and with it the block set, order and shapes — is
-    unchanged: the whole operation is one scalar per block.
+    every fusion-tree leaf -- and with it the block set, order, shapes and coupled-sector
+    layout -- is unchanged, so the whole operation is one scalar per block. That scalar
+    factorizes over the two trees, which makes it a diagonal scaling of the rows and of
+    the columns of each stored matrix: no block is ever cut out to be multiplied by a
+    number.
     """
-    from tenet.tensor import SymmetricTensor
+    from tenet.tensor import SymmetricTensor, _relabelled
 
     picked = _flip_axes(t.structure, axes)
     if not picked:
         return t
     _flip_refuse(t.structure)
 
-    structure = t.structure
-    provider = structure.provider
-    legs = list(structure.legs)
-    for ax in picked:
-        leg = legs[ax]
-        relabelled = GradedSpace.new(
-            provider, tuple((provider.dual(a), m) for a, m in leg.space.sectors)
-        )
-        legs[ax] = replace(leg, space=relabelled, dual=not leg.dual)
-    new_structure = TensorStructure(tuple(legs))
+    new_structure, scales = _flip_plan(t.structure, picked, inv)
+    if all(rows is None and cols is None for rows, cols in scales):
+        # a bosonic grading has chi * theta == 1 everywhere, so the flip is a pure
+        # relabel: keep the storage in whichever form it is already held in
+        return _relabelled(t, new_structure)
 
-    # Position of each flipped axis inside its own side's tree.
-    tree_pos = {ax: k for k, ax in enumerate(structure.out_axes)}
-    tree_pos |= {ax: k for k, ax in enumerate(structure.in_axes)}
-
-    blocks = []
-    for key, block in zip(structure.block_order, t.blocks, strict=True):
-        factor: complex = 1.0
-        for ax in picked:
-            leg = structure.legs[ax]
-            out = leg.side is OUT
-            tree = key.output_tree if out else key.input_tree
-            # the leaf is invariant under the flip, so old key and new key agree.
-            # flip_dual() ran requires(provider, FSIndicatorData/TwistData) before this
-            # plan; chi * theta is the flip scalar, per flipped leg per tree.
-            a = tree.uncoupled[tree_pos[ax]]
-            base = complex(provider.frobenius_schur(a) * provider.twist(a))  # ty: ignore[unresolved-attribute]
-            if not out:  # the input tree enters the pairing conjugated
-                base = base.conjugate()
-            if not inv:
-                factor *= base if leg.dual else 1.0
-            else:
-                factor *= 1.0 if leg.dual else base.conjugate()
-        if factor != 1:
-            # keep a real coefficient real, so a real tensor stays real
-            block = block * (factor.real if factor.imag == 0 else factor)
-        blocks.append(block)
-    # same key set, same sorted order: blocks stay aligned position for position
-    return SymmetricTensor(new_structure, tuple(blocks))
+    data = []
+    for mat, (rows, cols) in zip(t.data, scales, strict=True):
+        if rows is not None:
+            mat = ar.do("multiply", mat, band_scale(rows, mat, 0))
+        if cols is not None:
+            mat = ar.do("multiply", mat, band_scale(cols, mat, 1))
+        data.append(mat)
+    return SymmetricTensor.from_data(new_structure, tuple(data))
