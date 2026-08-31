@@ -28,7 +28,7 @@ import numpy as np
 from tenet.cache import plan_cache
 from tenet.structure import TensorStructure
 
-__all__ = ["batch_plan", "cast_coefficients"]
+__all__ = ["band_scale", "batch_plan", "cast_coefficients"]
 
 
 MIN_BATCH_ROWS = 4
@@ -172,3 +172,51 @@ def batch_plan(
         start = stop
 
     return tuple(groups), tuple(loose)
+
+
+@plan_cache(cost=lambda vec: len(vec))
+def _repeated(runs: tuple[tuple[complex, int], ...]) -> np.ndarray:
+    """``(coefficient, extent)`` per band, expanded to one coefficient per index."""
+    values = [coeff for coeff, _ in runs]
+    band = (
+        np.array([coeff.real for coeff in values], dtype=float)
+        if all(coeff.imag == 0 for coeff in values)
+        else np.array(values, dtype=complex)
+    )
+    return np.repeat(band, [extent for _, extent in runs])
+
+
+def band_scale(runs: tuple[tuple[complex, int], ...], mat: Any, axis: int) -> Any:
+    """One coefficient per band of a coupled-sector matrix, ready to multiply ``mat`` by.
+
+    Parameters
+    ----------
+    runs : tuple of (complex, int)
+        ``(coefficient, extent)`` per band of ``axis``, in band order; the extents sum
+        to ``mat``'s length along it.
+    mat : array
+        The coupled-sector matrix the result multiplies; supplies backend and dtype.
+    axis : int
+        0 to scale rows, 1 to scale columns.
+
+    Returns
+    -------
+    array
+        A backend-native vector shaped to broadcast against ``mat`` along ``axis``.
+
+    Notes
+    -----
+    The numerical half of a *band* plan, kept here for the reason the index arrays above
+    are: a plan stays array-free Python metadata, and the arrays that execute it are a
+    cached side table hanging off it. The expansion is cached because it is a pure
+    function of the runs, which are per structure and not per tensor; the cast is not,
+    because it depends on the operand's dtype.
+
+    A diagonal scaling is the shape every *relabelling* operation reduces to -- a scalar
+    per fusion tree, which is a scalar per band -- and multiplying the matrix by this is
+    what keeps such an operation from cutting its operand into blocks (invariant 8).
+    Real where it can be, so a real tensor stays real, which is
+    [cast_coefficients][tenet.ops.batch.cast_coefficients]'s rule and not a new one.
+    """
+    vec = _repeated(runs)
+    return cast_coefficients(vec[:, None] if axis == 0 else vec[None, :], mat)

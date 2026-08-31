@@ -9,13 +9,16 @@ sector, the same stance as the cup/cap oracle in ``tests/symmetry/test_su2_dual.
 """
 
 import dataclasses
+import itertools
 
 import numpy as np
 import pytest
 
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, SymmetricTensor, flip_dual, tensordot
+from tenet.map_view import map_layout
 from tenet.ops.contraction import contractible
+from tenet.structure import TensorStructure
 from tenet.symmetry import (
     SU2,
     U1,
@@ -42,6 +45,15 @@ SU2_BOND = GradedSpace.new(SU2, {HALF: 2})
 FZ2_SPACE = GradedSpace.new(fZ2, {EVEN: 2, ODD: 2})
 Z2_SPACE = GradedSpace.new(Z2, {Z2Sector(0): 2, Z2Sector(1): 2})
 TRIV_SPACE = GradedSpace.new(Trivial, {TrivialSector(): 3})
+
+FPRODUCT = ProductProvider((fZ2, U1, SU2))
+FPROD_SPACE = GradedSpace.new(
+    FPRODUCT,
+    {
+        ProductSector((EVEN, U1Sector(0), SU2Sector(0))): 2,
+        ProductSector((ODD, U1Sector(1), HALF)): 2,
+    },
+)
 
 PRODUCT = ProductProvider((U1, SU2))
 PROD_SPACE = GradedSpace.new(
@@ -387,3 +399,121 @@ def test_flip_dual_on_jax_matches_numpy_and_jits():
     assert tenet.allclose(on_jax.to_backend("numpy"), flip_dual(t, 0))
     jitted = jax.jit(lambda x: flip_dual(x, 0))(t.to_backend("jax"))
     assert tenet.allclose(jitted.to_backend("numpy"), flip_dual(t, 0))
+
+
+# --- the matrix route -----------------------------------------------------------
+
+
+def block_route(t, picked, inv):
+    """``flip_dual`` written the way it was before it read ``data``: one scalar per block.
+
+    The reference the matrix route is held bit-identical to. It is spelled out here
+    rather than imported because it is exactly what the library no longer does.
+    """
+    structure = t.structure
+    provider = structure.provider
+    legs = list(structure.legs)
+    for ax in picked:
+        leg = legs[ax]
+        relabelled = GradedSpace.new(
+            provider, tuple((provider.dual(a), m) for a, m in leg.space.sectors)
+        )
+        legs[ax] = dataclasses.replace(leg, space=relabelled, dual=not leg.dual)
+    new_structure = TensorStructure(tuple(legs))
+
+    tree_pos = {ax: k for k, ax in enumerate(structure.out_axes)}
+    tree_pos |= {ax: k for k, ax in enumerate(structure.in_axes)}
+
+    blocks = []
+    for key, block in zip(structure.block_order, t.blocks, strict=True):
+        factor = 1.0
+        for ax in picked:
+            leg = structure.legs[ax]
+            out = leg.side is OUT
+            tree = key.output_tree if out else key.input_tree
+            a = tree.uncoupled[tree_pos[ax]]
+            base = complex(provider.frobenius_schur(a) * provider.twist(a))
+            if not out:
+                base = base.conjugate()
+            if not inv:
+                factor *= base if leg.dual else 1.0
+            else:
+                factor *= 1.0 if leg.dual else base.conjugate()
+        if factor != 1:
+            block = block * (factor.real if factor.imag == 0 else factor)
+        blocks.append(block)
+    return SymmetricTensor(new_structure, tuple(blocks))
+
+
+@pytest.mark.parametrize("space", [FZ2_SPACE, FPROD_SPACE], ids=["fz2", "fz2xu1xsu2"])
+@pytest.mark.parametrize("dtype", [np.float64, np.complex128], ids=["real", "complex"])
+def test_the_matrix_route_is_bit_identical_to_the_block_route(space, dtype):
+    """Every flip of a four-leg tensor, against the implementation this replaced.
+
+    On the two gradings where the coefficient is not 1 and where a wrong one would hide:
+    ``fZ2`` pays the twist on an odd line, and the product pays it distributed over three
+    factors. ``np.array_equal`` and not ``allclose``: the flip is a multiplication by
+    ``+-1``, so anything but equality is a different operation.
+    """
+    legs = (
+        Leg(space, OUT),
+        Leg(space, OUT, dual=True),
+        Leg(space, IN),
+        Leg(space, IN, dual=True),
+    )
+    t = SymmetricTensor.random(legs, seed=41).astype(dtype)
+    for r in range(1, 5):
+        for picked in itertools.combinations(range(4), r):
+            for inv in (False, True):
+                want = block_route(t, picked, inv)
+                got = flip_dual(t, picked, inv=inv)
+                assert got.structure == want.structure, (picked, inv)
+                for i, (g, w) in enumerate(zip(got.blocks, want.blocks, strict=True)):
+                    assert np.asarray(g).dtype == np.asarray(w).dtype, (picked, inv, i)
+                    assert np.array_equal(np.asarray(g), np.asarray(w)), (picked, inv, i)
+
+
+def test_a_u1_leg_whose_duals_sort_in_reverse_keeps_every_block_on_its_key():
+    """The case the matrix route had to derive rather than assume.
+
+    ``dual(q) = -q`` reverses the sector order of ``{0, 1, 2}``, and ``GradedSpace.new``
+    sorts, so the flipped leg's *space* lists its sectors in the opposite order and with
+    the degeneracies permuted with them. Nothing downstream of ``Leg.fused_sector`` sees
+    that: the block keys, their shapes and the coupled-sector layout all come back
+    identical, which is why the flip is a scaling of the stored matrices and not a
+    gather. Ragged degeneracies, so a block landing on the wrong key would be a wrong
+    shape and not merely a wrong number.
+    """
+    space = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 1, U1Sector(2): 3})
+    t = SymmetricTensor.random((Leg(space, OUT), Leg(space, OUT), Leg(space, IN)), seed=42)
+    f = flip_dual(t, 0)
+
+    assert [q for q, _ in space.sectors] == [U1Sector(0), U1Sector(1), U1Sector(2)]
+    assert [q for q, _ in f.legs[0].space.sectors] == [
+        U1Sector(-2),
+        U1Sector(-1),
+        U1Sector(0),
+    ]
+    assert [m for _, m in f.legs[0].space.sectors] == [3, 1, 2]
+
+    assert f.structure.block_order == t.structure.block_order
+    assert map_layout(f.structure).rows == map_layout(t.structure).rows
+    assert map_layout(f.structure).cols == map_layout(t.structure).cols
+    for key in t.structure.block_order:
+        assert f.structure.block_shape(key) == t.structure.block_shape(key)
+        # chi * theta is 1 on U(1), so a block that landed on its own key is untouched
+        assert np.array_equal(np.asarray(f.block(key)), np.asarray(t.block(key)))
+    assert flip_dual(f, 0, inv=True).structure == t.structure
+
+
+def test_a_flip_that_costs_nothing_keeps_the_storage_it_was_handed():
+    """A bosonic grading's flip is a relabel, and a relabel moves no array.
+
+    ``chi * theta`` is 1 everywhere on U(1), so there is nothing to multiply by and the
+    result holds the very arrays its operand did -- neither gathered nor cut, whichever
+    form the operand was already in.
+    """
+    space = GradedSpace.new(U1, {U1Sector(0): 2, U1Sector(1): 3})
+    t = SymmetricTensor.random((Leg(space, OUT), Leg(space, IN)), seed=43)
+    f = flip_dual(t, 0)
+    assert all(a is b for a, b in zip(f.data, t.data, strict=True))

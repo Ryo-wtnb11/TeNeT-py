@@ -7622,7 +7622,10 @@ apart.** Reading `blocks` cuts every block of the tensor out of its matrices —
 cheap on NumPy, a graph node with a backward pass on a traced backend, and never
 free — so an operation that is defined per coupled sector (`norm`, `inner`, the
 elementwise maps) reduces over the matrices, and one that is defined per plan
-term reaches its source through a single slice of the source's own matrix. This
+term reaches its source through a single slice of the source's own matrix. A
+*relabelling* operation — `flip_dual`, whose scalar is one per fusion tree and
+therefore one per band — is a diagonal scaling of each matrix's rows and columns,
+and where that scalar is 1 throughout it moves nothing at all. This
 is pinned by a count, not by a comment: `tests/test_map_view.py` asserts *zero*
 cuts across the hot operations, on **every symmetry the library ships** —
 trivial, Z2, U(1), fZ2, SU(2), SU(N) and a product of three — and

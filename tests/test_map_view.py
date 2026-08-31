@@ -602,5 +602,8 @@ def test_the_hot_operations_never_cut_a_block_on_any_symmetry(legs):
         a * 2.0
         tenet.linalg.svd(a)
         tenet.linalg.qr(a)
+        tenet.flip_dual(a, 0)
+        tenet.flip_dual(a, 2, inv=True)
+        tenet.flip_dual(a, (0, 1, 2, 3))
 
     assert _blocks_reads(hot) == 0
