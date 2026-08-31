@@ -31,7 +31,7 @@ __all__ = [
 DOCS_EXAMPLES = pathlib.Path(__file__).parents[1] / "docs" / "examples"
 
 _FENCE = re.compile(r"```text\n(.*?)```", re.DOTALL)
-_NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+_NUMBER = re.compile(r"~?[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
 
 
 def check_example_page(page_path: str, captured_stdout: str) -> None:
@@ -41,6 +41,13 @@ def check_example_page(page_path: str, captured_stdout: str) -> None:
     (with a 1e-12 absolute floor, so float-noise diagnostics like ``max|<S^z>|`` survive
     a BLAS change while any physical digit does not). ``TENET_UPDATE_EXAMPLE_PAGES=1``
     rewrites the fence in place instead of asserting — that is the regeneration path.
+
+    A number an example prints as ``~n`` is compared for **presence and shape only**.
+    That spelling is for a quantity that is not a property of the program: an iteration
+    count is where a stopping rule lands, so a change in the last bits of a sum moves it
+    while every physical digit stays put. A sweep count here went 8 to 10 on a runner
+    whose BLAS rounds differently, with the energies agreeing to twelve digits — pinning
+    the count would have been asserting a property of the machine.
     """
     page = DOCS_EXAMPLES / page_path
     text = page.read_text()
@@ -57,6 +64,8 @@ def check_example_page(page_path: str, captured_stdout: str) -> None:
     for committed, fresh in zip(
         _NUMBER.findall(fence), _NUMBER.findall(captured_stdout), strict=True
     ):
+        if committed.startswith("~") or fresh.startswith("~"):
+            continue  # a stopping rule's landing place, not a digit of the answer
         assert math.isclose(float(committed), float(fresh), rel_tol=1e-6, abs_tol=1e-12), (
             f"{page}: committed {committed} vs computed {fresh} — regenerate with "
             f"TENET_UPDATE_EXAMPLE_PAGES=1"

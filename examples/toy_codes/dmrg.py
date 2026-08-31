@@ -382,7 +382,7 @@ def main(n_sites: int = 12, chi: int = 64, big_sites: int = 32, big_chi: int = 6
     print(
         f"N={big_sites} chi={big_chi}  E={big.energy:+.12f}  "
         f"E/N={big.energy / big_sites:+.12f}  e_inf={E_INF:+.12f}  "
-        f"sweeps={big.sweeps}  max_dw={big.max_discarded_weight:.3e}"
+        f"sweeps=~{big.sweeps}  max_dw={big.max_discarded_weight:.3e}"
     )
     return small, big
 

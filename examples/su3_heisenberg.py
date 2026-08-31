@@ -96,7 +96,7 @@ def main(n_sites: int = 24, chi: int = 96, n_ed: int = 6):
     # Small chain first, where dense ED is still affordable and can pin DMRG exactly.
     short = run(n_ed, chi)
     exact = ed_energy(n_ed)
-    print(f"N={n_ed:2d}  {short.sweeps} sweeps  E = {short.energy:.12f}  ED = {exact:.12f}")
+    print(f"N={n_ed:2d}  ~{short.sweeps} sweeps  E = {short.energy:.12f}  ED = {exact:.12f}")
     print(f"      |E_dmrg - E_ed| = {abs(short.energy - exact):.1e}")
 
     # Long chain: too large for ED, so it is judged against Sutherland's infinite-chain
@@ -107,7 +107,7 @@ def main(n_sites: int = 24, chi: int = 96, n_ed: int = 6):
     # sits between E/N and E/(N-1) for exactly the reason those two bracket Sutherland.
     bulk = expectation_2site(long.psi, P, n_sites // 2)
     print(
-        f"N={n_sites:2d}  {long.sweeps} sweeps  E = {long.energy:.12f}  "
+        f"N={n_sites:2d}  ~{long.sweeps} sweeps  E = {long.energy:.12f}  "
         f"mid bond {mid.reduced_dim} multiplets, {mid.dim} dense"
     )
     print("      mid bond:", " ".join(f"{a.dynkin}x{m}" for a, m in mid.sectors))
