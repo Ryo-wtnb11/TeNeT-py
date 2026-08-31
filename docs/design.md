@@ -7623,17 +7623,36 @@ cheap on NumPy, a graph node with a backward pass on a traced backend, and never
 free — so an operation that is defined per coupled sector (`norm`, `inner`, the
 elementwise maps) reduces over the matrices, and one that is defined per plan
 term reaches its source through a single slice of the source's own matrix. A
-*relabelling* operation — `flip_dual`, whose scalar is one per fusion tree and
-therefore one per band — is a diagonal scaling of each matrix's rows and columns,
-and where that scalar is 1 throughout it moves nothing at all. This
-is pinned by a count, not by a comment: `tests/test_map_view.py` asserts *zero*
-cuts across the hot operations, on **every symmetry the library ships** —
-trivial, Z2, U(1), fZ2, SU(2), SU(N) and a product of three — and
-`tests/backends/test_pytree.py` asserts zero `slice` primitives in the traced
-graph of the matrix-native ones.
+*relabelling* operation — `flip_dual` and `twist`, whose scalar is one per fusion
+tree and therefore one per band — is a diagonal scaling of each matrix's rows and
+columns, and where that scalar is 1 throughout it moves nothing at all. An
+operation that keeps or grows a *box* of each block — `restrict`, `embed` — is a
+gather along a strided index map, cached with the layout tables like any other
+plan.
+
+This is pinned by a count, not by a comment, and the count is taken over the
+**whole public surface** rather than over a sample of it: `tests/test_map_view.py`
+enumerates `tenet.__all__`, `tenet.ops.linalg.__all__` and `SymmetricTensor`'s
+public callables, asserts that every one of them is classified, and asserts *zero*
+cuts for each on **every symmetry the library ships** — trivial, Z2, U(1), fZ2,
+SU(2), SU(N) and a product of three. `tests/backends/test_pytree.py` asserts zero
+`slice` primitives in the traced graph of the matrix-native ones.
+
+A sample is how the contract kept being broken somewhere else: each violation
+surfaced on its own out of a profile, which is the wrong instrument for a rule
+meant to hold everywhere. The enumeration admits exactly two exemptions, both
+named with their reason in the test. **Boundaries** are where untrusted arrays
+enter or where a caller decides the shapes — `to_dense`, `from_dense`,
+`from_blocks`, `with_blocks`, `set_params`, `items`, `block`, `save`,
+`apply_blocks`, `zip_blocks`, `to_symmetry`. **Open** violations are operations
+that still read `blocks` and have not yet been derived on the matrices —
+`fuse`/`unfuse`, whose target rows are a reordering of the source's that no plan
+states, and `direct_sum`, whose second operand lands in the trailing degeneracy
+slots that `embed`'s index map does not cover. That list is itself asserted to
+still be true, so an exemption cannot outlive what earned it.
 
 Matrix-native is a property of the lowering rather than of the provider, which is
-why that list is exhaustive and not a sample. `map_layout` defines
+why the *symmetry* axis of that enumeration is exhaustive too. `map_layout` defines
 `T ≃ ⊕_c B_c ⊗ id_c` for whatever the fusion rules are; composition is a matmul
 per coupled sector on all of them; and the symmetry enters through the
 coefficients — F/R symbols, Clebsch-Gordan data, Koszul signs — which the plan

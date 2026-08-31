@@ -900,7 +900,7 @@ def full_trace(t: "SymmetricTensor") -> Any:
     requires(t.provider, QuantumDimensionData)
     requires(t.provider, PivotalData)
     check_square(t, "full_trace")
-    if not t.blocks:
+    if not t.data:  # the storage, not the cut of it: the question is only "any at all?"
         return 0.0
     # requires() above; raise-based check does not narrow
     qdim = t.provider.qdim  # ty: ignore[unresolved-attribute]

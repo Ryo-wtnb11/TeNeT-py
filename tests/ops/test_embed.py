@@ -504,16 +504,24 @@ def test_jax_backed_blocks_stay_jax_and_satisfy_the_same_criteria(name, flavour)
 # --- what is deliberately absent --------------------------------------------------
 
 
-def test_no_plan_object_no_cache_and_the_decision_is_recorded():
+def test_the_only_plan_holds_index_arrays_and_the_decision_is_recorded():
+    """The plans here carry indices, never a coefficient and never a capability.
+
+    ``embed`` and ``restrict`` touch no F-symbol, no tree and no provider, so a plan
+    would be pure overhead if it held what other plans hold. What it does hold is the
+    strided index map the coupled-sector storage needs -- a pure function of the two
+    structures, hence cached beside the layout tables rather than rebuilt per call.
+    """
     import pathlib
     import sys
 
     module = sys.modules["tenet.ops.embed"]
 
-    assert not any(n.lower().endswith("plan") for n in vars(module))
+    plans = {n for n in vars(module) if n.lower().endswith("plan")}
+    assert plans == {"_slot_plan", "_embed_plan"}
     source = pathlib.Path(module.__file__).read_text()
     assert "functools" not in source and "@cache" not in source
-    assert "Simplification: no plan object and no cache" in source
+    assert "Simplification: one plan, and it holds index arrays only" in source
     # #90 discharged the "no restrict" note; #91 added its two.
     assert "Simplification: no `restrict`" not in source
     assert "Simplification: `_check_containment` is shared" in source

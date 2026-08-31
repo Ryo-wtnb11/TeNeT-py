@@ -42,6 +42,8 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 import numpy as np
 
+from tenet.cache import plan_cache
+from tenet.map_view import _degeneracies, map_layout
 from tenet.ops.dense import PROJECT
 from tenet.structure import TensorStructure
 from tenet.symmetry.base import QuantumDimensionData, requires
@@ -147,6 +149,51 @@ def _pad(x: Any, pad_width: tuple[tuple[int, int], ...]) -> Any:
     return x
 
 
+@plan_cache(cost=lambda p: sum(len(r) + len(c) for e in p if e is not None for _, r, c in (e,)))
+def _embed_plan(
+    old: TensorStructure, new: TensorStructure
+) -> tuple[tuple[int, np.ndarray, np.ndarray] | None, ...]:
+    """Per coupled sector of ``new``, which row and column of ``old``'s matrix fills it.
+
+    Parameters
+    ----------
+    old : TensorStructure
+        The source structure, contained in ``new``.
+    new : TensorStructure
+        The target structure.
+
+    Returns
+    -------
+    tuple of (int, ndarray, ndarray) or None
+        One entry per coupled sector of ``new``, in ``map_layout(new).sectors`` order.
+        ``None`` where the source has no such sector and the matrix is all zeros;
+        otherwise the sector's position in the source's ``data`` and, per target row and
+        per target column, the source index that fills it -- with the source's own row
+        count (resp. column count) standing for "nothing does".
+
+    Notes
+    -----
+    [_slot_plan][tenet.ops.embed._slot_plan] read forwards, inverted. That inversion is
+    what turns a *scatter* -- which no backend spells the same way, and which is why
+    ``tenet.map_view.assemble`` carries two implementations -- into two gathers, which
+    every backend spells identically. The out-of-range value is not a sentinel to be
+    tested for: the caller appends one zero row and one zero column to the source
+    matrix, so an index pointing at them gathers a zero, and a target cell is zero
+    exactly when its row or its column is new (invariant 8, and no ``pad`` per block).
+    """
+    source, target = map_layout(old), map_layout(new)
+    filled: list[Any] = [None] * len(target.sectors)
+    for src, (pos, rows, cols) in enumerate(_slot_plan(old, new)):
+        height, width = source.shapes[src]
+        tall, wide = target.shapes[pos]
+        inverse_rows = np.full(tall, height, dtype=np.intp)
+        inverse_rows[rows] = np.arange(len(rows), dtype=np.intp)
+        inverse_cols = np.full(wide, width, dtype=np.intp)
+        inverse_cols[cols] = np.arange(len(cols), dtype=np.intp)
+        filled[pos] = (src, inverse_rows, inverse_cols)
+    return tuple(filled)
+
+
 def embed(t: "SymmetricTensor", legs: Sequence["Leg"]) -> "SymmetricTensor":
     """``t`` re-expressed on larger legs: same data, leading slots, zeros elsewhere.
 
@@ -196,6 +243,7 @@ def embed(t: "SymmetricTensor", legs: Sequence["Leg"]) -> "SymmetricTensor":
     source's keys a *subset* of the target's — which is the fact the loop below
     rests on, and why no key can silently lose its data.
     """
+    from tenet.ops.map import block_ref  # deferred: ops.map imports this module
     from tenet.tensor import SymmetricTensor
 
     new = TensorStructure(tuple(legs))
@@ -203,19 +251,98 @@ def embed(t: "SymmetricTensor", legs: Sequence["Leg"]) -> "SymmetricTensor":
     if new == t.structure:
         return t  # nothing to pad; tensors are immutable, so hand it back
 
-    index = {k: i for i, k in enumerate(t.structure.block_order)}
-    ref = t.blocks[0]
-    blocks = []
-    for key in new.block_order:
-        shape = new.block_shape(key)
-        if key not in index:
-            blocks.append(ar.do("zeros", shape, dtype=ar.get_dtype_name(ref), like=ref))
+    ref = block_ref(t)  # backend and dtype only: reading a block for them would cut them all
+    dtype = ar.get_dtype_name(ref)
+    plan = _embed_plan(t.structure, new)
+    data = []
+    for shape, slots in zip(map_layout(new).shapes, plan, strict=True):
+        if slots is None:  # a coupled sector the source does not have at all
+            data.append(ar.do("zeros", shape, dtype=dtype, like=ref))
             continue
-        src = t.blocks[index[key]]
-        pad = tuple((0, n - m) for n, m in zip(shape, t.structure.block_shape(key), strict=True))
-        # identity axes stay identity objects: no pad call, no copy
-        blocks.append(src if not any(hi for _, hi in pad) else _pad(src, pad))
-    return SymmetricTensor(new, tuple(blocks))
+        src, rows, cols = slots
+        mat = t.data[src]
+        # one zero row and one zero column, so that every target slot the source does not
+        # reach can simply *point* at them: a target cell is zero exactly when its row or
+        # its column is new, which is what two independent gathers already express
+        height, width = ar.do("shape", mat)
+        mat = ar.do("concatenate", (mat, ar.do("zeros", (1, width), dtype=dtype, like=mat)), axis=0)
+        mat = ar.do(
+            "concatenate", (mat, ar.do("zeros", (height + 1, 1), dtype=dtype, like=mat)), axis=1
+        )
+        data.append(ar.do("take", ar.do("take", mat, rows, axis=0), cols, axis=1))
+    return SymmetricTensor.from_data(new, tuple(data))
+
+
+@plan_cache(cost=lambda p: sum(len(rows) + len(cols) for _, rows, cols in p))
+def _slot_plan(
+    small: TensorStructure, large: TensorStructure
+) -> tuple[tuple[int, np.ndarray, np.ndarray], ...]:
+    """Where each of ``small``'s coupled-sector matrices sits inside ``large``'s.
+
+    Parameters
+    ----------
+    small : TensorStructure
+        The contained structure. ``_check_containment`` has already said it is contained
+        in ``large``; nothing here re-checks it.
+    large : TensorStructure
+        The containing structure.
+
+    Returns
+    -------
+    tuple of (int, ndarray, ndarray)
+        One entry per coupled sector of ``small``, in ``map_layout(small).sectors``
+        order: that sector's position among ``large``'s sectors -- which is its position
+        in a ``large``-shaped tensor's ``data`` -- and the ``large`` row and column
+        indices its own rows and columns occupy.
+
+    Notes
+    -----
+    A restriction keeps a **box** of each block: the leading ``m_i`` degeneracy slots of
+    axis ``i``. That box is not a prefix of a row band, because a band's index is the
+    block's axes flattened together (``alpha_0 * d_1 * d_2 + ...``, in ``out_axes``
+    order), so keeping a prefix of each factor keeps a *strided* subset of the band.
+    Written as index arrays it is still one gather per axis of the matrix, and the same
+    two gathers serve every block of the sector at once -- which is why ``restrict``,
+    alone among the operations that read blocks, cost one cut *and* a Python loop the
+    length of the block count. [restrict][tenet.restrict] gathers along this map and
+    [embed][tenet.embed] scatters along it; both directions are the same box.
+
+    Both sides' bands carry the same fusion trees in both structures (containment makes
+    the target's sector tuples a subset of the source's, and a tree is a function of its
+    sector tuple alone), so a target band is located in the source by its own tree. The
+    arrays are plain NumPy index arrays -- static metadata, cached with the plan, never a
+    value from a block.
+    """
+    inner, outer = map_layout(small), map_layout(large)
+    at = {c: i for i, c in enumerate(outer.sectors)}
+
+    def side(
+        axes: tuple[int, ...],
+        bands: tuple[tuple[Any, int, int], ...],
+        host: tuple[tuple[Any, int, int], ...],
+    ) -> np.ndarray:
+        """One side's ``large`` indices, band by band, in ``small`` band order."""
+        offsets = {tree: off for tree, off, _ in host}
+        picked = []
+        for tree, _, _ in bands:
+            kept = _degeneracies(small, axes, tree)
+            whole = _degeneracies(large, axes, tree)
+            within = (
+                np.ravel(np.ravel_multi_index(np.indices(kept), whole))
+                if kept
+                else np.zeros(1, dtype=np.intp)
+            )
+            picked.append(within.astype(np.intp, copy=False) + offsets[tree])
+        return np.concatenate(picked) if picked else np.zeros(0, dtype=np.intp)
+
+    return tuple(
+        (
+            at[c],
+            side(small.out_axes, inner.row_bands(c), outer.row_bands(c)),
+            side(small.in_axes, inner.col_bands(c), outer.col_bands(c)),
+        )
+        for c in inner.sectors
+    )
 
 
 def restrict(
@@ -296,13 +423,14 @@ def restrict(
 
     new = TensorStructure(tuple(legs))
     _check_containment(new, t.structure, op="restrict")
+    if new == t.structure:
+        return t  # nothing to cut; tensors are immutable, so hand it back (embed's rule)
 
-    index = {k: i for i, k in enumerate(t.structure.block_order)}
-    out = SymmetricTensor(
+    out = SymmetricTensor.from_data(
         new,
         tuple(
-            t.blocks[index[key]][tuple(slice(0, m) for m in new.block_shape(key))]
-            for key in new.block_order
+            ar.do("take", ar.do("take", t.data[c], rows, axis=0), cols, axis=1)
+            for c, rows, cols in _slot_plan(new, t.structure)
         ),
     )
     if atol != PROJECT:
@@ -314,34 +442,67 @@ def _sum_squares(x: Any) -> float:
     return float(ar.do("sum", ar.do("abs", x) ** 2))
 
 
+def _worst_discarded(t: "SymmetricTensor", kept: "SymmetricTensor") -> tuple[float, Any]:
+    """``(mass squared, key)`` of the block a restriction threw the most away from.
+
+    Only the refusal message needs this, and a refusal is about to be raised, so cutting
+    both tensors into blocks here costs nothing that is not already lost.
+    """
+    provider = t.provider
+    # the caller ran requires(); raise-based check does not narrow
+    qdim = provider.qdim  # ty: ignore[unresolved-attribute]
+    index = {k: i for i, k in enumerate(kept.structure.block_order)}
+    worst: tuple[float, Any] = (0.0, None)
+    for key, block in t.items():
+        weight = qdim(key.coupled)
+        whole = weight * _sum_squares(block)
+        i = index.get(key)
+        here = whole if i is None else max(whole - weight * _sum_squares(kept.blocks[i]), 0.0)
+        if here > worst[0]:
+            worst = (here, key)
+    return worst
+
+
 def _refuse_discarded(t: "SymmetricTensor", kept: "SymmetricTensor", atol: float | None) -> None:
     """Refuse a restriction that threw away mass, naming the worst offending key.
 
-    The per-key accumulation exists only for that message; it runs on the check
-    path, which is untraceable anyway, so ``atol=tenet.PROJECT`` pays nothing for it.
+    Notes
+    -----
+    Accumulated **per coupled sector**, over the stored matrices. A sector's weight
+    depends on its coupled label alone and its matrix is exactly its blocks laid side by
+    side -- the grid is complete -- so this is the same sum over the same numbers that a
+    per-block walk gives, and it is the identity [norm][tenet.norm] is already written
+    in. Doing it per block would cut every block of *both* tensors out of the matrices
+    the reduction runs over anyway, on the path that is taken by default (invariant 8).
+
+    Which key is worst is a question only the refusal message asks, so
+    [_worst_discarded][tenet.ops.embed._worst_discarded] is called only when there is a
+    refusal to word. ``atol=tenet.PROJECT`` skips all of it, as before.
     """
+    from tenet.ops.map import block_ref  # deferred: ops.map imports this module
+
     provider = t.provider
     requires(provider, QuantumDimensionData)
-    index = {k: i for i, k in enumerate(kept.structure.block_order)}
-    worst: tuple[float, Any] = (0.0, None)
+    # requires() above; raise-based check does not narrow
+    qdim = provider.qdim  # ty: ignore[unresolved-attribute]
+    index = {c: i for i, c in enumerate(map_layout(kept.structure).sectors)}
     discarded_sq = total_sq = 0.0
-    for key, block in t.items():
-        # requires() above; raise-based check does not narrow
-        weight = provider.qdim(key.coupled)  # ty: ignore[unresolved-attribute]
-        whole = weight * _sum_squares(block)
+    for c, mat in zip(map_layout(t.structure).sectors, t.data, strict=True):
+        weight = qdim(c)
+        whole = weight * _sum_squares(mat)
         total_sq += whole
-        i = index.get(key)
-        # a dropped key loses all of its mass; a kept one loses the complement
-        here = whole if i is None else max(whole - weight * _sum_squares(kept.blocks[i]), 0.0)
-        discarded_sq += here
-        if here > worst[0]:
-            worst = (here, key)
+        i = index.get(c)
+        # a dropped sector loses all of its mass; a kept one loses the complement
+        discarded_sq += (
+            whole if i is None else max(whole - weight * _sum_squares(kept.data[i]), 0.0)
+        )
 
     residual = math.sqrt(discarded_sq)
     if atol is None:
-        dtype = np.promote_types(ar.get_dtype_name(t.blocks[0]), np.float32)  # see #95
+        dtype = np.promote_types(ar.get_dtype_name(block_ref(t)), np.float32)  # see #95
         atol = math.sqrt(float(np.finfo(dtype).eps)) * math.sqrt(total_sq)
     if residual > atol:
+        worst = _worst_discarded(t, kept)
         raise ValueError(
             f"restrict: discarded data — residual {residual:.6g} exceeds atol {atol:.6g}; "
             f"the worst block is {worst[1]} (mass {math.sqrt(worst[0]):.6g}). Pass a "
@@ -479,14 +640,15 @@ def direct_sum(
     legs and ``axes``, which are metadata, so this composes inside ``jit`` and
     ``grad``. Linear in each operand separately.
     """
+    from tenet.ops.map import block_ref  # deferred: ops.map imports this module
     from tenet.tensor import SymmetricTensor
 
     summed = _check_summable(t, u, axes)
     new = TensorStructure(tuple(_summed_legs(t, u, summed)))
-    ref = t.blocks[0]
+    ref = block_ref(t)  # backend and dtype only, in whichever form each operand holds
     # Promoted once, up front, and applied to every part: a key only one operand
     # contributes to must not come out at that operand's own dtype.
-    dtype = np.promote_types(ar.get_dtype_name(ref), ar.get_dtype_name(u.blocks[0])).name  # #95
+    dtype = np.promote_types(ar.get_dtype_name(ref), ar.get_dtype_name(block_ref(u))).name  # #95
     if t.backend != u.backend:
         # `add` gets promotion for free because every one of its blocks meets
         # both operands; here a key only `t` touches would never see `u`'s
@@ -526,11 +688,14 @@ def direct_sum(
     return SymmetricTensor(new, tuple(blocks))
 
 
-# Simplification: no plan object and no cache. embed does a dict lookup and a
-# subtraction per block — there is no coefficient to compute, no tree to permute
-# and no capability to gate, and the categorical work (TensorStructure) is
-# already cached where it matters. Add a memoized boolean for
-# _check_containment if a profile ever shows it on the hot path — a plan, never.
+# Simplification: one plan, and it holds index arrays only. embed and restrict have no
+# coefficient to compute, no tree to permute and no capability to gate, so for a long
+# time they had no plan either — a dict lookup and a subtraction per block. What forced
+# one is the storage: keeping the leading degeneracy slots of each axis keeps a *strided*
+# subset of a row band, and the strides are a pure function of two structures, so the
+# index arrays that express it are static metadata and belong beside the layout tables
+# rather than being rebuilt per call. `_check_containment` still has no plan and no
+# memoized boolean; add one only if a profile ever shows it on the hot path.
 # Simplification: `_check_containment` is shared between embed and restrict, arguments
 # swapped, with `op` naming the direction and the message prefix. Split it into
 # two checkers only if the two refusals ever need to say genuinely different

@@ -589,27 +589,6 @@ def adjoint(t: "SymmetricTensor") -> "SymmetricTensor":
     )
 
 
-@cache
-def _diagonal_subscripts(structure: TensorStructure) -> str:
-    """``"abab->ab"``-style subscripts pairing ``out_axes[i]`` with ``in_axes[i]``.
-
-    Public axis order may interleave the two sides, so the pairing is read off the
-    axis lists rather than assumed contiguous.
-    """
-    out_axes, in_axes = structure.out_axes, structure.in_axes
-    if len(out_axes) > 26:
-        # Simplification: one einsum letter per paired axis. Lift to
-        # ar.do("einsum", operand, indices) with integer indices if a rank-52 map
-        # ever exists.
-        raise ValueError(
-            f"map_diagonal: {len(out_axes)} paired axes exceed the 26 available einsum subscripts"
-        )
-    letters = [""] * structure.ndim
-    for i, (o, n) in enumerate(zip(out_axes, in_axes, strict=True)):
-        letters[o] = letters[n] = "abcdefghijklmnopqrstuvwxyz"[i]
-    return "".join(letters) + "->" + "".join(letters[a] for a in out_axes)
-
-
 def map_diagonal(m: "SymmetricTensor") -> "SymmetricTensor":
     """The diagonal of a square map, in the reduced basis, on its codomain legs.
 
@@ -629,9 +608,8 @@ def map_diagonal(m: "SymmetricTensor") -> "SymmetricTensor":
     Raises
     ------
     ValueError
-        If the map is not square (``check_square``'s refusal, which names the
-        first offending position and both legs), or if it has more than 26
-        paired axes.
+        If the map is not square — ``check_square``'s refusal, which names the
+        first offending position and both legs.
 
     Examples
     --------
@@ -677,10 +655,15 @@ def map_diagonal(m: "SymmetricTensor") -> "SymmetricTensor":
     reading of that relational basis and loses both the inner line and the
     graded braiding sign. Given the map itself, both are already in its blocks.
 
-    **Nothing full-width is allocated**: one ``einsum`` per diagonal block, each
-    output the size of one block of the *result*. ``to_matrices`` is deliberately
-    not called — it would concatenate the whole per-sector matrix to read its
-    diagonal.
+    **The whole operation is one ``diagonal`` per coupled sector.** The result carries
+    ``m``'s codomain legs and no domain, so its own domain admits only the empty fusion
+    tree and it has exactly one coupled sector: the unit. Its matrix is one column, its
+    row bands are the codomain trees, and a row band's index flattens the codomain
+    degeneracies in ``out_axes`` order -- which is the order ``m``'s own rows flatten in,
+    and, ``m`` being square, the order its columns do too. The block at ``(tau, tau)``
+    is therefore the diagonal square of ``m``'s unit matrix at that band, and the whole
+    column is that matrix's main diagonal. No block is cut out and no einsum runs
+    (invariant 8); the 26-subscript ceiling the einsum spelling carried is gone with it.
 
     **The unit-coupled reading.** The result carries ``m``'s codomain legs, whose
     blocks are the unit-coupled ones, and that is the whole diagonal of the
@@ -696,13 +679,11 @@ def map_diagonal(m: "SymmetricTensor") -> "SymmetricTensor":
 
     check_square(m, "map_diagonal")
     structure = TensorStructure(tuple(m.codomain))
-    subscripts = _diagonal_subscripts(m.structure)
-    blocks = tuple(
-        ar.do(
-            "einsum",
-            subscripts,
-            m.blocks[m.structure.index_of(FusionBlockKey(key.output_tree, key.output_tree))],
-        )
-        for key in structure.block_order
+    at = {c: i for i, c in enumerate(map_layout(m.structure).sectors)}
+    return SymmetricTensor.from_data(
+        structure,
+        tuple(
+            ar.do("reshape", ar.do("diagonal", m.data[at[c]]), (-1, 1))
+            for c in map_layout(structure).sectors
+        ),
     )
-    return SymmetricTensor(structure, blocks)
