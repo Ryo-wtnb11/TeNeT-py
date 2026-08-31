@@ -27,9 +27,9 @@ Produced by `su3_heisenberg.main()` at its defaults — exactly
 ```text
 P: one block per coupled sector of 3 x 3, [(0, 1), (2, 0)]
       max |P_dense - permutation matrix| = 4.4e-16
-N= 6  3 sweeps  E = -4.069784138805  ED = -4.069784138805
-      |E_dmrg - E_ed| = 1.7e-13
-N=24  8 sweeps  E = -16.686244544237  mid bond 10 multiplets, 89 dense
+N= 6  ~3 sweeps  E = -4.069784138805  ED = -4.069784138805
+      |E_dmrg - E_ed| = 1.5e-13
+N=24  ~8 sweeps  E = -16.686244544237  mid bond 10 multiplets, 89 dense
       mid bond: (0, 0)x2 (0, 3)x1 (1, 1)x5 (2, 2)x1 (3, 0)x1
       E/N = -0.695260  bulk bond <P> = -0.747250
       Sutherland (infinite chain) = -0.703212
