@@ -49,7 +49,9 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
-from tenet.map_view import from_matrices, lower_plan, scaled
+from tenet.leg import IN, OUT
+from tenet.map_view import from_matrices, lower_plan, map_layout, scaled
+from tenet.ops.batch import Scales, band_runs, scale_bands
 from tenet.structure import FusionBlockKey, TensorStructure, _pattern
 from tenet.symmetry.base import (
     BraidingData,
@@ -418,23 +420,63 @@ def _pattern_braid_plan(
 
 
 @cache
-def _twist_signs(structure: TensorStructure, axes: tuple[int, ...]) -> tuple[complex, ...]:
-    """``theta`` on the named legs, per block; ``()`` when every factor is ``1``.
+def _twist_plan(structure: TensorStructure, axes: tuple[int, ...]) -> Scales:
+    """``theta`` on the named legs, as a row and a column scaling per coupled sector.
 
-    ``()`` is the whole bosonic story -- ``theta`` is ``1`` on every sector of a
-    symmetric bosonic category, so [twist][tenet.twist] hands the tensor straight back
-    and those paths stay bit-identical.
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure being twisted; untouched by the operation.
+    axes : tuple of int
+        The public axes whose lines are twisted, repeats included.
+
+    Returns
+    -------
+    tuple of (Runs or None, Runs or None)
+        Per coupled sector, in ``map_layout(structure).sectors`` order, the runs
+        [scale_bands][tenet.ops.batch.scale_bands] applies to that matrix's rows and to
+        its columns; ``(None, None)`` throughout when every factor is ``1``.
+
+    Notes
+    -----
+    A twist is one scalar per fusion block, and the scalar **factorizes**: a twisted OUT
+    leg reads the block's output tree only and a twisted IN leg its input tree only. So
+    the per-block grid of thetas is a row scaling times a column scaling, which is what
+    lets [twist][tenet.twist] read ``data`` instead of cutting every block out to
+    multiply it by a sign (invariant 8).
+
+    All ``None`` is the whole bosonic story -- ``theta`` is ``1`` on every sector of a
+    symmetric bosonic category, so ``twist`` hands the tensor straight back and those
+    paths stay bit-identical. The leaf a leg contributes is read through
+    ``Leg.space_sector``, the de-dualizing lookup ``axis_sectors`` and the layout's own
+    degeneracy tables both go through, so ``dual`` is accounted for once and in one way.
     """
     theta = structure.provider.twist  # ty: ignore[unresolved-attribute]  # requires() at the call
-    signs, trivial = [], True
-    for key in structure.block_order:
-        sectors = structure.axis_sectors(key)
-        factor: complex = 1.0
-        for i in axes:
-            factor *= theta(sectors[i])
-        trivial = trivial and factor == 1
-        signs.append(factor)
-    return () if trivial else tuple(signs)
+    layout = map_layout(structure)
+    position = {ax: k for k, ax in enumerate(structure.out_axes)}
+    position |= {ax: k for k, ax in enumerate(structure.in_axes)}
+
+    def side(picked: tuple[int, ...]) -> Any:
+        """One side's per-band coefficient: the product of theta over its twisted legs."""
+
+        def coefficient(tree: Any) -> complex:
+            factor: complex = 1.0
+            for ax in picked:
+                leg = structure.legs[ax]
+                factor *= theta(leg.space_sector(tree.uncoupled[position[ax]]))
+            return factor
+
+        return coefficient
+
+    out_picked = tuple(ax for ax in axes if structure.legs[ax].side is OUT)
+    in_picked = tuple(ax for ax in axes if structure.legs[ax].side is IN)
+    return tuple(
+        (
+            band_runs(layout.row_bands(c), side(out_picked)),
+            band_runs(layout.col_bands(c), side(in_picked)),
+        )
+        for c in layout.sectors
+    )
 
 
 def twist(t: "SymmetricTensor", axes: Sequence[int] | int) -> "SymmetricTensor":
@@ -484,21 +526,22 @@ def twist(t: "SymmetricTensor", axes: Sequence[int] | int) -> "SymmetricTensor":
 
     ``theta`` is ``(-1)^parity`` on a fermion-parity grading and ``1`` on every bosonic one,
     the same grading datum [braid][tenet.braid] reads its crossing sign from.
+
+    The structure is unchanged, so the coupled-sector layout is too, and the scalar per
+    block factorizes: a twisted OUT leg reads the block's output tree only and a twisted
+    IN leg its input tree only. The twist is therefore a diagonal scaling of the stored
+    matrices, and no block is cut out to be multiplied by a sign.
     """
+    from tenet.tensor import SymmetricTensor
+
     axes = (axes,) if isinstance(axes, int) else tuple(axes)
     if not axes:
         return t
     requires(t.provider, TwistData)
-    signs = _twist_signs(t.structure, axes)
-    if not signs:
+    scales = _twist_plan(t.structure, axes)
+    if all(rows is None and cols is None for rows, cols in scales):
         return t
-    return type(t)(
-        t.structure,
-        tuple(
-            b if c == 1 else scaled(b, c.real if isinstance(c, complex) and c.imag == 0 else c)
-            for b, c in zip(t.blocks, signs, strict=True)
-        ),
-    )
+    return SymmetricTensor.from_data(t.structure, scale_bands(t.data, scales))
 
 
 def braid(t: "SymmetricTensor", axes: Sequence[int], levels: Sequence[int]) -> "SymmetricTensor":

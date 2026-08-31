@@ -1,9 +1,11 @@
 """Tests for the coupled-sector matrix lowering — issue #29."""
 
 import dataclasses
+import functools
 import math
 import pathlib
 import re
+import tempfile
 
 import autoray as ar
 import numpy as np
@@ -607,3 +609,256 @@ def test_the_hot_operations_never_cut_a_block_on_any_symmetry(legs):
         tenet.flip_dual(a, (0, 1, 2, 3))
 
     assert _blocks_reads(hot) == 0
+
+
+# --- the whole public surface, against the same contract ------------------------
+
+
+def _public_surface():
+    """Every public callable the library exposes, as ``qualified name -> object``.
+
+    Three doors and only three: ``tenet.__all__``, ``tenet.ops.linalg.__all__`` and the
+    public attributes of ``SymmetricTensor``. Classes are not operations and drop out;
+    everything left has to be classified below, which is what makes the classification a
+    partition of the surface rather than a list somebody remembered to extend.
+    """
+    surface = {f"tenet.{name}": getattr(tenet, name) for name in tenet.__all__}
+    surface |= {
+        f"linalg.{name}": getattr(tenet.ops.linalg, name) for name in tenet.ops.linalg.__all__
+    }
+    surface |= {
+        f"SymmetricTensor.{name}": getattr(SymmetricTensor, name)
+        for name in vars(SymmetricTensor)
+        if not name.startswith("_")
+    }
+    return {k: v for k, v in surface.items() if callable(v) and not isinstance(v, type)}
+
+
+EXCLUDED = {
+    # --- boundaries: where untrusted arrays enter, or where the caller decides shapes ---
+    "SymmetricTensor.to_dense": "the dense boundary itself; reading the tensor apart is the job",
+    "SymmetricTensor.from_dense": "a dense array arrives from outside and is checked into blocks",
+    "SymmetricTensor.from_blocks": "the caller names blocks; they are gathered once, here",
+    "SymmetricTensor.with_blocks": "the caller replaces named blocks, so the rest is cut out",
+    "SymmetricTensor.set_params": "quimb's leaf protocol: the caller hands back per-block arrays",
+    "SymmetricTensor.items": "the interop walk -- reading a tensor apart is what it is for",
+    "SymmetricTensor.block": "one named block, by key: the single-block spelling of ``items``",
+    "SymmetricTensor.save": "the archive's format is the blocks",
+    "tenet.save": "the free function behind ``SymmetricTensor.save``",
+    "tenet.apply_blocks": "the caller supplies ``fn``, so the shapes it may read are not ours",
+    "SymmetricTensor.apply_blocks": "the method behind ``tenet.apply_blocks``",
+    "tenet.zip_blocks": "``apply_blocks``' two-operand sibling, a caller's ``fn`` the same way",
+    "tenet.to_symmetry": "defined in the dense basis: it is ``to_dense`` then ``from_dense``",
+    "SymmetricTensor.to_symmetry": "the method behind ``tenet.to_symmetry``",
+    # --- not operations on a tensor: there is no operand to cut ---
+    "tenet.map_layout": "a query on a structure; no tensor is involved",
+    "tenet.fusion_trees": "a fusion-rules query on sector labels; no tensor is involved",
+    "tenet.coupled_sectors": "a fusion-rules query on sector labels; no tensor is involved",
+    "tenet.enable_jax": "a process-wide pytree registration, not an operation on a tensor",
+}
+
+OPEN = {
+    "tenet.fuse": (
+        "merges bands into one, so the target's rows are a reordering of the source's "
+        "that no plan states; the derivation is not in this branch"
+    ),
+    "SymmetricTensor.fuse": "the method behind ``tenet.fuse``",
+    "tenet.unfuse": "``fuse`` run backwards, and open for the same reason",
+    "SymmetricTensor.unfuse": "the method behind ``tenet.unfuse``",
+    "tenet.direct_sum": (
+        "puts one operand in the leading degeneracy slots and the other in the trailing "
+        "ones; ``embed``'s index map covers the leading half only"
+    ),
+    "SymmetricTensor.direct_sum": "the method behind ``tenet.direct_sum``",
+}
+
+
+@functools.cache
+def _material(legs):
+    """The arrays every case below is built from, as ``(structure, matrices)`` pairs.
+
+    Kept as matrices rather than as tensors because a *tensor remembers a cut*: an
+    operand that some construction step had already read as blocks would answer the
+    measurement out of that memo, and the count would come back zero for the wrong
+    reason. Rehydrating through ``from_matrices`` is cheap and gives a tensor that has
+    never been cut, which is also what every intermediate of a real chain is.
+    """
+    space = legs[0].space
+    sectors = space.sectors
+    smaller = GradedSpace.new(
+        space.provider,
+        tuple((a, max(1, m - 1)) for a, m in sectors[1:]) if len(sectors) > 1 else sectors,
+    )
+    small_legs = tuple(dataclasses.replace(leg, space=smaller) for leg in legs)
+    square = (Leg(space, OUT), Leg(space, IN))
+    archive = pathlib.Path(tempfile.mkdtemp()) / "operand.npz"
+    tenet.save(SymmetricTensor.random(legs, seed=41), archive)
+
+    def pair(t):
+        return t.structure, to_matrices(t)
+
+    return {
+        "legs": legs,
+        "small_legs": small_legs,
+        "archive": archive,
+        "a": pair(SymmetricTensor.random(legs, seed=41)),
+        "b": pair(SymmetricTensor.random(legs, seed=42)),
+        "sq": pair(SymmetricTensor.random(square, seed=43)),
+        "small": pair(SymmetricTensor.random(small_legs, seed=44)),
+        "big": pair(tenet.embed(SymmetricTensor.random(small_legs, seed=45), legs)),
+        "positive": pair(
+            tenet.apply_blocks(tenet.linalg.eigh(SymmetricTensor.random(square, seed=46))[0], abs)
+        ),
+        "values": pair(
+            tenet.linalg.svd(SymmetricTensor.random(legs, seed=47), ((0, 1), (2, 3)))[1]
+        ),
+        "fused": pair(tenet.fuse(SymmetricTensor.random(legs, seed=48), (0, 1))),
+    }
+
+
+def _operations(legs):
+    """One thunk per public callable that is not excluded, on freshly uncut operands."""
+    m = _material(legs)
+    a, b, sq = (from_matrices(*m[k]) for k in ("a", "b", "sq"))
+    small, big = from_matrices(*m["small"]), from_matrices(*m["big"])
+    positive, values = from_matrices(*m["positive"]), from_matrices(*m["values"])
+    fused = from_matrices(*m["fused"])
+    legs, small_legs, archive = m["legs"], m["small_legs"], m["archive"]
+    out2, in2 = legs[:2], legs[2:]
+    lin = tenet.linalg
+    return {
+        # contraction, and the scalars that leave the tensor world
+        "tenet.tensordot": lambda: tenet.tensordot(a, b, ((2, 3), (0, 1))),
+        "tenet.einsum": lambda: tenet.einsum("abcd,cdef->abef", a, b),
+        "tenet.einsum_chain": lambda: tenet.einsum_chain([("abcd,cdef->abef", a, b, "")]),
+        "tenet.compose": lambda: tenet.compose(a, b),
+        "tenet.trace": lambda: tenet.trace(a, (0, 2)),
+        "tenet.full_trace": lambda: tenet.full_trace(tenet.tensordot(a, b, ((2, 3), (0, 1)))),
+        "tenet.inner": lambda: tenet.inner(a, b),
+        "tenet.norm": lambda: tenet.norm(a),
+        "SymmetricTensor.norm": lambda: a.norm(),
+        # the diagram moves
+        "tenet.transpose": lambda: tenet.transpose(a, (1, 0, 3, 2)),
+        "SymmetricTensor.transpose": lambda: a.transpose(1, 0, 3, 2),
+        "tenet.repartition": lambda: tenet.repartition(a, (0,), (1, 2, 3)),
+        "SymmetricTensor.repartition": lambda: a.repartition((0,), (1, 2, 3)),
+        "tenet.bend": lambda: tenet.bend(a, 1),
+        "tenet.braid": lambda: tenet.braid(a, (1, 0, 3, 2), (0, 1, 2, 3)),
+        "tenet.twist": lambda: tenet.twist(a, (0, 3)),
+        "tenet.flip_dual": lambda: tenet.flip_dual(a, (0, 1, 2, 3)),
+        "tenet.adjoint": lambda: tenet.adjoint(a),
+        "SymmetricTensor.adjoint": lambda: a.adjoint(),
+        "tenet.conj": lambda: tenet.conj(a),
+        "SymmetricTensor.conj": lambda: a.conj(),
+        "tenet.as_map": lambda: tenet.as_map(a),
+        "SymmetricTensor.as_map": lambda: a.as_map(),
+        # arithmetic
+        "tenet.add": lambda: tenet.add(a, b),
+        "tenet.subtract": lambda: tenet.subtract(a, b),
+        "tenet.multiply": lambda: tenet.multiply(a, 2.0),
+        "tenet.divide": lambda: tenet.divide(a, 2.0),
+        "tenet.negative": lambda: tenet.negative(a),
+        "tenet.allclose": lambda: tenet.allclose(a, b),
+        # blockwise maps whose ``fn`` is the library's own, and the diagonal
+        "tenet.block_sqrt": lambda: tenet.block_sqrt(positive),
+        "SymmetricTensor.block_sqrt": lambda: positive.block_sqrt(),
+        "tenet.block_power": lambda: tenet.block_power(positive, 0.5),
+        "SymmetricTensor.block_power": lambda: positive.block_power(0.5),
+        "tenet.map_diagonal": lambda: tenet.map_diagonal(a),
+        # graded-space plumbing
+        "tenet.embed": lambda: tenet.embed(small, legs),
+        "SymmetricTensor.embed": lambda: small.embed(legs),
+        "tenet.restrict": lambda: tenet.restrict(big, small_legs),
+        "SymmetricTensor.restrict": lambda: big.restrict(small_legs),
+        # constructors and interop that hold no operand to cut
+        "tenet.identity": lambda: tenet.identity((legs[0],)),
+        "tenet.isometry": lambda: tenet.isometry(out2, in2),
+        "tenet.random_isometry": lambda: tenet.random_isometry(out2, in2, seed=1),
+        "tenet.from_matrices": lambda: from_matrices(*m["a"]),
+        "tenet.to_matrices": lambda: to_matrices(a),
+        "tenet.load": lambda: tenet.load(archive),
+        "SymmetricTensor.load": lambda: SymmetricTensor.load(archive),
+        "SymmetricTensor.random": lambda: SymmetricTensor.random(legs, seed=1),
+        "SymmetricTensor.zeros": lambda: SymmetricTensor.zeros(legs),
+        "SymmetricTensor.from_data": lambda: SymmetricTensor.from_data(a.structure, a.data),
+        "SymmetricTensor.astype": lambda: a.astype("complex128"),
+        "SymmetricTensor.copy": lambda: a.copy(),
+        "SymmetricTensor.to_backend": lambda: a.to_backend("numpy"),
+        "SymmetricTensor.get_params": lambda: a.get_params(),
+        # linalg
+        "linalg.svd": lambda: lin.svd(a, ((0, 1), (2, 3))),
+        "linalg.qr": lambda: lin.qr(a, ((0, 1), (2, 3))),
+        "linalg.lq": lambda: lin.lq(a, ((0, 1), (2, 3))),
+        "linalg.polar": lambda: lin.polar(a, ((0, 1), (2, 3))),
+        "linalg.eigh": lambda: lin.eigh(sq),
+        "linalg.eig": lambda: lin.eig(sq),
+        "linalg.eigvals": lambda: lin.eigvals(sq),
+        "linalg.expm": lambda: lin.expm(sq, alpha=0.5),
+        "linalg.left_null": lambda: lin.left_null(a, ((0, 1, 2), (3,))),
+        "linalg.right_null": lambda: lin.right_null(a, ((0,), (1, 2, 3))),
+        "linalg.select_bond": lambda: lin.select_bond(values, cutoff=1e-12),
+        "linalg.svd_truncated": lambda: lin.svd_truncated(a, ((0, 1), (2, 3)), cutoff=1e-12),
+        "linalg.eigh_truncated": lambda: lin.eigh_truncated(sq, cutoff=1e-12),
+        # the open violations, measured so that the list above cannot quietly rot
+        "tenet.fuse": lambda: tenet.fuse(a, (0, 1)),
+        "SymmetricTensor.fuse": lambda: a.fuse((0, 1)),
+        "tenet.unfuse": lambda: tenet.unfuse(fused, 0, out2),
+        "SymmetricTensor.unfuse": lambda: fused.unfuse(0, out2),
+        "tenet.direct_sum": lambda: tenet.direct_sum(a, b, 0),
+        "SymmetricTensor.direct_sum": lambda: a.direct_sum(b, 0),
+    }
+
+
+def test_the_classification_covers_the_public_surface_exactly():
+    """No public callable is unclassified, and none is classified twice.
+
+    This is what stops the storage contract from being re-discovered one profile at a
+    time. A new operation lands in one of three places or this fails: measured below at
+    zero cuts, named in ``EXCLUDED`` with the reason it is allowed to read blocks, or
+    named in ``OPEN`` with the reason it still does. There is no fourth option and no
+    default, so "nobody thought to add it to the list" is not reachable.
+    """
+    surface = set(_public_surface())
+    measured = set(_operations(EVERY_SYMMETRY[2].values[0]))
+    assert measured.isdisjoint(EXCLUDED)
+    assert set(OPEN) <= measured
+    missing = surface - measured - set(EXCLUDED)
+    assert not missing, f"unclassified public callables: {sorted(missing)}"
+    stale = (measured | set(EXCLUDED)) - surface
+    assert not stale, f"classified but no longer public: {sorted(stale)}"
+
+
+@pytest.mark.parametrize("legs", EVERY_SYMMETRY)
+def test_the_public_surface_never_cuts_a_block(legs):
+    """The storage contract over the *whole* surface, on every symmetry. Still zero.
+
+    The eleven hot operations above were a sample, and a sample is how the contract kept
+    being broken somewhere else: each violation surfaced on its own out of a profile,
+    which is the wrong instrument for a rule that is supposed to hold everywhere. This
+    walks the enumeration instead.
+
+    Every operand is rehydrated from matrices immediately before it is measured, because
+    the cut is memoized: an operand that something else had already read as blocks would
+    report zero without the operation having been matrix-native at all. That is how the
+    count under-reported before, and it is why the fixtures are stored as matrices rather
+    than as tensors.
+    """
+    for name in _operations(legs):
+        if name in OPEN:
+            continue
+        _operations(legs)[name]()  # warm every plan and layout cache; a cold build is not it
+        reads = _blocks_reads(_operations(legs)[name])
+        assert reads == 0, f"{name} cut its operand into blocks {reads} time(s)"
+
+
+@pytest.mark.parametrize("legs", EVERY_SYMMETRY)
+def test_the_open_violations_are_still_open(legs):
+    """``OPEN`` is held to being true, so an exemption cannot outlive what earned it.
+
+    An entry that has quietly become matrix-native fails here, which is the prompt to
+    move it into the measured set. An exemption nobody is made to re-earn is how a
+    known-bad list becomes a permanent one.
+    """
+    for name in OPEN:
+        _operations(legs)[name]()
+        assert _blocks_reads(_operations(legs)[name]) > 0, f"{name} no longer cuts: move it up"

@@ -417,7 +417,10 @@ def allclose(
     """
     if a.structure != b.structure:
         return False
+    # equal structures lay out identically, and a coupled sector's matrix is exactly its
+    # blocks laid side by side -- the grid is complete -- so this compares the same pairs
+    # of numbers a per-block walk would, without cutting either operand up (invariant 8)
     return all(
         bool(ar.do("allclose", x, y, rtol=rtol, atol=atol))
-        for x, y in zip(a.blocks, b.blocks, strict=True)
+        for x, y in zip(a.data, b.data, strict=True)
     )

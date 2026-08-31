@@ -20,6 +20,7 @@ one: bucketing by *multiplicity* as well as by shape makes every bucket a rectan
 rectangle is summed by indexing and adding, which every backend spells the same way.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 import autoray as ar
@@ -28,7 +29,7 @@ import numpy as np
 from tenet.cache import plan_cache
 from tenet.structure import TensorStructure
 
-__all__ = ["band_scale", "batch_plan", "cast_coefficients"]
+__all__ = ["band_runs", "band_scale", "batch_plan", "cast_coefficients", "scale_bands"]
 
 
 MIN_BATCH_ROWS = 4
@@ -220,3 +221,76 @@ def band_scale(runs: tuple[tuple[complex, int], ...], mat: Any, axis: int) -> An
     """
     vec = _repeated(runs)
     return cast_coefficients(vec[:, None] if axis == 0 else vec[None, :], mat)
+
+
+Runs = tuple[tuple[complex, int], ...]
+"""``(coefficient, extent)`` per band of one side of one coupled-sector matrix."""
+
+Scales = tuple[tuple[Runs | None, Runs | None], ...]
+"""One ``(row runs, column runs)`` pair per coupled sector, in ``sectors`` order."""
+
+
+def band_runs(
+    bands: tuple[tuple[Any, int, int], ...], coefficient: Callable[[Any], complex]
+) -> Runs | None:
+    """``coefficient`` of each band's fusion tree, paired with the band's extent.
+
+    Parameters
+    ----------
+    bands : tuple of (FusionTree, int, int)
+        One side's ``(tree, offset, extent)`` bands, as
+        [MapLayout.row_bands][tenet.MapLayout.row_bands] gives them.
+    coefficient : callable
+        The scalar this operation pays on a block whose tree on this side is the given
+        one. Called once per band, on static metadata, never on an array.
+
+    Returns
+    -------
+    tuple of (complex, int), or None
+        The runs [band_scale][tenet.ops.batch.band_scale] expands, or ``None`` when
+        every coefficient is ``1`` and the side needs no scaling at all.
+
+    Notes
+    -----
+    ``None`` rather than a tuple of ones is what lets a bosonic grading skip the
+    multiply entirely and keep the operand's own arrays, so those paths stay
+    bit-identical to the ones that never scaled anything.
+    """
+    runs = tuple((coefficient(tree), extent) for tree, _, extent in bands)
+    return None if all(coeff == 1 for coeff, _ in runs) else runs
+
+
+def scale_bands(data: tuple[Any, ...], scales: Scales) -> tuple[Any, ...]:
+    """``data`` with each coupled-sector matrix's row and column bands scaled.
+
+    Parameters
+    ----------
+    data : tuple of array
+        The coupled-sector matrices, in ``map_layout(structure).sectors`` order.
+    scales : tuple of (Runs or None, Runs or None)
+        One pair per matrix, from [band_runs][tenet.ops.batch.band_runs].
+
+    Returns
+    -------
+    tuple of array
+        The scaled matrices; a matrix whose pair is ``(None, None)`` comes back
+        unchanged and uncopied.
+
+    Notes
+    -----
+    The execution half of every operation whose whole content is one scalar per fusion
+    block -- ``twist`` and ``flip_dual`` today. Such a scalar always *factorizes*: a leg
+    on the OUT side reads the block's output tree only and a leg on the IN side its input
+    tree only, so a per-block grid of scalars is a row scaling times a column scaling,
+    and a diagonal scaling of a matrix is one array operation. That is what lets these
+    operations read ``data`` instead of cutting every block out to multiply it by a
+    number (invariant 8).
+    """
+    out = []
+    for mat, (rows, cols) in zip(data, scales, strict=True):
+        if rows is not None:
+            mat = ar.do("multiply", mat, band_scale(rows, mat, 0))
+        if cols is not None:
+            mat = ar.do("multiply", mat, band_scale(cols, mat, 1))
+        out.append(mat)
+    return tuple(out)

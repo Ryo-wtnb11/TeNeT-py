@@ -231,6 +231,15 @@ def bend(t: "SymmetricTensor", axis: int) -> "SymmetricTensor":
     plan = bend_plan(t.structure, axis)
     perm = (*(i for i in range(t.ndim) if i != axis), axis)
 
+    # a bend is a plan like any other, so it takes the same lowered route ``transpose``
+    # and ``braid`` do: the source cells are read out of ``t``'s coupled-sector matrices
+    # and written straight into the result's, and the blocks the loop below would build
+    # -- along with the gather that would copy every one of them back into a matrix --
+    # never exist (invariant 8). The loop stays for what ``lower_plan`` declines.
+    mats = lower_plan(t, plan.new_structure, perm, plan.terms)
+    if mats is not None:
+        return from_matrices(plan.new_structure, mats)
+
     # one transpose per *distinct source*, not per term (#123): the permutation is
     # per-plan and only the coefficient is per-term, so every term sharing a source used
     # to recompute a byte-identical array. #74's batched alternative -- stack a shape

@@ -92,6 +92,43 @@ def apply_blocks(t: "SymmetricTensor", fn: Callable[[Array], Array]) -> "Symmetr
     return SymmetricTensor(t.structure, tuple(fn(b) for b in t.blocks))
 
 
+def _over_data(t: "SymmetricTensor", fn: Callable[[Array], Array]) -> "SymmetricTensor":
+    """[apply_blocks][tenet.apply_blocks] for an ``fn`` this module supplies itself.
+
+    Parameters
+    ----------
+    t : SymmetricTensor
+        The operand; its structure is the result's.
+    fn : callable
+        A **shape-agnostic** elementwise function -- one of this module's own, never a
+        caller's.
+
+    Returns
+    -------
+    SymmetricTensor
+        ``fn`` of every coupled-sector matrix, on ``t``'s unchanged structure.
+
+    Notes
+    -----
+    A coupled sector's matrix is exactly its blocks laid side by side: the
+    ``(output tree, input tree)`` grid is complete, so every cell is written once and
+    none is left zero (``tenet.map_view``'s module docstring). An elementwise map is
+    therefore the *same numbers* whether it runs over the matrices or over the blocks
+    cut out of them, and running it over the matrices leaves the result holding storage
+    rather than views (invariant 8).
+
+    ``apply_blocks`` and ``zip_blocks`` keep the block route because there the ``fn`` is
+    the caller's. Their contract says elementwise, but nothing checks it, and an ``fn``
+    that reads ``b.shape`` -- a per-block normalization, a broadcast against an axis --
+    would see the matrix instead of the block and silently compute something else. Here
+    ``fn`` is ``sqrt`` or ``power``, whose value at an entry depends on that entry only,
+    so there is nothing for the shape to change.
+    """
+    from tenet.tensor import SymmetricTensor
+
+    return SymmetricTensor.from_data(t.structure, tuple(fn(m) for m in t.data))
+
+
 def block_sqrt(t: "SymmetricTensor") -> "SymmetricTensor":
     """Blockwise ``sqrt``. The ``svd`` splitter: ``u @ sqrt(s)``, ``sqrt(s) @ vh``.
 
@@ -131,8 +168,13 @@ def block_sqrt(t: "SymmetricTensor") -> "SymmetricTensor":
     Negative or complex entries are the backend's business: ``sqrt(-1.0)`` is
     ``nan`` under NumPy, JAX and torch alike, and nothing here clips, guards or
     regularizes.
+
+    Runs over the coupled-sector matrices, not over the blocks cut out of them: a
+    coupled sector's matrix is exactly its blocks laid side by side, so an elementwise
+    map is the same numbers either way, and this one's ``fn`` is the library's own and
+    reads no shape. ``apply_blocks`` keeps the block route because there it is not.
     """
-    return apply_blocks(t, lambda b: ar.do("sqrt", b))
+    return _over_data(t, lambda m: ar.do("sqrt", m))
 
 
 def block_power(t: "SymmetricTensor", p: Any) -> "SymmetricTensor":
@@ -164,9 +206,9 @@ def block_power(t: "SymmetricTensor", p: Any) -> "SymmetricTensor":
     -----
     Same coefficient-space semantics and the same backend-owned branch cuts and
     ``nan``s as [block_sqrt][tenet.block_sqrt]; ``p = -0.5`` is the inverse-√S of
-    canonical-form and gauge-fixing loops.
+    canonical-form and gauge-fixing loops. It runs over ``data`` for the same reason.
     """
-    return apply_blocks(t, lambda b: ar.do("power", b, p))
+    return _over_data(t, lambda m: ar.do("power", m, p))
 
 
 def zip_blocks(
