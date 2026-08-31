@@ -48,7 +48,7 @@ def main(n_sites: int = 20, chi: int = 64):
     # legs[0] of site n is its left virtual bond, so this is the cut through the middle
     # of the chain -- the one that carries the most entanglement and the largest bond.
     mid = out.psi[n_sites // 2].legs[0].space
-    print(f"N={n_sites}  {out.sweeps} sweeps  E = {out.energy:.15f}  mid bond: {mid.dim} states")
+    print(f"N={n_sites}  ~{out.sweeps} sweeps  E = {out.energy:.15f}  mid bond: {mid.dim} states")
 
     # S.S as a single two-site matrix, so the bond energy is one expectation value
     # rather than the three-term sum the MPO was built from.

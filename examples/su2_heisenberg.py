@@ -59,9 +59,9 @@ def main(n_sites: int = 20, chi: int = 64):
     # gap between them is the (2j+1) degeneracy SU(2) never has to store.
     mid = su2.psi[n_sites // 2].legs[0].space
     mid_u1 = u1.psi[n_sites // 2].legs[0].space
-    print(f"U(1) : {u1.sweeps} sweeps  E = {u1.energy:.12f}  mid bond {mid_u1.dim} states")
+    print(f"U(1) : ~{u1.sweeps} sweeps  E = {u1.energy:.12f}  mid bond {mid_u1.dim} states")
     print(
-        f"SU(2): {su2.sweeps} sweeps  E = {su2.energy:.12f}  "
+        f"SU(2): ~{su2.sweeps} sweeps  E = {su2.energy:.12f}  "
         f"mid bond {mid.reduced_dim} multiplets, {mid.dim} dense"
     )
     print(f"|E_su2 - E_u1| = {abs(su2.energy - u1.energy):.1e}")

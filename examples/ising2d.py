@@ -112,7 +112,7 @@ def main(chi: int = 24):
         out = env.iterate_(max_bond=chi, max_sweeps=100)
         bf = -float(log_kappa(env))
         rel = abs(bf / onsager(beta) - 1)
-        print(f"beta={beta:.4f}  {out.sweeps:3d} sweeps  beta*f = {bf:+.10f}  rel {rel:.1e}")
+        print(f"beta={beta:.4f}  ~{out.sweeps:<3d} sweeps  beta*f = {bf:+.10f}  rel {rel:.1e}")
         results[beta] = (bf, rel)
     # The exact cross-sector doublet is a sharper question than the free energy, so the
     # ordered environment is swept to the float64 floor for it (as the integration suite
