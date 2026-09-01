@@ -11,20 +11,41 @@ Layout contract, depended on by twenty test modules: axis
 space's canonical order; within sector ``a``'s slab the index is ``alpha * d_a + m``.
 
 **Mechanism.** The dense array is a *grid of slabs* indexed by one space sector
-per public axis. Every cell is built independently and the grid is glued by
-nested ``concatenate`` — symmray's ``_to_dense_abelian`` design. No ``zeros`` +
-scatter, no ``at[].add`` (JAX-only spelling), no data-dependent skip of an
-all-zero block (invariant 9). Cells that carry no fusion channel are exact
-``zeros`` *by construction*, which is where the deleted ``block.any()`` skip's
-saving really lived.
+per public axis, and the whole grid is walked *at once*: :func:`_expansion` resolves
+it to three static index/coefficient vectors, and ``to_dense`` applies them as one
+gather out of the tensor's own matrices, one multiply by the Clebsch-Gordan
+coefficients, one sum per fusion multiplicity, and one gather into dense position.
+A *gather*, not a scatter, so there is still no ``zeros`` + write and no ``at[].add``
+(JAX-only spelling), and no data-dependent skip of an all-zero block (invariant 9).
+Cells that carry no fusion channel are not built at all: they read one shared
+leading zero, which is where the deleted ``block.any()`` skip's saving really lived.
+
+It used to be one ``ar.do`` per grid cell per axis level — a cell built by
+``einsum`` and the grid glued by nested ``concatenate``, symmray's
+``_to_dense_abelian`` design. That is a cheap call per cell on NumPy, but on JAX
+every distinct shape is a fresh XLA module and a symmetric tensor's cells are all
+different shapes: a five-leg SU(2) tensor with three sectors per leg (117 occupied
+cells, 207 blocks) compiled **420 executables in 3.4 s**, against **39 in 0.38 s**
+here, and NumPy went 5.7 ms to 4.1 ms per call rather than paying for the change.
+The number of backend calls is now set by the number of *distinct fusion
+multiplicities*, which is a handful, instead of by the size of the grid.
+
+The index arithmetic is layout-only — charges, degeneracies, slab offsets — so it
+is done once in NumPy and cached on the structure. Reading the blocks out of the
+matrices is part of it, so ``to_dense`` no longer goes through
+[blocks][tenet.SymmetricTensor.blocks]: that cut is per block and pays the same
+per-shape compile toll on JAX, and expressed as indices it folds into the gather
+that was happening anyway.
 
 **NumPy.** This is the one module in ``ops/`` besides ``map.py``'s ``eye`` that
 imports NumPy, and correctly so: the :class:`~tenet.symmetry.base.ClebschGordanData`
 protocol *returns* ``np.ndarray`` (``cgc``, ``z_matrix``), so the coefficient
 data is NumPy by contract. The blocks never are — they are only ever touched by
 ``ar.do``, and the plan's arrays reach the backend per call through
-``ar.do("array", cgt, like=block)`` (constant-folded under ``jit``; caching
+``ar.do("asarray", ..., like=block)`` (constant-folded under ``jit``; caching
 per-backend copies would pin device buffers alive behind an uncleared cache).
+``asarray`` rather than ``array`` because the expansion vectors are the size of the
+dense result and are only ever read, so NumPy must not copy them.
 
 **The adjoint is a pseudo-inverse, not a conjugate transpose.** Stacking a
 cell's ``K`` CG tensors into ``C`` of shape ``(K, D)``, the Gram matrix
@@ -38,7 +59,6 @@ provider whose gauge is not orthogonal.
 """
 
 import math
-import string
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import product
@@ -50,6 +70,7 @@ import numpy as np
 from tenet.cache import plan_cache
 from tenet.fusion_tree import FusionTree
 from tenet.leg import Leg
+from tenet.map_view import _slots, _tables, map_layout
 from tenet.structure import TensorStructure
 from tenet.symmetry.base import (
     CapabilityError,
@@ -132,8 +153,6 @@ class DensePlan:
     """Per axis, ``m_a * d_a`` for each of those sectors."""
     cells: tuple[Cell, ...]
     """One per *occupied* sector tuple; every other grid cell is exact zeros."""
-    subscripts: str
-    """The ``einsum`` equation gluing one block to one CG tensor, built once."""
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -273,17 +292,135 @@ def dense_plan(structure: TensorStructure) -> DensePlan:
         tuple(leg.degeneracy(a) * provider.irrep_dim(a) for a in sectors)  # ty: ignore[unresolved-attribute]
         for leg, sectors in zip(legs, axis_sectors, strict=True)
     )
-    # block indices "abc", CG indices "def", output interleaved "adbecf": the
-    # within-slab index alpha * d_a + m falls out of the reshape that follows.
-    a_sub = string.ascii_letters[:n]
-    c_sub = string.ascii_letters[n : 2 * n]
-    out_sub = "".join(a + c for a, c in zip(a_sub, c_sub, strict=True))
     return DensePlan(
         structure=structure,
         axis_sectors=axis_sectors,
         axis_sizes=axis_sizes,
         cells=tuple(cells),
-        subscripts=f"{a_sub},{c_sub}->{out_sub}",
+    )
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class _Expansion:
+    """Densification as three static vectors and a table — the grid walk, precomputed.
+
+    ``source`` and ``weights`` are equally long: term ``k`` of the expansion is
+    ``matrices_flat[source[k]] * weights[k]``, where ``matrices_flat`` is
+    ``concatenate([m.reshape(-1) for m in t.data])``. The terms run cell by cell
+    with the cells grouped by fusion multiplicity, so ``groups`` — one
+    ``(multiplicity, elements)`` pair per group, in order — cuts the term vector
+    into ``(multiplicity, elements)`` rectangles whose rows are summed to give the
+    cells' dense values. ``placement`` then reads the dense array out of
+    ``concatenate((zeros(1), *those sums))``, a symmetry-forbidden element taking
+    the leading zero.
+    """
+
+    source: np.ndarray
+    weights: np.ndarray
+    groups: tuple[tuple[int, int], ...]
+    placement: np.ndarray
+
+
+def _block_positions(structure: TensorStructure) -> list[np.ndarray]:
+    """Per block, where each of its public-order elements sits in the flat matrices.
+
+    ``map_view.views`` reaches a block as ``transpose(reshape(mat[rows, cols], shape),
+    inverse)``; this is that same cut expressed as indices instead of as a view, so a
+    caller that wants *all* the blocks at once can take them in one gather.
+    """
+    layout = map_layout(structure)
+    _, shapes = _tables(structure)
+    inverse = tuple(sorted(range(structure.ndim), key=layout.axes_order.__getitem__))
+    bases, base = [], 0
+    for rows, cols in layout.shapes:
+        bases.append((base, cols))
+        base += rows * cols
+    out = []
+    for i, (pos, ro, dr, co, dc) in enumerate(_slots(structure)):
+        start, ncols = bases[pos]
+        rows = start + (ro + np.arange(dr, dtype=np.intp)) * ncols
+        flat = (rows[:, None] + (co + np.arange(dc, dtype=np.intp))[None, :]).reshape(shapes[i])
+        out.append(np.transpose(flat, inverse))
+    return out
+
+
+def _expansion_cost(exp: _Expansion) -> int:
+    """The expansion's bytes in ``tenet.cache`` units, as ``_dense_cost`` counts them."""
+    return (exp.source.nbytes + exp.weights.nbytes + exp.placement.nbytes) // 156
+
+
+@plan_cache(cost=_expansion_cost)
+def _expansion(structure: TensorStructure) -> _Expansion:
+    """The dense grid walk of ``structure``, resolved to indices once.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The structure to expand.
+
+    Returns
+    -------
+    _Expansion
+        The vectors [to_dense][tenet.ops.dense.to_dense] applies.
+
+    Notes
+    -----
+    Pure layout arithmetic — charges, degeneracies, slab offsets and the
+    Clebsch-Gordan coefficients the plan already holds — so it is NumPy, and it is
+    cached on the structure exactly as [dense_plan][tenet.ops.dense.dense_plan] is.
+    Separately from it, because ``from_dense`` shares the plan and does not want
+    this: it is the size of the dense array, and building it is the price of the
+    walk that ``to_dense`` no longer takes per cell.
+
+    The cells are grouped by multiplicity rather than padded to the largest, so the
+    term vector is exactly as long as the sum over cells of ``multiplicity × cell
+    size`` — the work that is actually there — and the number of backend calls is
+    set by the number of *distinct* multiplicities, which is a handful.
+    """
+    plan = dense_plan(structure)
+    positions = _block_positions(structure)
+    cells = sorted(plan.cells, key=lambda cell: len(cell.block_indices))
+
+    source: list[np.ndarray] = []
+    weights: list[np.ndarray] = []
+    groups: list[tuple[int, int]] = []
+    # np.intp throughout: NumPy converts any narrower index type on every gather,
+    # and JAX narrows to int32 itself when x64 is off
+    index = np.zeros(plan.shape, dtype=np.intp)
+    base = 1
+    start = 0
+    while start < len(cells):
+        mult = len(cells[start].block_indices)
+        stop = start
+        while stop < len(cells) and len(cells[stop].block_indices) == mult:
+            stop += 1
+        run = cells[start:stop]
+        start = stop
+        groups.append((mult, sum(math.prod(cell.shape) for cell in run)))
+        for j in range(mult):
+            for cell in run:
+                # the cell's dense index is alpha * d + m per axis: broadcasting the
+                # block over the irrep axes and the CG tensor over the degeneracy axes
+                # spells that interleave without an einsum
+                interleaved = tuple(
+                    x for pair in zip(cell.degens, cell.dims, strict=True) for x in pair
+                )
+                block = positions[cell.block_indices[j]].reshape(
+                    tuple(x for m in cell.degens for x in (m, 1))
+                )
+                cgt = cell.cgts[j].reshape(tuple(x for d in cell.dims for x in (1, d)))
+                source.append(np.broadcast_to(block, interleaved).reshape(-1))
+                weights.append(np.broadcast_to(cgt, interleaved).reshape(-1))
+        for cell in run:
+            n = math.prod(cell.shape)
+            index[cell.slabs] = np.arange(base, base + n, dtype=index.dtype).reshape(cell.shape)
+            base += n
+
+    return _Expansion(
+        source=np.concatenate(source),
+        weights=np.concatenate(weights),
+        groups=tuple(groups),
+        placement=index.reshape(-1),
     )
 
 
@@ -300,35 +437,35 @@ def to_dense(t: "SymmetricTensor") -> Array:
     ``float32``, the same stance ``to_backend`` documents.
     """
     plan = dense_plan(t.structure)
-    if not t.blocks:
+    if not t.data:
         return np.zeros(plan.shape, dtype=np.float64)
-    blocks = t.blocks  # read once: it is a property, not a field
-    ref = blocks[0]
-    cells = plan.cell_map()
+    ref = t.data[0]
+    exp = _expansion(t.structure)
 
-    def build(sectors: tuple[Sector, ...], index: tuple[int, ...]) -> Array:
-        cell = cells.get(sectors)
-        if cell is None:  # symmetry-forbidden: exact zeros, no block read
-            shape = tuple(plan.axis_sizes[ax][i] for ax, i in enumerate(index))
-            return ar.do("zeros", shape, like=ref)
-        acc = None
-        for i, cgt in zip(cell.block_indices, cell.cgts, strict=True):
-            g = ar.do("array", cgt, like=ref)  # backend + dtype policy in one call
-            full = ar.do("einsum", plan.subscripts, blocks[i], g)
-            full = ar.do("reshape", full, cell.shape)
-            acc = full if acc is None else acc + full
-        return acc
+    # every term of Σ_τ A^(τ) ⊗ C^(τ), for the whole grid at once: one gather out of
+    # the tensor's own matrices, times the Clebsch-Gordan factors the plan holds.
+    # ``asarray``, not ``array``: the two index arrays and the coefficient vector are
+    # the size of the dense result, and only ever read, so NumPy must not copy them
+    flat = ar.do("concatenate", tuple(ar.do("reshape", m, (-1,)) for m in t.data))
+    terms = ar.do("take", flat, ar.do("asarray", exp.source, like=flat), axis=0) * ar.do(
+        "asarray", exp.weights, like=ref
+    )
 
-    def glue(sectors: tuple[Sector, ...], index: tuple[int, ...]) -> Array:
-        axis = len(index)
-        if axis == t.ndim:
-            return build(sectors, index)
-        parts = tuple(
-            glue((*sectors, a), (*index, i)) for i, a in enumerate(plan.axis_sectors[axis])
-        )
-        return parts[0] if len(parts) == 1 else ar.do("concatenate", parts, axis=axis)
+    # a group's terms are (multiplicity, elements); summing the rows in order is the
+    # `acc = acc + full` the per-cell walk did, on every cell of the group at once
+    values = [ar.do("zeros", (1,), like=ref)]
+    at = 0
+    for mult, size in exp.groups:
+        rows = ar.do("reshape", terms[at : at + mult * size], (mult, size))
+        acc = rows[0]
+        for j in range(1, mult):
+            acc = acc + rows[j]
+        values.append(acc)
+        at += mult * size
 
-    return glue((), ())
+    cells = ar.do("concatenate", tuple(values))
+    index = ar.do("asarray", exp.placement, like=cells)
+    return ar.do("reshape", ar.do("take", cells, index, axis=0), plan.shape)
 
 
 def from_dense(

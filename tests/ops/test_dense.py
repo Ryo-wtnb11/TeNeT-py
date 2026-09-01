@@ -214,6 +214,36 @@ def test_pinv_equals_conjugate_transpose_over_qdim(name):
         np.testing.assert_allclose(cell.adjoint, np.linalg.pinv(C), atol=0.0, rtol=0.0)
 
 
+def test_backend_calls_do_not_scale_with_the_grid(monkeypatch):
+    """The walk is batched: the call count follows the distinct fusion multiplicities.
+
+    The regression this guards is not a wrong value but a compile storm — one
+    ``ar.do`` per cell per axis level is free on NumPy and cost 420 XLA executables
+    on JAX for exactly this structure, because a symmetric tensor's cells are all
+    different shapes and every distinct shape is a fresh module.
+    """
+    import autoray as ar
+
+    space = GradedSpace.new(SU2, {SINGLET: 2, HALF: 3, ONE: 2})
+    legs = (Leg(space, OUT),) * 3 + (Leg(space, IN),) * 2
+    t = SymmetricTensor.random(legs, seed=11)
+    plan = dense_plan(t.structure)
+    assert len(plan.cells) > 50  # a grid worth batching in the first place
+
+    calls = 0
+    real = ar.do
+
+    def counting(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(ar, "do", counting)
+    dense = t.to_dense()
+    assert calls < len(plan.cells)
+    assert np.array_equal(dense, legacy_to_dense(t))
+
+
 def test_a_cell_with_fusion_multiplicity_exists_in_the_fixtures():
     """The K > 1 case the adjoint exists for is actually exercised above."""
     plan = dense_plan(TensorStructure(STRUCTURES["su2_4"]))
