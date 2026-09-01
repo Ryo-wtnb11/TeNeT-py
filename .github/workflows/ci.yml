@@ -74,7 +74,7 @@ jobs:
       # Codecov beside the self-hosted badge: the Pages badge is the
       # dependency-free number; codecov adds per-PR coverage diffs and history.
       # Tokenless upload (public repo); non-fatal like the rest of this job.
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         with:
           files: coverage.xml
           fail_ci_if_error: false
