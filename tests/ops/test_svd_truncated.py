@@ -201,6 +201,45 @@ def test_the_kept_set_equals_the_independent_greedy_reference():
         assert kept_pairs(bond) == set(reference_selection(t, max_bond=max_bond))
 
 
+def test_exact_ties_go_to_the_lower_sector_then_the_lower_index():
+    """A flat spectrum, so the cut is *entirely* tie-breaking — the isometry case.
+
+    Every coupled block is made exactly ``diag(1, ..., 1)``, and LAPACK returns a
+    diagonal matrix's singular values bit-exactly, so the documented tie rule (bare
+    sigma descending, ties by sector then by index within the sector) is what decides
+    the whole selection rather than floating-point noise. What it has to produce is the
+    greedy walk down that order, spending ``qdim(c)`` per kept value and stopping at the
+    first one that overflows.
+
+    Pinned because it is the one clause of the keep rule the other tests cannot reach:
+    on a random spectrum ties never occur. TensorKit.jl's ``truncrank`` specifies the
+    same tie order (a stable ``sortperm`` over sector-ordered storage), but neither
+    library can promise a *numerically* degenerate spectrum arrives at the sort exactly
+    tied — see ``benchmarks/bench_svd_truncation.py``.
+    """
+    m = tenet.repartition(tensor("su2", seed=3), *SPLIT)
+    flat = {}
+    for c, b in to_matrices(m).items():
+        mat = np.zeros_like(np.asarray(b))
+        np.fill_diagonal(mat, 1.0)
+        flat[c] = mat
+    t = tenet.from_matrices(m.structure, flat)
+
+    order = sorted((c, i) for c, mat in flat.items() for i in range(min(mat.shape)))
+    for max_bond in (2, 3, 5, 8, 13):
+        expected, budget = [], 0.0
+        for c, i in order:
+            if budget + SU2.qdim(c) > max_bond:
+                break
+            budget += SU2.qdim(c)
+            expected.append((c, i))
+        bond = tenet.linalg.svd_truncated(t, axes=SPLIT, max_bond=max_bond)[0].legs[-1].space
+        assert kept_pairs(bond) == set(expected)
+        # deterministic: the same input decides the same bond, every time
+        again = tenet.linalg.svd_truncated(t, axes=SPLIT, max_bond=max_bond)[0].legs[-1].space
+        assert again.sectors == bond.sectors
+
+
 def test_nesting_across_budgets():
     t = tensor("su2", seed=3)
     sets = []

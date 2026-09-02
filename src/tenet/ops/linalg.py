@@ -1626,6 +1626,19 @@ def svd_truncated(
     No ``absorb`` enum and no fourth return value: ``S`` is a tensor, so absorbing is
     a one-line ``compose``, and the truncation error is exactly
     ``tenet.norm(t)**2 - tenet.norm(U @ S @ Vh)**2`` by Pythagoras.
+
+    **Against TensorKit.jl.** ``max_bond=D`` is TensorKit's
+    ``svd_trunc(t; trunc=truncrank(D))``, convention for convention: ``D`` counts dense
+    dimensions there too (its ``findtruncated`` walk adds ``dim(c)`` per kept value under
+    ``GenericFusion``), whole multiplets only, and it stops at the first value that
+    overflows rather than scanning on for a cheaper one. The one number that differs is
+    the error: TensorKit's ``truncation_error`` is the *norm* of the discarded part, so
+    it equals ``sqrt(BondSelection.discarded_weight)`` -- both absolute and both
+    ``qdim``-weighted, but this library reports the square.
+    ``benchmarks/bench_svd_truncation.py`` runs the comparison. On a spectrum with exact
+    ties the two libraries can still land on different sectors: the tie order is then
+    decided by whichever last bit each runtime's LAPACK produced, not by either
+    library's tie rule.
     """
     _validate(max_bond, cutoff, cutoff_mode, renorm, "svd_truncated")
     m, _, mats = _lower(t, axes)
