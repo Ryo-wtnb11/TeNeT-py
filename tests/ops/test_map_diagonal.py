@@ -272,7 +272,9 @@ def test_map_diagonal_never_densifies(monkeypatch):
 
     m = heff(*CASES["su2"])
     monkeypatch.setattr(SymmetricTensor, "to_dense", refuse)
-    monkeypatch.setattr(tenet.ops.map, "to_matrices", refuse)
+    # broken at its source, not at ``ops.map``'s re-export: ``compose`` reads ``data``
+    # positionally now, so ``ops.map`` no longer names ``to_matrices`` at all
+    monkeypatch.setattr(tenet.map_view, "to_matrices", refuse)
     assert tenet.map_diagonal(m).structure.num_blocks > 0
 
 

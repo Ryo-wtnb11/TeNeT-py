@@ -11,6 +11,7 @@ import pytest
 import tenet
 from tenet import IN, OUT, GradedSpace, Leg, ProductSpace, SymmetricTensor, TensorMapView, as_map
 from tenet.map_view import map_layout, to_matrices
+from tenet.ops.map import compose_plan
 from tenet.symmetry import SU2, U1, SU2Sector, Trivial, TrivialSector, U1Sector
 
 ZERO, HALF, ONE = SU2Sector(0), SU2Sector(1), SU2Sector(2)
@@ -195,6 +196,40 @@ def test_a_sector_on_only_one_side_gives_zero_blocks_not_a_key_error():
         if key.coupled == ZERO:
             assert not np.any(block)
     np.testing.assert_allclose(c.to_dense(), dense_compose(a, b), atol=1e-10)
+
+
+@pytest.mark.parametrize(("a_legs", "b_legs"), PAIRS)
+def test_compose_plan_positions_name_the_sectors_they_stand_for(a_legs, b_legs):
+    """The alignment is positional; assert it against the sector labels it replaced."""
+    a, b = pair(a_legs, b_legs)
+    plan = compose_plan(a.structure, b.structure)
+    ca, cb = map_layout(a.structure).sectors, map_layout(b.structure).sectors
+    layout = map_layout(plan.structure)
+
+    assert plan.structure == (a @ b).structure
+    assert plan.num_sectors == len(layout.sectors)
+    for k, i, j in plan.products:
+        assert layout.sectors[k] == ca[i] == cb[j]
+    for k, shape in plan.missing:
+        assert layout.sectors[k] not in ca or layout.sectors[k] not in cb
+        assert shape == layout.shapes[k]
+    # every sector reached exactly once, by one route or the other
+    assert sorted([k for k, _, _ in plan.products] + [k for k, _ in plan.missing]) == list(
+        range(plan.num_sectors)
+    )
+
+
+def test_a_numpy_operand_against_a_jax_one_dispatches_to_jax():
+    """The ``matmul`` is resolved once per call, so it has to be resolved for *both*.
+
+    A CTMRG corner is a constant tensor times a traced one, which is exactly this pair;
+    resolving off one side alone sends a tracer through ``numpy.matmul``.
+    """
+    use_jax()
+    a, b = pair()
+    got = a @ b.to_backend("jax")
+    assert got.backend == "jax"
+    assert tenet.allclose(got, a @ b, atol=1e-12)
 
 
 # --- compatibility refusals -----------------------------------------------------

@@ -40,7 +40,7 @@ constructor runs at setup time, outside any trace, and ``to_backend`` is the
 documented route onto a device.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from functools import cache
 from typing import TYPE_CHECKING, Any
@@ -48,9 +48,12 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 import numpy as np
 
+from tenet.backend import lib_fn
+from tenet.cache import plan_cache
 from tenet.leg import IN, OUT, Leg
-from tenet.map_view import as_map, check_square, from_matrices, map_layout, to_matrices
+from tenet.map_view import check_square, from_matrices, map_layout
 from tenet.ops.embed import embed
+from tenet.space import ProductSpace
 from tenet.structure import FusionBlockKey, TensorStructure, _pattern
 
 if TYPE_CHECKING:
@@ -68,14 +71,19 @@ __all__ = [
 ]
 
 
-def _check_composable(a: "SymmetricTensor", b: "SymmetricTensor") -> None:
+def _check_composable(a: TensorStructure, b: TensorStructure) -> None:
     """Raise ``ValueError`` naming the offending axis on *both* tensors.
 
     Follows ``ops.basic._check_same_structure``'s per-axis style: the position in
     the domain/codomain is useless on its own when the public axis order
     interleaves the sides, so both public axis indices are printed.
+
+    Takes the two *structures* rather than the tensors: compatibility is a question
+    about legs alone, so [compose_plan][tenet.ops.map.compose_plan] can ask it once
+    per structure pair instead of once per composition.
     """
-    domain, codomain = as_map(a).domain, as_map(b).codomain
+    domain = ProductSpace(tuple(a.legs[i] for i in a.in_axes))
+    codomain = ProductSpace(tuple(b.legs[i] for i in b.out_axes))
     if len(domain.legs) != len(codomain.legs):
         raise ValueError(
             f"compose: a has {len(domain.legs)} IN legs but b has {len(codomain.legs)} "
@@ -89,7 +97,7 @@ def _check_composable(a: "SymmetricTensor", b: "SymmetricTensor") -> None:
     x, y = domain.legs[i], codomain.legs[i]
     message = (
         f"compose: a's domain and b's codomain differ at position {i} "
-        f"(public axis {a.structure.in_axes[i]} of a, public axis {b.structure.out_axes[i]} "
+        f"(public axis {a.in_axes[i]} of a, public axis {b.out_axes[i]} "
         f"of b): {x!r} vs {y!r}. "
     )
     if x.provider != y.provider:
@@ -155,9 +163,7 @@ def compose(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
             acc = {c: acc[c] @ mb[c] for c in acc}
         out = from_matrices(TensorStructure((*ts[0].codomain, *ts[-1].domain)), acc)
     """
-    _check_composable(a, b)
-    structure = TensorStructure((*a.codomain, *b.domain))
-    return compose_lowered(structure, to_matrices(a), to_matrices(b), block_ref(a, b))
+    return compose_lowered(a.structure, a.data, b.structure, b.data, block_ref(a, b))
 
 
 def block_ref(*tensors: "SymmetricTensor") -> Any:
@@ -191,21 +197,108 @@ def block_ref(*tensors: "SymmetricTensor") -> Any:
     return np.zeros((), dtype=np.float64)
 
 
+@dataclass(frozen=True, slots=True)
+class ComposePlan:
+    """Which of two operands' matrices multiply into which of the result's. Array-free.
+
+    Parameters
+    ----------
+    structure : TensorStructure
+        The composition's structure, ``(*a.codomain, *b.domain)``.
+    products : tuple of (int, int, int)
+        ``(result position, a position, b position)`` for every coupled sector both
+        operands carry, in the result's sector order. Positions index the three
+        tensors' ``data`` tuples, i.e. their ``map_layout(...).sectors`` order.
+    missing : tuple of (int, (int, int))
+        ``(result position, matrix shape)`` for a coupled sector only one operand
+        carries, which is zero.
+    num_sectors : int
+        How many matrices the result holds.
+    """
+
+    structure: TensorStructure
+    products: tuple[tuple[int, int, int], ...]
+    missing: tuple[tuple[int, tuple[int, int]], ...]
+    num_sectors: int
+
+
+@plan_cache(cost=lambda plan: plan.num_sectors)
+def compose_plan(a: TensorStructure, b: TensorStructure) -> ComposePlan:
+    """The composition's structure and its sector alignment, computed once per pair.
+
+    Parameters
+    ----------
+    a, b : TensorStructure
+        The operands' structures. ``a``'s domain must be ``b``'s codomain as
+        ``(space, dual)`` in order.
+
+    Returns
+    -------
+    ComposePlan
+        The plan [compose_lowered][tenet.ops.map.compose_lowered] applies.
+
+    Raises
+    ------
+    ValueError
+        If the two are not composable; the message names the offending axis on both.
+
+    Notes
+    -----
+    Everything a composition does that is not arithmetic: the compatibility check, the
+    result structure, and the map from the result's coupled sectors to the two operands'.
+    All three are pure functions of the legs, so a chain that composes the same shapes
+    every step pays them once -- measured at the production SU(2) rank-3 point, 4.0x the
+    cost of the ``gemm``\\ s themselves before, 1.2x after. The alignment is *positional*
+    for the same reason ``_slots`` holds a sector index rather than a sector: the matrices
+    are a tuple in that order, so a dict keyed on sectors would hash one per composition.
+    """
+    _check_composable(a, b)
+    structure = TensorStructure((*(a.legs[i] for i in a.out_axes), *(b.legs[i] for i in b.in_axes)))
+    at = {c: i for i, c in enumerate(map_layout(a).sectors)}
+    bt = {c: i for i, c in enumerate(map_layout(b).sectors)}
+    layout = map_layout(structure)
+    products: list[tuple[int, int, int]] = []
+    missing: list[tuple[int, tuple[int, int]]] = []
+    for k, c in enumerate(layout.sectors):
+        i, j = at.get(c), bt.get(c)
+        if i is None or j is None:
+            # A coupled sector carried by only one operand contributes nothing: the
+            # missing side has zero trees there, so the product is zero. Deliberate
+            # (the result structure still declares the sector), not a KeyError.
+            missing.append((k, layout.shapes[k]))
+        else:
+            # The join's band orders agree by construction (see the module docstring);
+            # assert it rather than trust it, the way ``map_layout`` asserts its grid.
+            # Cold, once per structure pair -- and it is what ``from_matrices``' shape
+            # check used to say on every single composition.
+            want = (map_layout(a).shapes[i][0], map_layout(b).shapes[j][1])
+            if want != layout.shapes[k]:
+                raise RuntimeError(
+                    f"compose_plan: sector {c!r} would multiply to {want}, but the "
+                    f"composition's layout declares {layout.shapes[k]}; the two sides of "
+                    "the join do not enumerate the same trees in the same order"
+                )
+            products.append((k, i, j))
+    return ComposePlan(structure, tuple(products), tuple(missing), len(layout.sectors))
+
+
 def compose_lowered(
-    structure: TensorStructure,
-    ma: Mapping[Any, Any],
-    mb: Mapping[Any, Any],
+    sa: TensorStructure,
+    da: "Sequence[Any]",
+    sb: TensorStructure,
+    db: "Sequence[Any]",
     ref: Any,
 ) -> "SymmetricTensor":
     """[compose][tenet.compose]'s body once both operands are already lowered.
 
     Parameters
     ----------
-    structure : TensorStructure
-        The composition's structure, ``(*a.codomain, *b.domain)``.
-    ma, mb : Mapping
-        The operands' coupled-sector matrices, as
-        [to_matrices][tenet.to_matrices] returns them.
+    sa, sb : TensorStructure
+        The operands' structures.
+    da, db : sequence of array
+        The operands' coupled-sector matrices, in ``map_layout(...).sectors`` order --
+        the order a tensor's ``data`` and [lower_plan][tenet.map_view.lower_plan] both
+        already use.
     ref : array
         A block to take a backend and a dtype from when a coupled sector is
         missing from both products, as [block_ref][tenet.ops.map.block_ref] returns it.
@@ -221,21 +314,34 @@ def compose_lowered(
     matrices assembled straight from the *unrepartitioned* operands
     ([lower_plan][tenet.map_view.lower_plan]); the matmul and
     the missing-sector rule are the ones ``compose`` always applied.
+
+    The ``matmul`` is resolved once per composition rather than once per sector: at the
+    production SU(2) rank-3 point the blocks are 38x3 and ``ar.do``'s lookup is a
+    measurable fraction of the ``gemm`` it dispatches. Same function, same values --
+    ``lib_fn`` resolves what ``ar.do`` would have reached (see ``tenet.backend``).
     """
-    layout = map_layout(structure)
-    mats: dict[Any, Any] = {
-        c: ar.do("matmul", ma[c], mb[c]) for c in layout.sectors if c in ma and c in mb
-    }
-    if len(mats) < len(layout.sectors):
-        # A coupled sector carried by only one operand contributes nothing: the
-        # missing side has zero trees there, so the product is zero. Deliberate
-        # (the result structure still declares the sector), not a KeyError.
-        ref = next(iter(mats.values()), ref)
-        dtype = ar.get_dtype_name(ref)
-        for c in layout.sectors:
-            if c not in mats:
-                mats[c] = ar.do("zeros", layout.shape(c), dtype=dtype, like=ref)
-    return from_matrices(structure, mats)
+    from tenet.tensor import SymmetricTensor
+
+    plan = compose_plan(sa, sb)
+    mats: list[Any] = [None] * plan.num_sectors
+    if plan.products:
+        # ``infer_backend_multi``, not ``infer_backend`` of one side: a NumPy operand
+        # meeting a traced JAX one has to dispatch to JAX, which is exactly the promotion
+        # ``ar.do`` performed here before -- one CTMRG corner is a constant times a traced
+        # tensor. A tensor's own matrices all share a backend, so one pair decides.
+        _, i, j = plan.products[0]
+        matmul = lib_fn(ar.infer_backend_multi(da[i], db[j]), "matmul")
+        for k, i, j in plan.products:
+            mats[k] = matmul(da[i], db[j])
+    if plan.missing:
+        ref = mats[plan.products[0][0]] if plan.products else ref
+        # ``ref.dtype``, not ``ar.get_dtype_name`` and back: every backend this package
+        # runs on hands its own ``zeros`` its own dtype object, and reading ``.dtype``
+        # off a block is what ``from_matrices`` and ``SymmetricTensor.dtype`` already do.
+        zeros, dtype = lib_fn(ar.infer_backend(ref), "zeros"), ref.dtype
+        for k, shape in plan.missing:
+            mats[k] = zeros(shape, dtype=dtype)
+    return SymmetricTensor.from_data(plan.structure, tuple(mats))
 
 
 def identity(

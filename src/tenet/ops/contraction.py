@@ -63,7 +63,7 @@ No ``to_dense``, no NumPy and no provider branching here (invariants 8/9).
 
 import operator
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import cache
 from typing import TYPE_CHECKING, Any
@@ -484,7 +484,7 @@ def _ref(*xs: Operand) -> Any:
 
 def _lower_operand(
     x: Operand, outputs: tuple[int, ...], inputs: tuple[int, ...]
-) -> tuple[TensorStructure, Mapping[Any, Any]]:
+) -> tuple[TensorStructure, tuple[Any, ...]]:
     """``_lowered`` for an operand that may still be carrying an unapplied plan.
 
     Parameters
@@ -498,8 +498,8 @@ def _lower_operand(
     -------
     structure : TensorStructure
         The lowered operand's structure.
-    mats : Mapping
-        Its coupled-sector matrices.
+    mats : tuple of array
+        Its coupled-sector matrices, in ``map_layout(structure).sectors`` order.
 
     Notes
     -----
@@ -512,7 +512,7 @@ def _lower_operand(
         fused = x.then(*sides_plan(x.structure, outputs, inputs))
         mats = lower_plan(fused.source, fused.structure, fused.perm, fused.terms)
         if mats is not None:
-            return fused.structure, mats
+            return fused.structure, tuple(mats.values())
         x = x.realized("einsum_chain")
     return _lowered(x, outputs, inputs)
 
@@ -524,10 +524,7 @@ def _contracted(
     plan = contraction_plan(a.structure, b.structure, axes)
     sa, ma = _lower_operand(a, plan.a_outputs, plan.a_inputs)
     sb, mb = _lower_operand(b, plan.b_outputs, plan.b_inputs)
-    joined = TensorStructure(
-        (*(sa.legs[i] for i in sa.out_axes), *(sb.legs[i] for i in sb.in_axes))
-    )
-    c = compose_lowered(joined, ma, mb, _ref(a, b))
+    c = compose_lowered(sa, ma, sb, mb, _ref(a, b))
     return _Pending(
         c,
         *_restore_plan(
@@ -732,7 +729,7 @@ def _pattern_restore_plan(
 
 def _lowered(
     t: "SymmetricTensor", outputs: tuple[int, ...], inputs: tuple[int, ...]
-) -> tuple[TensorStructure, Mapping[Any, Any]]:
+) -> tuple[TensorStructure, tuple[Any, ...]]:
     """``repartition(t, outputs, inputs)``'s structure and its sector matrices.
 
     Parameters
@@ -747,8 +744,8 @@ def _lowered(
     -------
     structure : TensorStructure
         The repartitioned operand's structure.
-    mats : Mapping
-        Its coupled-sector matrices, as [to_matrices][tenet.to_matrices] returns them.
+    mats : tuple of array
+        Its coupled-sector matrices, in ``map_layout(structure).sectors`` order.
 
     Notes
     -----
@@ -763,7 +760,11 @@ def _lowered(
     """
     structure, perm, terms = sides_plan(t.structure, outputs, inputs)
     mats = lower_plan(t, structure, perm, terms)
-    return structure, to_matrices(repartition(t, outputs, inputs)) if mats is None else mats
+    if mats is None:
+        return structure, repartition(t, outputs, inputs).data
+    # ``lower_plan`` keys its dict on ``map_layout(structure).sectors`` in order, so the
+    # values *are* the positional matrices ``compose_lowered`` wants -- no rehash.
+    return structure, tuple(mats.values())
 
 
 def trace(t: "SymmetricTensor", axes: Sequence[int]) -> "SymmetricTensor":
