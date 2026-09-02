@@ -48,7 +48,7 @@ from typing import TYPE_CHECKING, Any
 import autoray as ar
 import numpy as np
 
-from tenet.backend import lib_fn
+from tenet.backend import lib_fn, promote
 from tenet.cache import plan_cache
 from tenet.leg import IN, OUT, Leg
 from tenet.map_view import check_square, from_matrices, map_layout
@@ -325,16 +325,28 @@ def compose_lowered(
     plan = compose_plan(sa, sb)
     mats: list[Any] = [None] * plan.num_sectors
     if plan.products:
-        # ``infer_backend_multi``, not ``infer_backend`` of one side: a NumPy operand
-        # meeting a traced JAX one has to dispatch to JAX, which is exactly the promotion
-        # ``ar.do`` performed here before -- one CTMRG corner is a constant times a traced
-        # tensor. A tensor's own matrices all share a backend, so one pair decides.
-        _, i, j = plan.products[0]
-        matmul = lib_fn(ar.infer_backend_multi(da[i], db[j]), "matmul")
+        # ``promote``, not ``infer_backend`` of one side: a NumPy operand meeting a
+        # traced JAX one has to dispatch to JAX, which is exactly the promotion
+        # ``ar.do`` performed here before -- one CTMRG corner is a constant times a
+        # traced tensor -- and a NumPy operand meeting a torch one has to be converted
+        # as well, because ``torch.matmul`` refuses an ``ndarray``. Once per call: a
+        # tensor's own matrices all share a backend, so one pair decides for the rest.
+        backend, da, db = promote(da, db)
+        matmul = lib_fn(backend, "matmul")
         for k, i, j in plan.products:
             mats[k] = matmul(da[i], db[j])
     if plan.missing:
-        ref = mats[plan.products[0][0]] if plan.products else ref
+        if plan.products:
+            ref = mats[plan.products[0][0]]
+        elif da and db:
+            # No product decided a backend, and the two operands need not be on one:
+            # ``block_ref`` answers with the *first* operand that carries a block, which
+            # is argument order and not a property of the pair, so a NumPy tensor
+            # composed with a traced JAX one would come back NumPy. Cold -- reached only
+            # when the operands share no coupled sector at all -- so it costs the hot
+            # path nothing to ask the same question ``promote`` asks.
+            wanted = ar.infer_backend_multi(da[0], db[0])
+            ref = da[0] if ar.infer_backend(da[0]) == wanted else db[0]
         # ``ref.dtype``, not ``ar.get_dtype_name`` and back: every backend this package
         # runs on hands its own ``zeros`` its own dtype object, and reading ``.dtype``
         # off a block is what ``from_matrices`` and ``SymmetricTensor.dtype`` already do.

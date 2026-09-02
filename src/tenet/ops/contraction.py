@@ -70,6 +70,7 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
+from tenet.backend import lib_fn, promote
 from tenet.leg import IN, OUT, Leg
 from tenet.map_view import check_square, lower_plan, map_layout, to_matrices
 from tenet.ops.basic import _check_same_structure
@@ -990,12 +991,16 @@ def inner(a: "SymmetricTensor", b: "SymmetricTensor") -> Any:
     _check_same_structure(a, b, "inner")
     if not a.data:
         return 0.0
+    # ``promote`` once per call: the operands need not be on the same backend, and
+    # ``ar.do`` read it off ``x`` alone (``ops.basic.add`` says the same).
+    backend, xs, ys = promote(a.data, b.data)
+    conj, total = lib_fn(backend, "conj"), lib_fn(backend, "sum")
     # No float(): concretizing here makes `inner` unusable under jit/grad/vmap.
     return sum(
         # requires() above; raise-based check does not narrow
         provider.qdim(c)  # ty: ignore[unresolved-attribute]
-        * ar.do("sum", ar.do("conj", x) * y)
-        for c, x, y in zip(map_layout(a.structure).sectors, a.data, b.data, strict=True)
+        * total(conj(x) * y)
+        for c, x, y in zip(map_layout(a.structure).sectors, xs, ys, strict=True)
     )
 
 

@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
+from tenet.backend import lib_fn, promote
 from tenet.map_view import map_layout
 from tenet.symmetry.base import QuantumDimensionData, requires
 
@@ -119,8 +120,13 @@ def add(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
     # over the coupled-sector matrices, not the blocks: the two tensors share a structure,
     # so they share a layout, and every cell of a matrix belongs to exactly one block.
     # One backend call per sector rather than per block, and neither operand is cut.
+    # ``promote`` once per call, not ``ar.do`` per sector: the operands need not be on
+    # the same backend (a NumPy constant plus a traced JAX tensor), and ``ar.do`` read
+    # the backend off ``x`` alone.
+    backend, xs, ys = promote(a.data, b.data)
+    op = lib_fn(backend, "add")
     return SymmetricTensor.from_data(
-        a.structure, tuple(ar.do("add", x, y) for x, y in zip(a.data, b.data, strict=True))
+        a.structure, tuple(op(x, y) for x, y in zip(xs, ys, strict=True))
     )
 
 
@@ -157,8 +163,10 @@ def subtract(a: "SymmetricTensor", b: "SymmetricTensor") -> "SymmetricTensor":
     from tenet.tensor import SymmetricTensor
 
     _check_same_structure(a, b, "subtract")
+    backend, xs, ys = promote(a.data, b.data)  # see ``add``
+    op = lib_fn(backend, "subtract")
     return SymmetricTensor.from_data(
-        a.structure, tuple(ar.do("subtract", x, y) for x, y in zip(a.data, b.data, strict=True))
+        a.structure, tuple(op(x, y) for x, y in zip(xs, ys, strict=True))
     )
 
 
@@ -420,7 +428,6 @@ def allclose(
     # equal structures lay out identically, and a coupled sector's matrix is exactly its
     # blocks laid side by side -- the grid is complete -- so this compares the same pairs
     # of numbers a per-block walk would, without cutting either operand up (invariant 8)
-    return all(
-        bool(ar.do("allclose", x, y, rtol=rtol, atol=atol))
-        for x, y in zip(a.data, b.data, strict=True)
-    )
+    backend, xs, ys = promote(a.data, b.data)  # see ``add``
+    close = lib_fn(backend, "allclose")
+    return all(bool(close(x, y, rtol=rtol, atol=atol)) for x, y in zip(xs, ys, strict=True))
