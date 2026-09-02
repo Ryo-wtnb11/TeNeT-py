@@ -11,7 +11,8 @@ plain ``functools.cache``.
 ``_pattern_braid_plan``, ``_pattern_restore_plan``, ``_pattern_adjoint_plan``,
 ``_crossing_signs``, ``_twist_signs``, ``_artin_braid``, ``permute_braided_tree``,
 ``symmetric_braiding``, ``properties``, ``_fusion_trees``, ``_coupled_sectors``,
-``_all_trees``, ``_flat``). A block index is a function of the
+``_all_trees``, ``_flat``, ``_side_trees``, ``_block_cross``, ``_num_blocks``).
+A block index is a function of the
 legs' sectors, sides and duals -- never of their degeneracies -- so these are keyed on
 the structure with every degeneracy set to 1. Growing a bond adds no entry, and a model
 has finitely many sector patterns. They stay unbounded, and so do the thin outer caches

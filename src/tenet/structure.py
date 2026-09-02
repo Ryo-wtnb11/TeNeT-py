@@ -184,8 +184,13 @@ class TensorStructure(_HashMemo):
         -------
         int
             ``len(self.block_order)``.
+
+        Notes
+        -----
+        Counted off the cross product, so asking how many blocks there are does
+        not build them: the count is the reason the layout never has to.
         """
-        return len(_block_order(self))
+        return _num_blocks(self)
 
     def index_of(self, key: FusionBlockKey) -> int:
         """Position of ``key`` in [block_order][tenet.TensorStructure.block_order].
@@ -353,9 +358,10 @@ class TensorStructure(_HashMemo):
 # degeneracies, so a structure whose bond degeneracies moved is a new key even though its
 # sector set did not — and a DMRG sweep moves them at every bond, every sweep, until the
 # state settles. Everything below that is a function of the *sectors* alone
-# (``_block_order`` and the two tables aligned with it) is therefore keyed on the
-# structure's ``_pattern``, the same legs with every degeneracy 1; only
-# ``_block_shape_table``, which reads the degeneracies, is keyed on the structure itself.
+# (``_side_trees``, ``_block_cross``, ``_num_blocks``, ``_block_order`` and the two
+# tables aligned with it) is therefore keyed on the structure's ``_pattern``, the same
+# legs with every degeneracy 1; only ``_block_shape_table``, which reads the
+# degeneracies, is keyed on the structure itself.
 
 
 @cache
@@ -384,28 +390,68 @@ def _axes(s: TensorStructure) -> tuple[tuple[int, ...], tuple[int, ...]]:
 
 
 @cache
-def _block_order(s: TensorStructure) -> tuple[FusionBlockKey, ...]:
-    """Pair up output- and input-side trees over every sector assignment.
+def _side_trees(s: TensorStructure, axes: tuple[int, ...]) -> dict[Sector, tuple[FusionTree, ...]]:
+    """One side's fusion trees, sorted, grouped by the sector they couple to.
 
-    The empty side falls out for free: ``fusion_trees(p, (), c)`` is the single
-    rank-0 tree when ``c is p.unit`` and nothing otherwise, so a tensor with no
-    IN legs keeps exactly the unit-coupled blocks.
+    The empty side falls out for free: the empty product yields one empty
+    assignment, whose only tree is the rank-0 tree at the unit.
     """
     if (p := _pattern(s)) is not s:
-        return _block_order(p)
-    provider, out_axes, in_axes = s.provider, s.out_axes, s.in_axes
-    keys: set[FusionBlockKey] = set()
-    for assignment in product(*(leg.sectors for leg in s.legs)):
-        uncoupled = tuple(leg.fused_sector(a) for leg, a in zip(s.legs, assignment, strict=True))
-        out_u = tuple(uncoupled[i] for i in out_axes)
-        in_u = tuple(uncoupled[i] for i in in_axes)
-        for c in coupled_sectors(provider, out_u):
-            keys.update(
-                FusionBlockKey(ot, it)
-                for ot in fusion_trees(provider, out_u, c)
-                for it in fusion_trees(provider, in_u, c)
-            )
-    return tuple(sorted(keys))
+        return _side_trees(p, axes)
+    legs = tuple(s.legs[i] for i in axes)
+    by_coupled: dict[Sector, list[FusionTree]] = {}
+    for assignment in product(*(leg.sectors for leg in legs)):
+        u = tuple(leg.fused_sector(a) for leg, a in zip(legs, assignment, strict=True))
+        for c in coupled_sectors(s.provider, u):
+            by_coupled.setdefault(c, []).extend(fusion_trees(s.provider, u, c))
+    return {c: tuple(sorted(trees)) for c, trees in by_coupled.items()}
+
+
+@cache
+def _block_cross(
+    s: TensorStructure,
+) -> tuple[dict[FusionTree, int], dict[Sector, tuple[FusionTree, ...]]]:
+    """``block_order`` as the per-sector cross product it is, without the keys.
+
+    Returns where each output tree's run of blocks starts in ``block_order`` —
+    in that order, so the keys of the dict *are* the output trees — and each
+    coupled sector's input trees in the order a run lists them. An index is
+    therefore a base plus the input tree's position in its sector, which is how
+    [map_layout][tenet.map_layout] fills its grid with no lookup per block.
+
+    The two sides are independent given the coupled sector, so they are
+    enumerated apart: ``S^n_out + S^n_in`` leg assignments rather than the
+    ``S^ndim`` joint walk, which is the difference between a sum and a product
+    of exponentials. Sorting likewise falls on the *trees* — a few thousand —
+    and not on the finished keys, of which there is one per block.
+    """
+    if (p := _pattern(s)) is not s:
+        return _block_cross(p)
+    out_by_c, in_by_c = _side_trees(s, s.out_axes), _side_trees(s, s.in_axes)
+    bases: dict[FusionTree, int] = {}
+    n = 0
+    for ot in sorted(t for c, trees in out_by_c.items() if c in in_by_c for t in trees):
+        bases[ot] = n
+        n += len(in_by_c[ot.coupled])
+    return bases, in_by_c
+
+
+@cache
+def _num_blocks(s: TensorStructure) -> int:
+    """``len(_block_order(s))``, from the cross product's sizes alone."""
+    bases, in_by_c = _block_cross(s)
+    return sum(len(in_by_c[ot.coupled]) for ot in bases)
+
+
+@cache
+def _block_order(s: TensorStructure) -> tuple[FusionBlockKey, ...]:
+    """Pair up output- and input-side trees, per shared coupled sector.
+
+    Sorted by construction: a key orders on ``(output_tree, input_tree)``, the
+    output trees are walked in order and each one's partners are already sorted.
+    """
+    bases, in_by_c = _block_cross(s)
+    return tuple(FusionBlockKey(ot, it) for ot in bases for it in in_by_c[ot.coupled])
 
 
 @cache
