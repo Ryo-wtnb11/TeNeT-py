@@ -5,13 +5,33 @@ import enum
 import os
 import subprocess
 import sys
+from itertools import product
 from math import prod
 
 import numpy as np
 import pytest
 
-from tenet import IN, OUT, FusionBlockKey, FusionTree, GradedSpace, Leg, TensorStructure
-from tenet.symmetry import SU2, U1, SU2Sector, Trivial, TrivialSector, U1Sector
+from tenet import (
+    IN,
+    OUT,
+    FusionBlockKey,
+    FusionTree,
+    GradedSpace,
+    Leg,
+    TensorStructure,
+    coupled_sectors,
+    fusion_trees,
+)
+from tenet.symmetry import (
+    SU2,
+    U1,
+    SU2Sector,
+    SUNProvider,
+    SUNSector,
+    Trivial,
+    TrivialSector,
+    U1Sector,
+)
 
 HALF = SU2Sector(1)
 ONE = SU2Sector(2)
@@ -143,6 +163,48 @@ def test_block_order_is_identical_across_python_hash_seeds():
             ).stdout
         )
     assert len(outs) == 1
+
+
+def _block_order_by_joint_enumeration(s):
+    """``block_order``'s definition, spelled out: walk every leg assignment at once.
+
+    The reference for ``_block_cross``, which gets the same tuple out of the two sides
+    enumerated *separately*. Quadratically slower and that is the point — the definition
+    is what the fast rule has to reproduce, key for key and in the same order.
+    """
+    keys = set()
+    for assignment in product(*(leg.sectors for leg in s.legs)):
+        uncoupled = tuple(leg.fused_sector(a) for leg, a in zip(s.legs, assignment, strict=True))
+        out_u = tuple(uncoupled[i] for i in s.out_axes)
+        in_u = tuple(uncoupled[i] for i in s.in_axes)
+        for c in coupled_sectors(s.provider, out_u):
+            keys.update(
+                FusionBlockKey(ot, it)
+                for ot in fusion_trees(s.provider, out_u, c)
+                for it in fusion_trees(s.provider, in_u, c)
+            )
+    return tuple(sorted(keys))
+
+
+@pytest.mark.parametrize(
+    "space",
+    [
+        su2_space({0: 2, 1: 1, 2: 3}),
+        su2_space({0: 1, 1: 1, 2: 1, 3: 1}),
+        u1_space({-1: 2, 0: 1, 2: 3}),
+        GradedSpace.new(SUNProvider(3), {SUNSector((0, 0)): 2, SUNSector((1, 0)): 1}),
+    ],
+    ids=["su2", "su2-wide", "u1", "su3"],
+)
+@pytest.mark.parametrize("ndim", [1, 2, 3, 4])
+def test_block_order_matches_the_joint_enumeration_of_every_leg(space, ndim):
+    for n_out in range(ndim + 1):
+        for duals in product((False, True), repeat=ndim):
+            s = TensorStructure(
+                tuple(Leg(space, OUT if i < n_out else IN, dual=d) for i, d in enumerate(duals))
+            )
+            assert s.block_order == _block_order_by_joint_enumeration(s)
+            assert s.num_blocks == len(s.block_order)
 
 
 def test_block_order_is_independent_of_input_ordering():

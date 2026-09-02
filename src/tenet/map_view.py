@@ -83,6 +83,7 @@ this module.
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
+from itertools import groupby
 from typing import TYPE_CHECKING, Any
 
 import autoray as ar
@@ -92,7 +93,12 @@ from tenet.cache import plan_cache
 from tenet.fusion_tree import FusionTree
 from tenet.leg import Leg
 from tenet.space import GradedSpace, ProductSpace
-from tenet.structure import FusionBlockKey, TensorStructure, _pattern
+from tenet.structure import (
+    TensorStructure,
+    _block_cross,
+    _pattern,
+    _side_trees,
+)
 from tenet.symmetry.base import Sector
 
 if TYPE_CHECKING:
@@ -236,6 +242,11 @@ def map_layout(structure: TensorStructure) -> MapLayout:
     out_axes, in_axes = structure.out_axes, structure.in_axes
     table = tree_structure(structure)
     sectors = tuple(c for c, _, _ in table)
+    # `block_order` is a per-sector cross product laid out output tree by output tree,
+    # so a cell's index is its row tree's base plus its column tree's position in the
+    # sector — arithmetic on two tables of tree size, instead of a dict lookup on a
+    # freshly built key per *block*.
+    bases, in_trees = _block_cross(structure)
     rows: list[Band] = []
     cols: list[Band] = []
     shapes: list[tuple[int, int]] = []
@@ -251,18 +262,20 @@ def map_layout(structure: TensorStructure) -> MapLayout:
                 sum(extent for _, _, _, extent in cbands),
             )
         )
+        at = {it: i for i, it in enumerate(in_trees[c])}
+        offsets = tuple(at[it] for _, it, _, _ in cbands)
         grid.append(
             (
                 c,
                 tuple(
-                    tuple(structure.index_of(FusionBlockKey(ot, it)) for _, it, _, _ in cbands)
-                    for _, ot, _, _ in rbands
+                    tuple(base + j for j in offsets)
+                    for base in (bases[ot] for _, ot, _, _ in rbands)
                 ),
             )
         )
 
     # The grid is complete by construction of `_block_order`; assert it rather
-    # than trust it. index_of() above already raises on a missing cell, so a
+    # than trust it. The two lookups above already raise on a missing tree, so a
     # matching total is enough to make every cell distinct and every block used.
     covered = sum(len(cells) * len(cells[0]) for _, cells in grid)
     if covered != structure.num_blocks:
@@ -323,21 +336,25 @@ def tree_structure(
     """
     if (pattern := _pattern(structure)) is not structure:
         return tree_structure(pattern)
-    # dict insertion order == block_order order, which is sorted: the trees of a
-    # configuration come out in block order for free, and so do the column trees within
-    # the first row tree (which, the grid being complete, already lists them all).
-    out_trees: dict[Sector, dict[tuple[Sector, ...], dict[FusionTree, None]]] = {}
-    in_trees: dict[Sector, dict[tuple[Sector, ...], dict[FusionTree, None]]] = {}
-    for key in structure.block_order:
-        ot, it = key.output_tree, key.input_tree
-        out_trees.setdefault(key.coupled, {}).setdefault(ot.uncoupled, {})[ot] = None
-        in_trees.setdefault(key.coupled, {}).setdefault(it.uncoupled, {})[it] = None
-    return tuple((c, _configs(out_trees[c]), _configs(in_trees[c])) for c in sorted(out_trees))
+    # Read off each side's own tree enumeration rather than walking block_order, which
+    # is their cross product and so has a term per *block*: this table is a function of
+    # the sides separately, and rebuilding it per block is what made it cost per block.
+    out_trees = _side_trees(structure, structure.out_axes)
+    in_trees = _side_trees(structure, structure.in_axes)
+    return tuple(
+        (c, _configs(out_trees[c]), _configs(in_trees[c]))
+        for c in sorted(out_trees.keys() & in_trees.keys())
+    )
 
 
-def _configs(trees: Mapping[tuple[Sector, ...], Mapping[FusionTree, None]]) -> tuple[Config, ...]:
-    """One side's configurations, sorted by their uncoupled labels."""
-    return tuple((u, tuple(trees[u])) for u in sorted(trees))
+def _configs(trees: tuple[FusionTree, ...]) -> tuple[Config, ...]:
+    """One side's configurations, sorted by their uncoupled labels.
+
+    ``trees`` is sorted and ``uncoupled`` is a ``FusionTree``'s first field, so a
+    configuration's trees are already contiguous and in block order, and the
+    configurations already come out sorted by their labels.
+    """
+    return tuple((u, tuple(g)) for u, g in groupby(trees, key=lambda t: t.uncoupled))
 
 
 def _dims(
