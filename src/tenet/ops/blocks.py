@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 import autoray as ar
 
+from tenet.backend import promote
 from tenet.ops.basic import _check_same_structure
 
 if TYPE_CHECKING:
@@ -289,6 +290,9 @@ def zip_blocks(
     from tenet.tensor import SymmetricTensor
 
     _check_same_structure(a, b, "zip_blocks")
-    return SymmetricTensor(
-        a.structure, tuple(fn(x, y) for x, y in zip(a.blocks, b.blocks, strict=True))
-    )
+    # ``fn`` is handed two arrays of one backend even when the operands arrive on two:
+    # a NumPy block and a torch one have no ``+`` between them, and which backend the
+    # pair lands on is not ``fn``'s question to answer (``ops.basic.add`` promotes for
+    # the same reason).
+    _, xs, ys = promote(a.blocks, b.blocks)
+    return SymmetricTensor(a.structure, tuple(fn(x, y) for x, y in zip(xs, ys, strict=True)))
