@@ -214,12 +214,15 @@ class ComposePlan:
         carries, which is zero.
     num_sectors : int
         How many matrices the result holds.
+    batches : tuple
+        Products grouped by operand matrix shapes for batched Torch matmul.
     """
 
     structure: TensorStructure
     products: tuple[tuple[int, int, int], ...]
     missing: tuple[tuple[int, tuple[int, int]], ...]
     num_sectors: int
+    batches: tuple[tuple[tuple[int, int, int], ...], ...]
 
 
 @plan_cache(cost=lambda plan: plan.num_sectors)
@@ -279,7 +282,17 @@ def compose_plan(a: TensorStructure, b: TensorStructure) -> ComposePlan:
                     "the join do not enumerate the same trees in the same order"
                 )
             products.append((k, i, j))
-    return ComposePlan(structure, tuple(products), tuple(missing), len(layout.sectors))
+    batches: dict[tuple, list[tuple[int, int, int]]] = {}
+    for k, i, j in products:
+        shapes = (map_layout(a).shapes[i], map_layout(b).shapes[j])
+        batches.setdefault(shapes, []).append((k, i, j))
+    return ComposePlan(
+        structure,
+        tuple(products),
+        tuple(missing),
+        len(layout.sectors),
+        tuple(tuple(group) for group in batches.values()),
+    )
 
 
 def compose_lowered(
@@ -333,8 +346,24 @@ def compose_lowered(
         # tensor's own matrices all share a backend, so one pair decides for the rest.
         backend, da, db = promote(da, db)
         matmul = lib_fn(backend, "matmul")
-        for k, i, j in plan.products:
-            mats[k] = matmul(da[i], db[j])
+        if backend == "torch":
+            # ponytail: stacking copies operands; tiny CPU matrices can favor the loop.
+            # Add a size/device gate only with representative workload measurements.
+            stack = lib_fn(backend, "stack")
+            for group in plan.batches:
+                if len(group) == 1:
+                    k, i, j = group[0]
+                    mats[k] = matmul(da[i], db[j])
+                    continue
+                values = matmul(
+                    stack(tuple(da[i] for _, i, _ in group)),
+                    stack(tuple(db[j] for _, _, j in group)),
+                )
+                for (k, _, _), value in zip(group, values, strict=True):
+                    mats[k] = value
+        else:
+            for k, i, j in plan.products:
+                mats[k] = matmul(da[i], db[j])
     if plan.missing:
         if plan.products:
             ref = mats[plan.products[0][0]]

@@ -986,14 +986,8 @@ def test_only_this_module_imports_torch():
 
 
 @pytest.mark.parametrize("provider", ["u1", "su2"])
-def test_torch_takes_the_loop_and_gets_the_same_numbers(provider):
-    """Torch is outside the batching gate, and its result is the looped one to the bit.
-
-    [_batches][tenet.ops.repartition._batches] admits NumPy only, and Torch is out for
-    want of a measurement rather than for a measured loss — this is the module where
-    that measurement would be made. Until it is, the claim under test is the one every
-    backend owes: the plan's execution equals the term-by-term one.
-    """
+def test_torch_plan_agrees_with_the_term_walk(provider):
+    """The lowered Torch path agrees with the explicit term walk."""
     from ops.test_batch import assert_bit_identical, bend_plan_of, tensor
 
     from tenet.ops.repartition import _batches
@@ -1002,3 +996,132 @@ def test_torch_takes_the_loop_and_gets_the_same_numbers(provider):
     assert not _batches(t)
     got = assert_bit_identical(t, *bend_plan_of(t))
     assert got.backend == "torch"
+
+
+@pytest.mark.parametrize("provider", ["su2", "u1", "product"])
+@pytest.mark.parametrize("dtype", [torch.float64, torch.complex64])
+@pytest.mark.parametrize("requires_grad", [False, True])
+def test_torch_lowering_batches_values_and_gradients(monkeypatch, provider, dtype, requires_grad):
+    from ops.test_batch import bend_plan_of, tensor
+
+    import tenet.map_view as map_view
+    from tenet.map_view import lower_plan
+    from tenet.ops import batch
+    from tenet.ops.repartition import _looped
+
+    t = tensor(provider, "ragged", 5).to_backend("torch")
+    values = tuple(m.to(dtype) for m in t.data)
+    if dtype.is_complex:
+        values = tuple(m + 0.3j * m.flip(-1) for m in values)
+    # Same values in noncontiguous storage: flat indices address logical matrices.
+    leaves = tuple(m.T.contiguous().T.requires_grad_(requires_grad) for m in values)
+    t = SymmetricTensor.from_data(t.structure, leaves)
+    structure, perm, terms = bend_plan_of(t)
+    groups, _ = batch.batch_plan(structure, perm, terms)
+    assert bool(groups) is (provider == "su2")
+    calls = []
+    real = map_view._lower_indexed
+
+    def watched(*args):
+        calls.append(1)
+        return real(*args)
+
+    monkeypatch.setattr(map_view, "_lower_indexed", watched)
+    got = lower_plan(t, structure, perm, terms)
+    assert got is not None and calls == [1]
+    blocks = _looped(t, perm, terms, {})
+    want = to_matrices(SymmetricTensor(structure, tuple(blocks[i] for i in range(len(blocks)))))
+    for c in want:
+        torch.testing.assert_close(got[c], want[c], rtol=0, atol=0)
+    if requires_grad:
+
+        def loss(mats):
+            return sum(m.abs().square().sum() for m in mats.values())
+
+        actual = torch.autograd.grad(loss(got), leaves, retain_graph=True)
+        expected = torch.autograd.grad(loss(want), leaves)
+        for g, w in zip(actual, expected, strict=True):
+            torch.testing.assert_close(g, w)
+
+
+@pytest.mark.parametrize("dtype", [np.float64, np.complex64])
+@pytest.mark.parametrize("requires_grad", [False, True])
+def test_torch_compose_batches_equal_shapes(monkeypatch, dtype, requires_grad):
+    import importlib
+
+    module = importlib.import_module("tenet.ops.map")
+    space = GradedSpace.new(SU2, {SU2Sector(j): 2 if j < 4 else 3 for j in range(5)})
+    a, b = (
+        SymmetricTensor.random((Leg(space, OUT), Leg(space, IN)), seed=i, dtype=dtype).to_backend(
+            "torch"
+        )
+        for i in range(2)
+    )
+    if np.issubdtype(dtype, np.complexfloating):
+        a, b = (
+            SymmetricTensor.from_data(t.structure, tuple(m + 0.3j * m.flip(-1) for m in t.data))
+            for t in (a, b)
+        )
+    for t in (a, b):
+        for m in t.data:
+            m.requires_grad_(requires_grad)
+    plan = module.compose_plan(a.structure, b.structure)
+    assert sorted(map(len, plan.batches)) == [1, 4]
+    calls = []
+    real = module.lib_fn
+
+    def dispatch(backend, name):
+        fn = real(backend, name)
+        if name != "matmul":
+            return fn
+
+        def multiply(x, y):
+            calls.append(x.ndim)
+            return fn(x, y)
+
+        return multiply
+
+    monkeypatch.setattr(module, "lib_fn", dispatch)
+    got = tenet.compose(a, b)
+    assert sorted(calls) == [2, 3]
+    want = tuple(x @ y for x, y in zip(a.data, b.data, strict=True))
+    for g, w in zip(got.data, want, strict=True):
+        torch.testing.assert_close(g, w)
+    if requires_grad:
+        leaves = (*a.data, *b.data)
+        actual = torch.autograd.grad(sum(m.abs().square().sum() for m in got.data), leaves)
+        expected = torch.autograd.grad(sum(m.abs().square().sum() for m in want), leaves)
+        for g, w in zip(actual, expected, strict=True):
+            torch.testing.assert_close(g, w)
+
+
+@pytest.mark.parametrize("requires_grad", [False, True])
+def test_torch_lowering_respects_index_memory_budget(monkeypatch, requires_grad):
+    from ops.test_batch import bend_plan_of, tensor
+
+    import tenet.map_view as map_view
+
+    t = tensor("su2", "ragged", 5).to_backend("torch")
+    for m in t.data:
+        m.requires_grad_(requires_grad)
+    args = (t, *bend_plan_of(t))
+    want = map_view.lower_plan(*args)
+    from tenet.ops.batch import _indexed_plan
+
+    cache = _indexed_plan
+    try:
+        cache.cache_clear()
+        monkeypatch.setattr(cache, "budget", 1)
+        assert cache(t.structure, *args[1:]) is None
+        got = map_view.lower_plan(*args)
+        for c in want:
+            torch.testing.assert_close(got[c], want[c], rtol=0, atol=0)
+        if requires_grad:
+            actual = torch.autograd.grad(sum(m.abs().square().sum() for m in got.values()), t.data)
+            expected = torch.autograd.grad(
+                sum(m.abs().square().sum() for m in want.values()), t.data
+            )
+            for g, w in zip(actual, expected, strict=True):
+                torch.testing.assert_close(g, w)
+    finally:
+        cache.cache_clear()
