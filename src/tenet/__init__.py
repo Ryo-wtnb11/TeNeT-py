@@ -89,7 +89,7 @@ from tenet.structure import FusionBlockKey, TensorStructure
 from tenet.symmetry.base import StructureChangingError
 from tenet.tensor import SymmetricTensor
 
-__version__ = "0.1.1"
+__version__ = "0.1.3"
 
 # Last: dispatch.py imports from tenet.ops, and registers this package with autoray as a
 # side effect of `import tenet`. `network` (the M11a driver layer) is imported alongside
