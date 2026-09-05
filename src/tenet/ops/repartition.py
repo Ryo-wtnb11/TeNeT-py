@@ -584,8 +584,8 @@ def _batches(t: "SymmetricTensor") -> bool:
     multiplicities and the backward pass of the gather all enter, and none of them is
     read off the term count.
 
-    PyTorch takes the loop because it has not been measured, not because it has been
-    measured to lose; ``tests/backends/test_torch.py`` is where that measurement would go.
+    This gate only controls the fallback: real-coefficient Torch plans now batch
+    through ``lower_plan``, including under autograd (#353).
 
     A tensor with no blocks has no backend to ask about, and no terms to batch either.
     """

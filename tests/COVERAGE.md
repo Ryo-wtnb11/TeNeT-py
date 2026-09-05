@@ -220,3 +220,11 @@ last. So:
   existing cell is not coverage, it is runtime: classify it (b) instead.
 - No coverage-percentage gate, here or in CI: the metric is blind to exactly
   the class of hole this file exists to track.
+
+### Torch contraction execution (#353)
+
+`tests/backends/test_torch.py` checks indexed lowering against the term walk on
+SU(2), U(1), and U(1) x fZ2, in float64 and complex64, with noncontiguous storage
+and with/without autograd. It also checks the bounded-index fallback and batched
+SU(2) sector composition, including singleton groups and gradients. These extend
+existing operations; no categorical capability or public operation was added.

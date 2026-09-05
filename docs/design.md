@@ -1004,6 +1004,13 @@ one call per sector. Holding the blocks instead meant gathering them into
 matrices and cutting them back out around every operation, and that round trip
 was most of what a contraction cost.
 
+Torch lowering may execute a categorical plan as flat gathers grouped by the
+number of summands, followed by a permutation into sector storage. The index and
+coefficient arrays are bounded numerical side tables, not structural fields;
+terms retain their summation order. If an expanded table would exceed its cache
+budget, lowering uses block-shape buckets instead. Equal-shape sector products
+may share a batched matmul without mixing sectors.
+
 The keys live in the structural metadata; both tuples contain only backend
 arrays. This keeps the numerical data a clean parameter tree (for
 `get_params`/`set_params` and optional JAX PyTree registration): the leaves are

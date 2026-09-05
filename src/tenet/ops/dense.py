@@ -70,7 +70,7 @@ import numpy as np
 from tenet.cache import plan_cache
 from tenet.fusion_tree import FusionTree
 from tenet.leg import Leg
-from tenet.map_view import _slots, _tables, map_layout
+from tenet.ops.batch import _block_positions
 from tenet.structure import TensorStructure
 from tenet.symmetry.base import (
     CapabilityError,
@@ -319,29 +319,6 @@ class _Expansion:
     weights: np.ndarray
     groups: tuple[tuple[int, int], ...]
     placement: np.ndarray
-
-
-def _block_positions(structure: TensorStructure) -> list[np.ndarray]:
-    """Per block, where each of its public-order elements sits in the flat matrices.
-
-    ``map_view.views`` reaches a block as ``transpose(reshape(mat[rows, cols], shape),
-    inverse)``; this is that same cut expressed as indices instead of as a view, so a
-    caller that wants *all* the blocks at once can take them in one gather.
-    """
-    layout = map_layout(structure)
-    _, shapes = _tables(structure)
-    inverse = tuple(sorted(range(structure.ndim), key=layout.axes_order.__getitem__))
-    bases, base = [], 0
-    for rows, cols in layout.shapes:
-        bases.append((base, cols))
-        base += rows * cols
-    out = []
-    for i, (pos, ro, dr, co, dc) in enumerate(_slots(structure)):
-        start, ncols = bases[pos]
-        rows = start + (ro + np.arange(dr, dtype=np.intp)) * ncols
-        flat = (rows[:, None] + (co + np.arange(dc, dtype=np.intp))[None, :]).reshape(shapes[i])
-        out.append(np.transpose(flat, inverse))
-    return out
 
 
 def _expansion_cost(exp: _Expansion) -> int:

@@ -74,7 +74,8 @@ def cast_coefficients(coeff: np.ndarray, block: Any) -> Any:
         dtype = real if coeff.dtype.kind == "f" else np.result_type(real, np.complex64)
     else:
         dtype = np.result_type(dtype, coeff.dtype)
-    return ar.do("array", coeff.astype(dtype, copy=False), like=block)
+    device = {"device": block.device} if ar.infer_backend(block) == "torch" else {}
+    return ar.do("asarray", coeff.astype(dtype, copy=False), like=block, **device)
 
 
 @plan_cache(cost=lambda r: sum(len(t) for _, bs in r[0] for t, _, _, _ in bs) + len(r[1]))
@@ -173,6 +174,101 @@ def batch_plan(
         start = stop
 
     return tuple(groups), tuple(loose)
+
+
+def _block_positions(structure: TensorStructure) -> list[np.ndarray]:
+    """Per block, where each of its public-order elements sits in the flat matrices.
+
+    ``map_view.views`` reaches a block as ``transpose(reshape(mat[rows, cols], shape),
+    inverse)``; this is that same cut expressed as indices instead of as a view, so a
+    caller that wants *all* the blocks at once can take them in one gather.
+    """
+    from tenet.map_view import _slots, _tables, map_layout
+
+    layout = map_layout(structure)
+    _, shapes = _tables(structure)
+    inverse = tuple(sorted(range(structure.ndim), key=layout.axes_order.__getitem__))
+    bases, base = [], 0
+    for rows, cols in layout.shapes:
+        bases.append((base, cols))
+        base += rows * cols
+    out = []
+    for i, (pos, ro, dr, co, dc) in enumerate(_slots(structure)):
+        start, ncols = bases[pos]
+        rows = start + (ro + np.arange(dr, dtype=np.intp)) * ncols
+        flat = (rows[:, None] + (co + np.arange(dc, dtype=np.intp))[None, :]).reshape(shapes[i])
+        out.append(np.transpose(flat, inverse))
+    return out
+
+
+def _indexed_cost(plan: Any) -> int:
+    """Index/coefficient bytes in the cache's 156-byte term units."""
+    if plan is None:
+        return 1
+    groups, order = plan
+    size = order.nbytes + sum(i.nbytes + (0 if c is None else c.nbytes) for i, c in groups)
+    return max(1, (size + 155) // 156)
+
+
+@plan_cache(cost=_indexed_cost)
+def _indexed_plan(
+    source: TensorStructure,
+    target: TensorStructure,
+    perm: tuple[int, ...],
+    terms: tuple[tuple[int, int, complex], ...],
+) -> tuple[tuple[Any, ...], np.ndarray] | None:
+    """Flat gather indices, coefficients and placement for a complete linear plan.
+
+    Group by the number of summands, independent of block shape: every destination
+    element in a group has the same number of sources. Term order is preserved.
+    These arrays are a numerical side table, never fields of TensorStructure.
+
+    The table grows with *elements times multiplicity*. Decline before allocating
+    if it would exceed this cache's byte budget; the shape-bucket executor then
+    keeps indices proportional to blocks instead. This also avoids rebuilding an
+    oversized, uncacheable table on every call.
+    """
+    from tenet.map_view import _normalized, _slots, map_layout
+
+    normalized = _normalized(terms)
+    if normalized is None:
+        return None
+    terms = normalized
+    dst = map_layout(target)
+    dst_slots = _slots(target)
+    size = sum(r * c for r, c in dst.shapes)
+    elements = sum(dst_slots[d][2] * dst_slots[d][4] for _, d, _ in terms)
+    if 16 * elements + 8 * size > 156 * _indexed_plan.budget:
+        return None
+    axes = tuple(perm[i] for i in dst.axes_order)
+    positions = _block_positions(source)
+    sources = {i: positions[i].transpose(axes).ravel() for i in {s for s, _, _ in terms}}
+    target_positions = _block_positions(target)
+    destinations: dict[int, list[tuple[int, complex]]] = {}
+    for i, d, coeff in terms:
+        destinations.setdefault(d, []).append((i, coeff))
+    if len(destinations) != target.num_blocks:
+        raise ValueError(
+            f"lower_plan: the plan fills {len(destinations)} of {target.num_blocks} target "
+            "blocks -- provider coefficients dropped terms"
+        )
+    by_width: dict[int, list[Any]] = {}
+    for d, row in destinations.items():
+        by_width.setdefault(len(row), []).append((d, row))
+    groups, writes = [], []
+    for rows in by_width.values():
+        reads, coefficients = [], []
+        for d, row in rows:
+            take = np.stack([sources[i] for i, _ in row])
+            reads.append(take)
+            coefficients.append(np.broadcast_to(np.array([c for _, c in row])[:, None], take.shape))
+            writes.append(target_positions[d].transpose(dst.axes_order).ravel())
+        coeff = np.concatenate(coefficients, axis=1)
+        groups.append((np.concatenate(reads, axis=1), None if np.all(coeff == 1) else coeff))
+    order = np.empty(size, dtype=np.intp)
+    if writes:
+        order[np.concatenate(writes)] = np.arange(order.size)
+    return tuple(groups), order
 
 
 @plan_cache(cost=lambda vec: len(vec))

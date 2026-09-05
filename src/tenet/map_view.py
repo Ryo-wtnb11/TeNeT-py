@@ -947,6 +947,46 @@ def is_identity_plan(
     )
 
 
+def _lower_indexed(
+    t: "SymmetricTensor",
+    structure: TensorStructure,
+    perm: tuple[int, ...],
+    terms: tuple[tuple[int, int, complex], ...],
+) -> dict[Sector, Any] | None:
+    """Torch's flat gather and placement, without per-block numerical calls or writes."""
+    from tenet.ops.batch import _indexed_plan, cast_coefficients
+
+    plan = _indexed_plan(t.structure, structure, perm, terms)
+    if plan is None:
+        return None
+    groups, order = plan
+    if not groups:
+        return {}
+    ref = t.data[0]
+    asarray = lib_fn(t.backend, "asarray")
+    concatenate = lib_fn(t.backend, "concatenate")
+    flat = tuple(m.reshape(-1) for m in t.data)
+    source = flat[0] if len(flat) == 1 else concatenate(flat)
+    parts = []
+    for indices, coeff in groups:
+        rows = source[asarray(indices, device=ref.device)]
+        if coeff is not None:
+            rows = rows * cast_coefficients(coeff, source)
+        acc = rows[0]
+        for i in range(1, rows.shape[0]):
+            acc = acc + rows[i]
+        parts.append(acc)
+    flat_result = parts[0] if len(parts) == 1 else concatenate(tuple(parts))
+    result = flat_result[asarray(order, device=ref.device)]
+    mats, start = [], 0
+    layout = map_layout(structure)
+    for rows, cols in layout.shapes:
+        stop = start + rows * cols
+        mats.append(result[start:stop].reshape(rows, cols))
+        start = stop
+    return dict(zip(layout.sectors, mats, strict=True))
+
+
 def lower_plan(
     t: "SymmetricTensor",
     structure: TensorStructure,
@@ -1005,10 +1045,17 @@ def lower_plan(
     What the grouping declines is the tail, and it keeps the term walk, with one
     transposed view per distinct source rather than one per term.
 
-    **A bucket is one allocation**, and that is the half of the grouping that decides
-    what it costs on a big plan. The gather ``stacked[take]`` is already a buffer of the
-    bucket's own -- an index array never returns a view -- so the scaling and the
-    accumulation are written back into it. Out of place each is another array the size of
+    Torch gathers source cells and places the complete result with cached flat
+    indices, avoiding a numerical call and an autograd slice-write node per block.
+    Its scaling and accumulation are out of place. An index table exceeding the
+    cache byte budget keeps the shape-bucket path below instead of expanding indices
+    per numerical element.
+
+    **The shape-bucket path without autograd uses one allocation per bucket**,
+    which decides what the grouping costs on a big plan. The gather ``stacked[take]``
+    is already a buffer of the bucket's own -- an index array never returns a view --
+    so the scaling and accumulation are written back into it. Out of place each is
+    another array the size of
     the bucket, and a bucket is a multiple of the *tensor*: on a rank-6 SU(2) intermediate
     whose one group holds 2,141 of its 2,407 terms the multiply's own temporary was 70 MB
     against a 32 MB result, and writing that one and the accumulations back into the
@@ -1045,30 +1092,21 @@ def lower_plan(
     # under a trace, a graph node each -- to discover that this function cannot use them.
     if not t.structure.num_blocks or t.backend not in _MUTABLE:
         return None
-    # ``out=`` is what makes this one pass, and torch refuses it under autograd
-    # ("functions with out=... arguments don't support automatic differentiation").
-    # A watched tensor is not mutable in the sense ``_MUTABLE`` means, so the route
-    # declines and the ordinary applier -- which builds a temporary per term, and
-    # which is what torch always took before -- runs instead.
-    if getattr(t._first_block(), "requires_grad", False):
-        return None
     if structure == t.structure and is_identity_plan(structure, perm, terms):
         # the plan rebuilds what it reads, and the tensor already holds the matrices
         return to_matrices(t)
+    if t.backend == "torch":
+        mats = _lower_indexed(t, structure, perm, terms)
+        if mats is not None:
+            return mats
     normalized = _normalized(terms)
     if normalized is None:
         return None
-    # the same grouping ``apply_plan`` batches with, on the same backend gate, and the
-    # same reason: the trade of Python iterations for array operations has been measured
-    # only on NumPy. Here the group's result is written straight into the destination
-    # matrix, so the blocks the applier would have built never exist.
     from tenet.ops.batch import batch_plan, cast_coefficients
 
-    groups, loose = (
-        batch_plan(structure, perm, normalized)
-        if ar.infer_backend(t.data[0]) == "numpy"
-        else ((), normalized)
-    )
+    # Assignment into fresh storage preserves Torch autograd; out= does not.
+    differentiable = t.backend == "torch" and any(m.requires_grad for m in t.data)
+    groups, loose = batch_plan(structure, perm, normalized)
 
     layout = map_layout(structure)
     _, shapes = _tables(structure)
@@ -1098,7 +1136,8 @@ def lower_plan(
         return src_mats[c][ro : ro + dr, co : co + dc].reshape(src_shapes[s])
 
     dtype = ar.to_backend_dtype(ar.get_dtype_name(ref), like=ref)
-    mats = [ar.do("empty", shape, dtype=dtype, like=ref) for shape in layout.shapes]
+    device = {"device": ref.device} if t.backend == "torch" else {}
+    mats = [ar.do("empty", shape, dtype=dtype, like=ref, **device) for shape in layout.shapes]
 
     transpose = lib_fn(t.backend, "transpose")
     multiply = lib_fn(t.backend, "multiply")
@@ -1116,13 +1155,19 @@ def lower_plan(
             # which on a plan whose buckets hold most of the tensor is the dominant
             # traffic, not the Python that issues it.
             rows = stacked[take]
-            multiply(rows, cast_coefficients(coeff, stacked), out=rows)
+            if differentiable:
+                rows = multiply(rows, cast_coefficients(coeff, stacked))
+            else:
+                multiply(rows, cast_coefficients(coeff, stacked), out=rows)
             rows = ar.do("reshape", rows, (len(dsts), width, *ar.shape(rows)[1:]))
             acc = rows[:, 0]
             for i in range(1, width):
                 # ``acc`` is a slice of ``rows`` and the summands are its other slices,
                 # so accumulating into it neither aliases a summand nor outlives them
-                add(acc, rows[:, i], out=acc)
+                if differentiable:
+                    acc = add(acc, rows[:, i])
+                else:
+                    add(acc, rows[:, i], out=acc)
             for p, dst in enumerate(dsts):
                 written.add(dst)
                 c, ro, dr, co, dc = slots[dst]
@@ -1141,6 +1186,11 @@ def lower_plan(
         c, ro, dr, co, dc = slots[dst]
         # the *destination* is reshaped, never the source -- see ``to_matrices``
         dest = mats[c][ro : ro + dr, co : co + dc].reshape(shapes[dst])
+        if differentiable:
+            value = block if coeff == 1 else scaled(block, coeff)
+            dest[...] = add(dest, value) if dst in written else value
+            written.add(dst)
+            continue
         if dst not in written:
             written.add(dst)
             if coeff == 1:

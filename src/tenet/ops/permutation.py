@@ -269,8 +269,8 @@ def _apply(t: "SymmetricTensor", plan: PermutationPlan, what: str) -> "Symmetric
     are read out of ``t``'s coupled-sector matrices and written straight into the
     result's, and the blocks this loop would build -- along with the gather that would
     then copy every one of them back into a matrix -- never exist. The loop below stays
-    as the route for what ``lower_plan`` declines: an immutable backend, a watched torch
-    tensor, a genuinely complex coefficient.
+    as the route for what ``lower_plan`` declines: an immutable backend or a genuinely
+    complex coefficient.
     """
     from tenet.tensor import _unchecked
 
